@@ -470,6 +470,14 @@ async def _handle_code_command(agent: Agent, args_str: str):
         console.print("[red]No LLM endpoint available.[/red]")
         return
 
+    # Get context window for the endpoint
+    ctx_tokens = None
+    if agent.endpoint_manager:
+        ctx_tokens = agent.endpoint_manager.get_context_tokens_for_role(TaskType.REASONING)
+    stream_kwargs = {}
+    if ctx_tokens:
+        stream_kwargs["options"] = {"num_ctx": ctx_tokens}
+
     console.print(
         f"[cyan]Sending {len(files_content)} file(s) ({total_chars:,} chars) to {model}...[/cyan]"
     )
@@ -486,7 +494,7 @@ async def _handle_code_command(agent: Agent, args_str: str):
 
     try:
         full_response = []
-        async for chunk in client.chat_stream(messages=messages, model=model):
+        async for chunk in client.chat_stream(messages=messages, model=model, **stream_kwargs):
             msg = getattr(chunk, "message", None)
             if msg:
                 content = getattr(msg, "content", "")

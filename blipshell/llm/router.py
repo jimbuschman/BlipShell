@@ -65,7 +65,11 @@ class LLMRouter:
         endpoint = await self._endpoint_manager.get_endpoint_for_role(task_type)
         endpoint.start_request()
         try:
-            result = await client.generate(prompt=prompt, model=model, system=system)
+            # Pass context window size to Ollama
+            gen_kwargs = {}
+            if endpoint and endpoint.context_tokens:
+                gen_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
+            result = await client.generate(prompt=prompt, model=model, system=system, **gen_kwargs)
             endpoint.record_success(0)
             return result
         except Exception:

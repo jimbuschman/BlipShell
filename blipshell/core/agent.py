@@ -454,10 +454,17 @@ class Agent:
                     endpoint.start_request()
                     self._last_endpoint_used = endpoint.name
 
+                # Pass context window size to Ollama so it doesn't truncate
+                ctx_tokens = endpoint.context_tokens if endpoint and endpoint.context_tokens else None
+                chat_kwargs = {}
+                if ctx_tokens:
+                    chat_kwargs["options"] = {"num_ctx": ctx_tokens}
+
                 response = await client.chat(
                     messages=messages,
                     model=model,
                     tools=tools if iteration < max_iterations else None,
+                    **chat_kwargs,
                 )
 
                 content, tool_calls = self._extract_response(response)
