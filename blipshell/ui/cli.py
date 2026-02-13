@@ -158,6 +158,17 @@ async def chat_loop(
                         feedback_text = user_input[len("/feedback "):]
                         await _save_feedback(agent, feedback_text)
                     continue
+                elif cmd[0] == "code":
+                    if len(cmd) < 2:
+                        console.print("[yellow]Usage: /code <file-or-folder> [instruction][/yellow]")
+                        console.print("[dim]Examples:[/dim]")
+                        console.print("[dim]  /code blipshell/core/agent.py[/dim]")
+                        console.print("[dim]  /code blipshell/core/ find potential bugs[/dim]")
+                        console.print("[dim]  /code blipshell/llm/router.py explain this code[/dim]")
+                    else:
+                        code_args = user_input[len("/code "):]
+                        await _handle_code_command(agent, code_args)
+                    continue
                 elif cmd[0] == "offload":
                     if len(cmd) < 2:
                         console.print("[yellow]Usage: /offload <task description>[/yellow]")
@@ -340,6 +351,139 @@ async def _save_feedback(agent: Agent, feedback: str):
         pass
 
     console.print(f"[green]Feedback saved as lesson #{lesson_id}.[/green]")
+
+
+async def _handle_code_command(agent: Agent, args_str: str):
+    """Handle /code <path> [instruction] — send code to the coding model for review."""
+    from pathlib import Path
+
+    from blipshell.llm.router import TaskType
+
+    # Parse: first token is the path, rest is instruction
+    parts = args_str.strip().split(None, 1)
+    path_str = parts[0]
+    instruction = parts[1] if len(parts) > 1 else (
+        "Review this code for issues, bugs, and potential improvements. "
+        "Be specific and actionable."
+    )
+
+    path = Path(path_str)
+    if not path.exists():
+        # Try relative to cwd
+        path = Path.cwd() / path_str
+    if not path.exists():
+        console.print(f"[yellow]Path not found: {path_str}[/yellow]")
+        return
+
+    # Collect files
+    files_content = {}
+    if path.is_file():
+        try:
+            files_content[str(path)] = path.read_text(encoding="utf-8")
+        except Exception as e:
+            console.print(f"[red]Error reading {path}: {e}[/red]")
+            return
+    elif path.is_dir():
+        # Common code extensions
+        extensions = {".py", ".js", ".ts", ".jsx", ".tsx", ".yaml", ".yml",
+                      ".json", ".toml", ".cfg", ".rs", ".go", ".java", ".cs",
+                      ".c", ".cpp", ".h", ".hpp", ".rb", ".sh", ".bat"}
+        code_files = sorted(
+            f for f in path.rglob("*")
+            if f.is_file()
+            and f.suffix in extensions
+            and "__pycache__" not in f.parts
+            and ".git" not in f.parts
+            and "node_modules" not in f.parts
+        )
+        if not code_files:
+            console.print(f"[yellow]No code files found in {path_str}[/yellow]")
+            return
+        console.print(f"[dim]Found {len(code_files)} code files in {path_str}[/dim]")
+        for f in code_files:
+            try:
+                rel = f.relative_to(Path.cwd()) if f.is_relative_to(Path.cwd()) else f
+                files_content[str(rel)] = f.read_text(encoding="utf-8")
+            except Exception as e:
+                console.print(f"[dim]Skipping {f.name}: {e}[/dim]")
+
+    if not files_content:
+        console.print("[yellow]No files could be read.[/yellow]")
+        return
+
+    # Build prompt
+    code_sections = []
+    total_chars = 0
+    for filepath, content in files_content.items():
+        code_sections.append(f"=== {filepath} ===\n{content}")
+        total_chars += len(content)
+
+    all_code = "\n\n".join(code_sections)
+
+    prompt = f"**Instruction**: {instruction}\n\n**Code to review**:\n\n{all_code}"
+
+    system_prompt = (
+        "You are a code review assistant. Analyze the provided code carefully. "
+        "Be specific — reference file names and line numbers. "
+        "Focus on: bugs, logic errors, security issues, performance problems, and code quality. "
+        "Suggest concrete fixes when possible. Be concise but thorough."
+    )
+
+    # Get coding model and client
+    model = agent.router.get_model(TaskType.CODING)
+    client = await agent.router.get_client(TaskType.CODING)
+
+    if not client:
+        # Fallback to reasoning
+        console.print("[dim]No coding endpoint available, using reasoning model.[/dim]")
+        model = agent.router.get_model(TaskType.REASONING)
+        client = await agent.router.get_client(TaskType.REASONING)
+
+    if not client:
+        console.print("[red]No LLM endpoint available.[/red]")
+        return
+
+    console.print(
+        f"[cyan]Sending {len(files_content)} file(s) ({total_chars:,} chars) to {model}...[/cyan]\n"
+    )
+
+    # Stream response
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt},
+    ]
+
+    try:
+        full_response = []
+        async for chunk in client.chat_stream(messages=messages, model=model):
+            msg = getattr(chunk, "message", None)
+            if msg:
+                content = getattr(msg, "content", "")
+            elif isinstance(chunk, dict):
+                content = chunk.get("message", {}).get("content", "")
+            else:
+                content = ""
+
+            if content:
+                sys.stdout.write(content)
+                sys.stdout.flush()
+                full_response.append(content)
+
+        console.print()  # newline after streaming
+
+        # Inject result into session context so the main LLM knows about it
+        if agent.session_manager and full_response:
+            result_text = "".join(full_response)
+            file_names = ", ".join(files_content.keys())
+            context_msg = (
+                f"[Code review completed] The user ran /code on {file_names}.\n"
+                f"Instruction: {instruction}\n"
+                f"Result:\n{result_text[:2000]}"
+            )
+            agent.session_manager.add_message(MessageRole.SYSTEM, context_msg)
+
+    except Exception as e:
+        console.print(f"\n[red]Code review failed: {e}[/red]")
 
 
 async def _submit_offload(agent: Agent, message: str):
@@ -743,6 +887,7 @@ def _print_help():
         "[bold]/memory[/bold]            - Show memory pool usage\n"
         "[bold]/save[/bold]              - Force save session to memory\n"
         "[bold]/core[/bold]              - Show core memories and lessons\n"
+        "[bold]/code <path> [msg][/bold]  - Send code to the coding model for review/analysis\n"
         "[bold]/feedback <msg>[/bold]    - Save feedback as a lesson (e.g. 'be more concise')\n"
         "[bold]/offload <msg>[/bold]     - Run a task on the remote PC in the background\n"
         "[bold]/plan[/bold]              - Show current active plan\n"
