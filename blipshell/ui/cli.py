@@ -136,7 +136,10 @@ async def chat_loop(
                     await _print_background_tasks(agent)
                     continue
                 elif cmd[0] == "task" and len(cmd) > 1:
-                    await _print_task_detail(agent, int(cmd[1]))
+                    try:
+                        await _print_task_detail(agent, int(cmd[1]))
+                    except ValueError:
+                        console.print("[yellow]Usage: /task <id> (e.g. /task 1)[/yellow]")
                     continue
                 elif cmd[0] == "workflow":
                     await _handle_workflow_command(agent, cmd_args)
