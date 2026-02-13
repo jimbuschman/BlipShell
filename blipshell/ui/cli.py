@@ -144,6 +144,9 @@ async def chat_loop(
                 elif cmd[0] == "workflow":
                     await _handle_workflow_command(agent, cmd_args)
                     continue
+                elif cmd[0] == "core":
+                    await _print_core(agent)
+                    continue
                 elif cmd[0] == "feedback":
                     if len(cmd) < 2:
                         console.print("[yellow]Usage: /feedback <your feedback>[/yellow]")
@@ -202,6 +205,62 @@ async def chat_loop(
         console.print("\n[dim]Ending session...[/dim]")
         await agent.end_session()
         console.print("[dim]Session saved. Goodbye![/dim]")
+
+
+async def _print_core(agent: Agent):
+    """Print everything in the Core memory pool — core memories and lessons."""
+    if not agent.sqlite:
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    core_memories = await agent.sqlite.get_active_core_memories()
+    lessons = await agent.sqlite.get_all_lessons()
+
+    if not core_memories and not lessons:
+        console.print("[dim]Core memory is empty.[/dim]")
+        return
+
+    if core_memories:
+        table = Table(title="Core Memories")
+        table.add_column("ID", style="cyan", width=4)
+        table.add_column("Content")
+        table.add_column("Category", style="dim")
+        table.add_column("Importance", justify="right")
+
+        for cm in core_memories:
+            table.add_row(
+                str(cm.id),
+                cm.content[:80] + ("..." if len(cm.content) > 80 else ""),
+                cm.category or "-",
+                f"{cm.importance:.1f}",
+            )
+        console.print(table)
+
+    if lessons:
+        table = Table(title=f"Lessons ({len(lessons)})")
+        table.add_column("ID", style="cyan", width=4)
+        table.add_column("Content")
+        table.add_column("Rank", justify="right")
+        table.add_column("Importance", justify="right")
+        table.add_column("Source", style="dim")
+
+        for lesson in lessons:
+            source = f"Session #{lesson.source_session_id}" if lesson.source_session_id else "-"
+            table.add_row(
+                str(lesson.id),
+                lesson.content[:80] + ("..." if len(lesson.content) > 80 else ""),
+                str(lesson.rank),
+                f"{lesson.importance:.1f}",
+                source,
+            )
+        console.print(table)
+
+    total_tokens = sum(
+        len(cm.content.split()) * 2 for cm in core_memories
+    ) + sum(
+        len(l.content.split()) * 2 for l in lessons
+    )
+    console.print(f"\n[dim]{len(core_memories)} core memories + {len(lessons)} lessons (~{total_tokens} tokens)[/dim]")
 
 
 async def _save_feedback(agent: Agent, feedback: str):
@@ -640,6 +699,7 @@ def _print_help():
         "[bold]/status[/bold]            - Show agent status, endpoints, routing\n"
         "[bold]/memory[/bold]            - Show memory pool usage\n"
         "[bold]/save[/bold]              - Force save session to memory\n"
+        "[bold]/core[/bold]              - Show core memories and lessons\n"
         "[bold]/feedback <msg>[/bold]    - Save feedback as a lesson (e.g. 'be more concise')\n"
         "[bold]/offload <msg>[/bold]     - Run a task on the remote PC in the background\n"
         "[bold]/plan[/bold]              - Show current active plan\n"
