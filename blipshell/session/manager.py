@@ -157,7 +157,7 @@ class SessionManager:
             self._currently_saving = False
 
     async def end_session(self):
-        """End the current session: dump remaining messages, generate summary."""
+        """End the current session: dump remaining messages, generate summary, extract lessons."""
         if not self.session_id:
             return
 
@@ -167,7 +167,31 @@ class SessionManager:
         # Generate session summary
         await self._create_session_summary()
 
+        # Extract lessons from the conversation
+        await self._extract_lessons()
+
         logger.info("Session %d ended", self.session_id)
+
+    async def _extract_lessons(self):
+        """Extract lessons from the session conversation.
+
+        Only runs if there were enough messages to be meaningful (5+).
+        Sends the conversation to the LLM for lesson extraction.
+        """
+        if not self.session_id or len(self._messages) < 5:
+            return
+
+        # Build conversation text from messages
+        conversation_lines = []
+        for msg in self._messages:
+            conversation_lines.append(f"{msg.role.value}: {msg.content}")
+        conversation_text = "\n".join(conversation_lines)
+
+        try:
+            await self.processor.process_lesson(conversation_text, self.session_id)
+            logger.info("Lessons extracted for session %d", self.session_id)
+        except Exception as e:
+            logger.error("Lesson extraction failed for session %d: %s", self.session_id, e)
 
     async def _create_session_summary(self):
         """Generate session summary using chunked summarization.
