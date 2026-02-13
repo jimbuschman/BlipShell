@@ -93,7 +93,8 @@ async def chat_loop(
         f"[bold cyan]BlipShell[/bold cyan] v0.1.0\n"
         f"Session #{sid}"
         + (f" | Project: {project}" if project else "")
-        + f"\nType [bold]/help[/bold] for commands, [bold]/quit[/bold] to exit",
+        + f"\nType [bold]/help[/bold] for commands, [bold]/quit[/bold] to exit"
+        + f"\nThinking: [bold]{'ON' if agent.think_enabled else 'OFF'}[/bold]",
         border_style="cyan",
     ))
 
@@ -157,6 +158,14 @@ async def chat_loop(
                     else:
                         feedback_text = user_input[len("/feedback "):]
                         await _save_feedback(agent, feedback_text)
+                    continue
+                elif cmd[0] == "think":
+                    if len(cmd) > 1 and cmd[1] in ("on", "off"):
+                        agent.think_enabled = cmd[1] == "on"
+                    else:
+                        agent.think_enabled = not agent.think_enabled
+                    state = "[green]ON[/green]" if agent.think_enabled else "[yellow]OFF[/yellow]"
+                    console.print(f"[dim]Thinking mode: {state}[/dim]")
                     continue
                 elif cmd[0] == "code":
                     if len(cmd) < 2:
@@ -958,6 +967,7 @@ def _print_help():
         "[bold]/memory[/bold]            - Show memory pool usage\n"
         "[bold]/save[/bold]              - Force save session to memory\n"
         "[bold]/core[/bold]              - Show core memories and lessons\n"
+        "[bold]/think[/bold]              - Toggle LLM thinking mode on/off (faster when off)\n"
         "[bold]/code <path> [msg][/bold]  - Send code to LLM for review (--model name to override)\n"
         "[bold]/feedback <msg>[/bold]    - Save feedback as a lesson (e.g. 'be more concise')\n"
         "[bold]/offload <msg>[/bold]     - Run a task on the remote PC in the background\n"

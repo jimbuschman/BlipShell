@@ -12,6 +12,7 @@ models:
   reasoning_fallback: "gpt-oss:latest"
   tool_calling_fallback: "gpt-oss:latest"
   coding_fallback: "gpt-oss:latest"
+  fallback_think: false  # Disable thinking for fallback models (faster chat)
 
 endpoints:
   - name: "local"

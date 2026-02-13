@@ -94,8 +94,12 @@ class LLMRouter:
                 try:
                     fallback_client = await self._endpoint_manager.get_client_for_role(task_type)
                     if fallback_client:
+                        fb_kwargs = {}
+                        if not self._models.fallback_think:
+                            fb_kwargs["think"] = False
                         result = await fallback_client.generate(
                             prompt=prompt, model=fallback_model, system=system,
+                            **fb_kwargs,
                         )
                         return result
                 except Exception as fallback_err:
