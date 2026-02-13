@@ -236,6 +236,20 @@ def _default_html() -> str:
             background: #2a1a3e; font-size: 12px; color: #b0b0b0;
             text-align: center; max-width: 100%;
         }
+        .thinking-indicator {
+            display: inline-flex; gap: 4px; padding: 4px 0;
+        }
+        .thinking-indicator span {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #00d9ff; opacity: 0.3;
+            animation: pulse 1.4s infinite ease-in-out;
+        }
+        .thinking-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .thinking-indicator span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes pulse {
+            0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+            40% { opacity: 1; transform: scale(1); }
+        }
         .input-area {
             padding: 16px 20px; background: #16213e;
             border-top: 1px solid #0f3460;
@@ -278,6 +292,8 @@ def _default_html() -> str:
     <script>
         let ws = null;
         let currentResponse = '';
+        let activeResponseEl = null;
+        let msgCounter = 0;
 
         function connect() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -309,18 +325,29 @@ def _default_html() -> str:
                     break;
                 case 'thinking':
                     currentResponse = '';
-                    addAssistantMessage('');
+                    activeResponseEl = createAssistantBubble();
+                    activeResponseEl.innerHTML = '<div class="thinking-indicator"><span></span><span></span><span></span></div>';
+                    scrollToBottom();
                     break;
                 case 'token':
                     currentResponse += data.content;
-                    updateLastAssistant(currentResponse);
+                    if (activeResponseEl) activeResponseEl.textContent = currentResponse;
+                    scrollToBottom();
                     break;
                 case 'response_complete':
-                    updateLastAssistant(data.content);
+                    if (activeResponseEl) activeResponseEl.textContent = data.content;
+                    activeResponseEl = null;
                     document.getElementById('sendBtn').disabled = false;
+                    scrollToBottom();
                     break;
                 case 'error':
-                    addSystemMessage('Error: ' + data.message);
+                    if (activeResponseEl) {
+                        activeResponseEl.textContent = 'Error: ' + data.message;
+                        activeResponseEl.style.borderLeft = '3px solid #f44336';
+                        activeResponseEl = null;
+                    } else {
+                        addSystemMessage('Error: ' + data.message);
+                    }
                     document.getElementById('sendBtn').disabled = false;
                     break;
             }
@@ -345,19 +372,12 @@ def _default_html() -> str:
             scrollToBottom();
         }
 
-        function addAssistantMessage(text) {
+        function createAssistantBubble() {
             const div = document.createElement('div');
             div.className = 'message assistant';
-            div.id = 'lastAssistant';
-            div.textContent = text;
+            div.id = 'msg-' + (++msgCounter);
             document.getElementById('chatArea').appendChild(div);
-            scrollToBottom();
-        }
-
-        function updateLastAssistant(text) {
-            const el = document.getElementById('lastAssistant');
-            if (el) el.textContent = text;
-            scrollToBottom();
+            return div;
         }
 
         function addSystemMessage(text) {
