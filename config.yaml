@@ -1,0 +1,118 @@
+# BlipShell Configuration
+# This file is self-modifiable by the agent
+
+models:
+  reasoning: "qwen3:14b"
+  tool_calling: "qwen3:14b"
+  coding: "qwen3:14b"
+  summarization: "gemma3:4b"
+  ranking: "gemma3:4b"
+  embedding: "nomic-embed-text"
+
+endpoints:
+  - name: "local"
+    url: "http://localhost:11434"
+    roles: ["reasoning", "tool_calling", "coding", "embedding"]
+    priority: 1
+    max_concurrent: 2
+    enabled: true
+  - name: "secondary"
+    url: "http://192.168.1.100:11434"
+    roles: ["summarization", "ranking"]
+    priority: 2
+    max_concurrent: 4
+    enabled: false
+
+memory:
+  pools:
+    core:
+      percentage: 0.10
+      max_tokens: 2048
+      priority: 5
+    active_session:
+      percentage: 0.35
+      max_tokens: null
+      priority: 3
+    recent_history:
+      percentage: 0.15
+      max_tokens: null
+      priority: 4
+    recall:
+      percentage: 0.30
+      max_tokens: 8192
+      priority: 2
+    buffer:
+      percentage: 0.10
+      max_tokens: null
+      priority: 1
+
+  total_context_tokens: 32768
+  system_prompt_reserve: 2048
+  overflow_batch_size: 4
+  recall_search_limit: 20
+  min_rank_threshold: 3
+  importance_recency_bonus: 0.1
+  importance_tag_bonus: 0.05
+
+session:
+  max_messages_before_summary: 50
+  summary_chunk_size: 20
+  auto_save_interval: 300  # seconds
+
+agent:
+  max_tool_iterations: 5
+  system_prompt: |
+    You are BlipShell, a helpful local AI assistant with persistent memory.
+    You remember previous conversations and learn from interactions.
+    You have access to tools for file operations, shell commands, web search, and memory management.
+    Be concise and helpful. Use your memory to provide personalized assistance.
+  stream: true
+
+tools:
+  shell:
+    timeout: 30
+    allowed_commands:
+      - "ls"
+      - "dir"
+      - "cat"
+      - "type"
+      - "echo"
+      - "pwd"
+      - "cd"
+      - "find"
+      - "grep"
+      - "head"
+      - "tail"
+      - "wc"
+      - "sort"
+      - "python"
+      - "pip"
+      - "git"
+      - "node"
+      - "npm"
+      - "cargo"
+      - "make"
+      - "cmake"
+  filesystem:
+    max_file_size: 1048576  # 1MB
+    blocked_paths:
+      - "/etc/shadow"
+      - "/etc/passwd"
+  web:
+    max_fetch_size: 524288  # 512KB
+    timeout: 15
+
+noise:
+  min_word_count: 3
+  max_filler_ratio: 0.6
+
+tagging:
+  max_tags: 7
+
+database:
+  path: "data/blipshell.db"
+  chroma_path: "data/chroma"
+
+web_ui:
+  host: "0.0.0.0"
+  port: 8000
