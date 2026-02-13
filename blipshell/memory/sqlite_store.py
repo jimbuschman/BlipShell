@@ -10,6 +10,14 @@ import aiosqlite
 
 from blipshell.models.memory import CoreMemory, Lesson, Memory, MemoryType
 from blipshell.models.session import Session, SessionMessage
+from blipshell.models.task import (
+    BackgroundTask,
+    BackgroundTaskStatus,
+    PlanStatus,
+    StepStatus,
+    TaskPlan,
+    TaskStep,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +119,52 @@ CREATE TABLE IF NOT EXISTS projects (
     metadata_json TEXT
 );
 
+CREATE TABLE IF NOT EXISTS task_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER,
+    user_request TEXT NOT NULL,
+    status TEXT DEFAULT 'planning',
+    result_summary TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE TABLE IF NOT EXISTS task_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id INTEGER NOT NULL,
+    step_number INTEGER NOT NULL,
+    description TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+    tool_hint TEXT,
+    output_result TEXT,
+    error_message TEXT,
+    retry_count INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (plan_id) REFERENCES task_plans(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS background_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER,
+    plan_id INTEGER,
+    title TEXT NOT NULL,
+    task_type TEXT DEFAULT 'custom',
+    prompt TEXT DEFAULT '',
+    status TEXT DEFAULT 'pending',
+    priority INTEGER DEFAULT 0,
+    progress_pct REAL DEFAULT 0.0,
+    progress_message TEXT DEFAULT '',
+    result TEXT,
+    error_message TEXT,
+    target_endpoint TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES sessions(id),
+    FOREIGN KEY (plan_id) REFERENCES task_plans(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
 CREATE INDEX IF NOT EXISTS idx_memories_rank ON memories(rank);
 CREATE INDEX IF NOT EXISTS idx_memories_timestamp ON memories(timestamp);
@@ -118,6 +172,10 @@ CREATE INDEX IF NOT EXISTS idx_memory_tags_memory ON memory_tags(memory_id);
 CREATE INDEX IF NOT EXISTS idx_memory_tags_tag ON memory_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
+CREATE INDEX IF NOT EXISTS idx_task_plans_session ON task_plans(session_id);
+CREATE INDEX IF NOT EXISTS idx_task_steps_plan ON task_steps(plan_id);
+CREATE INDEX IF NOT EXISTS idx_background_tasks_session ON background_tasks(session_id);
+CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status);
 """
 
 
@@ -612,3 +670,288 @@ class SQLiteStore:
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
+
+    # --- Task Plans ---
+
+    async def create_plan(self, plan: TaskPlan) -> int:
+        """Create a task plan and return its ID."""
+        cursor = await self._db.execute(
+            """INSERT INTO task_plans (session_id, user_request, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                plan.session_id,
+                plan.user_request,
+                plan.status.value,
+                plan.created_at.isoformat(),
+                plan.updated_at.isoformat(),
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_plan(self, plan_id: int) -> Optional[TaskPlan]:
+        """Get a task plan by ID, including its steps."""
+        cursor = await self._db.execute(
+            "SELECT * FROM task_plans WHERE id = ?", (plan_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+
+        steps = await self.get_plan_steps(plan_id)
+        return TaskPlan(
+            id=row["id"],
+            session_id=row["session_id"],
+            user_request=row["user_request"],
+            status=PlanStatus(row["status"]),
+            steps=steps,
+            result_summary=row["result_summary"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    async def update_plan(self, plan_id: int, **kwargs):
+        """Update task plan fields."""
+        allowed = {"status", "result_summary", "updated_at"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return
+        # Convert enums to their values
+        for k, v in fields.items():
+            if hasattr(v, "value"):
+                fields[k] = v.value
+        fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [plan_id]
+        await self._db.execute(f"UPDATE task_plans SET {set_clause} WHERE id = ?", values)
+        await self._db.commit()
+
+    async def list_plans(self, session_id: Optional[int] = None, limit: int = 20) -> list[TaskPlan]:
+        """List task plans, optionally filtered by session."""
+        if session_id:
+            cursor = await self._db.execute(
+                "SELECT * FROM task_plans WHERE session_id = ? ORDER BY created_at DESC LIMIT ?",
+                (session_id, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT * FROM task_plans ORDER BY created_at DESC LIMIT ?", (limit,)
+            )
+        rows = await cursor.fetchall()
+        plans = []
+        for row in rows:
+            steps = await self.get_plan_steps(row["id"])
+            plans.append(TaskPlan(
+                id=row["id"],
+                session_id=row["session_id"],
+                user_request=row["user_request"],
+                status=PlanStatus(row["status"]),
+                steps=steps,
+                result_summary=row["result_summary"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            ))
+        return plans
+
+    async def get_active_plan(self, session_id: int) -> Optional[TaskPlan]:
+        """Get the currently running or approved plan for a session."""
+        cursor = await self._db.execute(
+            """SELECT * FROM task_plans
+               WHERE session_id = ? AND status IN ('planning', 'approved', 'running')
+               ORDER BY created_at DESC LIMIT 1""",
+            (session_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        steps = await self.get_plan_steps(row["id"])
+        return TaskPlan(
+            id=row["id"],
+            session_id=row["session_id"],
+            user_request=row["user_request"],
+            status=PlanStatus(row["status"]),
+            steps=steps,
+            result_summary=row["result_summary"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    # --- Task Steps ---
+
+    async def create_step(self, step: TaskStep) -> int:
+        """Create a task step and return its ID."""
+        cursor = await self._db.execute(
+            """INSERT INTO task_steps
+               (plan_id, step_number, description, status, tool_hint, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                step.plan_id,
+                step.step_number,
+                step.description,
+                step.status.value,
+                step.tool_hint,
+                step.created_at.isoformat(),
+                step.updated_at.isoformat(),
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_plan_steps(self, plan_id: int) -> list[TaskStep]:
+        """Get all steps for a plan, ordered by step number."""
+        cursor = await self._db.execute(
+            "SELECT * FROM task_steps WHERE plan_id = ? ORDER BY step_number",
+            (plan_id,),
+        )
+        rows = await cursor.fetchall()
+        return [
+            TaskStep(
+                id=r["id"],
+                plan_id=r["plan_id"],
+                step_number=r["step_number"],
+                description=r["description"],
+                status=StepStatus(r["status"]),
+                tool_hint=r["tool_hint"],
+                output_result=r["output_result"],
+                error_message=r["error_message"],
+                retry_count=r["retry_count"],
+                created_at=r["created_at"],
+                updated_at=r["updated_at"],
+            )
+            for r in rows
+        ]
+
+    async def update_step(self, step_id: int, **kwargs):
+        """Update task step fields."""
+        allowed = {"status", "output_result", "error_message", "retry_count", "updated_at"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return
+        for k, v in fields.items():
+            if hasattr(v, "value"):
+                fields[k] = v.value
+        fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [step_id]
+        await self._db.execute(f"UPDATE task_steps SET {set_clause} WHERE id = ?", values)
+        await self._db.commit()
+
+    # --- Background Tasks ---
+
+    async def create_background_task(self, task: BackgroundTask) -> int:
+        """Create a background task and return its ID."""
+        cursor = await self._db.execute(
+            """INSERT INTO background_tasks
+               (session_id, plan_id, title, task_type, prompt, status, priority,
+                progress_pct, progress_message, target_endpoint, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                task.session_id,
+                task.plan_id,
+                task.title,
+                task.task_type,
+                task.prompt,
+                task.status.value,
+                task.priority,
+                task.progress_pct,
+                task.progress_message,
+                task.target_endpoint,
+                task.created_at.isoformat(),
+                task.updated_at.isoformat(),
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_background_task(self, task_id: int) -> Optional[BackgroundTask]:
+        """Get a background task by ID."""
+        cursor = await self._db.execute(
+            "SELECT * FROM background_tasks WHERE id = ?", (task_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return self._row_to_background_task(row)
+
+    async def update_background_task(self, task_id: int, **kwargs):
+        """Update background task fields."""
+        allowed = {
+            "status", "progress_pct", "progress_message", "result",
+            "error_message", "target_endpoint", "updated_at",
+        }
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return
+        for k, v in fields.items():
+            if hasattr(v, "value"):
+                fields[k] = v.value
+        fields["updated_at"] = datetime.now(timezone.utc).isoformat()
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [task_id]
+        await self._db.execute(
+            f"UPDATE background_tasks SET {set_clause} WHERE id = ?", values
+        )
+        await self._db.commit()
+
+    async def list_background_tasks(
+        self,
+        session_id: Optional[int] = None,
+        status: Optional[str] = None,
+        limit: int = 50,
+    ) -> list[BackgroundTask]:
+        """List background tasks with optional filters."""
+        conditions = []
+        params = []
+        if session_id is not None:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+        if status:
+            conditions.append("status = ?")
+            params.append(status)
+        where = "WHERE " + " AND ".join(conditions) if conditions else ""
+        params.append(limit)
+        cursor = await self._db.execute(
+            f"SELECT * FROM background_tasks {where} ORDER BY created_at DESC LIMIT ?",
+            params,
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_background_task(r) for r in rows]
+
+    async def get_pending_background_tasks(
+        self, endpoint_name: Optional[str] = None,
+    ) -> list[BackgroundTask]:
+        """Get pending background tasks, optionally filtered by target endpoint."""
+        if endpoint_name:
+            cursor = await self._db.execute(
+                """SELECT * FROM background_tasks
+                   WHERE status = 'pending' AND target_endpoint = ?
+                   ORDER BY priority DESC, created_at ASC""",
+                (endpoint_name,),
+            )
+        else:
+            cursor = await self._db.execute(
+                """SELECT * FROM background_tasks
+                   WHERE status = 'pending'
+                   ORDER BY priority DESC, created_at ASC"""
+            )
+        rows = await cursor.fetchall()
+        return [self._row_to_background_task(r) for r in rows]
+
+    def _row_to_background_task(self, row) -> BackgroundTask:
+        return BackgroundTask(
+            id=row["id"],
+            session_id=row["session_id"],
+            plan_id=row["plan_id"],
+            title=row["title"],
+            task_type=row["task_type"],
+            prompt=row["prompt"],
+            status=BackgroundTaskStatus(row["status"]),
+            priority=row["priority"],
+            progress_pct=row["progress_pct"],
+            progress_message=row["progress_message"] or "",
+            result=row["result"],
+            error_message=row["error_message"],
+            target_endpoint=row["target_endpoint"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )

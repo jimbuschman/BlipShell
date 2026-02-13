@@ -1,0 +1,18 @@
+name: code-review
+description: "Read a file, analyze patterns, check for issues, and generate a review report."
+parameters:
+  - name: file_path
+    description: "Path to the file to review"
+  - name: focus
+    description: "Specific area to focus on (e.g., security, performance, readability)"
+    default: "general"
+steps:
+  - description: "Read the source file at {file_path}"
+    tool_hint: read_file
+    prompt: "Read the file at {file_path} and return its contents."
+  - description: "Analyze code patterns and structure"
+    prompt: "Analyze the code from {file_path}. Identify the overall structure, design patterns used, and code organization. Focus area: {focus}."
+  - description: "Check for potential issues and improvements"
+    prompt: "Review the code from {file_path} for potential issues. Look for bugs, anti-patterns, error handling gaps, and areas for improvement. Focus area: {focus}."
+  - description: "Generate a review report with actionable feedback"
+    prompt: "Generate a concise code review report for {file_path}. Include: a summary of what the code does, strengths, issues found, and specific actionable recommendations. Focus area: {focus}."

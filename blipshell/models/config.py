@@ -150,6 +150,25 @@ class WebUIConfig(BaseModel):
     port: int = 8000
 
 
+class PlannerConfig(BaseModel):
+    """Task planner configuration."""
+    enabled: bool = True
+    auto_approve: bool = True
+    max_steps: int = 7
+    max_retries_per_step: int = 2
+    complexity_threshold_words: int = 20
+
+
+class WorkerConfig(BaseModel):
+    """Remote worker configuration."""
+    enabled: bool = False
+    default_remote_endpoint: str = ""
+    task_types_for_remote: list[str] = Field(default_factory=lambda: [
+        "summarization", "research", "analysis",
+    ])
+    poll_interval: int = 10
+
+
 class BlipShellConfig(BaseModel):
     """Root configuration model."""
     models: ModelsConfig = ModelsConfig()
@@ -172,3 +191,5 @@ class BlipShellConfig(BaseModel):
     auth: AuthConfig = AuthConfig()
     database: DatabaseConfig = DatabaseConfig()
     web_ui: WebUIConfig = WebUIConfig()
+    planner: PlannerConfig = PlannerConfig()
+    worker: WorkerConfig = WorkerConfig()

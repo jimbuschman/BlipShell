@@ -323,6 +323,76 @@ def create_app(config_path: str | None = None) -> FastAPI:
             headers={"Content-Disposition": "attachment; filename=blipshell_export.json"},
         )
 
+    # --- Worker API Endpoints (for remote worker daemon) ---
+
+    @app.get("/api/worker/poll", dependencies=[Depends(verify_auth)])
+    async def worker_poll(endpoint_name: str):
+        """Return pending background tasks for a specific endpoint."""
+        tasks = await _agent.sqlite.get_pending_background_tasks(
+            endpoint_name=endpoint_name,
+        )
+        return [
+            {
+                "id": t.id,
+                "title": t.title,
+                "task_type": t.task_type,
+                "prompt": t.prompt,
+                "priority": t.priority,
+            }
+            for t in tasks
+        ]
+
+    @app.post("/api/worker/claim/{task_id}", dependencies=[Depends(verify_auth)])
+    async def worker_claim(task_id: int):
+        """Mark a task as claimed/running by a worker."""
+        task = await _agent.sqlite.get_background_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if task.status != "pending":
+            raise HTTPException(status_code=409, detail="Task is not pending")
+        await _agent.sqlite.update_background_task(
+            task_id, status="claimed", progress_message="Claimed by worker",
+        )
+        return {"status": "claimed"}
+
+    @app.post("/api/worker/complete/{task_id}", dependencies=[Depends(verify_auth)])
+    async def worker_complete(task_id: int, body: dict):
+        """Report task completion or failure from a worker."""
+        task = await _agent.sqlite.get_background_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        status = body.get("status", "completed")
+        if status == "completed":
+            await _agent.sqlite.update_background_task(
+                task_id,
+                status="completed",
+                result=body.get("result", ""),
+                progress_pct=1.0,
+                progress_message="Done",
+            )
+        else:
+            await _agent.sqlite.update_background_task(
+                task_id,
+                status="failed",
+                error_message=body.get("error_message", "Unknown error"),
+                progress_message="Failed",
+            )
+        return {"status": "ok"}
+
+    @app.post("/api/worker/progress/{task_id}", dependencies=[Depends(verify_auth)])
+    async def worker_progress(task_id: int, body: dict):
+        """Report progress update from a worker."""
+        task = await _agent.sqlite.get_background_task(task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        await _agent.sqlite.update_background_task(
+            task_id,
+            progress_pct=body.get("progress_pct", task.progress_pct),
+            progress_message=body.get("progress_message", task.progress_message),
+        )
+        return {"status": "ok"}
+
     return app
 
 

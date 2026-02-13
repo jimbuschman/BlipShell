@@ -1,0 +1,21 @@
+name: research
+description: "Web search, fetch top results, synthesize summary, and optionally save to memory."
+parameters:
+  - name: topic
+    description: "The topic to research"
+  - name: save_to_memory
+    description: "Whether to save findings as a core memory (true/false)"
+    default: "false"
+steps:
+  - description: "Search the web for information about {topic}"
+    tool_hint: web_search
+    prompt: "Search the web for: {topic}. Return the most relevant search results."
+  - description: "Fetch and read the top search results about {topic}"
+    tool_hint: web_fetch
+    prompt: "Based on the search results from the previous step, fetch the content of the most relevant URLs and extract key information about {topic}."
+  - description: "Synthesize findings into a comprehensive summary"
+    prompt: "Synthesize all the information gathered about {topic} into a clear, well-organized summary. Include key facts, insights, and any notable details."
+  - description: "Save research findings to memory"
+    tool_hint: save_core_memory
+    prompt: "Save the key findings about {topic} as a core memory for future reference."
+    condition: save_to_memory

@@ -2,6 +2,11 @@
 
 Key improvement: Uses native Ollama tool calling instead of parsing
 tool calls from markdown code blocks.
+
+Extended with:
+- Task planner + executor (Phase 1): complex messages get decomposed
+- Background task manager (Phase 2): async long-running tasks
+- Workflow system (Phase 4): named reusable templates
 """
 
 import asyncio
@@ -9,7 +14,10 @@ import logging
 from datetime import datetime
 from typing import AsyncIterator, Callable, Optional
 
+from blipshell.core.background import BackgroundTaskManager
 from blipshell.core.config import ConfigManager
+from blipshell.core.executor import TaskExecutor
+from blipshell.core.planner import ComplexityClassifier, TaskPlanner
 from blipshell.core.tools.base import ToolRegistry, detect_tool_groups
 from blipshell.core.tools.filesystem import (
     ListDirectoryTool,
@@ -23,7 +31,14 @@ from blipshell.core.tools.memory_tools import (
     SearchMemoriesTool,
 )
 from blipshell.core.tools.shell import ShellTool
+from blipshell.core.tools.task_tools import (
+    CheckBackgroundTaskTool,
+    ListBackgroundTasksTool,
+    RunWorkflowTool,
+    StartBackgroundTaskTool,
+)
 from blipshell.core.tools.web import WebFetchTool, WebSearchTool
+from blipshell.core.workflows import WorkflowExecutor, WorkflowRegistry
 from blipshell.llm.client import LLMClient
 from blipshell.llm.endpoints import EndpointManager
 from blipshell.llm.job_queue import LLMJobQueue
@@ -50,10 +65,11 @@ class Agent:
     2. Calculate token budget
     3. Gather memory context from all pools
     4. Build message list (system + memory context + conversation)
-    5. Send to Ollama with native tool calling
-    6. Handle tool call loop (max N iterations)
-    7. Update session + memory pools
-    8. Background: process memories (summarize, embed, tag, rank)
+    5. Classify complexity: simple → direct chat, complex → plan + execute
+    6. Send to Ollama with native tool calling
+    7. Handle tool call loop (max N iterations)
+    8. Update session + memory pools
+    9. Background: process memories (summarize, embed, tag, rank)
     """
 
     def __init__(self, config: BlipShellConfig, config_manager: ConfigManager):
@@ -78,6 +94,19 @@ class Agent:
         # Tools
         self.tool_registry = ToolRegistry()
 
+        # Task planning + execution (Phase 1)
+        self.complexity_classifier: Optional[ComplexityClassifier] = None
+        self.task_planner: Optional[TaskPlanner] = None
+        self.task_executor: Optional[TaskExecutor] = None
+
+        # Background tasks (Phase 2)
+        self.background_manager: Optional[BackgroundTaskManager] = None
+
+        # Workflows (Phase 4)
+        self.workflow_registry: Optional[WorkflowRegistry] = None
+        self.workflow_executor: Optional[WorkflowExecutor] = None
+
+        self._health_check_task: Optional[asyncio.Task] = None
         self._initialized = False
 
     async def initialize(self):
@@ -127,11 +156,42 @@ class Agent:
             summary_chunk_size=self.config.session.summary_chunk_size,
         )
 
+        # Task planner + executor (Phase 1)
+        self.complexity_classifier = ComplexityClassifier(self.config.planner)
+        self.task_planner = TaskPlanner(
+            self.router, self.sqlite, self.config.planner,
+        )
+        self.task_executor = TaskExecutor(
+            router=self.router,
+            sqlite=self.sqlite,
+            tool_registry=self.tool_registry,
+            config=self.config.planner,
+            system_prompt=self.config.agent.system_prompt,
+            max_tool_iterations=self.config.agent.max_tool_iterations,
+        )
+
+        # Background task manager (Phase 2)
+        self.background_manager = BackgroundTaskManager(
+            self.router, self.sqlite, self.config.worker,
+        )
+
+        # Workflow system (Phase 4)
+        self.workflow_registry = WorkflowRegistry("workflows")
+        self.workflow_executor = WorkflowExecutor(
+            self.workflow_registry, self.task_executor, self.sqlite,
+        )
+
         # Register tools
         self._register_tools()
 
         # Auto-prune old low-value memories
         await self._auto_prune_memories()
+
+        # Health check endpoints on startup (detect remote PCs)
+        await self.endpoint_manager.startup_health_check()
+
+        # Start periodic health check (re-detects endpoints that come/go)
+        self._health_check_task = self.endpoint_manager.start_health_loop(interval=60)
 
         self._initialized = True
         logger.info("Agent initialized")
@@ -174,6 +234,25 @@ class Agent:
         ), group="memory")
         self.tool_registry.register(ListSessionsTool(self.sqlite), group="memory")
 
+    def _register_task_tools(self):
+        """Register background task and workflow tools (needs session_id)."""
+        session_id = self.session_manager.session_id if self.session_manager else None
+
+        self.tool_registry.register(StartBackgroundTaskTool(
+            self.background_manager, session_id,
+        ), group="tasks")
+        self.tool_registry.register(CheckBackgroundTaskTool(
+            self.background_manager,
+        ), group="tasks")
+        self.tool_registry.register(ListBackgroundTasksTool(
+            self.background_manager, session_id,
+        ), group="tasks")
+
+        if self.workflow_executor:
+            self.tool_registry.register(RunWorkflowTool(
+                self.workflow_executor, session_id,
+            ), group="tasks")
+
     async def start_session(
         self,
         project: Optional[str] = None,
@@ -189,6 +268,9 @@ class Agent:
 
         # Register memory tools now that we have session_id
         self._register_memory_tools()
+
+        # Register task/workflow tools
+        self._register_task_tools()
 
         # Load core memories into Core pool
         await self._load_core_memories()
@@ -305,12 +387,17 @@ class Agent:
         self,
         user_message: str,
         on_token: Optional[Callable[[str], None]] = None,
+        force_plan: bool = False,
     ) -> str:
         """Process a user message through the full agent pipeline.
+
+        Routes between simple chat and planned execution based on
+        complexity classification.
 
         Args:
             user_message: The user's input
             on_token: Optional callback for streaming tokens
+            force_plan: If True, skip classification and go straight to planning
 
         Returns:
             The assistant's complete response
@@ -318,6 +405,28 @@ class Agent:
         # Add user message to session
         self.session_manager.add_message(MessageRole.USER, user_message)
 
+        # Decide execution path
+        if force_plan or self.complexity_classifier.needs_planning(user_message):
+            logger.info("Message classified as complex — using planned execution")
+            response = await self._chat_planned(user_message, on_token=on_token)
+        else:
+            logger.info("Message classified as simple — using direct chat")
+            response = await self._chat_simple(user_message, on_token=on_token)
+
+        # Add assistant response to session
+        self.session_manager.add_message(MessageRole.ASSISTANT, response)
+
+        # Background: dump to memory periodically
+        asyncio.create_task(self._background_memory_processing())
+
+        return response
+
+    async def _chat_simple(
+        self,
+        user_message: str,
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """Simple chat path — existing flat tool-calling loop."""
         # Search relevant memories for recall
         await self._search_relevant_memories(user_message)
 
@@ -389,13 +498,60 @@ class Agent:
                 if endpoint:
                     endpoint.complete_request()
 
-        # Add assistant response to session
-        self.session_manager.add_message(MessageRole.ASSISTANT, full_response)
-
-        # Background: dump to memory periodically
-        asyncio.create_task(self._background_memory_processing())
-
         return full_response
+
+    async def _chat_planned(
+        self,
+        user_message: str,
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """Planned chat path — decompose into steps and execute sequentially."""
+        session_id = self.session_manager.session_id
+
+        # Generate plan
+        if on_token:
+            on_token("[Planning...]\n")
+
+        try:
+            plan = await self.task_planner.create_plan(
+                user_message, session_id=session_id,
+            )
+        except Exception as e:
+            logger.error("Plan generation failed: %s", e)
+            # Fallback to simple chat
+            if on_token:
+                on_token("[Plan generation failed, falling back to direct chat]\n")
+            return await self._chat_simple(user_message, on_token=on_token)
+
+        # Show plan to user
+        if on_token:
+            on_token(f"\n[Plan ({len(plan.steps)} steps):]\n")
+            for step in plan.steps:
+                tool_hint = f" ({step.tool_hint})" if step.tool_hint else ""
+                on_token(f"  {step.step_number}. {step.description}{tool_hint}\n")
+            on_token("\n[Executing...]\n\n")
+
+        # Execute plan
+        def on_step_start(step_num, total, description):
+            if on_token:
+                on_token(f"\n--- Step {step_num}/{total}: {description} ---\n")
+
+        def on_step_complete(step_num, total, result_summary):
+            if on_token:
+                on_token(f"\n[Step {step_num}/{total} complete]\n")
+
+        try:
+            result = await self.task_executor.execute_plan(
+                plan,
+                on_step_start=on_step_start,
+                on_step_complete=on_step_complete,
+                on_token=on_token,
+            )
+        except Exception as e:
+            logger.error("Plan execution failed: %s", e)
+            result = f"Plan execution failed: {e}"
+
+        return result
 
     async def _search_relevant_memories(self, query: str):
         """Search for relevant memories and lessons, add to Recall pool."""
@@ -496,6 +652,9 @@ class Agent:
 
     async def end_session(self):
         """End the current session and clean up."""
+        if self._health_check_task:
+            self._health_check_task.cancel()
+            self._health_check_task = None
         if self.session_manager:
             await self.session_manager.end_session()
         if self.job_queue:
@@ -511,4 +670,6 @@ class Agent:
             "endpoints": self.endpoint_manager.get_status() if self.endpoint_manager else [],
             "tools": self.tool_registry.get_tool_names(),
             "job_queue_pending": self.job_queue.pending_count if self.job_queue else 0,
+            "planner_enabled": self.config.planner.enabled,
+            "workflows_loaded": len(self.workflow_registry.list_all()) if self.workflow_registry else 0,
         }
