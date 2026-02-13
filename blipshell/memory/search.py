@@ -80,19 +80,10 @@ class MemorySearch:
         if should_skip_memory(query, max_length=20) and not contains_signal_words(query):
             return []
 
-        # Step 2: Rephrase query for better semantic matching
-        try:
-            memory_query = await self.router.generate(
-                TaskType.SUMMARIZATION,
-                rephrase_as_memory_style(query),
-            )
-        except Exception as e:
-            logger.warning("Query rephrase failed, using original: %s", e)
-            memory_query = query
-
-        # Step 3: ChromaDB semantic search
+        # Step 2: ChromaDB semantic search (nomic-embed-text handles
+        # question-to-statement matching well enough without rephrasing)
         chroma_results = self.chroma.search_memories(
-            query=memory_query,
+            query=query,
             n_results=n_results * 2,  # fetch extra for post-filtering
         )
 
