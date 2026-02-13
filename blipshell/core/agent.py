@@ -296,18 +296,10 @@ class Agent:
         if not client:
             return "Error: No available LLM endpoint."
 
-        # Detect which tools (if any) this message needs
-        needed_groups = detect_tool_groups(user_message)
-        tools = self.tool_registry.get_tools_for_groups(needed_groups) if needed_groups else None
-
-        if tools:
-            tool_names = [t["function"]["name"] for t in tools]
-            logger.info("Tool groups detected: %s -> tools: %s", needed_groups, tool_names)
-        else:
-            logger.info("No tool groups detected for: %s", user_message[:80])
-
-        # Tool call loop (or single call if no tools)
+        # Always pass all tools — the model decides whether to use them
+        tools = self.tool_registry.get_all_ollama_tools() or None
         max_iterations = self.config.agent.max_tool_iterations if tools else 0
+        logger.info("Passing %d tools to model", len(tools) if tools else 0)
         full_response = ""
 
         for iteration in range(max_iterations + 1):
