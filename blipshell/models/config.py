@@ -23,6 +23,7 @@ class EndpointConfig(BaseModel):
     priority: int = 1
     max_concurrent: int = 2
     enabled: bool = True
+    context_tokens: Optional[int] = None  # per-endpoint context window override
 
 
 class PoolConfig(BaseModel):

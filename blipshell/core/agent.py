@@ -592,10 +592,18 @@ class Agent:
         """Build the full message list with memory context.
 
         Port of OllamaChat.SendMessageToOllama message building.
+        Uses dynamic context window based on the active endpoint.
         """
         user_tokens = estimate_tokens(user_message)
+
+        # Use endpoint-specific context window if available
+        context_limit = self.endpoint_manager.get_context_tokens_for_role(
+            TaskType.REASONING,
+            default=self.config.memory.total_context_tokens,
+        )
+
         available = (
-            self.config.memory.total_context_tokens
+            context_limit
             - user_tokens
             - MemoryManager.OVERHEAD_TOKENS
         )

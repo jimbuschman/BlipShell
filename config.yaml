@@ -2,8 +2,8 @@
 # This file is self-modifiable by the agent
 
 models:
-  reasoning: "gpt-oss:120b-cloud"
-  tool_calling: "gpt-oss:120b-cloud"
+  reasoning: "glm-5:cloud"
+  tool_calling: "glm-5:cloud"
   coding: "qwen3-coder:480b-cloud"
   summarization: "gemma3:4b"
   ranking: "gemma3:4b"
@@ -15,12 +15,14 @@ endpoints:
     roles: ["reasoning", "tool_calling", "coding", "embedding"]
     priority: 1
     max_concurrent: 2
+    context_tokens: 131072  # 128K — GLM-5 and qwen3-coder support this
     enabled: true
   - name: "old-pc"
     url: "http://192.168.0.225:11434"
     roles: ["summarization", "ranking"]
     priority: 2    # higher = preferred for these roles
     max_concurrent: 2
+    context_tokens: 131072  # gemma3:4b supports 128K
     enabled: true
 
 memory:
@@ -46,7 +48,7 @@ memory:
       max_tokens: null
       priority: 1
 
-  total_context_tokens: 32768
+  total_context_tokens: 32768  # fallback default; overridden by endpoint context_tokens
   system_prompt_reserve: 2048
   overflow_batch_size: 4
   recall_search_limit: 20
