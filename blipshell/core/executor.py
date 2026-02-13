@@ -121,7 +121,16 @@ class TaskExecutor:
                 return f"Plan failed at step {step.step_number}: {step.description}"
 
         # All steps completed — generate summary
-        summary = await self._generate_summary(plan.user_request, step_results)
+        if on_token:
+            on_token("\n[Summarizing results...]\n\n")
+
+        try:
+            summary = await self._generate_summary(plan.user_request, step_results)
+        except Exception as e:
+            logger.error("Summary generation failed: %s", e)
+            # Fallback: just return the last step result
+            summary = step_results[-1] if step_results else "Plan completed but summary generation failed."
+
         await self.sqlite.update_plan(
             plan.id,
             status=PlanStatus.COMPLETED,
@@ -208,10 +217,14 @@ class TaskExecutor:
     async def _generate_summary(
         self, user_request: str, step_results: list[str],
     ) -> str:
-        """Generate a final summary from all step results."""
+        """Generate a final summary from all step results.
+
+        Uses the reasoning model (not summarization) since the summary
+        needs to synthesize tool results — not just compress text.
+        """
         prompt = summarize_plan_results(user_request, step_results)
         return await self.router.generate(
-            TaskType.SUMMARIZATION, prompt, system=UTILITY_SYSTEM_PROMPT,
+            TaskType.REASONING, prompt, system=UTILITY_SYSTEM_PROMPT,
         )
 
     @staticmethod

@@ -62,14 +62,12 @@ class EndpointManager:
     - Config-driven endpoints
     - Role-based selection (reasoning, summarization, etc.)
     - Async health polling
-    - Offload mode: prefer remote endpoints when local PC is busy
     """
 
     def __init__(self, configs: list[EndpointConfig], llm_config: LLMConfig | None = None):
         self._lock = asyncio.Lock()
         self._endpoints: list[Endpoint] = []
         self._last_routed: dict[str, str] = {}  # role → endpoint name
-        self._offload_mode: bool = False
         llm_cfg = llm_config or LLMConfig()
         for cfg in configs:
             ep = Endpoint(
@@ -90,14 +88,11 @@ class EndpointManager:
     async def get_endpoint_for_role(self, role: str) -> Optional[Endpoint]:
         """Get the best available endpoint that supports the given role.
 
-        Selection priority (normal mode):
+        Selection priority:
         1. Supports the requested role
         2. Enabled and can accept requests
         3. Highest priority value
         4. Fewest active requests (load balancing)
-
-        In offload mode, remote (non-local) endpoints are strongly preferred.
-        Local is only used as a last resort when no remote endpoint is available.
         """
         async with self._lock:
             candidates = [
@@ -111,13 +106,6 @@ class EndpointManager:
                 is_fallback = True
             if not candidates:
                 return None
-
-            # In offload mode, prefer remote endpoints
-            if self._offload_mode and len(candidates) > 1:
-                remote_candidates = [ep for ep in candidates if ep.name != "local"]
-                if remote_candidates:
-                    candidates = remote_candidates
-                    logger.debug("Offload mode: preferring remote endpoints for '%s'", role)
 
             chosen = sorted(
                 candidates,
@@ -133,41 +121,27 @@ class EndpointManager:
             self._last_routed[role] = chosen.name
             return chosen
 
-    @property
-    def offload_mode(self) -> bool:
-        """Whether offload mode is active (prefer remote endpoints)."""
-        return self._offload_mode
-
-    def set_offload_mode(self, enabled: bool) -> bool:
-        """Enable or disable offload mode.
-
-        When enabled, all roles are routed to remote endpoints when possible.
-        Falls back to local only if no remote endpoint is available.
-
-        Returns True if offload mode was actually activated (i.e. a remote
-        endpoint exists and is enabled), False if no remote endpoint is
-        available.
-        """
-        if enabled:
-            # Check if any remote endpoint is available
-            remote_available = any(
-                ep for ep in self._endpoints
-                if ep.name != "local" and ep.enabled
-            )
-            if not remote_available:
-                logger.warning("Cannot enable offload mode: no remote endpoints available")
-                return False
-            self._offload_mode = True
-            logger.info("Offload mode ENABLED — preferring remote endpoints")
-        else:
-            self._offload_mode = False
-            logger.info("Offload mode DISABLED — normal routing resumed")
-        return True
-
     async def get_client_for_role(self, role: str) -> Optional[LLMClient]:
         """Get the LLMClient for the best endpoint matching a role."""
         ep = await self.get_endpoint_for_role(role)
         return ep.client if ep else None
+
+    def get_client_by_name(self, name: str) -> Optional[LLMClient]:
+        """Get the LLMClient for a specific endpoint by name."""
+        for ep in self._endpoints:
+            if ep.name == name and ep.enabled:
+                return ep.client
+        return None
+
+    def get_first_remote_name(self) -> Optional[str]:
+        """Get the name of the first available remote (non-local) endpoint.
+
+        Returns None if no remote endpoint is enabled.
+        """
+        for ep in self._endpoints:
+            if ep.name != "local" and ep.enabled:
+                return ep.name
+        return None
 
     async def mark_failed(self, endpoint_name: str):
         """Mark an endpoint as failed."""

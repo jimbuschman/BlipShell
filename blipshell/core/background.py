@@ -2,12 +2,12 @@
 
 Users (or the LLM) can kick off tasks that run asynchronously.
 Tasks are tracked in SQLite and executed via the LLM router.
-When a target_endpoint is set, the task is left for a remote worker to pick up.
+Supports targeting a specific endpoint (e.g. offloading to a remote PC).
 """
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.sqlite_store import SQLiteStore
@@ -30,6 +30,18 @@ class BackgroundTaskManager:
         self.sqlite = sqlite
         self.worker_config = worker_config
         self._running_tasks: dict[int, asyncio.Task] = {}
+        self._completed_ids: list[int] = []  # task IDs that finished since last check
+        self._on_complete: Optional[Callable[[int, str, str], None]] = None
+
+    def set_on_complete(self, callback: Optional[Callable[[int, str, str], None]]):
+        """Set a callback for when a task completes: callback(task_id, title, status)."""
+        self._on_complete = callback
+
+    def pop_completed(self) -> list[int]:
+        """Return and clear the list of task IDs that completed since last check."""
+        ids = self._completed_ids[:]
+        self._completed_ids.clear()
+        return ids
 
     async def submit_task(
         self,
@@ -43,9 +55,9 @@ class BackgroundTaskManager:
     ) -> int:
         """Submit a background task. Returns the task ID.
 
-        If target_endpoint is set or the task_type is configured for remote,
-        the task is left in 'pending' for a remote worker. Otherwise, it
-        runs locally via asyncio.
+        If target_endpoint is set, the task runs locally but routes the
+        LLM call to that specific endpoint. If worker.enabled is True and
+        no target is specified, auto-routes based on task_type config.
         """
         # Auto-route to remote if configured
         if not target_endpoint and self.worker_config.enabled:
@@ -63,22 +75,28 @@ class BackgroundTaskManager:
         )
         task_id = await self.sqlite.create_background_task(task)
 
-        if target_endpoint:
-            # Leave for remote worker to pick up
-            logger.info(
-                "Background task #%d queued for remote worker '%s': %s",
-                task_id, target_endpoint, title,
-            )
-        else:
-            # Execute locally
-            asyncio_task = asyncio.create_task(self._run_task(task_id, prompt))
-            self._running_tasks[task_id] = asyncio_task
-            logger.info("Background task #%d started locally: %s", task_id, title)
+        # Always execute locally (using target endpoint's client if specified)
+        asyncio_task = asyncio.create_task(
+            self._run_task(task_id, prompt, target_endpoint),
+        )
+        self._running_tasks[task_id] = asyncio_task
+
+        ep_label = f" on '{target_endpoint}'" if target_endpoint else ""
+        logger.info("Background task #%d started%s: %s", task_id, ep_label, title)
 
         return task_id
 
-    async def _run_task(self, task_id: int, prompt: str):
-        """Execute a background task locally via LLM."""
+    async def _run_task(
+        self,
+        task_id: int,
+        prompt: str,
+        target_endpoint: Optional[str] = None,
+    ):
+        """Execute a background task via LLM.
+
+        If target_endpoint is specified, routes directly to that endpoint's
+        client. Otherwise uses the normal router.
+        """
         try:
             await self.sqlite.update_background_task(
                 task_id,
@@ -95,13 +113,24 @@ class BackgroundTaskManager:
                 "code_review": TaskType.CODING,
             }
             llm_task_type = task_type_map.get(task.task_type, TaskType.REASONING)
+            model = self.router.get_model(llm_task_type)
 
-            # Run LLM generation
             await self.sqlite.update_background_task(
                 task_id, progress_pct=0.5, progress_message="Processing...",
             )
 
-            result = await self.router.generate(llm_task_type, prompt)
+            # Route to specific endpoint or use normal routing
+            if target_endpoint:
+                client = self.router._endpoint_manager.get_client_by_name(
+                    target_endpoint,
+                )
+                if not client:
+                    raise RuntimeError(
+                        f"Endpoint '{target_endpoint}' is not available"
+                    )
+                result = await client.generate(prompt=prompt, model=model)
+            else:
+                result = await self.router.generate(llm_task_type, prompt)
 
             await self.sqlite.update_background_task(
                 task_id,
@@ -110,6 +139,7 @@ class BackgroundTaskManager:
                 progress_message="Done",
                 result=result,
             )
+            self._completed_ids.append(task_id)
             logger.info("Background task #%d completed", task_id)
 
         except asyncio.CancelledError:
@@ -128,6 +158,7 @@ class BackgroundTaskManager:
                 error_message=str(e),
                 progress_message="Failed",
             )
+            self._completed_ids.append(task_id)
 
         finally:
             self._running_tasks.pop(task_id, None)

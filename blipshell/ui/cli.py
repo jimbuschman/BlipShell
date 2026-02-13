@@ -98,6 +98,9 @@ async def chat_loop(
 
     try:
         while True:
+            # Notify about background tasks that finished
+            _check_completed_tasks(agent)
+
             try:
                 user_input = console.input("[bold green]> [/bold green]").strip()
             except (EOFError, KeyboardInterrupt):
@@ -138,7 +141,12 @@ async def chat_loop(
                     await _handle_workflow_command(agent, cmd_args)
                     continue
                 elif cmd[0] == "offload":
-                    _toggle_offload(agent)
+                    if len(cmd) < 2:
+                        console.print("[yellow]Usage: /offload <task description>[/yellow]")
+                        console.print("[dim]Example: /offload review this code for errors: ...[/dim]")
+                    else:
+                        offload_msg = user_input[len("/offload "):]
+                        await _submit_offload(agent, offload_msg)
                     continue
                 elif cmd[0] in ("help", "commands"):
                     _print_help()
@@ -184,28 +192,55 @@ async def chat_loop(
         console.print("[dim]Session saved. Goodbye![/dim]")
 
 
-def _toggle_offload(agent: Agent):
-    """Toggle offload mode — route work to remote endpoints."""
+async def _submit_offload(agent: Agent, message: str):
+    """Submit a task to run on a remote endpoint in the background."""
+    if not agent.background_manager:
+        console.print("[yellow]Background task manager not initialized.[/yellow]")
+        return
+
     if not agent.endpoint_manager:
         console.print("[yellow]Endpoint manager not initialized.[/yellow]")
         return
 
-    if agent.endpoint_manager.offload_mode:
-        agent.endpoint_manager.set_offload_mode(False)
-        console.print("[cyan]Offload mode OFF[/cyan] — using normal routing.")
-    else:
-        success = agent.endpoint_manager.set_offload_mode(True)
-        if success:
-            console.print(
-                "[bold cyan]Offload mode ON[/bold cyan] — "
-                "routing all work to remote endpoints.\n"
-                "[dim]Local PC only used as fallback. Toggle off with /offload[/dim]"
-            )
-        else:
-            console.print(
-                "[yellow]Cannot enable offload: no remote endpoints are available.[/yellow]\n"
-                "[dim]Check /status to see endpoint health.[/dim]"
-            )
+    # Find a remote endpoint
+    remote_name = agent.endpoint_manager.get_first_remote_name()
+    if not remote_name:
+        console.print(
+            "[yellow]No remote endpoints available.[/yellow]\n"
+            "[dim]Check /status to see endpoint health.[/dim]"
+        )
+        return
+
+    session_id = agent.session_manager.session_id if agent.session_manager else None
+
+    # Truncate title for display
+    title = message[:80] + ("..." if len(message) > 80 else "")
+
+    task_id = await agent.background_manager.submit_task(
+        title=title,
+        task_type="custom",
+        prompt=message,
+        session_id=session_id,
+        target_endpoint=remote_name,
+    )
+
+    console.print(
+        f"[cyan]Task #{task_id} offloaded to {remote_name}[/cyan]\n"
+        f"[dim]Check progress: /tasks | View result: /task {task_id}[/dim]"
+    )
+
+
+def _check_completed_tasks(agent: Agent):
+    """Check for background tasks that completed and notify the user."""
+    if not agent.background_manager:
+        return
+
+    completed_ids = agent.background_manager.pop_completed()
+    for task_id in completed_ids:
+        console.print(
+            f"\n[bold green]Background task #{task_id} finished![/bold green] "
+            f"[dim]View with /task {task_id}[/dim]"
+        )
 
 
 def _print_status(agent: Agent):
@@ -223,11 +258,10 @@ def _print_status(agent: Agent):
     table.add_row("Workflows", str(status.get("workflows_loaded", 0)))
     table.add_row("Queue Pending", str(status["job_queue_pending"]))
 
-    if agent.endpoint_manager:
-        offload = agent.endpoint_manager.offload_mode
-        table.add_row("Offload Mode",
-                       "[bold cyan]ON — remote preferred[/bold cyan]" if offload
-                       else "[dim]Off[/dim]")
+    # Show active background tasks count
+    bg_running = len(agent.background_manager._running_tasks) if agent.background_manager else 0
+    if bg_running:
+        table.add_row("Background Tasks", f"[yellow]{bg_running} running[/yellow]")
 
     console.print(table)
 
@@ -529,7 +563,7 @@ def _print_help():
         "[bold]/status[/bold]            - Show agent status, endpoints, routing\n"
         "[bold]/memory[/bold]            - Show memory pool usage\n"
         "[bold]/save[/bold]              - Force save session to memory\n"
-        "[bold]/offload[/bold]           - Toggle offload mode (route work to remote PC)\n"
+        "[bold]/offload <msg>[/bold]     - Run a task on the remote PC in the background\n"
         "[bold]/plan[/bold]              - Show current active plan\n"
         "[bold]/plans[/bold]             - List all plans for this session\n"
         "[bold]/tasks[/bold]             - Show background tasks\n"
