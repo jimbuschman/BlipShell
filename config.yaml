@@ -8,6 +8,10 @@ models:
   summarization: "gemma3:4b"
   ranking: "gemma3:4b"
   embedding: "nomic-embed-text"
+  # Local fallbacks when cloud endpoints are unavailable
+  reasoning_fallback: "gpt-oss:latest"
+  tool_calling_fallback: "gpt-oss:latest"
+  coding_fallback: "gpt-oss:latest"
 
 endpoints:
   - name: "local"

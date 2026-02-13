@@ -13,6 +13,10 @@ class ModelsConfig(BaseModel):
     summarization: str = "gemma3:4b"
     ranking: str = "gemma3:4b"
     embedding: str = "nomic-embed-text"
+    # Fallback models used when cloud endpoints are unavailable
+    reasoning_fallback: str = "gpt-oss:latest"
+    tool_calling_fallback: str = "gpt-oss:latest"
+    coding_fallback: str = "gpt-oss:latest"
 
 
 class EndpointConfig(BaseModel):
