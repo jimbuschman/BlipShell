@@ -47,6 +47,15 @@ class LLMRouter:
         }
         return model_map.get(task_type, self._models.reasoning)
 
+    def get_fallback_model(self, task_type: str) -> Optional[str]:
+        """Get the fallback model for a task type (used when cloud is down)."""
+        fallback_map = {
+            TaskType.REASONING: self._models.reasoning_fallback,
+            TaskType.TOOL_CALLING: self._models.tool_calling_fallback,
+            TaskType.CODING: self._models.coding_fallback,
+        }
+        return fallback_map.get(task_type)
+
     async def get_client(self, task_type: str) -> Optional[LLMClient]:
         """Get the LLMClient for the best endpoint matching a task type."""
         return await self._endpoint_manager.get_client_for_role(task_type)
@@ -56,7 +65,11 @@ class LLMRouter:
         return self.get_model(task_type), await self.get_client(task_type)
 
     async def generate(self, task_type: str, prompt: str, system: Optional[str] = None) -> str:
-        """Route a generate request to the appropriate model/endpoint."""
+        """Route a generate request to the appropriate model/endpoint.
+
+        If the primary model/endpoint fails and a fallback model is configured,
+        retries with the fallback model on any available endpoint.
+        """
         model = self.get_model(task_type)
         client = await self.get_client(task_type)
         if not client:
@@ -72,8 +85,21 @@ class LLMRouter:
             result = await client.generate(prompt=prompt, model=model, system=system, **gen_kwargs)
             endpoint.record_success(0)
             return result
-        except Exception:
+        except Exception as primary_err:
             endpoint.record_failure()
-            raise
+            # Try fallback model if available
+            fallback_model = self.get_fallback_model(task_type)
+            if fallback_model and fallback_model != model:
+                logger.warning("Primary model '%s' failed, trying fallback '%s'", model, fallback_model)
+                try:
+                    fallback_client = await self._endpoint_manager.get_client_for_role(task_type)
+                    if fallback_client:
+                        result = await fallback_client.generate(
+                            prompt=prompt, model=fallback_model, system=system,
+                        )
+                        return result
+                except Exception as fallback_err:
+                    logger.error("Fallback model '%s' also failed: %s", fallback_model, fallback_err)
+            raise primary_err
         finally:
             endpoint.complete_request()

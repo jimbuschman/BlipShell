@@ -434,11 +434,18 @@ class Agent:
         # Build message list
         messages = self._build_messages(user_message)
 
-        # Get model and client
+        # Get model and client (with fallback if cloud is down)
         model = self.router.get_model(TaskType.REASONING)
         client = await self.router.get_client(TaskType.REASONING)
         if not client:
-            return "Error: No available LLM endpoint."
+            # Try fallback model
+            fallback = self.router.get_fallback_model(TaskType.REASONING)
+            if fallback:
+                logger.warning("Primary endpoint down, using fallback model '%s'", fallback)
+                model = fallback
+                client = await self.router.get_client(TaskType.REASONING)
+            if not client:
+                return "Error: No available LLM endpoint."
 
         # Always pass all tools — the model decides whether to use them
         tools = self.tool_registry.get_all_ollama_tools() or None
