@@ -301,7 +301,10 @@ class Agent:
         tools = self.tool_registry.get_tools_for_groups(needed_groups) if needed_groups else None
 
         if tools:
-            logger.info("Tool groups detected: %s (%d tools)", needed_groups, len(tools))
+            tool_names = [t["function"]["name"] for t in tools]
+            logger.info("Tool groups detected: %s -> tools: %s", needed_groups, tool_names)
+        else:
+            logger.info("No tool groups detected for: %s", user_message[:80])
 
         # Tool call loop (or single call if no tools)
         max_iterations = self.config.agent.max_tool_iterations if tools else 0
@@ -320,6 +323,8 @@ class Agent:
                 )
 
                 content, tool_calls = self._extract_response(response)
+                logger.info("LLM response: tool_calls=%s, content_len=%d",
+                           bool(tool_calls), len(content))
 
                 if tool_calls and iteration < max_iterations:
                     # Process tool calls
