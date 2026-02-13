@@ -141,7 +141,7 @@ web_ui:
   port: 8000
 
 planner:
-  enabled: true
+  enabled: false           # Auto-detection off — use !plan to trigger manually
   auto_approve: true      # Plans execute immediately (no review step)
   max_steps: 7            # Maximum steps per plan
   max_retries_per_step: 2 # Retries before marking step as failed
