@@ -10,15 +10,13 @@ from datetime import datetime
 from typing import AsyncIterator, Callable, Optional
 
 from blipshell.core.config import ConfigManager
-from blipshell.core.tools.base import ToolRegistry
+from blipshell.core.tools.base import ToolRegistry, detect_tool_groups
 from blipshell.core.tools.filesystem import (
-    EditFileTool,
     ListDirectoryTool,
     ReadFileTool,
     WriteFileTool,
 )
 from blipshell.core.tools.memory_tools import (
-    GetSessionSummaryTool,
     ListSessionsTool,
     SaveCoreMemoryTool,
     SearchMemoriesTool,
@@ -135,34 +133,39 @@ class Agent:
         logger.info("Agent initialized")
 
     def _register_tools(self):
-        """Register all tools."""
+        """Register all tools with their group for selective inclusion."""
         cfg = self.config.tools
 
+        # Filesystem group
         self.tool_registry.register(ReadFileTool(
             max_file_size=cfg.filesystem.max_file_size,
             blocked_paths=cfg.filesystem.blocked_paths,
-        ))
-        self.tool_registry.register(WriteFileTool(blocked_paths=cfg.filesystem.blocked_paths))
-        self.tool_registry.register(EditFileTool())
-        self.tool_registry.register(ListDirectoryTool())
+        ), group="filesystem")
+        self.tool_registry.register(WriteFileTool(
+            blocked_paths=cfg.filesystem.blocked_paths,
+        ), group="filesystem")
+        self.tool_registry.register(ListDirectoryTool(), group="filesystem")
+
+        # Shell group
         self.tool_registry.register(ShellTool(
             timeout=cfg.shell.timeout,
             allowed_commands=cfg.shell.allowed_commands,
-        ))
-        self.tool_registry.register(WebSearchTool())
+        ), group="shell")
+
+        # Web group
+        self.tool_registry.register(WebSearchTool(), group="web")
         self.tool_registry.register(WebFetchTool(
             max_size=cfg.web.max_fetch_size,
             timeout=cfg.web.timeout,
-        ))
+        ), group="web")
 
     def _register_memory_tools(self):
         """Register memory tools (needs session_id, so called after session start)."""
         session_id = self.session_manager.session_id if self.session_manager else None
 
-        self.tool_registry.register(SearchMemoriesTool(self.search, session_id))
-        self.tool_registry.register(SaveCoreMemoryTool(self.processor, session_id))
-        self.tool_registry.register(ListSessionsTool(self.sqlite))
-        self.tool_registry.register(GetSessionSummaryTool(self.sqlite))
+        self.tool_registry.register(SearchMemoriesTool(self.search, session_id), group="memory")
+        self.tool_registry.register(SaveCoreMemoryTool(self.processor, session_id), group="memory")
+        self.tool_registry.register(ListSessionsTool(self.sqlite), group="memory")
 
     async def start_session(
         self,
@@ -293,11 +296,15 @@ class Agent:
         if not client:
             return "Error: No available LLM endpoint."
 
-        # Get tools
-        tools = self.tool_registry.get_all_ollama_tools()
+        # Detect which tools (if any) this message needs
+        needed_groups = detect_tool_groups(user_message)
+        tools = self.tool_registry.get_tools_for_groups(needed_groups) if needed_groups else None
 
-        # Tool call loop
-        max_iterations = self.config.agent.max_tool_iterations
+        if tools:
+            logger.info("Tool groups detected: %s (%d tools)", needed_groups, len(tools))
+
+        # Tool call loop (or single call if no tools)
+        max_iterations = self.config.agent.max_tool_iterations if tools else 0
         full_response = ""
 
         for iteration in range(max_iterations + 1):
@@ -306,8 +313,6 @@ class Agent:
                 endpoint.start_request()
 
             try:
-                # First check: do we need tool calls? Use non-streaming.
-                # On final text response: use the content directly (single call).
                 response = await client.chat(
                     messages=messages,
                     model=model,
