@@ -23,7 +23,7 @@ class WebSearchTool(Tool):
 
     async def execute(self, query: str, max_results: int = 5, **kwargs) -> str:
         try:
-            from duckduckgo_search import DDGS
+            from ddgs import DDGS
 
             results = []
             with DDGS() as ddgs:
@@ -34,7 +34,7 @@ class WebSearchTool(Tool):
                 return f"No results found for: {query}"
             return "\n---\n".join(results)
         except ImportError:
-            return "Error: duckduckgo-search package not installed."
+            return "Error: ddgs package not installed. Run: pip install ddgs"
         except Exception as e:
             return f"Search error: {e}"
 

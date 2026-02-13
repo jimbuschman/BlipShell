@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -150,7 +150,7 @@ class SQLiteStore:
         """Create a new session and return its ID."""
         cursor = await self._db.execute(
             "INSERT INTO sessions (title, project, created_at, last_active) VALUES (?, ?, ?, ?)",
-            (title, project, datetime.utcnow().isoformat(), datetime.utcnow().isoformat()),
+            (title, project, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()),
         )
         await self._db.commit()
         return cursor.lastrowid

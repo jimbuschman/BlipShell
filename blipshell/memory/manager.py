@@ -2,11 +2,12 @@
 
 5 pools: Core (10%/cap 2048), ActiveSession (35%), RecentHistory (15%),
 Recall (30%/cap 8192), Buffer (10%).
+
 """
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 from blipshell.models.config import MemoryConfig
 
@@ -26,7 +27,7 @@ class PoolItem:
     text: str
     estimated_tokens: int = 0
     priority_score: float = 0.0
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     session_role: str = "user"  # user, assistant, system, system2 (lessons)
     pool_name: str = ""
     session_id: int = 0

@@ -1,6 +1,6 @@
 """Tool-related Pydantic models for native Ollama tool calling."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
@@ -67,7 +67,7 @@ class ToolCall(BaseModel):
     id: str = ""
     name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ToolResult(BaseModel):
@@ -77,7 +77,7 @@ class ToolResult(BaseModel):
     result: str
     success: bool = True
     execution_time_ms: float = 0.0
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_ollama_message(self) -> dict:
         """Convert to Ollama tool response message format."""

@@ -1,6 +1,6 @@
 """Memory-related Pydantic models."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -29,7 +29,7 @@ class Memory(BaseModel):
     role: str  # "user" or "assistant"
     content: str
     summary: Optional[str] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     rank: int = 0  # 1-5 quality/relevance rank
     importance: float = 0.0  # 0.0 - 1.0 importance score
     tags: list[str] = Field(default_factory=list)
@@ -43,7 +43,7 @@ class CoreMemory(BaseModel):
     id: Optional[int] = None
     content: str
     category: str = "general"  # general, preference, fact, personality
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     importance: float = 0.5
     tags: list[str] = Field(default_factory=list)
     source_session_id: Optional[int] = None
@@ -54,7 +54,7 @@ class Lesson(BaseModel):
     id: Optional[int] = None
     content: str
     summary: Optional[str] = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     rank: int = 3
     importance: float = 0.5
     tags: list[str] = Field(default_factory=list)
@@ -75,7 +75,7 @@ class MemoryItem(BaseModel):
     content: str
     token_count: int = 0
     priority: int = 0  # higher = more important to keep
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     source: str = ""  # which pool this belongs to
     metadata: dict = Field(default_factory=dict)
 

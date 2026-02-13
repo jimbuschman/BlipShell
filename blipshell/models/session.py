@@ -1,6 +1,6 @@
 """Session-related Pydantic models."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -21,7 +21,7 @@ class SessionMessage(BaseModel):
     session_id: Optional[int] = None
     role: MessageRole
     content: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     token_count: int = 0
     tool_calls: Optional[list[dict]] = None  # native Ollama tool call data
     tool_call_id: Optional[str] = None  # for tool response messages
@@ -43,8 +43,8 @@ class Session(BaseModel):
     title: Optional[str] = None
     summary: Optional[str] = None
     project: Optional[str] = None  # named project context
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
-    last_active: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_active: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_archived: bool = False
     message_count: int = 0
     metadata_json: Optional[str] = None

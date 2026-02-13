@@ -1,11 +1,11 @@
 """Background memory processing pipeline.
 
 Port of MemoryDB.CreateMemoryAsync pipeline:
-noise check → LLM summarize → SQLite insert → ChromaDB embed → tag → LLM rank → LLM importance
+noise check -> LLM summarize -> SQLite insert -> ChromaDB embed -> tag -> LLM rank -> LLM importance
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from blipshell.llm.prompts import (
     ask_importance,
@@ -73,7 +73,7 @@ class MemoryProcessor:
             role=role,
             content=text,
             summary=summary,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             memory_type=MemoryType.CONVERSATION,
         )
         memory_id = await self.sqlite.create_memory(memory)

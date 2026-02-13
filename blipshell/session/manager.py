@@ -6,7 +6,7 @@ dump-to-memory lifecycle, and session summary generation.
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from blipshell.llm.prompts import (
@@ -93,7 +93,7 @@ class SessionManager:
         msg = SessionMessage(
             role=role,
             content=cleaned,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             token_count=estimate_tokens(cleaned),
             tool_calls=tool_calls,
         )
@@ -148,7 +148,7 @@ class SessionManager:
 
             await self.sqlite.update_session(
                 self.session_id,
-                last_active=datetime.utcnow().isoformat(),
+                last_active=datetime.now(timezone.utc).isoformat(),
                 message_count=len(self._messages),
             )
         except Exception as e:
