@@ -67,6 +67,10 @@ class MemoryProcessor:
                 TaskType.SUMMARIZATION,
                 summarize_memory(text),
             )
+            # LLM signals this is self-referential / meta content
+            if summary.strip().upper() == "SKIP":
+                logger.debug("Memory skipped (meta/self-referential): %s", text[:50])
+                return None
         except Exception as e:
             logger.error("Summarization failed, using raw text: %s", e)
             summary = text
@@ -146,10 +150,10 @@ class MemoryProcessor:
 
     async def process_lesson(self, conversation_text: str, session_id: int) -> int:
         """Extract and store a lesson from a conversation."""
-        # Generate lesson text via LLM
+        # Generate lesson text via reasoning model (needs understanding, not just summarization)
         try:
             lesson_text = await self.router.generate(
-                TaskType.SUMMARIZATION,
+                TaskType.REASONING,
                 extract_lesson(conversation_text),
             )
         except Exception as e:

@@ -37,9 +37,12 @@ def rephrase_as_memory_style(text: str) -> str:
 def summarize_memory(text: str) -> str:
     """Prompt for summarizing a memory."""
     return (
-        "Summarize the following memory in 1 concise, factual sentence. "
-        "Avoid lists or multiple versions. Focus on core details.\n\n"
-        f"Memory: {text}"
+        "Summarize the following conversation excerpt in 1 concise, factual sentence. "
+        "Focus on what the USER said, asked, decided, or learned. "
+        "Do NOT describe the assistant's capabilities, tools, or system features. "
+        "Do NOT summarize meta-discussion about the AI itself. "
+        "If the content is only about the AI system and not the user, respond with: SKIP\n\n"
+        f"Excerpt: {text}"
     )
 
 
@@ -107,17 +110,22 @@ def ask_importance(text: str) -> str:
 
 
 def extract_lesson(text: str) -> str:
-    """Prompt for extracting lessons from a conversation."""
+    """Prompt for extracting actionable lessons from a conversation."""
     return (
-        "Looking at the following conversation:\n"
-        "1. Did the assistant understand the user's intention?\n"
-        "2. What did it miss?\n"
-        "3. What 3-5 lessons should it internalize to improve in the future?\n"
-        "4. Growth Trajectory?\n\n"
-        "Please separate your response into:\n"
-        "Evaluation Summary\n"
-        "Lessons\n\n"
-        f"Conversation: {text}"
+        "Extract 1-3 short, actionable lessons from this conversation. "
+        "Focus on:\n"
+        "- User preferences (communication style, level of detail, topics of interest)\n"
+        "- Facts about the user (name, projects, tools they use, technical level)\n"
+        "- What worked well or poorly in the interaction\n"
+        "- Technical insights or decisions made\n\n"
+        "Rules:\n"
+        "- Each lesson must be a single concise sentence\n"
+        "- Write from the perspective of advice for the assistant\n"
+        "- Do NOT write an evaluation, summary, or self-review\n"
+        "- Do NOT include generic observations about AI capabilities\n"
+        "- Only include lessons that are specific and actionable\n\n"
+        "Format: One lesson per line, no numbering, no headers.\n\n"
+        f"Conversation:\n{text}"
     )
 
 
