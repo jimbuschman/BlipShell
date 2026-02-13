@@ -191,16 +191,27 @@ async def chat_loop(
                 force_plan = True
                 message = user_input[6:]
 
-            # Stream response
+            # Stream response with thinking spinner
             response_parts = []
+            thinking_status = console.status("[dim]Thinking...[/dim]", spinner="dots")
+            thinking_active = True
 
             def on_token(token: str):
+                nonlocal thinking_active
+                if thinking_active:
+                    thinking_status.stop()
+                    thinking_active = False
                 response_parts.append(token)
                 sys.stdout.write(token)
                 sys.stdout.flush()
 
             console.print()  # blank line before response
-            response = await agent.chat(message, on_token=on_token, force_plan=force_plan)
+            thinking_status.start()
+            try:
+                response = await agent.chat(message, on_token=on_token, force_plan=force_plan)
+            finally:
+                if thinking_active:
+                    thinking_status.stop()
 
             if not response_parts:
                 # Response wasn't streamed (e.g., tool calls happened)
@@ -449,14 +460,18 @@ async def _handle_code_command(agent: Agent, args_str: str):
         return
 
     console.print(
-        f"[cyan]Sending {len(files_content)} file(s) ({total_chars:,} chars) to {model}...[/cyan]\n"
+        f"[cyan]Sending {len(files_content)} file(s) ({total_chars:,} chars) to {model}...[/cyan]"
     )
 
-    # Stream response
+    # Stream response with thinking spinner
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": prompt},
     ]
+
+    thinking_status = console.status("[dim]Thinking...[/dim]", spinner="dots")
+    thinking_active = True
+    thinking_status.start()
 
     try:
         full_response = []
@@ -470,10 +485,16 @@ async def _handle_code_command(agent: Agent, args_str: str):
                 content = ""
 
             if content:
+                if thinking_active:
+                    thinking_status.stop()
+                    thinking_active = False
                 sys.stdout.write(content)
                 sys.stdout.flush()
                 full_response.append(content)
 
+        if thinking_active:
+            thinking_status.stop()
+            thinking_active = False
         console.print()  # newline after streaming
 
         # Inject result into session context so the main LLM knows about it
@@ -488,6 +509,8 @@ async def _handle_code_command(agent: Agent, args_str: str):
             agent.session_manager.add_message(MessageRole.SYSTEM, context_msg)
 
     except Exception as e:
+        if thinking_active:
+            thinking_status.stop()
         console.print(f"\n[red]Code review failed: {e}[/red]")
 
 
