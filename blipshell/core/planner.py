@@ -17,25 +17,29 @@ from blipshell.models.task import PlanStatus, TaskPlan, TaskStep
 
 logger = logging.getLogger(__name__)
 
-# Patterns that suggest a complex multi-step request
+# Imperative action verbs — only match commands, not casual mentions
+# These are verbs that imply the user is ASKING the agent to DO something
 _ACTION_VERBS = re.compile(
-    r"\b(research|analyze|summarize|compare|create|build|find|search|fetch|"
-    r"review|investigate|compile|generate|write|implement|set up|configure|"
+    r"\b(research|analyze|summarize|compare|create|build|fetch|"
+    r"investigate|compile|generate|implement|set up|configure|"
     r"install|deploy|migrate|refactor|optimize|debug|diagnose)\b",
     re.IGNORECASE,
 )
 
-# Connectors that chain multiple actions
+# Connectors that explicitly chain multiple actions together
 _CHAINING_WORDS = re.compile(
-    r"\b(then|and then|after that|next|also|additionally|finally|"
-    r"once .+ done|followed by|save .+ as|and save|and summarize)\b",
+    r"\b(and then|after that|once .+ done|followed by|"
+    r"save .+ as|and save|and summarize|then summarize|then save)\b",
     re.IGNORECASE,
 )
 
-# Simple patterns that should skip planning
-_SIMPLE_PATTERNS = re.compile(
+# Patterns that should never trigger planning
+_SKIP_PATTERNS = re.compile(
     r"^(hi|hello|hey|thanks|thank you|ok|okay|sure|yes|no|bye|"
-    r"what is|what's|who is|who's|how are|good morning|good night)\b",
+    r"what is|what's|who is|who's|how are|good morning|good night|"
+    r"i'm |i am |i was |i think|i feel|i want|i like|i need|"
+    r"can you|could you|would you|do you|did you|have you|"
+    r"tell me|show me|explain|help me|what do you)\b",
     re.IGNORECASE,
 )
 
@@ -44,6 +48,8 @@ class ComplexityClassifier:
     """Decides if a message needs structured planning or can go through normal chat.
 
     Uses heuristic checks — no LLM call. Instant decision.
+    Very conservative — only triggers on explicit multi-step commands.
+    Users can always force planning with !plan prefix.
     """
 
     def __init__(self, config: PlannerConfig):
@@ -56,31 +62,32 @@ class ComplexityClassifier:
 
         stripped = message.strip()
 
-        # Skip very short messages
-        if len(stripped) < 10:
+        # Skip short messages
+        if len(stripped) < 20:
             return False
 
-        # Skip simple greetings/responses
-        if _SIMPLE_PATTERNS.match(stripped):
+        # Skip conversational patterns (questions, statements about self, etc.)
+        if _SKIP_PATTERNS.match(stripped):
             return False
 
-        # Skip questions that are just asking for info (single-step)
-        if stripped.endswith("?") and len(stripped.split()) < 15:
+        # Skip anything that ends with a question mark
+        if stripped.endswith("?"):
             return False
 
         word_count = len(stripped.split())
 
-        # Check for chaining words (strong signal)
-        if _CHAINING_WORDS.search(stripped):
-            return True
+        # MUST have explicit chaining words — this is the primary trigger
+        # e.g. "research X and then summarize it and save to memory"
+        has_chaining = bool(_CHAINING_WORDS.search(stripped))
 
-        # Check for multiple action verbs
+        # Also need at least one action verb alongside the chaining
         action_matches = _ACTION_VERBS.findall(stripped)
-        if len(action_matches) >= 2:
+
+        if has_chaining and len(action_matches) >= 1:
             return True
 
-        # Long messages with at least one action verb
-        if word_count >= self.config.complexity_threshold_words and action_matches:
+        # Multiple distinct action verbs in a long message (3+)
+        if len(action_matches) >= 3 and word_count >= self.config.complexity_threshold_words:
             return True
 
         return False
