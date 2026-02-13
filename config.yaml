@@ -12,16 +12,10 @@ models:
 endpoints:
   - name: "local"
     url: "http://localhost:11434"
-    roles: ["reasoning", "tool_calling", "coding", "embedding"]
+    roles: ["reasoning", "tool_calling", "coding", "summarization", "ranking", "embedding"]
     priority: 1
     max_concurrent: 2
     enabled: true
-  - name: "secondary"
-    url: "http://192.168.1.100:11434"
-    roles: ["summarization", "ranking"]
-    priority: 2
-    max_concurrent: 4
-    enabled: false
 
 memory:
   pools:
