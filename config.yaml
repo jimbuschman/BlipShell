@@ -2,9 +2,9 @@
 # This file is self-modifiable by the agent
 
 models:
-  reasoning: "qwen3:14b"
-  tool_calling: "qwen3:14b"
-  coding: "qwen3:14b"
+  reasoning: "gpt-oss:120b-cloud"
+  tool_calling: "gpt-oss:120b-cloud"
+  coding: "qwen3-coder:480b-cloud"
   summarization: "gemma3:4b"
   ranking: "gemma3:4b"
   embedding: "nomic-embed-text"
@@ -47,6 +47,12 @@ memory:
   min_rank_threshold: 3
   importance_recency_bonus: 0.1
   importance_tag_bonus: 0.05
+  similarity_threshold: 0.5
+  importance_boost_weight: 0.2
+  search_overfetch_multiplier: 2
+  auto_prune_days: 90
+  prune_max_importance: 0.3
+  prune_max_rank: 2
 
 session:
   max_messages_before_summary: 50
@@ -67,6 +73,7 @@ agent:
     - Use run_command to execute shell commands.
     - Use search_memories to recall past conversations.
     - Use save_core_memory to permanently remember important facts about the user.
+    - Use promote_to_core_memory to promote an important memory or lesson to permanent core memory.
     When a user asks you to search, look something up, or you need current information, ALWAYS call web_search. Do not say you cannot search - use the tool.
   stream: true
 
@@ -110,6 +117,14 @@ noise:
 
 tagging:
   max_tags: 7
+
+llm:
+  max_retries: 2
+  retry_base_delay: 1.0
+
+auth:
+  enabled: false
+  api_key: ""
 
 database:
   path: "data/blipshell.db"

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from blipshell.llm.client import LLMClient
-from blipshell.models.config import EndpointConfig
+from blipshell.models.config import EndpointConfig, LLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +64,10 @@ class EndpointManager:
     - Async health polling
     """
 
-    def __init__(self, configs: list[EndpointConfig]):
+    def __init__(self, configs: list[EndpointConfig], llm_config: LLMConfig | None = None):
         self._lock = asyncio.Lock()
         self._endpoints: list[Endpoint] = []
+        llm_cfg = llm_config or LLMConfig()
         for cfg in configs:
             ep = Endpoint(
                 name=cfg.name,
@@ -75,11 +76,15 @@ class EndpointManager:
                 priority=cfg.priority,
                 max_concurrent=cfg.max_concurrent,
                 enabled=cfg.enabled,
-                client=LLMClient(host=cfg.url),
+                client=LLMClient(
+                    host=cfg.url,
+                    max_retries=llm_cfg.max_retries,
+                    retry_base_delay=llm_cfg.retry_base_delay,
+                ),
             )
             self._endpoints.append(ep)
 
-    def get_endpoint_for_role(self, role: str) -> Optional[Endpoint]:
+    async def get_endpoint_for_role(self, role: str) -> Optional[Endpoint]:
         """Get the best available endpoint that supports the given role.
 
         Selection priority:
@@ -88,39 +93,42 @@ class EndpointManager:
         3. Highest priority value
         4. Fewest active requests (load balancing)
         """
-        candidates = [
-            ep for ep in self._endpoints
-            if role in ep.roles and ep.can_accept_request
-        ]
-        if not candidates:
-            # Fallback: any enabled endpoint
-            candidates = [ep for ep in self._endpoints if ep.can_accept_request]
-        if not candidates:
-            return None
+        async with self._lock:
+            candidates = [
+                ep for ep in self._endpoints
+                if role in ep.roles and ep.can_accept_request
+            ]
+            if not candidates:
+                # Fallback: any enabled endpoint
+                candidates = [ep for ep in self._endpoints if ep.can_accept_request]
+            if not candidates:
+                return None
 
-        return sorted(
-            candidates,
-            key=lambda e: (-e.priority, e.active_requests),
-        )[0]
+            return sorted(
+                candidates,
+                key=lambda e: (-e.priority, e.active_requests),
+            )[0]
 
-    def get_client_for_role(self, role: str) -> Optional[LLMClient]:
+    async def get_client_for_role(self, role: str) -> Optional[LLMClient]:
         """Get the LLMClient for the best endpoint matching a role."""
-        ep = self.get_endpoint_for_role(role)
+        ep = await self.get_endpoint_for_role(role)
         return ep.client if ep else None
 
-    def mark_failed(self, endpoint_name: str):
+    async def mark_failed(self, endpoint_name: str):
         """Mark an endpoint as failed."""
-        for ep in self._endpoints:
-            if ep.name == endpoint_name:
-                ep.record_failure()
-                break
+        async with self._lock:
+            for ep in self._endpoints:
+                if ep.name == endpoint_name:
+                    ep.record_failure()
+                    break
 
-    def mark_success(self, endpoint_name: str, response_time: float):
+    async def mark_success(self, endpoint_name: str, response_time: float):
         """Mark an endpoint request as successful."""
-        for ep in self._endpoints:
-            if ep.name == endpoint_name:
-                ep.record_success(response_time)
-                break
+        async with self._lock:
+            for ep in self._endpoints:
+                if ep.name == endpoint_name:
+                    ep.record_success(response_time)
+                    break
 
     async def health_check_all(self):
         """Check health of all endpoints concurrently."""

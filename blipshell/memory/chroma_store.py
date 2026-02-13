@@ -174,6 +174,10 @@ class ChromaStore:
         """Remove a core memory from ChromaDB."""
         self._core_memories.delete(ids=[str(core_memory_id)])
 
+    def delete_lesson(self, lesson_id: int):
+        """Remove a lesson from ChromaDB."""
+        self._lessons.delete(ids=[str(lesson_id)])
+
     def get_counts(self) -> dict[str, int]:
         """Get document counts for all collections."""
         return {

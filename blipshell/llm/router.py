@@ -47,22 +47,22 @@ class LLMRouter:
         }
         return model_map.get(task_type, self._models.reasoning)
 
-    def get_client(self, task_type: str) -> Optional[LLMClient]:
+    async def get_client(self, task_type: str) -> Optional[LLMClient]:
         """Get the LLMClient for the best endpoint matching a task type."""
-        return self._endpoint_manager.get_client_for_role(task_type)
+        return await self._endpoint_manager.get_client_for_role(task_type)
 
-    def get_model_and_client(self, task_type: str) -> tuple[str, Optional[LLMClient]]:
+    async def get_model_and_client(self, task_type: str) -> tuple[str, Optional[LLMClient]]:
         """Get both model name and client for a task type."""
-        return self.get_model(task_type), self.get_client(task_type)
+        return self.get_model(task_type), await self.get_client(task_type)
 
     async def generate(self, task_type: str, prompt: str, system: Optional[str] = None) -> str:
         """Route a generate request to the appropriate model/endpoint."""
         model = self.get_model(task_type)
-        client = self.get_client(task_type)
+        client = await self.get_client(task_type)
         if not client:
             raise RuntimeError(f"No available endpoint for task type: {task_type}")
 
-        endpoint = self._endpoint_manager.get_endpoint_for_role(task_type)
+        endpoint = await self._endpoint_manager.get_endpoint_for_role(task_type)
         endpoint.start_request()
         try:
             result = await client.generate(prompt=prompt, model=model, system=system)

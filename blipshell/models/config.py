@@ -51,6 +51,12 @@ class MemoryConfig(BaseModel):
     min_rank_threshold: int = 3
     importance_recency_bonus: float = 0.1
     importance_tag_bonus: float = 0.05
+    similarity_threshold: float = 0.5
+    importance_boost_weight: float = 0.2
+    search_overfetch_multiplier: int = 2
+    auto_prune_days: int = 90
+    prune_max_importance: float = 0.3
+    prune_max_rank: int = 2
 
 
 class SessionConfig(BaseModel):
@@ -74,6 +80,7 @@ class AgentConfig(BaseModel):
         "- Use run_command to execute shell commands.\n"
         "- Use search_memories to recall past conversations.\n"
         "- Use save_core_memory to permanently remember important facts about the user.\n"
+        "- Use promote_to_core_memory to promote an important memory or lesson to permanent core memory.\n"
         "When a user asks you to search or you need current information, ALWAYS call web_search."
     )
     stream: bool = True
@@ -125,6 +132,18 @@ class DatabaseConfig(BaseModel):
     chroma_path: str = "data/chroma"
 
 
+class LLMConfig(BaseModel):
+    """LLM call configuration."""
+    max_retries: int = 2
+    retry_base_delay: float = 1.0
+
+
+class AuthConfig(BaseModel):
+    """Web UI authentication configuration."""
+    enabled: bool = False
+    api_key: str = ""
+
+
 class WebUIConfig(BaseModel):
     """Web UI configuration."""
     host: str = "0.0.0.0"
@@ -149,5 +168,7 @@ class BlipShellConfig(BaseModel):
     tools: ToolsConfig = ToolsConfig()
     noise: NoiseConfig = NoiseConfig()
     tagging: TaggingConfig = TaggingConfig()
+    llm: LLMConfig = LLMConfig()
+    auth: AuthConfig = AuthConfig()
     database: DatabaseConfig = DatabaseConfig()
     web_ui: WebUIConfig = WebUIConfig()

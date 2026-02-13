@@ -18,6 +18,7 @@ from blipshell.core.tools.filesystem import (
 )
 from blipshell.core.tools.memory_tools import (
     ListSessionsTool,
+    PromoteToCoreMemoryTool,
     SaveCoreMemoryTool,
     SearchMemoriesTool,
 )
@@ -97,7 +98,7 @@ class Agent:
         self.chroma.initialize()
 
         # Endpoint manager
-        self.endpoint_manager = EndpointManager(self.config.endpoints)
+        self.endpoint_manager = EndpointManager(self.config.endpoints, self.config.llm)
 
         # Router
         self.router = LLMRouter(self.config.models, self.endpoint_manager)
@@ -111,13 +112,13 @@ class Agent:
         self.memory_manager.set_summarize_callback(self._summarize_overflow)
 
         # Processor
-        self.processor = MemoryProcessor(self.sqlite, self.chroma, self.router)
+        self.processor = MemoryProcessor(self.sqlite, self.chroma, self.router,
+                                         config=self.config.memory)
 
         # Search
         self.search = MemorySearch(
             self.sqlite, self.chroma, self.router,
-            min_rank=self.config.memory.min_rank_threshold,
-            search_limit=self.config.memory.recall_search_limit,
+            config=self.config.memory,
         )
 
         # Session manager
@@ -128,6 +129,9 @@ class Agent:
 
         # Register tools
         self._register_tools()
+
+        # Auto-prune old low-value memories
+        await self._auto_prune_memories()
 
         self._initialized = True
         logger.info("Agent initialized")
@@ -165,6 +169,9 @@ class Agent:
 
         self.tool_registry.register(SearchMemoriesTool(self.search, session_id), group="memory")
         self.tool_registry.register(SaveCoreMemoryTool(self.processor, session_id), group="memory")
+        self.tool_registry.register(PromoteToCoreMemoryTool(
+            self.sqlite, self.processor, session_id,
+        ), group="memory")
         self.tool_registry.register(ListSessionsTool(self.sqlite), group="memory")
 
     async def start_session(
@@ -215,6 +222,33 @@ class Agent:
                 priority_score=lesson.importance,
             ))
         logger.info("Loaded %d lessons", len(lessons))
+
+    async def _auto_prune_memories(self):
+        """Prune old low-value memories on startup."""
+        cfg = self.config.memory
+        try:
+            # Get IDs before archiving (for ChromaDB cleanup)
+            ids_to_archive = await self.sqlite.get_archived_memory_ids(
+                days_old=cfg.auto_prune_days,
+                max_importance=cfg.prune_max_importance,
+                max_rank=cfg.prune_max_rank,
+            )
+            # Archive in SQLite
+            count = await self.sqlite.archive_old_memories(
+                days_old=cfg.auto_prune_days,
+                max_importance=cfg.prune_max_importance,
+                max_rank=cfg.prune_max_rank,
+            )
+            # Remove from ChromaDB
+            for mid in ids_to_archive:
+                try:
+                    self.chroma.delete_memory(mid)
+                except Exception:
+                    pass
+            if count:
+                logger.info("Auto-pruned %d memories", count)
+        except Exception as e:
+            logger.error("Auto-prune failed: %s", e)
 
     async def _load_recent_sessions(self):
         """Load recent session summaries into RecentHistory pool."""
@@ -292,7 +326,7 @@ class Agent:
 
         # Get model and client
         model = self.router.get_model(TaskType.REASONING)
-        client = self.router.get_client(TaskType.REASONING)
+        client = await self.router.get_client(TaskType.REASONING)
         if not client:
             return "Error: No available LLM endpoint."
 
@@ -303,7 +337,7 @@ class Agent:
         full_response = ""
 
         for iteration in range(max_iterations + 1):
-            endpoint = self.endpoint_manager.get_endpoint_for_role(TaskType.REASONING)
+            endpoint = await self.endpoint_manager.get_endpoint_for_role(TaskType.REASONING)
             if endpoint:
                 endpoint.start_request()
 
@@ -364,7 +398,8 @@ class Agent:
         return full_response
 
     async def _search_relevant_memories(self, query: str):
-        """Search for relevant memories and add to Recall pool."""
+        """Search for relevant memories and lessons, add to Recall pool."""
+        # Search conversation memories
         try:
             results = await self.search.search(
                 query=query,
@@ -379,6 +414,21 @@ class Agent:
                 ))
         except Exception as e:
             logger.error("Memory search failed: %s", e)
+
+        # Search lessons semantically (closes the lessons loop)
+        try:
+            lesson_results = await self.search.search_lessons(query, n_results=5)
+            for lr in lesson_results:
+                similarity = lr.get("similarity", 0.0)
+                if similarity < 0.4:
+                    continue
+                self.memory_manager.add_memory("Recall", PoolItem(
+                    text=lr.get("document", ""),
+                    session_role="system2",  # labeled as "RelevantLessons" in context
+                    priority_score=similarity + 0.1,  # slight boost for lessons
+                ))
+        except Exception as e:
+            logger.error("Lesson search failed: %s", e)
 
     def _build_messages(self, user_message: str) -> list[dict]:
         """Build the full message list with memory context.

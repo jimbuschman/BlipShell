@@ -441,6 +441,159 @@ class SQLiteStore:
         row = await cursor.fetchone()
         return row["cnt"]
 
+    # --- Archiving / Pruning ---
+
+    async def archive_old_memories(
+        self,
+        days_old: int = 90,
+        max_importance: float = 0.3,
+        max_rank: int = 2,
+    ) -> int:
+        """Archive memories older than N days with low rank and importance.
+
+        Returns count of newly archived memories.
+        """
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
+        cursor = await self._db.execute(
+            """UPDATE memories SET is_archived = 1
+               WHERE is_archived = 0
+               AND timestamp < ?
+               AND rank <= ?
+               AND importance <= ?""",
+            (cutoff, max_rank, max_importance),
+        )
+        await self._db.commit()
+        count = cursor.rowcount
+        if count:
+            logger.info("Archived %d old low-value memories (older than %d days)", count, days_old)
+        return count
+
+    async def get_archived_memory_ids(
+        self,
+        days_old: int = 90,
+        max_importance: float = 0.3,
+        max_rank: int = 2,
+    ) -> list[int]:
+        """Get IDs of memories that were just archived (for ChromaDB cleanup)."""
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
+        cursor = await self._db.execute(
+            """SELECT id FROM memories
+               WHERE is_archived = 1
+               AND timestamp < ?
+               AND rank <= ?
+               AND importance <= ?""",
+            (cutoff, max_rank, max_importance),
+        )
+        rows = await cursor.fetchall()
+        return [r["id"] for r in rows]
+
+    async def get_archive_stats(self) -> dict:
+        """Get counts of active vs archived memories."""
+        cursor = await self._db.execute(
+            "SELECT is_archived, COUNT(*) as cnt FROM memories GROUP BY is_archived"
+        )
+        rows = await cursor.fetchall()
+        stats = {"active": 0, "archived": 0}
+        for r in rows:
+            if r["is_archived"]:
+                stats["archived"] = r["cnt"]
+            else:
+                stats["active"] = r["cnt"]
+        return stats
+
+    # --- Paginated Queries ---
+
+    async def get_memories_paginated(
+        self,
+        page: int = 1,
+        limit: int = 20,
+        sort: str = "recent",
+        include_archived: bool = False,
+    ) -> tuple[list[Memory], int]:
+        """Get paginated memories. Returns (memories, total_count)."""
+        offset = (page - 1) * limit
+        where = "" if include_archived else "WHERE is_archived = 0"
+        order = "timestamp DESC" if sort == "recent" else "rank DESC, importance DESC"
+
+        # Count
+        cursor = await self._db.execute(f"SELECT COUNT(*) as cnt FROM memories {where}")
+        row = await cursor.fetchone()
+        total = row["cnt"]
+
+        # Fetch page
+        cursor = await self._db.execute(
+            f"SELECT * FROM memories {where} ORDER BY {order} LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_memory(r) for r in rows], total
+
+    async def get_memory_with_tags(self, memory_id: int) -> dict | None:
+        """Get a memory with its tags."""
+        memory = await self.get_memory(memory_id)
+        if not memory:
+            return None
+        tags = await self.get_memory_tags(memory_id)
+        return {**memory.model_dump(), "tags": tags}
+
+    # --- Lesson Management ---
+
+    async def get_lesson(self, lesson_id: int) -> Optional[Lesson]:
+        """Get a single lesson by ID."""
+        cursor = await self._db.execute("SELECT * FROM lessons WHERE id = ?", (lesson_id,))
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return Lesson(
+            id=row["id"],
+            content=row["content"],
+            summary=row["summary"],
+            timestamp=row["timestamp"],
+            rank=row["rank"],
+            importance=row["importance"],
+            source_session_id=row["source_session_id"],
+        )
+
+    async def delete_lesson(self, lesson_id: int):
+        """Delete a lesson."""
+        await self._db.execute("DELETE FROM lesson_tags WHERE lesson_id = ?", (lesson_id,))
+        await self._db.execute("DELETE FROM lessons WHERE id = ?", (lesson_id,))
+        await self._db.commit()
+
+    # --- Core Memory Management ---
+
+    async def get_core_memory(self, core_memory_id: int) -> Optional[CoreMemory]:
+        """Get a single core memory by ID."""
+        cursor = await self._db.execute(
+            "SELECT * FROM core_memories WHERE id = ?", (core_memory_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return CoreMemory(
+            id=row["id"],
+            content=row["content"],
+            category=row["category"],
+            timestamp=row["timestamp"],
+            importance=row["importance"],
+            source_session_id=row["source_session_id"],
+        )
+
+    async def update_core_memory(self, core_memory_id: int, **kwargs):
+        """Update core memory fields."""
+        allowed = {"content", "category", "importance", "is_active"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        values = list(fields.values()) + [core_memory_id]
+        await self._db.execute(
+            f"UPDATE core_memories SET {set_clause} WHERE id = ?", values
+        )
+        await self._db.commit()
+
     # --- Projects ---
 
     async def create_project(self, name: str, description: str = "") -> int:

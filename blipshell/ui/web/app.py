@@ -1,20 +1,24 @@
 """FastAPI backend with WebSocket streaming for chat.
 
-REST endpoints for sessions, memories, lessons, config, and endpoint status.
+REST endpoints for sessions, memories, lessons, config, endpoint status,
+memory browser, data export, and API key auth.
 """
 
 import asyncio
 import json
 import logging
+import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
 from blipshell.core.agent import Agent
 from blipshell.core.config import ConfigManager
+from blipshell.models.config import AuthConfig
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +27,25 @@ STATIC_DIR = Path(__file__).parent / "static"
 # Global agent instance (created on startup)
 _agent: Optional[Agent] = None
 _config_manager: Optional[ConfigManager] = None
+_auth_config: Optional[AuthConfig] = None
+
+# Per-WebSocket session tracking: {ws_id: session_id}
+_ws_sessions: dict[str, int] = {}
+
+# HTTP Bearer scheme (auto_error=False so we can check auth_config.enabled)
+_bearer = HTTPBearer(auto_error=False)
+
+
+async def verify_auth(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+):
+    """Dependency that checks API key auth when enabled."""
+    if not _auth_config or not _auth_config.enabled:
+        return  # auth disabled
+    if not _auth_config.api_key:
+        return  # no key configured = open
+    if not credentials or credentials.credentials != _auth_config.api_key:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 def create_app(config_path: str | None = None) -> FastAPI:
@@ -35,9 +58,10 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     @app.on_event("startup")
     async def startup():
-        global _agent, _config_manager
+        global _agent, _config_manager, _auth_config
         _config_manager = ConfigManager(config_path)
         config = _config_manager.load()
+        _auth_config = config.auth
         _agent = Agent(config, _config_manager)
         await _agent.initialize()
         logger.info("Web UI agent initialized")
@@ -56,22 +80,33 @@ def create_app(config_path: str | None = None) -> FastAPI:
             return index_path.read_text()
         return _default_html()
 
-    # --- WebSocket Chat ---
+    # --- WebSocket Chat (per-connection sessions) ---
 
     @app.websocket("/ws/chat")
     async def websocket_chat(ws: WebSocket):
         await ws.accept()
+        ws_id = str(uuid.uuid4())
 
         try:
-            # Receive initial config (optional)
+            # Receive initial config
             init = await ws.receive_json()
+
+            # Auth check for WebSocket
+            if _auth_config and _auth_config.enabled and _auth_config.api_key:
+                token = init.get("token", "")
+                if token != _auth_config.api_key:
+                    await ws.send_json({"type": "error", "message": "Authentication failed"})
+                    await ws.close(code=4001)
+                    return
+
             project = init.get("project")
             session_id = init.get("session_id")
             resume = init.get("resume", False)
 
-            # Start session
+            # Each WebSocket gets its own session
             rid = session_id if resume else None
             sid = await _agent.start_session(project=project, resume_session_id=rid)
+            _ws_sessions[ws_id] = sid
 
             await ws.send_json({"type": "session_started", "session_id": sid})
 
@@ -87,11 +122,6 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
                     await ws.send_json({"type": "thinking"})
 
-                    # Stream response via WebSocket
-                    async def send_token(token: str):
-                        await ws.send_json({"type": "token", "content": token})
-
-                    # Use a wrapper since on_token needs to be sync
                     tokens = []
 
                     def collect_token(token: str):
@@ -99,7 +129,6 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
                     response = await _agent.chat(user_msg, on_token=collect_token)
 
-                    # Send collected tokens
                     for token in tokens:
                         await ws.send_json({"type": "token", "content": token})
 
@@ -113,29 +142,49 @@ def create_app(config_path: str | None = None) -> FastAPI:
                     await ws.send_json({"type": "status", "data": status})
 
         except WebSocketDisconnect:
-            logger.info("WebSocket client disconnected")
+            logger.info("WebSocket client %s disconnected", ws_id)
         except Exception as e:
             logger.error("WebSocket error: %s", e)
             try:
                 await ws.send_json({"type": "error", "message": str(e)})
             except Exception:
                 pass
+        finally:
+            _ws_sessions.pop(ws_id, None)
 
-    # --- REST Endpoints ---
+    # --- REST Endpoints (all require auth when enabled) ---
 
-    @app.get("/api/sessions")
+    @app.get("/api/sessions", dependencies=[Depends(verify_auth)])
     async def list_sessions(limit: int = 50, project: Optional[str] = None):
         sessions = await _agent.sqlite.list_sessions(limit=limit, project=project)
         return [s.model_dump() for s in sessions]
 
-    @app.get("/api/sessions/{session_id}")
+    @app.get("/api/sessions/{session_id}", dependencies=[Depends(verify_auth)])
     async def get_session(session_id: int):
         session = await _agent.sqlite.get_session(session_id)
         if not session:
-            return {"error": "Session not found"}
+            raise HTTPException(status_code=404, detail="Session not found")
         return session.model_dump()
 
-    @app.get("/api/memories/search")
+    # --- Memory Browser ---
+
+    @app.get("/api/memories", dependencies=[Depends(verify_auth)])
+    async def list_memories(
+        page: int = Query(1, ge=1),
+        limit: int = Query(20, ge=1, le=100),
+        sort: str = Query("recent"),
+    ):
+        memories, total = await _agent.sqlite.get_memories_paginated(
+            page=page, limit=limit, sort=sort,
+        )
+        return {
+            "memories": [m.model_dump() for m in memories],
+            "total": total,
+            "page": page,
+            "pages": (total + limit - 1) // limit if limit else 1,
+        }
+
+    @app.get("/api/memories/search", dependencies=[Depends(verify_auth)])
     async def search_memories(query: str, limit: int = 10):
         results = await _agent.search.search(query=query, n_results=limit)
         return [
@@ -145,44 +194,140 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 "similarity": r.similarity,
                 "boosted_score": r.boosted_score,
                 "rank": r.rank,
+                "importance": r.importance,
             }
             for r in results
         ]
 
-    @app.get("/api/core-memories")
+    @app.get("/api/memories/stats", dependencies=[Depends(verify_auth)])
+    async def memory_stats():
+        archive_stats = await _agent.sqlite.get_archive_stats()
+        chroma_counts = _agent.chroma.get_counts()
+        return {**archive_stats, "chroma": chroma_counts}
+
+    @app.get("/api/memories/{memory_id}", dependencies=[Depends(verify_auth)])
+    async def get_memory(memory_id: int):
+        result = await _agent.sqlite.get_memory_with_tags(memory_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="Memory not found")
+        return result
+
+    @app.put("/api/memories/{memory_id}", dependencies=[Depends(verify_auth)])
+    async def update_memory(memory_id: int, updates: dict):
+        allowed = {"rank", "importance", "is_archived"}
+        filtered = {k: v for k, v in updates.items() if k in allowed}
+        if not filtered:
+            raise HTTPException(status_code=400, detail="No valid fields to update")
+        await _agent.sqlite.update_memory(memory_id, **filtered)
+        return {"status": "ok"}
+
+    @app.delete("/api/memories/{memory_id}", dependencies=[Depends(verify_auth)])
+    async def archive_memory(memory_id: int):
+        await _agent.sqlite.update_memory(memory_id, is_archived=True)
+        try:
+            _agent.chroma.delete_memory(memory_id)
+        except Exception:
+            pass
+        return {"status": "archived"}
+
+    # --- Core Memories ---
+
+    @app.get("/api/core-memories", dependencies=[Depends(verify_auth)])
     async def list_core_memories():
         memories = await _agent.sqlite.get_active_core_memories()
         return [m.model_dump() for m in memories]
 
-    @app.get("/api/lessons")
+    @app.put("/api/core-memories/{core_memory_id}", dependencies=[Depends(verify_auth)])
+    async def update_core_memory(core_memory_id: int, updates: dict):
+        allowed = {"content", "category", "importance"}
+        filtered = {k: v for k, v in updates.items() if k in allowed}
+        if not filtered:
+            raise HTTPException(status_code=400, detail="No valid fields to update")
+        await _agent.sqlite.update_core_memory(core_memory_id, **filtered)
+        return {"status": "ok"}
+
+    @app.delete("/api/core-memories/{core_memory_id}", dependencies=[Depends(verify_auth)])
+    async def deactivate_core_memory(core_memory_id: int):
+        await _agent.sqlite.deactivate_core_memory(core_memory_id)
+        try:
+            _agent.chroma.delete_core_memory(core_memory_id)
+        except Exception:
+            pass
+        return {"status": "deactivated"}
+
+    # --- Lessons ---
+
+    @app.get("/api/lessons", dependencies=[Depends(verify_auth)])
     async def list_lessons():
         lessons = await _agent.sqlite.get_all_lessons()
         return [l.model_dump() for l in lessons]
 
-    @app.get("/api/config")
+    @app.delete("/api/lessons/{lesson_id}", dependencies=[Depends(verify_auth)])
+    async def delete_lesson(lesson_id: int):
+        await _agent.sqlite.delete_lesson(lesson_id)
+        try:
+            _agent.chroma.delete_lesson(lesson_id)
+        except Exception:
+            pass
+        return {"status": "deleted"}
+
+    # --- Config ---
+
+    @app.get("/api/config", dependencies=[Depends(verify_auth)])
     async def get_config():
         return _config_manager.to_dict()
 
-    @app.put("/api/config")
+    @app.put("/api/config", dependencies=[Depends(verify_auth)])
     async def update_config(updates: dict):
         for key, value in updates.items():
             _config_manager.set(key, value)
         _config_manager.save()
         return {"status": "ok"}
 
-    @app.get("/api/status")
+    # --- Status ---
+
+    @app.get("/api/status", dependencies=[Depends(verify_auth)])
     async def get_status():
         return _agent.get_status()
 
-    @app.get("/api/endpoints")
+    @app.get("/api/endpoints", dependencies=[Depends(verify_auth)])
     async def get_endpoints():
         return _agent.endpoint_manager.get_status()
+
+    # --- Data Export ---
+
+    @app.get("/api/export/sessions", dependencies=[Depends(verify_auth)])
+    async def export_sessions(format: str = "json"):
+        from blipshell.export import export_sessions_json
+        data = await export_sessions_json(_agent.sqlite)
+        return JSONResponse(
+            content=data,
+            headers={"Content-Disposition": "attachment; filename=blipshell_sessions.json"},
+        )
+
+    @app.get("/api/export/memories", dependencies=[Depends(verify_auth)])
+    async def export_memories(format: str = "json", include_archived: bool = False):
+        from blipshell.export import export_memories_json
+        data = await export_memories_json(_agent.sqlite, include_archived=include_archived)
+        return JSONResponse(
+            content=data,
+            headers={"Content-Disposition": "attachment; filename=blipshell_memories.json"},
+        )
+
+    @app.get("/api/export/all", dependencies=[Depends(verify_auth)])
+    async def export_all(format: str = "json"):
+        from blipshell.export import export_all_json
+        data = await export_all_json(_agent.sqlite)
+        return JSONResponse(
+            content=data,
+            headers={"Content-Disposition": "attachment; filename=blipshell_export.json"},
+        )
 
     return app
 
 
 def _default_html() -> str:
-    """Default HTML when no static files exist."""
+    """Default HTML with chat, memory browser, and export."""
     return """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -199,46 +344,54 @@ def _default_html() -> str:
         .sidebar {
             width: 260px; background: #16213e; padding: 16px;
             border-right: 1px solid #0f3460; overflow-y: auto;
+            display: flex; flex-direction: column;
         }
-        .sidebar h2 { color: #00d9ff; margin-bottom: 16px; font-size: 18px; }
+        .sidebar h2 { color: #00d9ff; margin-bottom: 12px; font-size: 18px; }
+        .nav-tabs {
+            display: flex; gap: 4px; margin-bottom: 12px;
+        }
+        .nav-tab {
+            flex: 1; padding: 8px 4px; background: #1a1a2e; border: 1px solid #0f3460;
+            border-radius: 6px; cursor: pointer; font-size: 11px; text-align: center;
+            color: #888;
+        }
+        .nav-tab.active { background: #0f3460; color: #00d9ff; border-color: #00d9ff; }
         .session-item {
             padding: 10px; margin-bottom: 8px; background: #1a1a2e;
             border-radius: 6px; cursor: pointer; font-size: 13px;
         }
         .session-item:hover { background: #0f3460; }
-        .main {
-            flex: 1; display: flex; flex-direction: column;
-        }
+        .main { flex: 1; display: flex; flex-direction: column; }
         .header {
             padding: 12px 20px; background: #16213e;
             border-bottom: 1px solid #0f3460;
             display: flex; align-items: center; gap: 12px;
         }
         .header h1 { color: #00d9ff; font-size: 20px; }
+        .header-actions { margin-left: auto; display: flex; gap: 8px; }
+        .header-btn {
+            padding: 6px 12px; background: #0f3460; color: #00d9ff; border: 1px solid #0f3460;
+            border-radius: 6px; cursor: pointer; font-size: 12px;
+        }
+        .header-btn:hover { background: #1a3a6e; }
         .status-dot {
             width: 10px; height: 10px; border-radius: 50%;
             background: #4caf50; display: inline-block;
         }
-        .chat-area {
-            flex: 1; overflow-y: auto; padding: 20px;
-        }
+        .tab-content { display: none; flex: 1; overflow-y: auto; }
+        .tab-content.active { display: flex; flex-direction: column; }
+        .chat-area { flex: 1; overflow-y: auto; padding: 20px; }
         .message {
             max-width: 80%; margin-bottom: 16px; padding: 12px 16px;
             border-radius: 12px; line-height: 1.5; white-space: pre-wrap;
         }
-        .message.user {
-            background: #0f3460; margin-left: auto;
-        }
-        .message.assistant {
-            background: #1e2a4a;
-        }
+        .message.user { background: #0f3460; margin-left: auto; }
+        .message.assistant { background: #1e2a4a; }
         .message.system {
             background: #2a1a3e; font-size: 12px; color: #b0b0b0;
             text-align: center; max-width: 100%;
         }
-        .thinking-indicator {
-            display: inline-flex; gap: 4px; padding: 4px 0;
-        }
+        .thinking-indicator { display: inline-flex; gap: 4px; padding: 4px 0; }
         .thinking-indicator span {
             width: 8px; height: 8px; border-radius: 50%;
             background: #00d9ff; opacity: 0.3;
@@ -268,24 +421,101 @@ def _default_html() -> str:
         }
         #sendBtn:hover { background: #00b8d4; }
         #sendBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+        /* Memory Browser */
+        .mem-browser { padding: 20px; overflow-y: auto; flex: 1; }
+        .mem-search {
+            display: flex; gap: 8px; margin-bottom: 16px;
+        }
+        .mem-search input {
+            flex: 1; padding: 10px 14px; background: #1a1a2e; border: 1px solid #0f3460;
+            border-radius: 8px; color: #e0e0e0; font-size: 14px; outline: none;
+        }
+        .mem-search input:focus { border-color: #00d9ff; }
+        .mem-search button {
+            padding: 10px 16px; background: #00d9ff; color: #1a1a2e;
+            border: none; border-radius: 8px; cursor: pointer; font-weight: bold;
+        }
+        .mem-section { margin-bottom: 24px; }
+        .mem-section h3 { color: #00d9ff; margin-bottom: 8px; font-size: 15px; }
+        .mem-card {
+            background: #1e2a4a; border-radius: 8px; padding: 12px;
+            margin-bottom: 8px; font-size: 13px; position: relative;
+        }
+        .mem-card .meta { color: #888; font-size: 11px; margin-top: 6px; }
+        .mem-card .actions {
+            position: absolute; top: 8px; right: 8px; display: flex; gap: 4px;
+        }
+        .mem-card .actions button {
+            padding: 3px 8px; font-size: 11px; border: 1px solid #0f3460;
+            background: #16213e; color: #888; border-radius: 4px; cursor: pointer;
+        }
+        .mem-card .actions button:hover { color: #00d9ff; border-color: #00d9ff; }
+        .mem-card .actions button.delete:hover { color: #f44336; border-color: #f44336; }
+        .mem-stats {
+            display: flex; gap: 16px; margin-bottom: 16px; font-size: 13px; color: #888;
+        }
+        .mem-stats span { color: #00d9ff; font-weight: bold; }
+        .pagination { display: flex; gap: 8px; justify-content: center; margin-top: 16px; }
+        .pagination button {
+            padding: 6px 14px; background: #0f3460; color: #e0e0e0;
+            border: none; border-radius: 6px; cursor: pointer;
+        }
+        .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .pagination button.active { background: #00d9ff; color: #1a1a2e; }
     </style>
 </head>
 <body>
     <div class="sidebar">
-        <h2>Sessions</h2>
-        <div id="sessionList"></div>
+        <h2>BlipShell</h2>
+        <div class="nav-tabs">
+            <div class="nav-tab active" onclick="switchView('chat')">Chat</div>
+            <div class="nav-tab" onclick="switchView('memories')">Memories</div>
+        </div>
+        <div id="sidebarContent">
+            <div id="sessionList"></div>
+        </div>
     </div>
     <div class="main">
         <div class="header">
-            <h1>BlipShell</h1>
+            <h1 id="viewTitle">Chat</h1>
             <span class="status-dot" id="statusDot"></span>
             <span id="statusText" style="font-size:12px;color:#888;">Connecting...</span>
+            <div class="header-actions">
+                <button class="header-btn" onclick="exportAll()">Export</button>
+            </div>
         </div>
-        <div class="chat-area" id="chatArea"></div>
-        <div class="input-area">
-            <textarea id="userInput" rows="1" placeholder="Type a message..."
-                      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
-            <button id="sendBtn" onclick="sendMessage()">Send</button>
+        <!-- Chat Tab -->
+        <div id="chatTab" class="tab-content active">
+            <div class="chat-area" id="chatArea"></div>
+            <div class="input-area">
+                <textarea id="userInput" rows="1" placeholder="Type a message..."
+                    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
+                <button id="sendBtn" onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+        <!-- Memory Browser Tab -->
+        <div id="memTab" class="tab-content">
+            <div class="mem-browser">
+                <div class="mem-stats" id="memStats"></div>
+                <div class="mem-search">
+                    <input type="text" id="memSearchInput" placeholder="Search memories..."
+                        onkeydown="if(event.key==='Enter')searchMem()">
+                    <button onclick="searchMem()">Search</button>
+                </div>
+                <div class="mem-section">
+                    <h3>Core Memories</h3>
+                    <div id="coreMemList"></div>
+                </div>
+                <div class="mem-section">
+                    <h3>Lessons</h3>
+                    <div id="lessonList"></div>
+                </div>
+                <div class="mem-section">
+                    <h3>Memories</h3>
+                    <div id="memList"></div>
+                    <div class="pagination" id="memPagination"></div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -294,33 +524,49 @@ def _default_html() -> str:
         let currentResponse = '';
         let activeResponseEl = null;
         let msgCounter = 0;
+        let memPage = 1;
+        const API_KEY = ''; // Set if auth enabled
 
+        function authHeaders() {
+            const h = {'Content-Type': 'application/json'};
+            if (API_KEY) h['Authorization'] = 'Bearer ' + API_KEY;
+            return h;
+        }
+
+        function switchView(view) {
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            if (view === 'chat') {
+                document.querySelectorAll('.nav-tab')[0].classList.add('active');
+                document.getElementById('chatTab').classList.add('active');
+                document.getElementById('viewTitle').textContent = 'Chat';
+            } else {
+                document.querySelectorAll('.nav-tab')[1].classList.add('active');
+                document.getElementById('memTab').classList.add('active');
+                document.getElementById('viewTitle').textContent = 'Memory Browser';
+                loadMemoryBrowser();
+            }
+        }
+
+        // --- Chat ---
         function connect() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(`${protocol}//${location.host}/ws/chat`);
-
             ws.onopen = () => {
                 setStatus('connected', 'Connected');
-                ws.send(JSON.stringify({project: null, resume: false}));
+                const init = {project: null, resume: false};
+                if (API_KEY) init.token = API_KEY;
+                ws.send(JSON.stringify(init));
             };
-
-            ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                handleMessage(data);
-            };
-
-            ws.onclose = () => {
-                setStatus('disconnected', 'Disconnected');
-                setTimeout(connect, 3000);
-            };
-
+            ws.onmessage = (event) => handleMessage(JSON.parse(event.data));
+            ws.onclose = () => { setStatus('disconnected', 'Disconnected'); setTimeout(connect, 3000); };
             ws.onerror = () => setStatus('error', 'Error');
         }
 
         function handleMessage(data) {
             switch(data.type) {
                 case 'session_started':
-                    addSystemMessage(`Session #${data.session_id} started`);
+                    addSystemMessage('Session #' + data.session_id + ' started');
                     loadSessions();
                     break;
                 case 'thinking':
@@ -345,9 +591,7 @@ def _default_html() -> str:
                         activeResponseEl.textContent = 'Error: ' + data.message;
                         activeResponseEl.style.borderLeft = '3px solid #f44336';
                         activeResponseEl = null;
-                    } else {
-                        addSystemMessage('Error: ' + data.message);
-                    }
+                    } else { addSystemMessage('Error: ' + data.message); }
                     document.getElementById('sendBtn').disabled = false;
                     break;
             }
@@ -357,7 +601,6 @@ def _default_html() -> str:
             const input = document.getElementById('userInput');
             const msg = input.value.trim();
             if (!msg || !ws || ws.readyState !== 1) return;
-
             addUserMessage(msg);
             ws.send(JSON.stringify({type: 'message', content: msg}));
             input.value = '';
@@ -366,52 +609,149 @@ def _default_html() -> str:
 
         function addUserMessage(text) {
             const div = document.createElement('div');
-            div.className = 'message user';
-            div.textContent = text;
-            document.getElementById('chatArea').appendChild(div);
-            scrollToBottom();
+            div.className = 'message user'; div.textContent = text;
+            document.getElementById('chatArea').appendChild(div); scrollToBottom();
         }
-
         function createAssistantBubble() {
             const div = document.createElement('div');
-            div.className = 'message assistant';
-            div.id = 'msg-' + (++msgCounter);
-            document.getElementById('chatArea').appendChild(div);
-            return div;
+            div.className = 'message assistant'; div.id = 'msg-' + (++msgCounter);
+            document.getElementById('chatArea').appendChild(div); return div;
         }
-
         function addSystemMessage(text) {
             const div = document.createElement('div');
-            div.className = 'message system';
-            div.textContent = text;
+            div.className = 'message system'; div.textContent = text;
             document.getElementById('chatArea').appendChild(div);
         }
-
         function scrollToBottom() {
             const area = document.getElementById('chatArea');
             area.scrollTop = area.scrollHeight;
         }
-
         function setStatus(state, text) {
-            const dot = document.getElementById('statusDot');
-            const txt = document.getElementById('statusText');
-            dot.style.background = state === 'connected' ? '#4caf50' : state === 'error' ? '#f44336' : '#ff9800';
-            txt.textContent = text;
+            document.getElementById('statusDot').style.background =
+                state === 'connected' ? '#4caf50' : state === 'error' ? '#f44336' : '#ff9800';
+            document.getElementById('statusText').textContent = text;
         }
 
         async function loadSessions() {
             try {
-                const resp = await fetch('/api/sessions?limit=20');
+                const resp = await fetch('/api/sessions?limit=20', {headers: authHeaders()});
                 const sessions = await resp.json();
                 const list = document.getElementById('sessionList');
                 list.innerHTML = '';
                 sessions.forEach(s => {
                     const div = document.createElement('div');
                     div.className = 'session-item';
-                    div.textContent = `#${s.id} ${s.title || 'Untitled'}`;
+                    div.textContent = '#' + s.id + ' ' + (s.title || 'Untitled');
                     list.appendChild(div);
                 });
             } catch(e) {}
+        }
+
+        // --- Memory Browser ---
+        async function loadMemoryBrowser() {
+            loadMemStats(); loadCoreMem(); loadLessons(); loadMemories(1);
+        }
+
+        async function loadMemStats() {
+            try {
+                const resp = await fetch('/api/memories/stats', {headers: authHeaders()});
+                const s = await resp.json();
+                document.getElementById('memStats').innerHTML =
+                    'Active: <span>' + s.active + '</span> | ' +
+                    'Archived: <span>' + s.archived + '</span> | ' +
+                    'ChromaDB: <span>' + (s.chroma?.memories||0) + '</span>';
+            } catch(e) {}
+        }
+
+        async function loadCoreMem() {
+            try {
+                const resp = await fetch('/api/core-memories', {headers: authHeaders()});
+                const mems = await resp.json();
+                const el = document.getElementById('coreMemList');
+                el.innerHTML = mems.length ? '' : '<div style="color:#666;font-size:12px">No core memories</div>';
+                mems.forEach(m => {
+                    el.innerHTML += '<div class="mem-card">' + escHtml(m.content) +
+                        '<div class="meta">Category: ' + m.category + ' | Importance: ' + (m.importance||0).toFixed(2) + '</div>' +
+                        '<div class="actions"><button class="delete" onclick="deactivateCore(' + m.id + ')">Deactivate</button></div></div>';
+                });
+            } catch(e) {}
+        }
+
+        async function loadLessons() {
+            try {
+                const resp = await fetch('/api/lessons', {headers: authHeaders()});
+                const lessons = await resp.json();
+                const el = document.getElementById('lessonList');
+                el.innerHTML = lessons.length ? '' : '<div style="color:#666;font-size:12px">No lessons</div>';
+                lessons.forEach(l => {
+                    el.innerHTML += '<div class="mem-card">' + escHtml(l.content).substring(0,300) +
+                        '<div class="meta">Rank: ' + l.rank + ' | Importance: ' + (l.importance||0).toFixed(2) + '</div>' +
+                        '<div class="actions"><button class="delete" onclick="deleteLesson(' + l.id + ')">Delete</button></div></div>';
+                });
+            } catch(e) {}
+        }
+
+        async function loadMemories(page) {
+            memPage = page;
+            try {
+                const resp = await fetch('/api/memories?page=' + page + '&limit=20', {headers: authHeaders()});
+                const data = await resp.json();
+                const el = document.getElementById('memList');
+                el.innerHTML = '';
+                data.memories.forEach(m => {
+                    el.innerHTML += '<div class="mem-card">' + escHtml(m.summary || m.content).substring(0,200) +
+                        '<div class="meta">Rank: ' + m.rank + ' | Imp: ' + (m.importance||0).toFixed(2) +
+                        ' | ' + (m.timestamp||'').substring(0,10) + '</div>' +
+                        '<div class="actions">' +
+                        '<button class="delete" onclick="archiveMem(' + m.id + ')">Archive</button>' +
+                        '</div></div>';
+                });
+                // Pagination
+                const pg = document.getElementById('memPagination');
+                pg.innerHTML = '';
+                for (let i = 1; i <= data.pages && i <= 10; i++) {
+                    pg.innerHTML += '<button ' + (i===page?'class="active"':'') +
+                        ' onclick="loadMemories(' + i + ')">' + i + '</button>';
+                }
+            } catch(e) {}
+        }
+
+        async function searchMem() {
+            const q = document.getElementById('memSearchInput').value.trim();
+            if (!q) { loadMemories(1); return; }
+            try {
+                const resp = await fetch('/api/memories/search?query=' + encodeURIComponent(q) + '&limit=20', {headers: authHeaders()});
+                const results = await resp.json();
+                const el = document.getElementById('memList');
+                el.innerHTML = '';
+                results.forEach(r => {
+                    el.innerHTML += '<div class="mem-card">' + escHtml(r.summary).substring(0,200) +
+                        '<div class="meta">Score: ' + r.boosted_score.toFixed(3) + ' | Rank: ' + r.rank + '</div></div>';
+                });
+                document.getElementById('memPagination').innerHTML = '';
+            } catch(e) {}
+        }
+
+        async function archiveMem(id) {
+            await fetch('/api/memories/' + id, {method:'DELETE', headers: authHeaders()});
+            loadMemories(memPage); loadMemStats();
+        }
+        async function deactivateCore(id) {
+            await fetch('/api/core-memories/' + id, {method:'DELETE', headers: authHeaders()});
+            loadCoreMem();
+        }
+        async function deleteLesson(id) {
+            await fetch('/api/lessons/' + id, {method:'DELETE', headers: authHeaders()});
+            loadLessons();
+        }
+        async function exportAll() {
+            window.open('/api/export/all?format=json', '_blank');
+        }
+
+        function escHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s || '';
+            return d.innerHTML;
         }
 
         connect();

@@ -18,6 +18,7 @@ from blipshell.memory.chroma_store import ChromaStore
 from blipshell.memory.noise import should_skip_memory
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.memory.tagger import tag_message
+from blipshell.models.config import MemoryConfig
 from blipshell.models.memory import CoreMemory, Lesson, Memory, MemoryType
 
 logger = logging.getLogger(__name__)
@@ -36,10 +37,13 @@ class MemoryProcessor:
     7. LLM importance (0.0-1.0 with recency/tag bonuses)
     """
 
-    def __init__(self, sqlite: SQLiteStore, chroma: ChromaStore, router: LLMRouter):
+    def __init__(self, sqlite: SQLiteStore, chroma: ChromaStore, router: LLMRouter,
+                 config: MemoryConfig | None = None):
         self.sqlite = sqlite
         self.chroma = chroma
         self.router = router
+        self._recency_bonus = config.importance_recency_bonus if config else 0.1
+        self._tag_bonus = config.importance_tag_bonus if config else 0.05
 
     async def process_message(
         self,
@@ -190,13 +194,13 @@ class MemoryProcessor:
         except Exception:
             importance = 0.3
 
-        # Recency bonus: +0.1 if within 7 days
-        importance += 0.1  # always recent at creation time
+        # Recency bonus (always recent at creation time)
+        importance += self._recency_bonus
 
-        # Tag bonus: +0.2 if many tags (>6)
+        # Tag bonus if many tags (>6)
         tag_count = await self.sqlite.get_tag_count_for_memory(memory_id)
         if tag_count > 6:
-            importance += 0.2
+            importance += self._tag_bonus
 
         return min(importance, 1.0)
 

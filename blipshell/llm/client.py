@@ -4,6 +4,7 @@ Uses the official `ollama` Python package for native tool calling,
 streaming, and structured responses.
 """
 
+import asyncio
 import logging
 from collections import OrderedDict
 from typing import Any, AsyncIterator, Optional
@@ -18,11 +19,34 @@ _CACHE_MAX_SIZE = 200
 
 
 class LLMClient:
-    """Async wrapper around ollama.AsyncClient."""
+    """Async wrapper around ollama.AsyncClient with retry/backoff."""
 
-    def __init__(self, host: str = "http://localhost:11434"):
+    def __init__(self, host: str = "http://localhost:11434",
+                 max_retries: int = 2, retry_base_delay: float = 1.0):
         self.host = host
+        self.max_retries = max_retries
+        self.retry_base_delay = retry_base_delay
         self._client = ollama.AsyncClient(host=host)
+
+    async def _retry_call(self, func, *args, **kwargs):
+        """Retry an async call with exponential backoff.
+
+        Retries up to max_retries times with delays of base*2^attempt seconds.
+        """
+        last_error = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                last_error = e
+                if attempt < self.max_retries:
+                    delay = self.retry_base_delay * (2 ** attempt)
+                    logger.warning(
+                        "LLM call failed (attempt %d/%d), retrying in %.1fs: %s",
+                        attempt + 1, self.max_retries + 1, delay, e,
+                    )
+                    await asyncio.sleep(delay)
+        raise last_error
 
     async def chat(
         self,
@@ -42,11 +66,13 @@ class LLMClient:
             params["tools"] = tools
         params.update(kwargs)
 
+        async def _do_chat():
+            return await self._client.chat(**params)
+
         try:
-            response = await self._client.chat(**params)
-            return response
+            return await self._retry_call(_do_chat)
         except Exception as e:
-            logger.error("Chat request failed: %s", e)
+            logger.error("Chat request failed after retries: %s", e)
             raise
 
     async def chat_stream(
@@ -56,7 +82,10 @@ class LLMClient:
         tools: Optional[list[dict]] = None,
         **kwargs,
     ) -> AsyncIterator[dict]:
-        """Send a streaming chat request. Yields response chunks."""
+        """Send a streaming chat request. Yields response chunks.
+
+        On failure, retries the whole stream (not mid-stream).
+        """
         params = {
             "model": model,
             "messages": messages,
@@ -66,12 +95,24 @@ class LLMClient:
             params["tools"] = tools
         params.update(kwargs)
 
-        try:
-            async for chunk in await self._client.chat(**params):
-                yield chunk
-        except Exception as e:
-            logger.error("Streaming chat failed: %s", e)
-            raise
+        last_error = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                async for chunk in await self._client.chat(**params):
+                    yield chunk
+                return  # success — stream completed
+            except Exception as e:
+                last_error = e
+                if attempt < self.max_retries:
+                    delay = self.retry_base_delay * (2 ** attempt)
+                    logger.warning(
+                        "Streaming chat failed (attempt %d/%d), retrying in %.1fs: %s",
+                        attempt + 1, self.max_retries + 1, delay, e,
+                    )
+                    await asyncio.sleep(delay)
+
+        logger.error("Streaming chat failed after retries: %s", last_error)
+        raise last_error
 
     async def generate(
         self,
@@ -96,13 +137,16 @@ class LLMClient:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        try:
-            response = await self._client.chat(
+        async def _do_generate():
+            return await self._client.chat(
                 model=model,
                 messages=messages,
                 stream=False,
                 **kwargs,
             )
+
+        try:
+            response = await self._retry_call(_do_generate)
             # Handle both object (ollama 0.4+) and dict responses
             msg = getattr(response, "message", None)
             if msg is not None:
@@ -119,7 +163,7 @@ class LLMClient:
 
             return result.strip()
         except Exception as e:
-            logger.error("Generate request failed: %s", e)
+            logger.error("Generate request failed after retries: %s", e)
             raise
 
     async def check_health(self) -> bool:

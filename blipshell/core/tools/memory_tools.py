@@ -108,6 +108,61 @@ class ListSessionsTool(Tool):
         return "\n\n".join(output)
 
 
+class PromoteToCoreMemoryTool(Tool):
+    """Allows the LLM to promote an existing memory or lesson to core memory status."""
+
+    def __init__(self, sqlite: SQLiteStore, processor: MemoryProcessor,
+                 session_id: int | None = None):
+        self.sqlite = sqlite
+        self.processor = processor
+        self.session_id = session_id
+
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="promote_to_core_memory",
+            description=(
+                "Promote an existing memory or lesson to a permanent core memory. "
+                "Use this when you find a memory or lesson that contains critical information "
+                "that should always be available (user preferences, key facts, important patterns)."
+            ),
+            parameters=[
+                ToolParameter(name="source_type", type=ToolParameterType.STRING,
+                              description="Type of source: 'memory' or 'lesson'",
+                              enum=["memory", "lesson"]),
+                ToolParameter(name="source_id", type=ToolParameterType.INTEGER,
+                              description="ID of the memory or lesson to promote"),
+                ToolParameter(name="category", type=ToolParameterType.STRING,
+                              description="Category: general, preference, fact, or personality",
+                              required=False),
+            ],
+        )
+
+    async def execute(self, source_type: str, source_id: int,
+                      category: str = "general", **kwargs) -> str:
+        if source_type == "memory":
+            memory = await self.sqlite.get_memory(source_id)
+            if not memory:
+                return f"Memory {source_id} not found."
+            content = memory.summary or memory.content
+        elif source_type == "lesson":
+            lessons = await self.sqlite.get_all_lessons()
+            lesson = next((l for l in lessons if l.id == source_id), None)
+            if not lesson:
+                return f"Lesson {source_id} not found."
+            content = lesson.content
+        else:
+            return f"Invalid source_type: {source_type}. Use 'memory' or 'lesson'."
+
+        mem_id = await self.processor.process_core_memory(
+            text=content,
+            session_id=self.session_id,
+        )
+        return (
+            f"Promoted {source_type} #{source_id} to core memory (ID: {mem_id}): "
+            f"{content[:100]}"
+        )
+
+
 class GetSessionSummaryTool(Tool):
     def __init__(self, sqlite: SQLiteStore):
         self.sqlite = sqlite

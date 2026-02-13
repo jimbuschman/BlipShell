@@ -322,6 +322,42 @@ def sessions(ctx, limit, project):
 
 
 @main.command()
+@click.option("--format", "fmt", type=click.Choice(["json", "markdown"]), default="json",
+              help="Export format")
+@click.option("--output", "-o", type=click.Path(), default=None, help="Output file path")
+@click.pass_context
+def export(ctx, fmt, output):
+    """Export all data (sessions, memories, core memories, lessons)."""
+    async def _export():
+        from blipshell.export import export_all_json, export_all_markdown
+
+        config_manager = ConfigManager(ctx.obj.get("config_path"))
+        cfg = config_manager.load()
+
+        sqlite = SQLiteStore(cfg.database.path)
+        await sqlite.initialize()
+
+        if fmt == "markdown":
+            data = await export_all_markdown(sqlite)
+        else:
+            import json
+            raw = await export_all_json(sqlite)
+            data = json.dumps(raw, indent=2, default=str)
+
+        await sqlite.close()
+
+        if output:
+            Path(output).write_text(data, encoding="utf-8")
+            console.print(f"[green]Exported to {output}[/green]")
+        else:
+            console.print(data)
+
+    from pathlib import Path
+    from blipshell.memory.sqlite_store import SQLiteStore
+    asyncio.run(_export())
+
+
+@main.command()
 @click.pass_context
 def web(ctx):
     """Launch the web UI."""

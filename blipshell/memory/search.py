@@ -11,7 +11,7 @@ from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.chroma_store import ChromaStore
 from blipshell.memory.noise import contains_signal_words, should_skip_memory
 from blipshell.memory.sqlite_store import SQLiteStore
-from blipshell.memory.tagger import tag_topics
+from blipshell.models.config import MemoryConfig
 from blipshell.models.memory import MemorySearchResult
 
 logger = logging.getLogger(__name__)
@@ -46,14 +46,30 @@ class MemorySearch:
         sqlite: SQLiteStore,
         chroma: ChromaStore,
         router: LLMRouter,
+        config: MemoryConfig | None = None,
         min_rank: int = 3,
         search_limit: int = 20,
     ):
         self.sqlite = sqlite
         self.chroma = chroma
         self.router = router
-        self.min_rank = min_rank
-        self.search_limit = search_limit
+        # Use config values if provided, else fall back to explicit params
+        if config:
+            self.min_rank = config.min_rank_threshold
+            self.search_limit = config.recall_search_limit
+            self.similarity_threshold = config.similarity_threshold
+            self.importance_boost_weight = config.importance_boost_weight
+            self.search_overfetch_multiplier = config.search_overfetch_multiplier
+            self.importance_recency_bonus = config.importance_recency_bonus
+            self.importance_tag_bonus = config.importance_tag_bonus
+        else:
+            self.min_rank = min_rank
+            self.search_limit = search_limit
+            self.similarity_threshold = 0.5
+            self.importance_boost_weight = 0.2
+            self.search_overfetch_multiplier = 2
+            self.importance_recency_bonus = 0.1
+            self.importance_tag_bonus = 0.05
 
     async def search(
         self,
@@ -84,7 +100,7 @@ class MemorySearch:
         # question-to-statement matching well enough without rephrasing)
         chroma_results = self.chroma.search_memories(
             query=query,
-            n_results=n_results * 2,  # fetch extra for post-filtering
+            n_results=n_results * self.search_overfetch_multiplier,
         )
 
         if not chroma_results:
@@ -97,7 +113,7 @@ class MemorySearch:
             similarity = cr["similarity"]
 
             # Skip if similarity too low
-            if similarity < 0.5:
+            if similarity < self.similarity_threshold:
                 continue
 
             # Skip current session memories
@@ -116,7 +132,7 @@ class MemorySearch:
 
             # Importance boost based on rank (port of C# logic)
             normalized_importance = (memory.rank - 1) / 4.0  # 1→0.0, 5→1.0
-            importance_boost = normalized_importance * 0.2
+            importance_boost = normalized_importance * self.importance_boost_weight
             boosted_score = similarity + importance_boost
 
             results.append(SearchResult(
