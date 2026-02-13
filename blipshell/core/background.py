@@ -113,7 +113,13 @@ class BackgroundTaskManager:
                 "code_review": TaskType.CODING,
             }
             llm_task_type = task_type_map.get(task.task_type, TaskType.REASONING)
-            model = self.router.get_model(llm_task_type)
+
+            # When targeting a specific endpoint, use the summarization model
+            # (that's what remote endpoints are configured to run)
+            if target_endpoint:
+                model = self.router.get_model(TaskType.SUMMARIZATION)
+            else:
+                model = self.router.get_model(llm_task_type)
 
             await self.sqlite.update_background_task(
                 task_id, progress_pct=0.5, progress_message="Processing...",
