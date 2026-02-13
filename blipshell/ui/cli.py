@@ -160,11 +160,11 @@ async def chat_loop(
                     continue
                 elif cmd[0] == "code":
                     if len(cmd) < 2:
-                        console.print("[yellow]Usage: /code <file-or-folder> [instruction][/yellow]")
+                        console.print("[yellow]Usage: /code [--model name] <file-or-folder> [instruction][/yellow]")
                         console.print("[dim]Examples:[/dim]")
                         console.print("[dim]  /code blipshell/core/agent.py[/dim]")
                         console.print("[dim]  /code blipshell/core/ find potential bugs[/dim]")
-                        console.print("[dim]  /code blipshell/llm/router.py explain this code[/dim]")
+                        console.print("[dim]  /code --model gemma3:4b tests/benchmark_agent_buggy.py[/dim]")
                     else:
                         code_args = user_input[len("/code "):]
                         await _handle_code_command(agent, code_args)
@@ -370,13 +370,26 @@ async def _save_feedback(agent: Agent, feedback: str):
 
 
 async def _handle_code_command(agent: Agent, args_str: str):
-    """Handle /code <path> [instruction] — send code to the coding model for review."""
+    """Handle /code [--model name] <path> [instruction] — send code to LLM for review."""
     from pathlib import Path
 
     from blipshell.llm.router import TaskType
 
+    # Parse optional --model flag
+    model_override = None
+    remaining = args_str.strip()
+    if remaining.startswith("--model "):
+        parts = remaining.split(None, 2)  # --model, modelname, rest
+        if len(parts) >= 2:
+            model_override = parts[1]
+            remaining = parts[2] if len(parts) > 2 else ""
+
+    if not remaining.strip():
+        console.print("[yellow]Usage: /code [--model name] <file-or-folder> [instruction][/yellow]")
+        return
+
     # Parse: first token is the path, rest is instruction
-    parts = args_str.strip().split(None, 1)
+    parts = remaining.strip().split(None, 1)
     path_str = parts[0]
     instruction = parts[1] if len(parts) > 1 else (
         "Review this code for issues, bugs, and potential improvements. "
@@ -445,9 +458,13 @@ async def _handle_code_command(agent: Agent, args_str: str):
         "Suggest concrete fixes when possible. Be concise but thorough."
     )
 
-    # Use reasoning model (GLM-5 outperforms coding-specific models on accuracy)
-    model = agent.router.get_model(TaskType.REASONING)
-    client = await agent.router.get_client(TaskType.REASONING)
+    # Use specified model or default to reasoning (GLM-5)
+    if model_override:
+        model = model_override
+        client = await agent.router.get_client(TaskType.REASONING)
+    else:
+        model = agent.router.get_model(TaskType.REASONING)
+        client = await agent.router.get_client(TaskType.REASONING)
 
     if not client:
         console.print("[red]No LLM endpoint available.[/red]")
@@ -509,7 +526,12 @@ async def _handle_code_command(agent: Agent, args_str: str):
 
 
 async def _submit_offload(agent: Agent, message: str):
-    """Submit a task to run on a remote endpoint in the background."""
+    """Submit a task to run on a remote endpoint in the background.
+
+    Detects file paths in the message and injects their contents into the prompt.
+    """
+    from pathlib import Path
+
     if not agent.background_manager:
         console.print("[yellow]Background task manager not initialized.[/yellow]")
         return
@@ -527,6 +549,25 @@ async def _submit_offload(agent: Agent, message: str):
         )
         return
 
+    # Detect file paths in the message and inject their contents
+    prompt = message
+    words = message.split()
+    files_injected = []
+    for word in words:
+        p = Path(word)
+        if not p.exists():
+            p = Path.cwd() / word
+        if p.exists() and p.is_file():
+            try:
+                content = p.read_text(encoding="utf-8")
+                prompt += f"\n\n=== File: {word} ===\n{content}"
+                files_injected.append(word)
+            except Exception:
+                pass
+
+    if files_injected:
+        console.print(f"[dim]Attached {len(files_injected)} file(s): {', '.join(files_injected)}[/dim]")
+
     session_id = agent.session_manager.session_id if agent.session_manager else None
 
     # Truncate title for display
@@ -535,7 +576,7 @@ async def _submit_offload(agent: Agent, message: str):
     task_id = await agent.background_manager.submit_task(
         title=title,
         task_type="custom",
-        prompt=message,
+        prompt=prompt,
         session_id=session_id,
         target_endpoint=remote_name,
     )
@@ -909,7 +950,7 @@ def _print_help():
         "[bold]/memory[/bold]            - Show memory pool usage\n"
         "[bold]/save[/bold]              - Force save session to memory\n"
         "[bold]/core[/bold]              - Show core memories and lessons\n"
-        "[bold]/code <path> [msg][/bold]  - Send code to the coding model for review/analysis\n"
+        "[bold]/code <path> [msg][/bold]  - Send code to LLM for review (--model name to override)\n"
         "[bold]/feedback <msg>[/bold]    - Save feedback as a lesson (e.g. 'be more concise')\n"
         "[bold]/offload <msg>[/bold]     - Run a task on the remote PC in the background\n"
         "[bold]/plan[/bold]              - Show current active plan\n"
