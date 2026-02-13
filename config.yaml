@@ -12,8 +12,14 @@ models:
 endpoints:
   - name: "local"
     url: "http://localhost:11434"
-    roles: ["reasoning", "tool_calling", "coding", "summarization", "ranking", "embedding"]
+    roles: ["reasoning", "tool_calling", "coding", "embedding"]
     priority: 1
+    max_concurrent: 2
+    enabled: true
+  - name: "old-pc"
+    url: "http://192.168.0.225:11434"
+    roles: ["summarization", "ranking"]
+    priority: 2    # higher = preferred for these roles
     max_concurrent: 2
     enabled: true
 
