@@ -145,7 +145,10 @@ async def chat_loop(
                     await _handle_workflow_command(agent, cmd_args)
                     continue
                 elif cmd[0] == "core":
-                    await _print_core(agent)
+                    if len(cmd) >= 3 and cmd[1] == "delete":
+                        await _delete_core_item(agent, cmd[2:])
+                    else:
+                        await _print_core(agent)
                     continue
                 elif cmd[0] == "feedback":
                     if len(cmd) < 2:
@@ -261,6 +264,46 @@ async def _print_core(agent: Agent):
         len(l.content.split()) * 2 for l in lessons
     )
     console.print(f"\n[dim]{len(core_memories)} core memories + {len(lessons)} lessons (~{total_tokens} tokens)[/dim]")
+
+
+async def _delete_core_item(agent: Agent, args: list[str]):
+    """Delete a core memory or lesson by type and ID.
+
+    Usage: /core delete lesson <id> | /core delete memory <id>
+    """
+    if len(args) < 2 or args[0] not in ("lesson", "memory"):
+        console.print("[yellow]Usage: /core delete lesson <id> | /core delete memory <id>[/yellow]")
+        return
+
+    item_type = args[0]
+    try:
+        item_id = int(args[1])
+    except ValueError:
+        console.print("[yellow]ID must be a number.[/yellow]")
+        return
+
+    if item_type == "lesson":
+        lesson = await agent.sqlite.get_lesson(item_id)
+        if not lesson:
+            console.print(f"[yellow]Lesson #{item_id} not found.[/yellow]")
+            return
+        await agent.sqlite.delete_lesson(item_id)
+        try:
+            agent.chroma.delete_lesson(item_id)
+        except Exception:
+            pass
+        console.print(f"[green]Lesson #{item_id} deleted.[/green]")
+    else:
+        cm = await agent.sqlite.get_core_memory(item_id)
+        if not cm:
+            console.print(f"[yellow]Core memory #{item_id} not found.[/yellow]")
+            return
+        await agent.sqlite.deactivate_core_memory(item_id)
+        try:
+            agent.chroma.delete_core_memory(item_id)
+        except Exception:
+            pass
+        console.print(f"[green]Core memory #{item_id} deactivated.[/green]")
 
 
 async def _save_feedback(agent: Agent, feedback: str):
