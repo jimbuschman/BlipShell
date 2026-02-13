@@ -227,6 +227,43 @@ class Agent:
                 session_id=s.id,
             ))
 
+    @staticmethod
+    def _extract_response(response) -> tuple[str, list | None]:
+        """Extract content and tool_calls from an Ollama response.
+
+        Handles both dict responses (old ollama) and object responses (ollama 0.4+).
+        """
+        # Try object attribute access first (ollama 0.4+)
+        msg = getattr(response, "message", None)
+        if msg is not None:
+            content = getattr(msg, "content", "") or ""
+            tool_calls = getattr(msg, "tool_calls", None)
+            return content, tool_calls
+
+        # Fallback to dict access (older ollama)
+        if isinstance(response, dict):
+            msg = response.get("message", {})
+            return msg.get("content", ""), msg.get("tool_calls", None)
+
+        return "", None
+
+    @staticmethod
+    def _extract_tool_call_info(tc) -> tuple[str, dict]:
+        """Extract name and arguments from a tool call object or dict."""
+        # Object access (ollama 0.4+)
+        fn = getattr(tc, "function", None)
+        if fn is not None:
+            name = getattr(fn, "name", "") or ""
+            args = getattr(fn, "arguments", {}) or {}
+            return name, args
+
+        # Dict access
+        if isinstance(tc, dict):
+            fn = tc.get("function", {})
+            return fn.get("name", ""), fn.get("arguments", {})
+
+        return "", {}
+
     async def chat(
         self,
         user_message: str,
@@ -269,27 +306,23 @@ class Agent:
                 endpoint.start_request()
 
             try:
-                # Non-streaming call with tools to check for tool calls
+                # First check: do we need tool calls? Use non-streaming.
+                # On final text response: use the content directly (single call).
                 response = await client.chat(
                     messages=messages,
                     model=model,
-                    tools=tools,
+                    tools=tools if iteration < max_iterations else None,
                 )
 
-                msg = response.get("message", {})
-                content = msg.get("content", "")
-                tool_calls = msg.get("tool_calls", None)
+                content, tool_calls = self._extract_response(response)
 
                 if tool_calls and iteration < max_iterations:
                     # Process tool calls
                     messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
 
                     for tc in tool_calls:
-                        fn = tc.get("function", {})
-                        tool_call = ToolCall(
-                            name=fn.get("name", ""),
-                            arguments=fn.get("arguments", {}),
-                        )
+                        name, arguments = self._extract_tool_call_info(tc)
+                        tool_call = ToolCall(name=name, arguments=arguments)
 
                         if on_token:
                             on_token(f"\n[Tool: {tool_call.name}]\n")
@@ -302,14 +335,10 @@ class Agent:
 
                     continue  # Loop back for LLM to process tool results
                 else:
-                    # No tool calls or max iterations — stream the final response
-                    if self.config.agent.stream and on_token:
-                        # Re-send as streaming for token-by-token output
-                        full_response = await self._stream_response(
-                            client, messages, model, None, on_token
-                        )
-                    else:
-                        full_response = content
+                    # No tool calls — use the response directly (single call, no double hit)
+                    full_response = content
+                    if on_token and content:
+                        on_token(content)
                     break
 
                 if endpoint:
@@ -331,23 +360,6 @@ class Agent:
         asyncio.create_task(self._background_memory_processing())
 
         return full_response
-
-    async def _stream_response(
-        self,
-        client: LLMClient,
-        messages: list[dict],
-        model: str,
-        tools: list[dict] | None,
-        on_token: Callable[[str], None],
-    ) -> str:
-        """Stream a response, calling on_token for each chunk."""
-        full = []
-        async for chunk in client.chat_stream(messages=messages, model=model, tools=tools):
-            content = chunk.get("message", {}).get("content", "")
-            if content:
-                full.append(content)
-                on_token(content)
-        return "".join(full)
 
     async def _search_relevant_memories(self, query: str):
         """Search for relevant memories and add to Recall pool."""

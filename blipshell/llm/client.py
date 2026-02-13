@@ -103,7 +103,14 @@ class LLMClient:
                 stream=False,
                 **kwargs,
             )
-            result = response.get("message", {}).get("content", "")
+            # Handle both object (ollama 0.4+) and dict responses
+            msg = getattr(response, "message", None)
+            if msg is not None:
+                result = getattr(msg, "content", "") or ""
+            elif isinstance(response, dict):
+                result = response.get("message", {}).get("content", "")
+            else:
+                result = ""
 
             if use_cache:
                 _response_cache[cache_key] = result
