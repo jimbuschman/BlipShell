@@ -35,7 +35,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     @app.on_event("startup")
     async def startup():
-        nonlocal _agent, _config_manager
+        global _agent, _config_manager
         _config_manager = ConfigManager(config_path)
         config = _config_manager.load()
         _agent = Agent(config, _config_manager)
