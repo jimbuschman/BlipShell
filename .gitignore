@@ -1,6 +1,13 @@
-﻿################################################################################
+################################################################################
 # This .gitignore file was automatically created by Microsoft(R) Visual Studio.
 ################################################################################
 
 /.vs
-/blipshell
+__pycache__/
+*.pyc
+
+# Database files — never overwrite local data on pull
+data/blipshell.db
+data/blipshell.db-shm
+data/blipshell.db-wal
+data/chroma/
