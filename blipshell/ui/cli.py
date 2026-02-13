@@ -168,6 +168,11 @@ async def chat_loop(
             else:
                 console.print()  # newline after streaming
 
+            # Show which endpoint handled the request
+            ep = agent.last_endpoint_used
+            if ep and ep != "local":
+                console.print(f"[dim]via {ep}[/dim]")
+
             console.print()  # spacing
 
     finally:

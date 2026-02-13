@@ -107,6 +107,7 @@ class Agent:
         self.workflow_executor: Optional[WorkflowExecutor] = None
 
         self._health_check_task: Optional[asyncio.Task] = None
+        self._last_endpoint_used: Optional[str] = None
         self._initialized = False
 
     async def initialize(self):
@@ -449,6 +450,7 @@ class Agent:
             endpoint = await self.endpoint_manager.get_endpoint_for_role(TaskType.REASONING)
             if endpoint:
                 endpoint.start_request()
+                self._last_endpoint_used = endpoint.name
 
             try:
                 response = await client.chat(
@@ -659,6 +661,11 @@ class Agent:
             await self.session_manager.end_session()
         if self.job_queue:
             await self.job_queue.stop()
+
+    @property
+    def last_endpoint_used(self) -> Optional[str]:
+        """Name of the endpoint that handled the last chat request."""
+        return self._last_endpoint_used
 
     def get_status(self) -> dict:
         """Get agent status for display."""
