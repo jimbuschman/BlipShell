@@ -24,6 +24,7 @@ from rich.table import Table
 
 from blipshell.core.agent import Agent
 from blipshell.core.config import ConfigManager
+from blipshell.models.session import MessageRole
 
 console = Console()
 
@@ -99,7 +100,7 @@ async def chat_loop(
     try:
         while True:
             # Notify about background tasks that finished
-            _check_completed_tasks(agent)
+            await _check_completed_tasks(agent)
 
             try:
                 user_input = console.input("[bold green]> [/bold green]").strip()
@@ -230,17 +231,46 @@ async def _submit_offload(agent: Agent, message: str):
     )
 
 
-def _check_completed_tasks(agent: Agent):
-    """Check for background tasks that completed and notify the user."""
+async def _check_completed_tasks(agent: Agent):
+    """Check for background tasks that completed, show results, and inject into LLM context."""
     if not agent.background_manager:
         return
 
     completed_ids = agent.background_manager.pop_completed()
     for task_id in completed_ids:
-        console.print(
-            f"\n[bold green]Background task #{task_id} finished![/bold green] "
-            f"[dim]View with /task {task_id}[/dim]"
-        )
+        task = await agent.background_manager.get_status(task_id)
+        if not task:
+            continue
+
+        status_label = task.status.value
+        if task.result:
+            # Show result to user
+            preview = task.result[:500]
+            console.print(
+                f"\n[bold green]Background task #{task_id} finished:[/bold green] "
+                f"{task.title}"
+            )
+            console.print(Panel(preview, border_style="green", title=f"Task #{task_id} Result"))
+            if len(task.result) > 500:
+                console.print(f"[dim]Result truncated. Full result: /task {task_id}[/dim]")
+
+            # Inject into LLM context so it knows the result
+            if agent.session_manager:
+                context_msg = (
+                    f"[Background task completed] The user previously offloaded this task: "
+                    f"\"{task.title}\"\n\nResult:\n{task.result[:2000]}"
+                )
+                agent.session_manager.add_message(MessageRole.SYSTEM, context_msg)
+        elif task.error_message:
+            console.print(
+                f"\n[bold red]Background task #{task_id} failed:[/bold red] "
+                f"{task.title}\n[red]{task.error_message}[/red]"
+            )
+        else:
+            console.print(
+                f"\n[bold green]Background task #{task_id} finished![/bold green] "
+                f"[dim]View with /task {task_id}[/dim]"
+            )
 
 
 def _print_status(agent: Agent):
