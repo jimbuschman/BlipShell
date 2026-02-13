@@ -445,15 +445,9 @@ async def _handle_code_command(agent: Agent, args_str: str):
         "Suggest concrete fixes when possible. Be concise but thorough."
     )
 
-    # Get coding model and client
-    model = agent.router.get_model(TaskType.CODING)
-    client = await agent.router.get_client(TaskType.CODING)
-
-    if not client:
-        # Fallback to reasoning
-        console.print("[dim]No coding endpoint available, using reasoning model.[/dim]")
-        model = agent.router.get_model(TaskType.REASONING)
-        client = await agent.router.get_client(TaskType.REASONING)
+    # Use reasoning model (GLM-5 outperforms coding-specific models on accuracy)
+    model = agent.router.get_model(TaskType.REASONING)
+    client = await agent.router.get_client(TaskType.REASONING)
 
     if not client:
         console.print("[red]No LLM endpoint available.[/red]")

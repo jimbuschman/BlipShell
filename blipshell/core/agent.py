@@ -447,12 +447,13 @@ class Agent:
         full_response = ""
 
         for iteration in range(max_iterations + 1):
-            endpoint = await self.endpoint_manager.get_endpoint_for_role(TaskType.REASONING)
-            if endpoint:
-                endpoint.start_request()
-                self._last_endpoint_used = endpoint.name
-
+            endpoint = None
             try:
+                endpoint = await self.endpoint_manager.get_endpoint_for_role(TaskType.REASONING)
+                if endpoint:
+                    endpoint.start_request()
+                    self._last_endpoint_used = endpoint.name
+
                 response = await client.chat(
                     messages=messages,
                     model=model,
@@ -480,16 +481,17 @@ class Agent:
                         if on_token:
                             on_token(f"[Result: {result.result[:200]}]\n\n")
 
+                    if endpoint:
+                        endpoint.record_success(0)
                     continue  # Loop back for LLM to process tool results
                 else:
-                    # No tool calls — use the response directly (single call, no double hit)
+                    # No tool calls — use the response directly
                     full_response = content
                     if on_token and content:
                         on_token(content)
+                    if endpoint:
+                        endpoint.record_success(0)
                     break
-
-                if endpoint:
-                    endpoint.record_success(0)
             except Exception as e:
                 if endpoint:
                     endpoint.record_failure()
