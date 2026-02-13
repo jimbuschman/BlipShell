@@ -17,6 +17,8 @@ class ModelsConfig(BaseModel):
     reasoning_fallback: str = "gpt-oss:latest"
     tool_calling_fallback: str = "gpt-oss:latest"
     coding_fallback: str = "gpt-oss:latest"
+    # Disable thinking for fallback models (faster conversational responses)
+    fallback_think: bool = False
 
 
 class EndpointConfig(BaseModel):

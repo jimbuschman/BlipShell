@@ -109,6 +109,7 @@ class Agent:
         self._health_check_task: Optional[asyncio.Task] = None
         self._last_endpoint_used: Optional[str] = None
         self._initialized = False
+        self.think_enabled: bool = False  # /think toggle — off for fast simple chat, complex auto-enables
 
     async def initialize(self):
         """Initialize all subsystems."""
@@ -437,12 +438,14 @@ class Agent:
         # Get model and client (with fallback if cloud is down)
         model = self.router.get_model(TaskType.REASONING)
         client = await self.router.get_client(TaskType.REASONING)
+        using_fallback = False
         if not client:
             # Try fallback model
             fallback = self.router.get_fallback_model(TaskType.REASONING)
             if fallback:
                 logger.warning("Primary endpoint down, using fallback model '%s'", fallback)
                 model = fallback
+                using_fallback = True
                 client = await self.router.get_client(TaskType.REASONING)
             if not client:
                 return "Error: No available LLM endpoint."
@@ -466,6 +469,10 @@ class Agent:
                 chat_kwargs = {}
                 if ctx_tokens:
                     chat_kwargs["options"] = {"num_ctx": ctx_tokens}
+
+                # Pass thinking mode toggle to Ollama (models that don't support it ignore it)
+                if not self.think_enabled:
+                    chat_kwargs["think"] = False
 
                 response = await client.chat(
                     messages=messages,
