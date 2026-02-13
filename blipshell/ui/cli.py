@@ -92,7 +92,7 @@ async def chat_loop(
         f"[bold cyan]BlipShell[/bold cyan] v0.1.0\n"
         f"Session #{sid}"
         + (f" | Project: {project}" if project else "")
-        + f"\nType [bold]/quit[/bold] to exit, [bold]/status[/bold] for info",
+        + f"\nType [bold]/help[/bold] for commands, [bold]/quit[/bold] to exit",
         border_style="cyan",
     ))
 
@@ -137,7 +137,10 @@ async def chat_loop(
                 elif cmd[0] == "workflow":
                     await _handle_workflow_command(agent, cmd_args)
                     continue
-                elif cmd[0] == "help":
+                elif cmd[0] == "offload":
+                    _toggle_offload(agent)
+                    continue
+                elif cmd[0] in ("help", "commands"):
                     _print_help()
                     continue
                 else:
@@ -181,6 +184,30 @@ async def chat_loop(
         console.print("[dim]Session saved. Goodbye![/dim]")
 
 
+def _toggle_offload(agent: Agent):
+    """Toggle offload mode — route work to remote endpoints."""
+    if not agent.endpoint_manager:
+        console.print("[yellow]Endpoint manager not initialized.[/yellow]")
+        return
+
+    if agent.endpoint_manager.offload_mode:
+        agent.endpoint_manager.set_offload_mode(False)
+        console.print("[cyan]Offload mode OFF[/cyan] — using normal routing.")
+    else:
+        success = agent.endpoint_manager.set_offload_mode(True)
+        if success:
+            console.print(
+                "[bold cyan]Offload mode ON[/bold cyan] — "
+                "routing all work to remote endpoints.\n"
+                "[dim]Local PC only used as fallback. Toggle off with /offload[/dim]"
+            )
+        else:
+            console.print(
+                "[yellow]Cannot enable offload: no remote endpoints are available.[/yellow]\n"
+                "[dim]Check /status to see endpoint health.[/dim]"
+            )
+
+
 def _print_status(agent: Agent):
     """Print agent status."""
     status = agent.get_status()
@@ -195,6 +222,12 @@ def _print_status(agent: Agent):
     table.add_row("Planner", "[green]Enabled[/green]" if status.get("planner_enabled") else "[dim]Disabled[/dim]")
     table.add_row("Workflows", str(status.get("workflows_loaded", 0)))
     table.add_row("Queue Pending", str(status["job_queue_pending"]))
+
+    if agent.endpoint_manager:
+        offload = agent.endpoint_manager.offload_mode
+        table.add_row("Offload Mode",
+                       "[bold cyan]ON — remote preferred[/bold cyan]" if offload
+                       else "[dim]Off[/dim]")
 
     console.print(table)
 
@@ -492,18 +525,19 @@ async def _handle_workflow_command(agent: Agent, args: list[str]):
 def _print_help():
     """Print help for CLI commands."""
     console.print(Panel(
-        "[bold]/quit[/bold]            - Exit BlipShell\n"
-        "[bold]/status[/bold]          - Show agent status\n"
-        "[bold]/memory[/bold]          - Show memory pool usage\n"
-        "[bold]/save[/bold]            - Force save session to memory\n"
-        "[bold]/plan[/bold]            - Show current active plan\n"
-        "[bold]/plans[/bold]           - List all plans for this session\n"
-        "[bold]/tasks[/bold]           - Show background tasks\n"
-        "[bold]/task <id>[/bold]       - Show background task detail\n"
-        "[bold]/workflow list[/bold]   - List available workflows\n"
+        "[bold]/quit[/bold]              - Exit BlipShell\n"
+        "[bold]/status[/bold]            - Show agent status, endpoints, routing\n"
+        "[bold]/memory[/bold]            - Show memory pool usage\n"
+        "[bold]/save[/bold]              - Force save session to memory\n"
+        "[bold]/offload[/bold]           - Toggle offload mode (route work to remote PC)\n"
+        "[bold]/plan[/bold]              - Show current active plan\n"
+        "[bold]/plans[/bold]             - List all plans for this session\n"
+        "[bold]/tasks[/bold]             - Show background tasks\n"
+        "[bold]/task <id>[/bold]         - Show background task detail\n"
+        "[bold]/workflow list[/bold]     - List available workflows\n"
         "[bold]/workflow show <n>[/bold] - Show workflow steps\n"
         "[bold]/workflow run <n>[/bold]  - Run a workflow\n"
-        "[bold]/help[/bold]            - Show this help\n\n"
+        "[bold]/help[/bold]              - Show this help\n\n"
         "[dim]Prefix with !plan to force planning: !plan <message>[/dim]",
         title="Commands",
         border_style="blue",
