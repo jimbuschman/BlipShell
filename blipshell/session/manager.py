@@ -162,13 +162,22 @@ class SessionManager:
             return
 
         # Dump any remaining messages
+        logger.info("Saving messages...")
         await self.dump_to_memory()
 
         # Generate session summary
-        await self._create_session_summary()
+        logger.info("Generating session summary...")
+        try:
+            await self._create_session_summary()
+        except Exception as e:
+            logger.error("Session summary failed (skipping): %s", e)
 
         # Extract lessons from the conversation
-        await self._extract_lessons()
+        logger.info("Extracting lessons...")
+        try:
+            await self._extract_lessons()
+        except Exception as e:
+            logger.error("Lesson extraction failed (skipping): %s", e)
 
         logger.info("Session %d ended", self.session_id)
 
