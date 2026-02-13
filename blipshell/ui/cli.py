@@ -144,6 +144,14 @@ async def chat_loop(
                 elif cmd[0] == "workflow":
                     await _handle_workflow_command(agent, cmd_args)
                     continue
+                elif cmd[0] == "feedback":
+                    if len(cmd) < 2:
+                        console.print("[yellow]Usage: /feedback <your feedback>[/yellow]")
+                        console.print("[dim]Example: /feedback too verbose, keep answers shorter[/dim]")
+                    else:
+                        feedback_text = user_input[len("/feedback "):]
+                        await _save_feedback(agent, feedback_text)
+                    continue
                 elif cmd[0] == "offload":
                     if len(cmd) < 2:
                         console.print("[yellow]Usage: /offload <task description>[/yellow]")
@@ -194,6 +202,42 @@ async def chat_loop(
         console.print("\n[dim]Ending session...[/dim]")
         await agent.end_session()
         console.print("[dim]Session saved. Goodbye![/dim]")
+
+
+async def _save_feedback(agent: Agent, feedback: str):
+    """Save user feedback as a lesson so the LLM learns from it."""
+    if not agent.processor:
+        console.print("[yellow]Memory processor not initialized.[/yellow]")
+        return
+
+    from blipshell.models.memory import Lesson
+
+    session_id = agent.session_manager.session_id if agent.session_manager else None
+
+    lesson = Lesson(
+        content=f"User feedback: {feedback}",
+        summary=feedback,
+        rank=4,  # high — explicit user feedback
+        importance=0.8,
+        source_session_id=session_id,
+        tags=["feedback"],
+    )
+
+    lesson_id = await agent.sqlite.create_lesson(lesson)
+
+    # Embed so it surfaces in semantic search
+    try:
+        agent.chroma.add_lesson(lesson_id, lesson.content)
+    except Exception as e:
+        logging.getLogger(__name__).debug("Feedback embed failed: %s", e)
+
+    # Tag it
+    try:
+        await agent.sqlite.tag_lesson(lesson_id, ["feedback", "user-preference"])
+    except Exception:
+        pass
+
+    console.print(f"[green]Feedback saved as lesson #{lesson_id}.[/green]")
 
 
 async def _submit_offload(agent: Agent, message: str):
@@ -596,6 +640,7 @@ def _print_help():
         "[bold]/status[/bold]            - Show agent status, endpoints, routing\n"
         "[bold]/memory[/bold]            - Show memory pool usage\n"
         "[bold]/save[/bold]              - Force save session to memory\n"
+        "[bold]/feedback <msg>[/bold]    - Save feedback as a lesson (e.g. 'be more concise')\n"
         "[bold]/offload <msg>[/bold]     - Run a task on the remote PC in the background\n"
         "[bold]/plan[/bold]              - Show current active plan\n"
         "[bold]/plans[/bold]             - List all plans for this session\n"
