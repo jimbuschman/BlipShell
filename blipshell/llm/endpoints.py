@@ -30,6 +30,7 @@ class Endpoint:
     active_requests: int = 0
     last_used: float = field(default_factory=time.time)
     last_response_time: float = 1.0  # seconds
+    context_tokens: Optional[int] = None  # per-endpoint context window
     client: Optional[LLMClient] = field(default=None, repr=False)
 
     @property
@@ -77,6 +78,7 @@ class EndpointManager:
                 priority=cfg.priority,
                 max_concurrent=cfg.max_concurrent,
                 enabled=cfg.enabled,
+                context_tokens=cfg.context_tokens,
                 client=LLMClient(
                     host=cfg.url,
                     max_retries=llm_cfg.max_retries,
@@ -142,6 +144,27 @@ class EndpointManager:
             if ep.name != "local" and ep.enabled:
                 return ep.name
         return None
+
+    def get_context_tokens_for_role(self, role: str, default: int = 32768) -> int:
+        """Get the context window size for the endpoint that handles a role.
+
+        Checks the last routed endpoint for the role, or finds the best
+        candidate. Returns the endpoint's context_tokens if set, otherwise
+        the provided default.
+        """
+        # Check last routed endpoint first
+        last_name = self._last_routed.get(role)
+        if last_name:
+            for ep in self._endpoints:
+                if ep.name == last_name and ep.context_tokens:
+                    return ep.context_tokens
+
+        # Fallback: find best endpoint for this role
+        for ep in self._endpoints:
+            if role in ep.roles and ep.enabled and ep.context_tokens:
+                return ep.context_tokens
+
+        return default
 
     async def mark_failed(self, endpoint_name: str):
         """Mark an endpoint as failed."""
