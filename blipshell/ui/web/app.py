@@ -7,14 +7,16 @@ memory browser, data export, and API key auth.
 import asyncio
 import json
 import logging
+import time
 import uuid
 from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from blipshell.core.agent import Agent
 from blipshell.core.config import ConfigManager
@@ -32,8 +34,26 @@ _auth_config: Optional[AuthConfig] = None
 # Per-WebSocket session tracking: {ws_id: session_id}
 _ws_sessions: dict[str, int] = {}
 
+# Lazy API session for /v1 endpoints (Continue.dev, etc.)
+_api_session_id: Optional[int] = None
+
 # HTTP Bearer scheme (auto_error=False so we can check auth_config.enabled)
 _bearer = HTTPBearer(auto_error=False)
+
+
+# --- OpenAI-compatible request models ---
+
+class ChatMessage(BaseModel):
+    role: str  # system, user, assistant
+    content: str
+
+
+class ChatCompletionRequest(BaseModel):
+    model: str = "blipshell"
+    messages: list[ChatMessage]
+    stream: bool = False
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
 
 
 async def verify_auth(
@@ -392,6 +412,117 @@ def create_app(config_path: str | None = None) -> FastAPI:
             progress_message=body.get("progress_message", task.progress_message),
         )
         return {"status": "ok"}
+
+    # --- OpenAI-compatible API (for Continue.dev / VS Code) ---
+
+    async def _ensure_api_session() -> int:
+        """Lazily start a session for /v1 API requests."""
+        global _api_session_id
+        if _api_session_id is None:
+            _api_session_id = await _agent.start_session(project="vscode-continue")
+        return _api_session_id
+
+    @app.get("/v1/models", dependencies=[Depends(verify_auth)])
+    async def list_models():
+        """Return available models in OpenAI format."""
+        return {
+            "object": "list",
+            "data": [
+                {"id": "blipshell", "object": "model", "owned_by": "blipshell"},
+                {"id": "blipshell-code", "object": "model", "owned_by": "blipshell"},
+            ],
+        }
+
+    @app.post("/v1/chat/completions", dependencies=[Depends(verify_auth)])
+    async def chat_completions(request: ChatCompletionRequest):
+        """OpenAI-compatible chat completions endpoint."""
+        await _ensure_api_session()
+
+        # Extract content: prepend system message if present, use last user message
+        system_parts = [
+            m.content for m in request.messages if m.role == "system"
+        ]
+        user_messages = [m for m in request.messages if m.role == "user"]
+        if not user_messages:
+            raise HTTPException(status_code=400, detail="No user message provided")
+
+        content = user_messages[-1].content
+        if system_parts:
+            content = f"[System: {system_parts[-1]}]\n\n{content}"
+
+        if request.stream:
+            return StreamingResponse(
+                _stream_chat(content),
+                media_type="text/event-stream",
+            )
+
+        # Non-streaming: call agent and return full response
+        response = await _agent.chat(content)
+        response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+        return {
+            "id": response_id,
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": request.model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": response},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
+
+    async def _stream_chat(content: str):
+        """SSE generator that yields OpenAI-format chunks from Agent.chat()."""
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        done = asyncio.Event()
+        response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+
+        def on_token(token: str):
+            queue.put_nowait(token)
+
+        async def run_chat():
+            try:
+                await _agent.chat(content, on_token=on_token)
+            finally:
+                done.set()
+
+        task = asyncio.create_task(run_chat())
+
+        # First chunk: role declaration
+        first = {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
+        }
+        yield f"data: {json.dumps(first)}\n\n"
+
+        # Stream content tokens
+        while not done.is_set() or not queue.empty():
+            try:
+                token = await asyncio.wait_for(queue.get(), timeout=0.1)
+                chunk = {
+                    "id": response_id,
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "choices": [{"index": 0, "delta": {"content": token}, "finish_reason": None}],
+                }
+                yield f"data: {json.dumps(chunk)}\n\n"
+            except asyncio.TimeoutError:
+                continue
+
+        # Final chunk: stop signal
+        final = {
+            "id": response_id,
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+        yield f"data: {json.dumps(final)}\n\n"
+        yield "data: [DONE]\n\n"
 
     return app
 
