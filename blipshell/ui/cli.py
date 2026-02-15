@@ -167,6 +167,14 @@ async def chat_loop(
                     state = "[green]ON[/green]" if agent.think_enabled else "[yellow]OFF[/yellow]"
                     console.print(f"[dim]Thinking mode: {state}[/dim]")
                     continue
+                elif cmd[0] == "reflect":
+                    if len(cmd) > 1 and cmd[1] in ("on", "off"):
+                        agent.reflect_enabled = cmd[1] == "on"
+                    else:
+                        agent.reflect_enabled = not agent.reflect_enabled
+                    state = "[green]ON[/green]" if agent.reflect_enabled else "[yellow]OFF[/yellow]"
+                    console.print(f"[dim]Self-reflection: {state}[/dim]")
+                    continue
                 elif cmd[0] == "code":
                     if len(cmd) < 2:
                         console.print("[yellow]Usage: /code [--model name] <file-or-folder> [instruction][/yellow]")
@@ -968,6 +976,7 @@ def _print_help():
         "[bold]/save[/bold]              - Force save session to memory\n"
         "[bold]/core[/bold]              - Show core memories and lessons\n"
         "[bold]/think[/bold]              - Toggle LLM thinking mode on/off (faster when off)\n"
+        "[bold]/reflect[/bold]            - Toggle self-reflection (second-pass critique) on/off\n"
         "[bold]/code <path> [msg][/bold]  - Send code to LLM for review (--model name to override)\n"
         "[bold]/feedback <msg>[/bold]    - Save feedback as a lesson (e.g. 'be more concise')\n"
         "[bold]/offload <msg>[/bold]     - Run a task on the remote PC in the background\n"

@@ -42,7 +42,7 @@ from blipshell.core.workflows import WorkflowExecutor, WorkflowRegistry
 from blipshell.llm.client import LLMClient
 from blipshell.llm.endpoints import EndpointManager
 from blipshell.llm.job_queue import LLMJobQueue
-from blipshell.llm.prompts import summarize_session_chunk
+from blipshell.llm.prompts import reflect_on_response, summarize_session_chunk
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.chroma_store import ChromaStore
 from blipshell.memory.manager import MemoryManager, PoolItem, estimate_tokens
@@ -110,6 +110,7 @@ class Agent:
         self._last_endpoint_used: Optional[str] = None
         self._initialized = False
         self.think_enabled: bool = False  # /think toggle — off for fast simple chat, complex auto-enables
+        self.reflect_enabled: bool = False  # /reflect toggle — second-pass self-critique
 
     async def initialize(self):
         """Initialize all subsystems."""
@@ -415,6 +416,12 @@ class Agent:
             logger.info("Message classified as simple — using direct chat")
             response = await self._chat_simple(user_message, on_token=on_token)
 
+        # Self-reflection: second LLM pass to catch errors/gaps
+        if self.reflect_enabled and response and not response.startswith("Error:"):
+            if on_token:
+                on_token("\n\n[Reflecting...]\n\n")
+            response = await self._reflect_on_response(user_message, response, on_token)
+
         # Add assistant response to session
         self.session_manager.add_message(MessageRole.ASSISTANT, response)
 
@@ -682,6 +689,36 @@ class Agent:
             TaskType.SUMMARIZATION,
             summarize_session_chunk(text),
         )
+
+    async def _reflect_on_response(
+        self,
+        user_message: str,
+        original_response: str,
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """Run a second LLM pass to critique and improve the response.
+
+        Returns the improved response if changes were suggested,
+        otherwise returns the original.
+        """
+        try:
+            prompt = reflect_on_response(user_message, original_response)
+            improved = await self.router.generate(TaskType.REASONING, prompt)
+            improved = improved.strip()
+
+            if not improved or improved == "NO_CHANGES":
+                if on_token:
+                    on_token("[No changes needed]\n")
+                return original_response
+
+            if on_token:
+                on_token(improved)
+            return improved
+        except Exception as e:
+            logger.error("Reflection failed: %s", e)
+            if on_token:
+                on_token(f"[Reflection failed: {e}]\n")
+            return original_response
 
     async def end_session(self):
         """End the current session and clean up."""

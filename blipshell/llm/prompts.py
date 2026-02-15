@@ -196,6 +196,25 @@ def execute_step(
     )
 
 
+def reflect_on_response(user_message: str, response: str) -> str:
+    """Prompt for self-reflection on a generated response."""
+    return (
+        "You are reviewing an AI assistant's response for quality.\n\n"
+        "Check for:\n"
+        "- Factual errors or incorrect statements\n"
+        "- Missing information that would meaningfully improve the answer\n"
+        "- Unclear or confusing explanations\n"
+        "- Whether the response actually answers what was asked\n\n"
+        "If you find issues, return an improved version of the response.\n"
+        "If the response is already good, return exactly: NO_CHANGES\n\n"
+        "Do NOT add pleasantries, disclaimers, or meta-commentary.\n"
+        "Do NOT mention that you are reviewing or improving anything.\n"
+        "Just return the improved response or NO_CHANGES.\n\n"
+        f"User question: {user_message}\n\n"
+        f"Response to review:\n{response}"
+    )
+
+
 def summarize_plan_results(user_request: str, step_results: list[str]) -> str:
     """Prompt for summarizing all completed plan steps into a final response."""
     results_text = ""
