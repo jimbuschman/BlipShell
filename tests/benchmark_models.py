@@ -5,12 +5,14 @@ multiple models side-by-side, then prints Rich comparison tables and
 saves results to JSON.
 
 Usage:
-    python tests/benchmark_models.py
-    python -m pytest tests/benchmark_models.py -s
+    python tests/benchmark_models.py                          # run all default models
+    python tests/benchmark_models.py phi4:14b qwen3:14b       # run only specified models
+    python -m pytest tests/benchmark_models.py -s             # run all via pytest
 """
 
 import asyncio
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -36,6 +38,12 @@ BENCHMARK_MODELS = [
     "gpt-oss:latest",
     "llama3.1:8b",
     "qwen2.5:14b",
+    "phi4:14b",
+    "mistral-small:24b",
+    "qwen3:14b",
+    "dolphin3:8b",
+    "olmo2:7b",
+    "glm-5:cloud",
 ]
 
 OLLAMA_URL = "http://localhost:11434"
@@ -255,14 +263,15 @@ async def benchmark_lessons(router: LLMRouter) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def print_summary_table(all_results: dict):
+    models = list(all_results.keys())
     table = Table(title="Summarization", show_lines=True, expand=True)
     table.add_column("Message", style="cyan", width=22, no_wrap=True)
-    for model in BENCHMARK_MODELS:
+    for model in models:
         table.add_column(model, ratio=1)
 
     for i, label in enumerate(MESSAGE_LABELS):
         row = [label]
-        for model in BENCHMARK_MODELS:
+        for model in models:
             r = all_results[model]["summarization"][i]
             cell = f"{r['response']}\n[dim]({r['time']}s)[/dim]"
             row.append(cell)
@@ -272,14 +281,15 @@ def print_summary_table(all_results: dict):
 
 
 def print_ranking_table(all_results: dict):
+    models = list(all_results.keys())
     table = Table(title="Ranking (1-5)", show_lines=True, expand=True)
     table.add_column("Message", style="cyan", width=22, no_wrap=True)
-    for model in BENCHMARK_MODELS:
+    for model in models:
         table.add_column(model, ratio=1)
 
     for i, label in enumerate(MESSAGE_LABELS):
         row = [label]
-        for model in BENCHMARK_MODELS:
+        for model in models:
             r = all_results[model]["ranking"][i]
             cell = f"[bold]{r['parsed']}[/bold]  [dim]raw={r['raw'][:20]}  ({r['time']}s)[/dim]"
             row.append(cell)
@@ -289,14 +299,15 @@ def print_ranking_table(all_results: dict):
 
 
 def print_importance_table(all_results: dict):
+    models = list(all_results.keys())
     table = Table(title="Importance (0.0-1.0)", show_lines=True, expand=True)
     table.add_column("Message", style="cyan", width=22, no_wrap=True)
-    for model in BENCHMARK_MODELS:
+    for model in models:
         table.add_column(model, ratio=1)
 
     for i, label in enumerate(MESSAGE_LABELS):
         row = [label]
-        for model in BENCHMARK_MODELS:
+        for model in models:
             r = all_results[model]["importance"][i]
             cell = f"[bold]{r['parsed']}[/bold]  [dim]raw={r['raw'][:20]}  ({r['time']}s)[/dim]"
             row.append(cell)
@@ -306,14 +317,15 @@ def print_importance_table(all_results: dict):
 
 
 def print_lessons_table(all_results: dict):
+    models = list(all_results.keys())
     table = Table(title="Lesson Extraction", show_lines=True, expand=True)
     table.add_column("Conversation", style="cyan", width=22, no_wrap=True)
-    for model in BENCHMARK_MODELS:
+    for model in models:
         table.add_column(model, ratio=1)
 
     for i in range(len(TEST_CONVERSATIONS)):
         row = [f"Conv {i + 1}"]
-        for model in BENCHMARK_MODELS:
+        for model in models:
             r = all_results[model]["lessons"][i]
             cell = f"{r['response']}\n[dim]({r['time']}s)[/dim]"
             row.append(cell)
@@ -326,12 +338,25 @@ def print_lessons_table(all_results: dict):
 # Main
 # ---------------------------------------------------------------------------
 
-async def run_benchmark():
-    all_results = {}
+async def run_benchmark(models: list[str]):
     data_dir = Path("data")
     data_dir.mkdir(exist_ok=True)
+    output_path = data_dir / "benchmark_results.json"
 
-    for model in BENCHMARK_MODELS:
+    # Load existing results to merge with
+    all_results = {}
+    if output_path.exists():
+        with open(output_path) as f:
+            all_results = json.load(f)
+        existing = [m for m in models if m in all_results]
+        if existing:
+            console.print(f"[yellow]Loaded existing results for: {', '.join(all_results.keys())}[/yellow]")
+
+    # Only run models that were requested
+    models_to_run = models
+    console.print(f"[bold]Running benchmarks for: {', '.join(models_to_run)}[/bold]\n")
+
+    for model in models_to_run:
         console.rule(f"[bold blue]Benchmarking: {model}")
         router = make_router(model)
 
@@ -355,7 +380,7 @@ async def run_benchmark():
         }
         console.print(f"  [green]Done with {model}[/green]\n")
 
-    # Print comparison tables
+    # Print comparison tables (all results, including previously loaded)
     console.rule("[bold green]Results")
     print_summary_table(all_results)
     console.print()
@@ -365,17 +390,17 @@ async def run_benchmark():
     console.print()
     print_lessons_table(all_results)
 
-    # Save to JSON
-    output_path = data_dir / "benchmark_results.json"
+    # Save merged results to JSON
     with open(output_path, "w") as f:
         json.dump(all_results, f, indent=2)
-    console.print(f"\n[bold]Results saved to {output_path}[/bold]")
+    console.print(f"\n[bold]Results saved to {output_path} ({len(all_results)} models)[/bold]")
 
 
 def test_benchmark():
     """Entry point for pytest -s."""
-    asyncio.run(run_benchmark())
+    asyncio.run(run_benchmark(BENCHMARK_MODELS))
 
 
 if __name__ == "__main__":
-    asyncio.run(run_benchmark())
+    models = sys.argv[1:] if len(sys.argv) > 1 else BENCHMARK_MODELS
+    asyncio.run(run_benchmark(models))
