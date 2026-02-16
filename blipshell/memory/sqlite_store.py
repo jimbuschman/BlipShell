@@ -204,11 +204,13 @@ class SQLiteStore:
 
     # --- Sessions ---
 
-    async def create_session(self, title: str = "New Session", project: Optional[str] = None) -> int:
+    async def create_session(self, title: str = "New Session", project: Optional[str] = None,
+                             created_at: Optional[datetime] = None) -> int:
         """Create a new session and return its ID."""
+        ts = (created_at or datetime.now(timezone.utc)).isoformat()
         cursor = await self._db.execute(
             "INSERT INTO sessions (title, project, created_at, last_active) VALUES (?, ?, ?, ?)",
-            (title, project, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()),
+            (title, project, ts, ts),
         )
         await self._db.commit()
         return cursor.lastrowid

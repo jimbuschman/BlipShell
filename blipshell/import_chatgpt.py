@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -235,8 +235,12 @@ async def _import_single_conversation(
     skip_lessons: bool,
 ):
     """Import a single conversation into BlipShell."""
-    # Create a session for this conversation
-    session_id = await sqlite.create_session(title=conv.title)
+    # Create a session for this conversation (preserve original date)
+    conv_ts = (
+        datetime.fromtimestamp(conv.created_at, tz=UTC)
+        if conv.created_at else None
+    )
+    session_id = await sqlite.create_session(title=conv.title, created_at=conv_ts)
 
     # Update message count on the session
     msg_count = 0
@@ -247,10 +251,15 @@ async def _import_single_conversation(
     async def _process_one(msg):
         async with sem:
             try:
+                ts = (
+                    datetime.fromtimestamp(msg.timestamp, tz=UTC)
+                    if msg.timestamp else None
+                )
                 result = await processor.process_message(
                     text=msg.content,
                     role=msg.role,
                     session_id=session_id,
+                    timestamp=ts,
                 )
                 return result
             except Exception as e:

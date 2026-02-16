@@ -51,6 +51,7 @@ class MemoryProcessor:
         role: str,
         session_id: int,
         metadata: str = "{}",
+        timestamp: datetime | None = None,
     ) -> int | None:
         """Full pipeline for processing a conversation message into memory.
 
@@ -83,7 +84,7 @@ class MemoryProcessor:
             role=role,
             content=text,
             summary=summary,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=timestamp or datetime.now(timezone.utc),
             memory_type=MemoryType.CONVERSATION,
         )
         memory_id = await self.sqlite.create_memory(memory)
