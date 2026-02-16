@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from blipshell.llm.endpoints import EndpointManager
@@ -44,6 +45,7 @@ BENCHMARK_MODELS = [
     "dolphin3:8b",
     "olmo2:7b",
     "glm-5:cloud",
+    "gpt-oss:120b-cloud",
 ]
 
 OLLAMA_URL = "http://localhost:11434"
@@ -265,15 +267,15 @@ async def benchmark_lessons(router: LLMRouter) -> list[dict]:
 def print_summary_table(all_results: dict):
     models = list(all_results.keys())
     table = Table(title="Summarization", show_lines=True, expand=True)
-    table.add_column("Message", style="cyan", width=22, no_wrap=True)
-    for model in models:
-        table.add_column(model, ratio=1)
+    table.add_column("Model", style="cyan", width=20, no_wrap=True)
+    for label in MESSAGE_LABELS:
+        table.add_column(label, ratio=1)
 
-    for i, label in enumerate(MESSAGE_LABELS):
-        row = [label]
-        for model in models:
+    for model in models:
+        row = [model]
+        for i in range(len(MESSAGE_LABELS)):
             r = all_results[model]["summarization"][i]
-            cell = f"{r['response']}\n[dim]({r['time']}s)[/dim]"
+            cell = f"{escape(r['response'])}\n[dim]({r['time']}s)[/dim]"
             row.append(cell)
         table.add_row(*row)
 
@@ -282,17 +284,16 @@ def print_summary_table(all_results: dict):
 
 def print_ranking_table(all_results: dict):
     models = list(all_results.keys())
-    table = Table(title="Ranking (1-5)", show_lines=True, expand=True)
-    table.add_column("Message", style="cyan", width=22, no_wrap=True)
-    for model in models:
-        table.add_column(model, ratio=1)
+    table = Table(title="Ranking (1-5)", show_lines=True)
+    table.add_column("Model", style="cyan", width=20, no_wrap=True)
+    for label in MESSAGE_LABELS:
+        table.add_column(label, justify="center", width=10)
 
-    for i, label in enumerate(MESSAGE_LABELS):
-        row = [label]
-        for model in models:
+    for model in models:
+        row = [model]
+        for i in range(len(MESSAGE_LABELS)):
             r = all_results[model]["ranking"][i]
-            cell = f"[bold]{r['parsed']}[/bold]  [dim]raw={r['raw'][:20]}  ({r['time']}s)[/dim]"
-            row.append(cell)
+            row.append(f"[bold]{r['parsed']}[/bold]\n[dim]{r['time']}s[/dim]")
         table.add_row(*row)
 
     console.print(table)
@@ -300,17 +301,16 @@ def print_ranking_table(all_results: dict):
 
 def print_importance_table(all_results: dict):
     models = list(all_results.keys())
-    table = Table(title="Importance (0.0-1.0)", show_lines=True, expand=True)
-    table.add_column("Message", style="cyan", width=22, no_wrap=True)
-    for model in models:
-        table.add_column(model, ratio=1)
+    table = Table(title="Importance (0.0-1.0)", show_lines=True)
+    table.add_column("Model", style="cyan", width=20, no_wrap=True)
+    for label in MESSAGE_LABELS:
+        table.add_column(label, justify="center", width=10)
 
-    for i, label in enumerate(MESSAGE_LABELS):
-        row = [label]
-        for model in models:
+    for model in models:
+        row = [model]
+        for i in range(len(MESSAGE_LABELS)):
             r = all_results[model]["importance"][i]
-            cell = f"[bold]{r['parsed']}[/bold]  [dim]raw={r['raw'][:20]}  ({r['time']}s)[/dim]"
-            row.append(cell)
+            row.append(f"[bold]{r['parsed']}[/bold]\n[dim]{r['time']}s[/dim]")
         table.add_row(*row)
 
     console.print(table)
@@ -319,15 +319,15 @@ def print_importance_table(all_results: dict):
 def print_lessons_table(all_results: dict):
     models = list(all_results.keys())
     table = Table(title="Lesson Extraction", show_lines=True, expand=True)
-    table.add_column("Conversation", style="cyan", width=22, no_wrap=True)
-    for model in models:
-        table.add_column(model, ratio=1)
-
+    table.add_column("Model", style="cyan", width=20, no_wrap=True)
     for i in range(len(TEST_CONVERSATIONS)):
-        row = [f"Conv {i + 1}"]
-        for model in models:
+        table.add_column(f"Conv {i + 1}", ratio=1)
+
+    for model in models:
+        row = [model]
+        for i in range(len(TEST_CONVERSATIONS)):
             r = all_results[model]["lessons"][i]
-            cell = f"{r['response']}\n[dim]({r['time']}s)[/dim]"
+            cell = f"{escape(r['response'])}\n[dim]({r['time']}s)[/dim]"
             row.append(cell)
         table.add_row(*row)
 
@@ -380,6 +380,11 @@ async def run_benchmark(models: list[str]):
         }
         console.print(f"  [green]Done with {model}[/green]\n")
 
+    # Save merged results to JSON first (so data isn't lost if table rendering fails)
+    with open(output_path, "w") as f:
+        json.dump(all_results, f, indent=2)
+    console.print(f"\n[bold]Results saved to {output_path} ({len(all_results)} models)[/bold]")
+
     # Print comparison tables (all results, including previously loaded)
     console.rule("[bold green]Results")
     print_summary_table(all_results)
@@ -389,11 +394,6 @@ async def run_benchmark(models: list[str]):
     print_importance_table(all_results)
     console.print()
     print_lessons_table(all_results)
-
-    # Save merged results to JSON
-    with open(output_path, "w") as f:
-        json.dump(all_results, f, indent=2)
-    console.print(f"\n[bold]Results saved to {output_path} ({len(all_results)} models)[/bold]")
 
 
 def test_benchmark():
