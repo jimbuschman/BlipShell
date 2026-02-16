@@ -63,9 +63,11 @@ class MemoryProcessor:
 
         # Step 2: Summarize
         try:
+            sum_system, sum_prompt = summarize_memory(text)
             summary = await self.router.generate(
                 TaskType.SUMMARIZATION,
-                summarize_memory(text),
+                sum_prompt,
+                system=sum_system,
             )
             # LLM signals this is self-referential / meta content
             if summary.strip().upper() == "SKIP":
@@ -105,9 +107,11 @@ class MemoryProcessor:
 
         # Step 6: Rank (1-5)
         try:
+            rank_system, rank_prompt = rank_memory(text)
             rank_text = await self.router.generate(
                 TaskType.RANKING,
-                rank_memory(text),
+                rank_prompt,
+                system=rank_system,
             )
             rank = self._parse_rank(rank_text)
             await self.sqlite.update_memory(memory_id, rank=rank)
@@ -192,9 +196,11 @@ class MemoryProcessor:
         """
         # Base importance from LLM
         try:
+            imp_system, imp_prompt = ask_importance(text)
             importance_text = await self.router.generate(
                 TaskType.RANKING,
-                ask_importance(text),
+                imp_prompt,
+                system=imp_system,
             )
             importance = self._parse_float(importance_text, default=0.3)
         except Exception:

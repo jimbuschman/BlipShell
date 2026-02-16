@@ -67,26 +67,32 @@ async def reprocess_memories(
 
             try:
                 # Re-summarize
+                sum_system, sum_prompt = summarize_memory(memory.content)
                 summary = await router.generate(
                     TaskType.SUMMARIZATION,
-                    summarize_memory(memory.content),
+                    sum_prompt,
+                    system=sum_system,
                     think=think,
                 )
                 if summary.strip().upper() == "SKIP":
                     summary = memory.summary or memory.content[:200]
 
                 # Re-rank (1-5)
+                rank_system, rank_prompt = rank_memory(memory.content)
                 rank_text = await router.generate(
                     TaskType.RANKING,
-                    rank_memory(memory.content),
+                    rank_prompt,
+                    system=rank_system,
                     think=think,
                 )
                 rank = MemoryProcessor._parse_rank(rank_text)
 
                 # Re-importance (0.0-1.0)
+                imp_system, imp_prompt = ask_importance(memory.content)
                 importance_text = await router.generate(
                     TaskType.RANKING,
-                    ask_importance(memory.content),
+                    imp_prompt,
+                    system=imp_system,
                     think=think,
                 )
                 importance = MemoryProcessor._parse_float(importance_text, default=0.3)

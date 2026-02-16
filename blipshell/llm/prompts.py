@@ -9,19 +9,22 @@ UTILITY_SYSTEM_PROMPT = (
 )
 
 
-def rank_memory(text: str) -> str:
-    """Prompt for ranking a memory 1-5."""
-    return (
-        "You are evaluating a message to determine how informative or meaningful it is.\n\n"
-        "Based on the content, assign it a rank from 1 to 5:\n\n"
-        "1 - Noise / Fluff: Boilerplate, repetitive, off-topic, or lacking meaningful content.\n"
-        "2 - Minor: Light emotional context or vague thought, lacks depth or specificity.\n"
-        "3 - Useful: Contains at least one clear idea, insight, or point worth keeping.\n"
-        "4 - Important: Clear relevance, meaningful insight, decision, realization, or reflective moment.\n"
-        "5 - Critical: Core to identity, evolution, or decision-making. Key turning points.\n\n"
-        "Respond with ONLY the rank (1-5).\n\n"
-        f"Message: {text}"
+def rank_memory(text: str) -> tuple[str, str]:
+    """Prompt for ranking a memory 1-5.
+
+    Returns (system_prompt, user_prompt) to keep instruction separate from content.
+    """
+    system = (
+        "You rate messages on a 1-5 scale based on how valuable they are to remember.\n\n"
+        "1 = Noise: greetings, filler, system prompts, boilerplate, 'hello', 'thanks'\n"
+        "2 = Minor: short or vague messages with little substance\n"
+        "3 = Useful: contains a clear topic, question, or piece of information\n"
+        "4 = Important: meaningful insight, decision, preference, or technical detail\n"
+        "5 = Critical: core fact about the user, key decision, or turning point\n\n"
+        "Respond with ONLY a single digit (1-5). Nothing else."
     )
+    user = f"Rate this message:\n\n{text}"
+    return system, user
 
 
 def rephrase_as_memory_style(text: str) -> str:
@@ -34,16 +37,28 @@ def rephrase_as_memory_style(text: str) -> str:
     )
 
 
-def summarize_memory(text: str) -> str:
-    """Prompt for summarizing a memory."""
-    return (
-        "Summarize the following conversation excerpt in 1 concise, factual sentence. "
-        "Focus on what the USER said, asked, decided, or learned. "
-        "Do NOT describe the assistant's capabilities, tools, or system features. "
-        "Do NOT summarize meta-discussion about the AI itself. "
-        "If the content is only about the AI system and not the user, respond with: SKIP\n\n"
-        f"Excerpt: {text}"
+def summarize_memory(text: str) -> tuple[str, str]:
+    """Prompt for summarizing a memory.
+
+    Returns (system_prompt, user_prompt) to keep instruction separate from content.
+    """
+    system = (
+        "You are a memory summarizer. Condense the message into ONE short, "
+        "factual sentence (under 30 words).\n\n"
+        "Rules:\n"
+        "- Write in third person: 'User asked...' or 'Assistant explained...'\n"
+        "- Focus on the TOPIC and SUBSTANCE, not the tools or process\n"
+        "- Strip out system prompts, tool markup, markdown formatting, and emojis\n"
+        "- Do NOT echo the original text — rephrase in your own words\n"
+        "- Do NOT describe what tools were used or how the AI works\n"
+        "- If the message is just a greeting, filler, or system boilerplate, respond with: SKIP\n\n"
+        "GOOD: 'User asked how to improve Minecraft performance on a low-end laptop.'\n"
+        "GOOD: 'Assistant identified three bugs in worker.py including missing shutdown logic.'\n"
+        "BAD: 'The user initiated a conversation, asking the assistant for help.' (too vague)\n"
+        "BAD: 'I will use the read_currently_open_file tool...' (describes tools, not topic)"
     )
+    user = f"Summarize this message:\n\n{text}"
+    return system, user
 
 
 def summarize_session_chunk(text: str) -> str:
@@ -95,18 +110,22 @@ def generate_memory_name(text: str) -> str:
     )
 
 
-def ask_importance(text: str) -> str:
-    """Prompt for rating memory importance 0.0-1.0."""
-    return (
-        "Rate the importance of the following memory on a scale from 0.0 to 1.0.\n"
-        "Use the following guidelines:\n"
-        "- 1.0 = Deeply personal, emotionally significant, critical fact, or core belief\n"
-        "- 0.7 = Important context or recurring theme\n"
-        "- 0.4 = Useful but minor detail\n"
-        "- 0.1 = Casual, generic, or low-impact\n\n"
-        "Respond ONLY with a single numeric value.\n\n"
-        f"Memory: {text}"
+def ask_importance(text: str) -> tuple[str, str]:
+    """Prompt for rating memory importance 0.0-1.0.
+
+    Returns (system_prompt, user_prompt) to keep instruction separate from content.
+    """
+    system = (
+        "You rate how important a message is to remember long-term on a 0.0-1.0 scale.\n\n"
+        "0.1 = Throwaway: greetings, filler, system noise\n"
+        "0.3 = Low: casual chat, minor details\n"
+        "0.5 = Medium: useful context, specific question or topic\n"
+        "0.7 = High: user preference, project detail, recurring theme\n"
+        "0.9 = Critical: core identity fact, major decision, key personal info\n\n"
+        "Respond with ONLY a single decimal number (e.g. 0.4). Nothing else."
     )
+    user = f"Rate importance:\n\n{text}"
+    return system, user
 
 
 def extract_lesson(text: str) -> tuple[str, str]:
