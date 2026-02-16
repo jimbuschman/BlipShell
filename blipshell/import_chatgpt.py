@@ -241,21 +241,28 @@ async def _import_single_conversation(
     # Update message count on the session
     msg_count = 0
 
-    # Process each message through the memory pipeline
-    for msg in conv.messages:
-        try:
-            result = await processor.process_message(
-                text=msg.content,
-                role=msg.role,
-                session_id=session_id,
-            )
-            if result is not None:
-                stats.messages_processed += 1
-                msg_count += 1
-            else:
-                stats.messages_skipped_noise += 1
-        except Exception as e:
-            logger.error("Failed to process message in '%s': %s", conv.title, e)
+    # Process messages concurrently (overlaps slow cloud calls)
+    sem = asyncio.Semaphore(3)
+
+    async def _process_one(msg):
+        async with sem:
+            try:
+                result = await processor.process_message(
+                    text=msg.content,
+                    role=msg.role,
+                    session_id=session_id,
+                )
+                return result
+            except Exception as e:
+                logger.error("Failed to process message in '%s': %s", conv.title, e)
+                return None
+
+    results = await asyncio.gather(*[_process_one(msg) for msg in conv.messages])
+    for result in results:
+        if result is not None:
+            stats.messages_processed += 1
+            msg_count += 1
+        else:
             stats.messages_skipped_noise += 1
 
     # Update session message count

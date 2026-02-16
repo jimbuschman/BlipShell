@@ -19,7 +19,7 @@ endpoints:
     url: "http://localhost:11434"
     roles: ["reasoning", "tool_calling", "coding", "embedding", "summarization", "ranking"]
     priority: 1
-    max_concurrent: 2
+    max_concurrent: 5
     context_tokens: 131072  # 128K — cloud models route through local Ollama
     enabled: true
   - name: "old-pc"
