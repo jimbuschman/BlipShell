@@ -152,9 +152,11 @@ class MemoryProcessor:
         """Extract and store a lesson from a conversation."""
         # Generate lesson text via reasoning model (needs understanding, not just summarization)
         try:
+            lesson_system, lesson_prompt = extract_lesson(conversation_text)
             lesson_text = await self.router.generate(
                 TaskType.REASONING,
-                extract_lesson(conversation_text),
+                lesson_prompt,
+                system=lesson_system,
             )
         except Exception as e:
             logger.error("Lesson extraction failed: %s", e)

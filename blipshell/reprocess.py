@@ -188,9 +188,11 @@ async def reprocess_lessons(
                 conversation_text = conversation_text[:4000]
 
             # Extract lessons via reasoning model
+            lesson_system, lesson_prompt = extract_lesson(conversation_text)
             lesson_text = await router.generate(
                 TaskType.REASONING,
-                extract_lesson(conversation_text),
+                lesson_prompt,
+                system=lesson_system,
             )
 
             # Parse individual lessons (one per line)

@@ -109,24 +109,39 @@ def ask_importance(text: str) -> str:
     )
 
 
-def extract_lesson(text: str) -> str:
-    """Prompt for extracting actionable lessons from a conversation."""
-    return (
-        "Extract 1-3 short, actionable lessons from this conversation. "
-        "Focus on:\n"
-        "- User preferences (communication style, level of detail, topics of interest)\n"
-        "- Facts about the user (name, projects, tools they use, technical level)\n"
-        "- What worked well or poorly in the interaction\n"
-        "- Technical insights or decisions made\n\n"
-        "Rules:\n"
-        "- Each lesson must be a single concise sentence\n"
-        "- Write from the perspective of advice for the assistant\n"
-        "- Do NOT write an evaluation, summary, or self-review\n"
-        "- Do NOT include generic observations about AI capabilities\n"
-        "- Only include lessons that are specific and actionable\n\n"
-        "Format: One lesson per line, no numbering, no headers.\n\n"
-        f"Conversation:\n{text}"
+def extract_lesson(text: str) -> tuple[str, str]:
+    """Prompt for extracting actionable lessons from a conversation.
+
+    Returns (system_prompt, user_prompt) so the instruction stays in the
+    system role and the conversation stays in the user role, preventing
+    the model from echoing the conversation back as the output.
+    """
+    system = (
+        "You are a behavioral lesson extractor. Your job is to identify "
+        "HOW the assistant should behave with this user in future conversations.\n\n"
+        "A lesson is NOT a fact, not a summary, not trivia. A lesson is "
+        "BEHAVIORAL ADVICE about how to interact with this specific user.\n\n"
+        "GOOD lessons (behavioral advice):\n"
+        "- User prefers direct troubleshooting steps over lengthy explanations.\n"
+        "- Acknowledge user's frustration before jumping to technical solutions.\n"
+        "- User works on multiple hardware projects — always clarify which one.\n"
+        "- User appreciates casual tone and humor in responses.\n\n"
+        "BAD lessons (these are facts/trivia, NOT lessons):\n"
+        "- The user has an HP EliteBook with Intel HD 4400. (this is a fact)\n"
+        "- Set render distance to 16 chunks. (this is a tip)\n"
+        "- LLMs process tokens not letters. (this is trivia)\n"
+        "- The user's project uses an SSD1306 OLED. (this is a fact)\n\n"
+        "Extract 1-3 behavioral lessons. Rules:\n"
+        "- Each lesson MUST be advice about HOW to talk to or help this user\n"
+        "- Each lesson MUST be a single sentence under 25 words\n"
+        "- Start each lesson with a verb or 'User prefers/likes/dislikes...'\n"
+        "- Do NOT output facts, project details, hardware specs, or tips\n"
+        "- Do NOT include conversation text, markdown, or emojis\n"
+        "- If there is nothing behavioral to learn, respond with: SKIP\n\n"
+        "Format: One lesson per line. No numbering, no bullets, no headers."
     )
+    user = f"Extract lessons from this conversation:\n\n{text}"
+    return system, user
 
 
 def summarize_file(text: str) -> str:
