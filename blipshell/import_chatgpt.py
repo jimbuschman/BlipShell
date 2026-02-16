@@ -1,0 +1,331 @@
+"""ChatGPT data import — conversations, personality, and memories.
+
+Parses a ChatGPT data export (conversations.json) and imports
+conversations through BlipShell's memory pipeline. Also supports
+importing a personality/system prompt and manual ChatGPT memories.
+"""
+
+import asyncio
+import json
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Callable, Optional
+
+from blipshell.core.config import ConfigManager
+from blipshell.memory.chroma_store import ChromaStore
+from blipshell.memory.processor import MemoryProcessor
+from blipshell.memory.sqlite_store import SQLiteStore
+from blipshell.llm.router import LLMRouter
+from blipshell.models.config import MemoryConfig
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Data classes for parsed ChatGPT conversations
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ParsedMessage:
+    role: str  # "user" or "assistant"
+    content: str
+    timestamp: Optional[float] = None
+
+
+@dataclass
+class ParsedConversation:
+    title: str
+    created_at: Optional[float] = None
+    messages: list[ParsedMessage] = field(default_factory=list)
+
+
+@dataclass
+class ImportStats:
+    conversations_imported: int = 0
+    messages_processed: int = 0
+    messages_skipped_noise: int = 0
+    lessons_extracted: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Conversation parser
+# ---------------------------------------------------------------------------
+
+def parse_conversations(file_path: str | Path) -> list[ParsedConversation]:
+    """Parse a ChatGPT conversations.json export file.
+
+    ChatGPT export format:
+    - Array of conversation objects, each with:
+      - title, create_time, update_time
+      - mapping: {node_id: {message: {...}, parent, children: [...]}}
+      - current_node: ID of the last message
+    - Messages form a tree; we linearize by walking from root following children.
+    - author.role is one of: system, user, assistant, tool
+    - content.parts is a list of strings (concatenated)
+    - Some messages have null content or are system/tool messages — skip those
+    """
+    path = Path(file_path)
+    with open(path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+
+    if not isinstance(raw, list):
+        raise ValueError("Expected a JSON array of conversations")
+
+    conversations = []
+    for conv_obj in raw:
+        parsed = _parse_single_conversation(conv_obj)
+        if parsed and parsed.messages:
+            conversations.append(parsed)
+
+    return conversations
+
+
+def _parse_single_conversation(conv_obj: dict) -> Optional[ParsedConversation]:
+    """Parse a single conversation object from the ChatGPT export."""
+    title = conv_obj.get("title") or "Untitled"
+    created_at = conv_obj.get("create_time")
+    mapping = conv_obj.get("mapping", {})
+
+    if not mapping:
+        return None
+
+    # Find the root node (no parent, or parent is None)
+    root_id = None
+    for node_id, node in mapping.items():
+        if node.get("parent") is None:
+            root_id = node_id
+            break
+
+    if root_id is None:
+        # Fallback: pick the first node
+        root_id = next(iter(mapping))
+
+    # Walk the tree depth-first, following first child at each level
+    messages = []
+    _walk_tree(mapping, root_id, messages)
+
+    return ParsedConversation(
+        title=title,
+        created_at=created_at,
+        messages=messages,
+    )
+
+
+def _walk_tree(mapping: dict, node_id: str, messages: list[ParsedMessage]):
+    """Recursively walk the conversation tree, collecting user/assistant messages."""
+    node = mapping.get(node_id)
+    if not node:
+        return
+
+    msg = node.get("message")
+    if msg:
+        parsed = _extract_message(msg)
+        if parsed:
+            messages.append(parsed)
+
+    # Follow children in order
+    children = node.get("children", [])
+    for child_id in children:
+        _walk_tree(mapping, child_id, messages)
+
+
+def _extract_message(msg: dict) -> Optional[ParsedMessage]:
+    """Extract a ParsedMessage from a ChatGPT message node, or None if skippable."""
+    if not msg:
+        return None
+
+    author = msg.get("author", {})
+    role = author.get("role", "")
+
+    # Only keep user and assistant messages
+    if role not in ("user", "assistant"):
+        return None
+
+    content_obj = msg.get("content", {})
+    parts = content_obj.get("parts", [])
+
+    # Concatenate text parts, skip non-string parts (images, etc.)
+    text_parts = [p for p in parts if isinstance(p, str)]
+    content = "\n".join(text_parts).strip()
+
+    if not content:
+        return None
+
+    timestamp = msg.get("create_time")
+
+    return ParsedMessage(
+        role=role,
+        content=content,
+        timestamp=timestamp,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Conversation import
+# ---------------------------------------------------------------------------
+
+async def import_conversations(
+    sqlite: SQLiteStore,
+    chroma: ChromaStore,
+    router: LLMRouter,
+    config: MemoryConfig,
+    conversations: list[ParsedConversation],
+    on_progress: Optional[Callable[[int, int, str], None]] = None,
+    skip_lessons: bool = False,
+) -> ImportStats:
+    """Import parsed ChatGPT conversations through the BlipShell memory pipeline.
+
+    For each conversation:
+    1. Create a BlipShell session
+    2. Process each message through the memory pipeline (noise, summarize, embed, tag, rank)
+    3. Optionally extract lessons from the full conversation
+
+    Args:
+        sqlite: SQLite store instance
+        chroma: ChromaDB store instance
+        router: LLM router for summarization/ranking
+        config: Memory configuration
+        conversations: Parsed conversations to import
+        on_progress: Callback(current_index, total, title) for progress tracking
+        skip_lessons: If True, skip lesson extraction (faster)
+
+    Returns:
+        ImportStats with counts of imported items
+    """
+    processor = MemoryProcessor(sqlite, chroma, router, config=config)
+    stats = ImportStats()
+    total = len(conversations)
+
+    for i, conv in enumerate(conversations):
+        if on_progress:
+            on_progress(i, total, conv.title)
+
+        try:
+            await _import_single_conversation(
+                sqlite, processor, conv, stats, skip_lessons
+            )
+            stats.conversations_imported += 1
+        except Exception as e:
+            logger.error("Failed to import conversation '%s': %s", conv.title, e)
+
+        # Small delay between conversations to avoid overwhelming the LLM endpoint
+        if i < total - 1:
+            await asyncio.sleep(0.5)
+
+    return stats
+
+
+async def _import_single_conversation(
+    sqlite: SQLiteStore,
+    processor: MemoryProcessor,
+    conv: ParsedConversation,
+    stats: ImportStats,
+    skip_lessons: bool,
+):
+    """Import a single conversation into BlipShell."""
+    # Create a session for this conversation
+    session_id = await sqlite.create_session(title=conv.title)
+
+    # Update message count on the session
+    msg_count = 0
+
+    # Process each message through the memory pipeline
+    for msg in conv.messages:
+        try:
+            result = await processor.process_message(
+                text=msg.content,
+                role=msg.role,
+                session_id=session_id,
+            )
+            if result is not None:
+                stats.messages_processed += 1
+                msg_count += 1
+            else:
+                stats.messages_skipped_noise += 1
+        except Exception as e:
+            logger.error("Failed to process message in '%s': %s", conv.title, e)
+            stats.messages_skipped_noise += 1
+
+    # Update session message count
+    await sqlite.update_session(session_id, message_count=msg_count)
+
+    # Extract lessons from the full conversation
+    if not skip_lessons and len(conv.messages) >= 4:
+        try:
+            full_text = _build_conversation_text(conv)
+            await processor.process_lesson(full_text, session_id)
+            stats.lessons_extracted += 1
+        except Exception as e:
+            logger.error("Lesson extraction failed for '%s': %s", conv.title, e)
+
+
+def _build_conversation_text(conv: ParsedConversation) -> str:
+    """Build a plain-text representation of a conversation for lesson extraction."""
+    lines = []
+    for msg in conv.messages:
+        prefix = "User" if msg.role == "user" else "Assistant"
+        lines.append(f"{prefix}: {msg.content}")
+    return "\n\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Personality / system prompt import
+# ---------------------------------------------------------------------------
+
+def import_personality(config_manager: ConfigManager, personality_text: str):
+    """Import a personality description into the BlipShell system prompt.
+
+    Prepends the personality text to the existing system prompt, keeping
+    BlipShell's tool-calling instructions intact.
+
+    Args:
+        config_manager: Config manager instance (must have loaded config)
+        personality_text: The personality/style text to prepend
+    """
+    existing_prompt = config_manager.get("agent.system_prompt", "")
+    new_prompt = f"{personality_text.strip()}\n\n{existing_prompt}"
+    config_manager.set("agent.system_prompt", new_prompt)
+    config_manager.save()
+
+
+# ---------------------------------------------------------------------------
+# Manual ChatGPT memories import (as core memories)
+# ---------------------------------------------------------------------------
+
+async def import_memories_as_core(
+    sqlite: SQLiteStore,
+    chroma: ChromaStore,
+    router: LLMRouter,
+    config: MemoryConfig,
+    memories_text: str,
+) -> int:
+    """Import ChatGPT memories as BlipShell core memories.
+
+    Accepts a text where each non-empty line is a separate memory.
+    Each line is stored as a core memory via the memory processor.
+
+    Args:
+        sqlite: SQLite store instance
+        chroma: ChromaDB store instance
+        router: LLM router
+        config: Memory configuration
+        memories_text: Text with one memory per line
+
+    Returns:
+        Count of imported core memories
+    """
+    processor = MemoryProcessor(sqlite, chroma, router, config=config)
+    count = 0
+
+    lines = [line.strip() for line in memories_text.splitlines() if line.strip()]
+
+    for line in lines:
+        try:
+            await processor.process_core_memory(line)
+            count += 1
+        except Exception as e:
+            logger.error("Failed to import core memory: %s — %s", line[:50], e)
+
+    return count
