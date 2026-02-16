@@ -1317,8 +1317,9 @@ def reprocess():
 @click.option("--model", type=str, default=None, help="Override model for summarization/ranking")
 @click.option("--batch-size", default=50, help="Memories per batch")
 @click.option("--skip-embed", is_flag=True, help="Skip re-embedding (faster if you only want new scores)")
+@click.option("--no-think", is_flag=True, help="Disable model thinking/reasoning (faster for simple tasks)")
 @click.pass_context
-def reprocess_memories_cmd(ctx, model, batch_size, skip_embed):
+def reprocess_memories_cmd(ctx, model, batch_size, skip_embed, no_think):
     """Re-summarize, re-rank, re-score, and re-embed all memories."""
     from rich.progress import Progress
 
@@ -1371,6 +1372,7 @@ def reprocess_memories_cmd(ctx, model, batch_size, skip_embed):
                 router=router,
                 batch_size=batch_size,
                 skip_embed=skip_embed,
+                no_think=no_think,
                 on_progress=on_progress,
             )
 
@@ -1397,8 +1399,9 @@ def reprocess_memories_cmd(ctx, model, batch_size, skip_embed):
 @reprocess.command("lessons")
 @click.option("--model", type=str, default=None, help="Override model for lesson extraction")
 @click.option("--min-messages", default=4, help="Minimum messages in a session to extract lessons")
+@click.option("--no-think", is_flag=True, help="Disable model thinking/reasoning (faster for simple tasks)")
 @click.pass_context
-def reprocess_lessons_cmd(ctx, model, min_messages):
+def reprocess_lessons_cmd(ctx, model, min_messages, no_think):
     """Delete bad lessons and re-extract from conversations."""
     from rich.progress import Progress
 
@@ -1446,6 +1449,7 @@ def reprocess_lessons_cmd(ctx, model, min_messages):
                 chroma=chroma,
                 router=router,
                 min_messages=min_messages,
+                no_think=no_think,
                 on_progress=on_progress,
             )
 

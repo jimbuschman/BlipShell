@@ -32,6 +32,7 @@ async def reprocess_memories(
     router: LLMRouter,
     batch_size: int = 50,
     skip_embed: bool = False,
+    no_think: bool = False,
     on_progress: ProgressCallback = None,
 ) -> dict:
     """Re-summarize, re-rank, re-score, and optionally re-embed all memories.
@@ -39,6 +40,7 @@ async def reprocess_memories(
     Returns stats dict with processed/skipped/errors/total counts.
     """
     stats = {"processed": 0, "skipped": 0, "errors": 0, "total": 0}
+    think = False if no_think else None  # None = let model decide, False = disable
 
     # Get total count
     _, total = await sqlite.get_memories_paginated(page=1, limit=1, include_archived=True)
@@ -68,6 +70,7 @@ async def reprocess_memories(
                 summary = await router.generate(
                     TaskType.SUMMARIZATION,
                     summarize_memory(memory.content),
+                    think=think,
                 )
                 if summary.strip().upper() == "SKIP":
                     summary = memory.summary or memory.content[:200]
@@ -76,6 +79,7 @@ async def reprocess_memories(
                 rank_text = await router.generate(
                     TaskType.RANKING,
                     rank_memory(memory.content),
+                    think=think,
                 )
                 rank = MemoryProcessor._parse_rank(rank_text)
 
@@ -83,6 +87,7 @@ async def reprocess_memories(
                 importance_text = await router.generate(
                     TaskType.RANKING,
                     ask_importance(memory.content),
+                    think=think,
                 )
                 importance = MemoryProcessor._parse_float(importance_text, default=0.3)
 
@@ -130,6 +135,7 @@ async def reprocess_lessons(
     chroma: ChromaStore,
     router: LLMRouter,
     min_messages: int = 4,
+    no_think: bool = False,
     on_progress: ProgressCallback = None,
 ) -> dict:
     """Delete all existing lessons and re-extract from conversation memories.
@@ -145,6 +151,7 @@ async def reprocess_lessons(
         "errors": 0,
         "old_lessons_deleted": 0,
     }
+    think = False if no_think else None
 
     # Delete all existing lessons from SQLite and ChromaDB
     old_lessons = await sqlite.get_all_lessons()
@@ -193,6 +200,7 @@ async def reprocess_lessons(
                 TaskType.REASONING,
                 lesson_prompt,
                 system=lesson_system,
+                think=think,
             )
 
             # Parse individual lessons (one per line)
