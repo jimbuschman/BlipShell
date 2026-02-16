@@ -353,6 +353,14 @@ class SQLiteStore:
             metadata_json=row["metadata_json"],
         )
 
+    async def get_distinct_memory_session_ids(self) -> list[int]:
+        """Get all distinct session_id values from the memories table."""
+        cursor = await self._db.execute(
+            "SELECT DISTINCT session_id FROM memories WHERE session_id IS NOT NULL ORDER BY session_id"
+        )
+        rows = await cursor.fetchall()
+        return [r["session_id"] for r in rows]
+
     # --- Core Memories ---
 
     async def create_core_memory(self, core_memory: CoreMemory) -> int:

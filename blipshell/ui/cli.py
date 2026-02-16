@@ -1305,5 +1305,168 @@ def import_memories_cmd(ctx, file):
     asyncio.run(_import())
 
 
+# --- Reprocess ---
+
+@main.group()
+def reprocess():
+    """Reprocess imported data with a better model."""
+    pass
+
+
+@reprocess.command("memories")
+@click.option("--model", type=str, default=None, help="Override model for summarization/ranking")
+@click.option("--batch-size", default=50, help="Memories per batch")
+@click.option("--skip-embed", is_flag=True, help="Skip re-embedding (faster if you only want new scores)")
+@click.pass_context
+def reprocess_memories_cmd(ctx, model, batch_size, skip_embed):
+    """Re-summarize, re-rank, re-score, and re-embed all memories."""
+    from rich.progress import Progress
+
+    from blipshell.llm.endpoints import EndpointManager
+    from blipshell.llm.router import LLMRouter
+    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.sqlite_store import SQLiteStore
+    from blipshell.reprocess import reprocess_memories
+
+    async def _run():
+        config_manager = ConfigManager(ctx.obj.get("config_path"))
+        cfg = config_manager.load()
+
+        sqlite = SQLiteStore(cfg.database.path)
+        await sqlite.initialize()
+
+        chroma = ChromaStore(
+            persist_dir=cfg.database.chroma_path,
+            embedding_model=cfg.models.embedding,
+            ollama_url=cfg.endpoints[0].url if cfg.endpoints else "http://localhost:11434",
+        )
+        chroma.initialize()
+
+        endpoint_manager = EndpointManager(cfg.endpoints, cfg.llm)
+        router = LLMRouter(cfg.models, endpoint_manager)
+
+        # Override models if --model provided
+        original_models = None
+        if model:
+            original_models = (
+                cfg.models.summarization,
+                cfg.models.ranking,
+            )
+            router._models.summarization = model
+            router._models.ranking = model
+            console.print(f"[cyan]Using model override: {model}[/cyan]")
+
+        console.print(f"[cyan]Reprocessing memories (batch_size={batch_size}, skip_embed={skip_embed})...[/cyan]")
+
+        with Progress(console=console) as progress:
+            task = progress.add_task("Reprocessing memories...", total=1)
+
+            def on_progress(done, total):
+                progress.update(task, completed=done, total=total,
+                                description=f"[cyan]Reprocessing {done}/{total}[/cyan]")
+
+            stats = await reprocess_memories(
+                sqlite=sqlite,
+                chroma=chroma,
+                router=router,
+                batch_size=batch_size,
+                skip_embed=skip_embed,
+                on_progress=on_progress,
+            )
+
+        # Restore original models
+        if original_models:
+            router._models.summarization = original_models[0]
+            router._models.ranking = original_models[1]
+
+        await sqlite.close()
+
+        # Print summary
+        summary = Table(title="Reprocess Memories Summary")
+        summary.add_column("Metric", style="cyan")
+        summary.add_column("Count", justify="right")
+        summary.add_row("Total memories", str(stats["total"]))
+        summary.add_row("Processed", f"[green]{stats['processed']}[/green]")
+        summary.add_row("Skipped (empty)", str(stats["skipped"]))
+        summary.add_row("Errors", f"[red]{stats['errors']}[/red]" if stats["errors"] else "0")
+        console.print(summary)
+
+    asyncio.run(_run())
+
+
+@reprocess.command("lessons")
+@click.option("--model", type=str, default=None, help="Override model for lesson extraction")
+@click.option("--min-messages", default=4, help="Minimum messages in a session to extract lessons")
+@click.pass_context
+def reprocess_lessons_cmd(ctx, model, min_messages):
+    """Delete bad lessons and re-extract from conversations."""
+    from rich.progress import Progress
+
+    from blipshell.llm.endpoints import EndpointManager
+    from blipshell.llm.router import LLMRouter
+    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.sqlite_store import SQLiteStore
+    from blipshell.reprocess import reprocess_lessons
+
+    async def _run():
+        config_manager = ConfigManager(ctx.obj.get("config_path"))
+        cfg = config_manager.load()
+
+        sqlite = SQLiteStore(cfg.database.path)
+        await sqlite.initialize()
+
+        chroma = ChromaStore(
+            persist_dir=cfg.database.chroma_path,
+            embedding_model=cfg.models.embedding,
+            ollama_url=cfg.endpoints[0].url if cfg.endpoints else "http://localhost:11434",
+        )
+        chroma.initialize()
+
+        endpoint_manager = EndpointManager(cfg.endpoints, cfg.llm)
+        router = LLMRouter(cfg.models, endpoint_manager)
+
+        # Override models if --model provided
+        original_reasoning = None
+        if model:
+            original_reasoning = cfg.models.reasoning
+            router._models.reasoning = model
+            console.print(f"[cyan]Using model override: {model}[/cyan]")
+
+        console.print(f"[cyan]Reprocessing lessons (min_messages={min_messages})...[/cyan]")
+
+        with Progress(console=console) as progress:
+            task = progress.add_task("Reprocessing lessons...", total=1)
+
+            def on_progress(done, total):
+                progress.update(task, completed=done, total=total,
+                                description=f"[cyan]Processing sessions {done}/{total}[/cyan]")
+
+            stats = await reprocess_lessons(
+                sqlite=sqlite,
+                chroma=chroma,
+                router=router,
+                min_messages=min_messages,
+                on_progress=on_progress,
+            )
+
+        # Restore original model
+        if original_reasoning:
+            router._models.reasoning = original_reasoning
+
+        await sqlite.close()
+
+        # Print summary
+        summary = Table(title="Reprocess Lessons Summary")
+        summary.add_column("Metric", style="cyan")
+        summary.add_column("Count", justify="right")
+        summary.add_row("Old lessons deleted", str(stats["old_lessons_deleted"]))
+        summary.add_row("Sessions processed", f"[green]{stats['sessions_processed']}[/green]")
+        summary.add_row("Lessons extracted", f"[green]{stats['lessons_extracted']}[/green]")
+        summary.add_row("Errors", f"[red]{stats['errors']}[/red]" if stats["errors"] else "0")
+        console.print(summary)
+
+    asyncio.run(_run())
+
+
 if __name__ == "__main__":
     main()
