@@ -113,22 +113,32 @@ def _parse_single_conversation(conv_obj: dict) -> Optional[ParsedConversation]:
     )
 
 
-def _walk_tree(mapping: dict, node_id: str, messages: list[ParsedMessage]):
-    """Recursively walk the conversation tree, collecting user/assistant messages."""
-    node = mapping.get(node_id)
-    if not node:
-        return
+def _walk_tree(mapping: dict, root_id: str, messages: list[ParsedMessage]):
+    """Iteratively walk the conversation tree, collecting user/assistant messages."""
+    stack = [root_id]
+    visited = set()
 
-    msg = node.get("message")
-    if msg:
-        parsed = _extract_message(msg)
-        if parsed:
-            messages.append(parsed)
+    while stack:
+        node_id = stack.pop()
+        if node_id in visited:
+            continue
+        visited.add(node_id)
 
-    # Follow children in order
-    children = node.get("children", [])
-    for child_id in children:
-        _walk_tree(mapping, child_id, messages)
+        node = mapping.get(node_id)
+        if not node:
+            continue
+
+        msg = node.get("message")
+        if msg:
+            parsed = _extract_message(msg)
+            if parsed:
+                messages.append(parsed)
+
+        # Push children in reverse order so first child is processed first
+        children = node.get("children", [])
+        for child_id in reversed(children):
+            if child_id not in visited:
+                stack.append(child_id)
 
 
 def _extract_message(msg: dict) -> Optional[ParsedMessage]:
