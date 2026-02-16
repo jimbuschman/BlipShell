@@ -22,21 +22,37 @@ class LLMClient:
     """Async wrapper around ollama.AsyncClient with retry/backoff."""
 
     def __init__(self, host: str = "http://localhost:11434",
-                 max_retries: int = 2, retry_base_delay: float = 1.0):
+                 max_retries: int = 2, retry_base_delay: float = 1.0,
+                 timeout: float = 120.0):
         self.host = host
         self.max_retries = max_retries
         self.retry_base_delay = retry_base_delay
+        self.timeout = timeout
         self._client = ollama.AsyncClient(host=host)
 
     async def _retry_call(self, func, *args, **kwargs):
-        """Retry an async call with exponential backoff.
+        """Retry an async call with exponential backoff and per-call timeout.
 
         Retries up to max_retries times with delays of base*2^attempt seconds.
+        Each attempt is bounded by self.timeout seconds.
         """
         last_error = None
         for attempt in range(self.max_retries + 1):
             try:
-                return await func(*args, **kwargs)
+                return await asyncio.wait_for(
+                    func(*args, **kwargs), timeout=self.timeout,
+                )
+            except asyncio.TimeoutError:
+                last_error = TimeoutError(
+                    f"LLM call timed out after {self.timeout}s"
+                )
+                logger.warning(
+                    "LLM call timed out (attempt %d/%d) after %.0fs",
+                    attempt + 1, self.max_retries + 1, self.timeout,
+                )
+                if attempt < self.max_retries:
+                    delay = self.retry_base_delay * (2 ** attempt)
+                    await asyncio.sleep(delay)
             except Exception as e:
                 last_error = e
                 if attempt < self.max_retries:

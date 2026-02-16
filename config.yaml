@@ -2,11 +2,11 @@
 # This file is self-modifiable by the agent
 
 models:
-  reasoning: "glm-5:cloud"
+  reasoning: "minimax-m2.5:cloud"   # free — used for lesson extraction during import
   tool_calling: "glm-5:cloud"
   coding: "qwen3-coder:480b-cloud"
-  summarization: "gemma3:4b"
-  ranking: "gemma3:4b"
+  summarization: "minimax-m2.5:cloud"  # free — handles text-heavy summarization
+  ranking: "qwen2.5:14b"              # best local ranker (also handles importance)
   embedding: "nomic-embed-text"
   # Local fallbacks when cloud endpoints are unavailable
   reasoning_fallback: "gpt-oss:latest"
@@ -17,18 +17,18 @@ models:
 endpoints:
   - name: "local"
     url: "http://localhost:11434"
-    roles: ["reasoning", "tool_calling", "coding", "embedding"]
+    roles: ["reasoning", "tool_calling", "coding", "embedding", "summarization", "ranking"]
     priority: 1
     max_concurrent: 2
-    context_tokens: 131072  # 128K — GLM-5 and qwen3-coder support this
+    context_tokens: 131072  # 128K — cloud models route through local Ollama
     enabled: true
   - name: "old-pc"
     url: "http://192.168.0.225:11434"
-    roles: ["summarization", "ranking"]
-    priority: 2    # higher = preferred for these roles
+    roles: ["ranking"]
+    priority: 2
     max_concurrent: 2
-    context_tokens: 131072  # gemma3:4b supports 128K
-    enabled: true
+    context_tokens: 131072
+    enabled: false  # not used for import
 
 memory:
   pools:
@@ -137,6 +137,7 @@ tagging:
 llm:
   max_retries: 2
   retry_base_delay: 1.0
+  timeout: 120  # per-call timeout in seconds (avoids cloud model hangs)
 
 auth:
   enabled: false

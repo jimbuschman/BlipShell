@@ -83,6 +83,7 @@ class EndpointManager:
                     host=cfg.url,
                     max_retries=llm_cfg.max_retries,
                     retry_base_delay=llm_cfg.retry_base_delay,
+                    timeout=llm_cfg.timeout,
                 ),
             )
             self._endpoints.append(ep)
