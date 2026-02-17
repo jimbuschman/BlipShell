@@ -1,8 +1,9 @@
 # CLAUDE.md - Project Context for BlipShell
 
 ## What is BlipShell?
-Local LLM personal assistant with persistent memory. Uses Ollama for model inference.
-Multi-endpoint support (local + cloud models via Ollama proxy). Config-driven model routing per task type.
+Local LLM personal assistant with persistent memory. Uses Ollama for local inference.
+Multi-endpoint support: Ollama (local) + OpenAI-compatible cloud APIs (Groq, Gemini, etc.).
+Config-driven model routing per task type with per-endpoint model overrides.
 
 ## Current Model Assignments (config.yaml)
 - reasoning: qwen3:14b (local) — used for main chat
@@ -30,6 +31,14 @@ Multi-endpoint support (local + cloud models via Ollama proxy). Config-driven mo
 - glm4:latest: Fast but no tool support, failed self-reflection test
 - qwen3:30b: Too slow for local use, not worth it
 - Real-data benchmark validated: glm4 for summarization, qwen2.5:14b for ranking, qwen3:14b for importance
+
+## Cloud Endpoints (OpenAI-compatible)
+- Provider type `"openai"` in config.yaml — uses the `openai` Python SDK
+- Per-endpoint `models:` map overrides global model names for each task type
+- API keys via `${ENV_VAR}` syntax or plaintext in config
+- Rate limiting: `rate_limit_rpm` / `rate_limit_rpd` — when hit, falls back to next endpoint automatically
+- Groq: `openai/gpt-oss-120b` — same model as local gpt-oss but at 500 tok/s on Groq hardware
+- Gemini: `gemini-2.5-flash` via OpenAI-compatible endpoint
 
 ## Architecture Notes
 - Two-PC setup: Development on one PC, Ollama/benchmarks on another
