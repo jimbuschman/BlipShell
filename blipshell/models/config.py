@@ -191,6 +191,14 @@ class WorkerConfig(BaseModel):
     poll_interval: int = 10
 
 
+def get_ollama_url(endpoints: list[EndpointConfig]) -> str:
+    """Get the URL of the first Ollama endpoint (for ChromaDB embedding)."""
+    for ep in endpoints:
+        if ep.provider == "ollama" and ep.enabled:
+            return ep.url
+    return "http://localhost:11434"
+
+
 class BlipShellConfig(BaseModel):
     """Root configuration model."""
     models: ModelsConfig = ModelsConfig()

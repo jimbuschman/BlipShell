@@ -1164,6 +1164,7 @@ def conversations(ctx, file, max_count, skip_lessons):
     from blipshell.import_common import import_conversations
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
+    from blipshell.models.config import get_ollama_url
     from blipshell.memory.chroma_store import ChromaStore
     from blipshell.memory.sqlite_store import SQLiteStore
 
@@ -1191,7 +1192,7 @@ def conversations(ctx, file, max_count, skip_lessons):
         chroma = ChromaStore(
             persist_dir=cfg.database.chroma_path,
             embedding_model=cfg.models.embedding,
-            ollama_url=cfg.endpoints[0].url if cfg.endpoints else "http://localhost:11434",
+            ollama_url=get_ollama_url(cfg.endpoints),
         )
         chroma.initialize()
 
@@ -1257,6 +1258,7 @@ def import_memories_cmd(ctx, file):
     from blipshell.import_chatgpt import import_memories_as_core
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
+    from blipshell.models.config import get_ollama_url
     from blipshell.memory.chroma_store import ChromaStore
     from blipshell.memory.sqlite_store import SQLiteStore
 
@@ -1278,7 +1280,7 @@ def import_memories_cmd(ctx, file):
         chroma = ChromaStore(
             persist_dir=cfg.database.chroma_path,
             embedding_model=cfg.models.embedding,
-            ollama_url=cfg.endpoints[0].url if cfg.endpoints else "http://localhost:11434",
+            ollama_url=get_ollama_url(cfg.endpoints),
         )
         chroma.initialize()
 
@@ -1321,6 +1323,7 @@ def claude_conversations(ctx, file, max_count, skip_lessons):
     from blipshell.import_common import import_conversations
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
+    from blipshell.models.config import get_ollama_url
     from blipshell.memory.chroma_store import ChromaStore
     from blipshell.memory.sqlite_store import SQLiteStore
 
@@ -1346,7 +1349,7 @@ def claude_conversations(ctx, file, max_count, skip_lessons):
         chroma = ChromaStore(
             persist_dir=cfg.database.chroma_path,
             embedding_model=cfg.models.embedding,
-            ollama_url=cfg.endpoints[0].url if cfg.endpoints else "http://localhost:11434",
+            ollama_url=get_ollama_url(cfg.endpoints),
         )
         chroma.initialize()
 
@@ -1394,6 +1397,7 @@ def claude_scraped(ctx, file, max_count, skip_lessons):
     from blipshell.import_common import import_conversations
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
+    from blipshell.models.config import get_ollama_url
     from blipshell.memory.chroma_store import ChromaStore
     from blipshell.memory.sqlite_store import SQLiteStore
 
@@ -1419,7 +1423,7 @@ def claude_scraped(ctx, file, max_count, skip_lessons):
         chroma = ChromaStore(
             persist_dir=cfg.database.chroma_path,
             embedding_model=cfg.models.embedding,
-            ollama_url=cfg.endpoints[0].url if cfg.endpoints else "http://localhost:11434",
+            ollama_url=get_ollama_url(cfg.endpoints),
         )
         chroma.initialize()
 
@@ -1475,6 +1479,7 @@ def deepseek_conversations(ctx, file, max_count, skip_lessons):
     from blipshell.import_deepseek import parse_conversations
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
+    from blipshell.models.config import get_ollama_url
     from blipshell.memory.chroma_store import ChromaStore
     from blipshell.memory.sqlite_store import SQLiteStore
 
@@ -1500,7 +1505,7 @@ def deepseek_conversations(ctx, file, max_count, skip_lessons):
         chroma = ChromaStore(
             persist_dir=cfg.database.chroma_path,
             embedding_model=cfg.models.embedding,
-            ollama_url=cfg.endpoints[0].url if cfg.endpoints else "http://localhost:11434",
+            ollama_url=get_ollama_url(cfg.endpoints),
         )
         chroma.initialize()
 
@@ -1571,6 +1576,7 @@ def reprocess_memories_cmd(ctx, model, batch_size, skip_embed, no_think):
 
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
+    from blipshell.models.config import get_ollama_url
     from blipshell.memory.chroma_store import ChromaStore
     from blipshell.memory.sqlite_store import SQLiteStore
     from blipshell.reprocess import reprocess_memories
@@ -1585,7 +1591,7 @@ def reprocess_memories_cmd(ctx, model, batch_size, skip_embed, no_think):
         chroma = ChromaStore(
             persist_dir=cfg.database.chroma_path,
             embedding_model=cfg.models.embedding,
-            ollama_url=cfg.endpoints[0].url if cfg.endpoints else "http://localhost:11434",
+            ollama_url=get_ollama_url(cfg.endpoints),
         )
         chroma.initialize()
 
@@ -1653,6 +1659,7 @@ def reprocess_lessons_cmd(ctx, model, min_messages, no_think):
 
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
+    from blipshell.models.config import get_ollama_url
     from blipshell.memory.chroma_store import ChromaStore
     from blipshell.memory.sqlite_store import SQLiteStore
     from blipshell.reprocess import reprocess_lessons
@@ -1667,7 +1674,7 @@ def reprocess_lessons_cmd(ctx, model, min_messages, no_think):
         chroma = ChromaStore(
             persist_dir=cfg.database.chroma_path,
             embedding_model=cfg.models.embedding,
-            ollama_url=cfg.endpoints[0].url if cfg.endpoints else "http://localhost:11434",
+            ollama_url=get_ollama_url(cfg.endpoints),
         )
         chroma.initialize()
 

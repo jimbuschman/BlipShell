@@ -49,7 +49,7 @@ from blipshell.memory.manager import MemoryManager, PoolItem, estimate_tokens
 from blipshell.memory.processor import MemoryProcessor
 from blipshell.memory.search import MemorySearch
 from blipshell.memory.sqlite_store import SQLiteStore
-from blipshell.models.config import BlipShellConfig
+from blipshell.models.config import BlipShellConfig, get_ollama_url
 from blipshell.models.session import MessageRole
 from blipshell.models.tools import ToolCall
 from blipshell.session.manager import SessionManager
@@ -125,7 +125,7 @@ class Agent:
         self.chroma = ChromaStore(
             persist_dir=self.config.database.chroma_path,
             embedding_model=self.config.models.embedding,
-            ollama_url=self.config.endpoints[0].url if self.config.endpoints else "http://localhost:11434",
+            ollama_url=get_ollama_url(self.config.endpoints),
         )
         self.chroma.initialize()
 
