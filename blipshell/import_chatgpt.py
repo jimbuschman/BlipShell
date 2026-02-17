@@ -290,8 +290,8 @@ async def _import_single_conversation(
     # Update message count on the session
     msg_count = 0
 
-    # Process messages concurrently (overlaps slow cloud calls)
-    sem = asyncio.Semaphore(3)
+    # Process messages sequentially to avoid model-swap thrashing on limited VRAM
+    sem = asyncio.Semaphore(1)
 
     async def _process_one(msg):
         async with sem:
