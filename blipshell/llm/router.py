@@ -63,8 +63,17 @@ class LLMRouter:
         return await self._endpoint_manager.get_client_for_role(task_type)
 
     async def get_model_and_client(self, task_type: str) -> tuple[str, Optional[LLMClient]]:
-        """Get both model name and client for a task type."""
-        return self.get_model(task_type), await self.get_client(task_type)
+        """Get both model name and client for a task type.
+
+        Resolves per-endpoint model overrides: if the selected endpoint has a
+        model configured for this task type, that model is used instead of the
+        global default from ModelsConfig.
+        """
+        endpoint = await self._endpoint_manager.get_endpoint_for_role(task_type)
+        if not endpoint:
+            return self.get_model(task_type), None
+        model = endpoint.models.get(task_type) or self.get_model(task_type)
+        return model, endpoint.client
 
     async def generate(self, task_type: str, prompt: str, system: Optional[str] = None, think: Optional[bool | str] = None) -> str:
         """Route a generate request to the appropriate model/endpoint.
@@ -72,17 +81,19 @@ class LLMRouter:
         If the primary model/endpoint fails and a fallback model is configured,
         retries with the fallback model on any available endpoint.
         """
-        model = self.get_model(task_type)
-        client = await self.get_client(task_type)
-        if not client:
+        endpoint = await self._endpoint_manager.get_endpoint_for_role(task_type)
+        if not endpoint:
             raise RuntimeError(f"No available endpoint for task type: {task_type}")
 
-        endpoint = await self._endpoint_manager.get_endpoint_for_role(task_type)
+        # Use per-endpoint model override if configured
+        model = endpoint.models.get(task_type) or self.get_model(task_type)
+        client = endpoint.client
+
         endpoint.start_request()
         try:
             # Pass context window size to Ollama
             gen_kwargs = {}
-            if endpoint and endpoint.context_tokens:
+            if endpoint.context_tokens:
                 gen_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
             if think is not None:
                 gen_kwargs["think"] = think
@@ -96,12 +107,12 @@ class LLMRouter:
             if fallback_model and fallback_model != model:
                 logger.warning("Primary model '%s' failed, trying fallback '%s'", model, fallback_model)
                 try:
-                    fallback_client = await self._endpoint_manager.get_client_for_role(task_type)
-                    if fallback_client:
+                    fallback_ep = await self._endpoint_manager.get_endpoint_for_role(task_type)
+                    if fallback_ep:
                         fb_kwargs = {}
                         if not self._models.fallback_think:
                             fb_kwargs["think"] = False
-                        result = await fallback_client.generate(
+                        result = await fallback_ep.client.generate(
                             prompt=prompt, model=fallback_model, system=system,
                             **fb_kwargs,
                         )

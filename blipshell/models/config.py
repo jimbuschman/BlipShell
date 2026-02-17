@@ -1,8 +1,16 @@
 """Configuration Pydantic models matching config.yaml schema."""
 
+import os
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+
+def resolve_env_vars(value: Optional[str]) -> Optional[str]:
+    """Expand ${ENV_VAR} syntax in a string to the environment variable value."""
+    if value and value.startswith("${") and value.endswith("}"):
+        return os.environ.get(value[2:-1], "")
+    return value
 
 
 class ModelsConfig(BaseModel):
@@ -23,14 +31,19 @@ class ModelsConfig(BaseModel):
 
 
 class EndpointConfig(BaseModel):
-    """Configuration for an Ollama endpoint."""
+    """Configuration for an LLM endpoint (Ollama or OpenAI-compatible)."""
     name: str
     url: str = "http://localhost:11434"
+    provider: str = "ollama"  # "ollama" or "openai" (OpenAI-compatible)
+    api_key: Optional[str] = None  # API key, supports ${ENV_VAR} syntax
     roles: list[str] = Field(default_factory=lambda: ["reasoning"])
     priority: int = 1
     max_concurrent: int = 2
     enabled: bool = True
     context_tokens: Optional[int] = None  # per-endpoint context window override
+    rate_limit_rpm: Optional[int] = None  # max requests per minute
+    rate_limit_rpd: Optional[int] = None  # max requests per day
+    models: dict[str, str] = Field(default_factory=dict)  # per-endpoint model overrides
 
 
 class PoolConfig(BaseModel):

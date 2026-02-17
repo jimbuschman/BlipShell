@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from blipshell.llm.client import LLMClient
-from blipshell.models.config import EndpointConfig, LLMConfig
+from blipshell.models.config import EndpointConfig, LLMConfig, resolve_env_vars
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +31,46 @@ class Endpoint:
     last_used: float = field(default_factory=time.time)
     last_response_time: float = 1.0  # seconds
     context_tokens: Optional[int] = None  # per-endpoint context window
+    provider: str = "ollama"
+    models: dict[str, str] = field(default_factory=dict)  # per-endpoint model overrides
+    rate_limit_rpm: Optional[int] = None
+    rate_limit_rpd: Optional[int] = None
+    _minute_requests: list[float] = field(default_factory=list, repr=False)
+    _day_requests: int = field(default=0, repr=False)
+    _day_reset: float = field(default_factory=lambda: time.time() + 86400, repr=False)
     client: Optional[LLMClient] = field(default=None, repr=False)
+
+    def _is_rate_limited(self) -> bool:
+        """Check if this endpoint is currently rate-limited."""
+        now = time.time()
+
+        if self.rate_limit_rpm is not None:
+            # Prune timestamps older than 60s
+            self._minute_requests = [t for t in self._minute_requests if now - t < 60]
+            if len(self._minute_requests) >= self.rate_limit_rpm:
+                return True
+
+        if self.rate_limit_rpd is not None:
+            if now >= self._day_reset:
+                self._day_requests = 0
+                self._day_reset = now + 86400
+            if self._day_requests >= self.rate_limit_rpd:
+                return True
+
+        return False
 
     @property
     def can_accept_request(self) -> bool:
-        return self.enabled and self.active_requests < self.max_concurrent
+        return (self.enabled
+                and self.active_requests < self.max_concurrent
+                and not self._is_rate_limited())
 
     def start_request(self):
         self.active_requests += 1
         self.last_used = time.time()
+        # Track for rate limiting
+        self._minute_requests.append(time.time())
+        self._day_requests += 1
 
     def complete_request(self):
         self.active_requests = max(0, self.active_requests - 1)
@@ -57,12 +88,10 @@ class Endpoint:
 
 
 class EndpointManager:
-    """Manages multiple Ollama endpoints with role-based routing.
+    """Manages multiple LLM endpoints with role-based routing.
 
-    Port of EndpointManager.cs with enhancements:
-    - Config-driven endpoints
-    - Role-based selection (reasoning, summarization, etc.)
-    - Async health polling
+    Supports both Ollama and OpenAI-compatible endpoints (Groq, Gemini, etc.).
+    Config-driven endpoints with role-based selection and async health polling.
     """
 
     def __init__(self, configs: list[EndpointConfig], llm_config: LLMConfig | None = None):
@@ -71,6 +100,7 @@ class EndpointManager:
         self._last_routed: dict[str, str] = {}  # role → endpoint name
         llm_cfg = llm_config or LLMConfig()
         for cfg in configs:
+            client = self._create_client(cfg, llm_cfg)
             ep = Endpoint(
                 name=cfg.name,
                 url=cfg.url,
@@ -79,14 +109,32 @@ class EndpointManager:
                 max_concurrent=cfg.max_concurrent,
                 enabled=cfg.enabled,
                 context_tokens=cfg.context_tokens,
-                client=LLMClient(
-                    host=cfg.url,
-                    max_retries=llm_cfg.max_retries,
-                    retry_base_delay=llm_cfg.retry_base_delay,
-                    timeout=llm_cfg.timeout,
-                ),
+                provider=cfg.provider,
+                models=cfg.models,
+                rate_limit_rpm=cfg.rate_limit_rpm,
+                rate_limit_rpd=cfg.rate_limit_rpd,
+                client=client,
             )
             self._endpoints.append(ep)
+
+    @staticmethod
+    def _create_client(cfg: EndpointConfig, llm_cfg: LLMConfig):
+        """Create the appropriate client based on provider type."""
+        if cfg.provider == "openai":
+            from blipshell.llm.openai_client import OpenAICompatClient
+            return OpenAICompatClient(
+                base_url=cfg.url,
+                api_key=resolve_env_vars(cfg.api_key) or "",
+                max_retries=llm_cfg.max_retries,
+                retry_base_delay=llm_cfg.retry_base_delay,
+                timeout=llm_cfg.timeout,
+            )
+        return LLMClient(
+            host=cfg.url,
+            max_retries=llm_cfg.max_retries,
+            retry_base_delay=llm_cfg.retry_base_delay,
+            timeout=llm_cfg.timeout,
+        )
 
     async def get_endpoint_for_role(self, role: str) -> Optional[Endpoint]:
         """Get the best available endpoint that supports the given role.
@@ -258,10 +306,12 @@ class EndpointManager:
 
     def get_status(self) -> list[dict]:
         """Get status of all endpoints for display."""
-        return [
-            {
+        statuses = []
+        for ep in self._endpoints:
+            status = {
                 "name": ep.name,
                 "url": ep.url,
+                "provider": ep.provider,
                 "enabled": ep.enabled,
                 "roles": ep.roles,
                 "active_requests": ep.active_requests,
@@ -269,5 +319,11 @@ class EndpointManager:
                 "failure_count": ep.failure_count,
                 "success_count": ep.success_count,
             }
-            for ep in self._endpoints
-        ]
+            if ep.rate_limit_rpm is not None:
+                status["rate_limit_rpm"] = ep.rate_limit_rpm
+            if ep.rate_limit_rpd is not None:
+                status["rate_limit_rpd"] = ep.rate_limit_rpd
+            if ep.models:
+                status["models"] = ep.models
+            statuses.append(status)
+        return statuses
