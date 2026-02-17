@@ -1225,6 +1225,7 @@ def conversations(ctx, file, max_count, skip_lessons):
         summary.add_column("Count", justify="right")
         summary.add_row("Conversations imported", str(stats.conversations_imported))
         summary.add_row("Conversations skipped (resume)", str(stats.conversations_skipped))
+        summary.add_row("Conversations re-imported (incomplete)", str(stats.conversations_reimported))
         summary.add_row("Messages processed", str(stats.messages_processed))
         summary.add_row("Messages skipped (noise)", str(stats.messages_skipped_noise))
         summary.add_row("Lessons extracted", str(stats.lessons_extracted))

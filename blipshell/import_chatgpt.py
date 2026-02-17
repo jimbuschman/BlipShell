@@ -45,6 +45,7 @@ class ParsedConversation:
 class ImportStats:
     conversations_imported: int = 0
     conversations_skipped: int = 0
+    conversations_reimported: int = 0
     messages_processed: int = 0
     messages_skipped_noise: int = 0
     lessons_extracted: int = 0
@@ -213,11 +214,48 @@ async def import_conversations(
         if on_progress:
             on_progress(i, total, conv.title)
 
-        # Resume support: skip conversations already imported
-        if await sqlite.session_exists(conv.title):
-            logger.debug("Skipping already imported: %s", conv.title)
-            stats.conversations_skipped += 1
-            continue
+        # Resume support: skip complete conversations, re-import incomplete ones
+        session_id, db_count = await sqlite.get_session_message_count(conv.title)
+        if session_id is not None:
+            expected = len(conv.messages)
+            if db_count >= expected:
+                logger.debug("Skipping already imported: %s", conv.title)
+                stats.conversations_skipped += 1
+                continue
+            else:
+                # Incomplete — delete and re-import
+                logger.info(
+                    "Re-importing incomplete '%s' (had %d/%d messages)",
+                    conv.title, db_count, expected,
+                )
+                try:
+                    # Clean up ChromaDB entries for old memories
+                    cursor = await sqlite._db.execute(
+                        "SELECT id FROM memories WHERE session_id = ?",
+                        (session_id,),
+                    )
+                    old_ids = [row[0] for row in await cursor.fetchall()]
+                    for mid in old_ids:
+                        try:
+                            chroma.delete_memory(mid)
+                        except Exception:
+                            pass
+                    # Clean up lessons in ChromaDB
+                    cursor = await sqlite._db.execute(
+                        "SELECT id FROM lessons WHERE source_session_id = ?",
+                        (session_id,),
+                    )
+                    old_lesson_ids = [row[0] for row in await cursor.fetchall()]
+                    for lid in old_lesson_ids:
+                        try:
+                            chroma.delete_lesson(lid)
+                        except Exception:
+                            pass
+                    await sqlite.delete_session_cascade(session_id, old_ids)
+                    stats.conversations_reimported += 1
+                except Exception as e:
+                    logger.error("Failed to clean up incomplete '%s': %s", conv.title, e)
+                    continue
 
         try:
             await _import_single_conversation(

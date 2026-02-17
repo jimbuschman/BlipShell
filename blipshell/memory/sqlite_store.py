@@ -270,6 +270,52 @@ class SQLiteStore:
         )
         return await cursor.fetchone() is not None
 
+    async def get_session_message_count(self, title: str) -> tuple[int | None, int]:
+        """Get the session ID and message_count for a session by title.
+
+        Returns (session_id, message_count) or (None, 0) if not found.
+        """
+        cursor = await self._db.execute(
+            "SELECT id, message_count FROM sessions WHERE title = ? LIMIT 1",
+            (title,),
+        )
+        row = await cursor.fetchone()
+        if row:
+            return row[0], row[1] or 0
+        return None, 0
+
+    async def delete_session_cascade(
+        self, session_id: int, memory_ids: list[int] | None = None,
+    ):
+        """Delete a session and all its memories, lessons, and tags.
+
+        If memory_ids is not provided, queries them from the DB.
+        """
+        if memory_ids is None:
+            cursor = await self._db.execute(
+                "SELECT id FROM memories WHERE session_id = ?", (session_id,)
+            )
+            memory_ids = [row[0] for row in await cursor.fetchall()]
+
+        # memory_tags cleaned by ON DELETE CASCADE
+        if memory_ids:
+            placeholders = ",".join("?" * len(memory_ids))
+            await self._db.execute(
+                f"DELETE FROM memories WHERE id IN ({placeholders})",
+                memory_ids,
+            )
+
+        # Clean up lessons from this session
+        await self._db.execute(
+            "DELETE FROM lessons WHERE source_session_id = ?", (session_id,)
+        )
+
+        # Delete the session itself
+        await self._db.execute(
+            "DELETE FROM sessions WHERE id = ?", (session_id,)
+        )
+        await self._db.commit()
+
     async def list_sessions(self, limit: int = 50, project: Optional[str] = None) -> list[Session]:
         """List sessions, optionally filtered by project."""
         if project:
