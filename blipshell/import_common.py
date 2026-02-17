@@ -64,13 +64,12 @@ async def import_conversations(
     conversations: list[ParsedConversation],
     on_progress: Optional[Callable[[int, int, str, "ImportStats"], None]] = None,
     skip_lessons: bool = False,
+    max_concurrent: int = 3,
 ) -> ImportStats:
     """Import parsed conversations through the BlipShell memory pipeline.
 
-    For each conversation:
-    1. Create a BlipShell session
-    2. Process each message through the memory pipeline (noise, summarize, embed, tag, rank)
-    3. Optionally extract lessons from the full conversation
+    Runs up to max_concurrent conversations in parallel so different LLM
+    steps (summarization, ranking, importance, embedding) can overlap.
 
     Args:
         sqlite: SQLite store instance
@@ -80,6 +79,7 @@ async def import_conversations(
         conversations: Parsed conversations to import
         on_progress: Callback(current_index, total, title, stats) for progress tracking
         skip_lessons: If True, skip lesson extraction (faster)
+        max_concurrent: Number of conversations to process in parallel
 
     Returns:
         ImportStats with counts of imported items
@@ -87,29 +87,28 @@ async def import_conversations(
     processor = MemoryProcessor(sqlite, chroma, router, config=config)
     stats = ImportStats()
     total = len(conversations)
+    semaphore = asyncio.Semaphore(max_concurrent)
+    progress_count = 0
 
-    for i, conv in enumerate(conversations):
-        if on_progress:
-            on_progress(i, total, conv.title, stats)
+    async def _process_one(i: int, conv: ParsedConversation):
+        nonlocal progress_count
 
         # Resume support: skip complete conversations, re-import incomplete ones
         session_id, db_count = await sqlite.get_session_message_count(conv.title)
         if session_id is not None:
-            # message_count is only set after all steps complete, so >0
-            # means the conversation was fully processed. If 0, it was
-            # interrupted mid-import and needs to be redone.
             if db_count > 0:
                 logger.info("Skipping already imported (%d msgs): %s", db_count, conv.title)
                 stats.conversations_skipped += 1
-                continue
+                progress_count += 1
+                if on_progress:
+                    on_progress(progress_count, total, conv.title, stats)
+                return
             else:
-                # Incomplete — session exists but message_count=0 (interrupted)
                 logger.info(
                     "Re-importing incomplete '%s' (interrupted, 0 messages saved)",
                     conv.title,
                 )
                 try:
-                    # Clean up ChromaDB entries for old memories
                     cursor = await sqlite._db.execute(
                         "SELECT id FROM memories WHERE session_id = ?",
                         (session_id,),
@@ -120,7 +119,6 @@ async def import_conversations(
                             chroma.delete_memory(mid)
                         except Exception:
                             pass
-                    # Clean up lessons in ChromaDB
                     cursor = await sqlite._db.execute(
                         "SELECT id FROM lessons WHERE source_session_id = ?",
                         (session_id,),
@@ -135,20 +133,25 @@ async def import_conversations(
                     stats.conversations_reimported += 1
                 except Exception as e:
                     logger.error("Failed to clean up incomplete '%s': %s", conv.title, e)
-                    continue
+                    return
 
-        try:
-            await _import_single_conversation(
-                sqlite, chroma, router, processor, config, conv, stats,
-                skip_lessons,
-            )
-            stats.conversations_imported += 1
-        except Exception as e:
-            logger.error("Failed to import conversation '%s': %s", conv.title, e)
+        async with semaphore:
+            try:
+                await _import_single_conversation(
+                    sqlite, chroma, router, processor, config, conv, stats,
+                    skip_lessons,
+                )
+                stats.conversations_imported += 1
+            except Exception as e:
+                logger.error("Failed to import conversation '%s': %s", conv.title, e)
 
-        # Small delay between conversations to avoid overwhelming the LLM endpoint
-        if i < total - 1:
-            await asyncio.sleep(0.5)
+        progress_count += 1
+        if on_progress:
+            on_progress(progress_count, total, conv.title, stats)
+
+    # Launch all tasks and let the semaphore control concurrency
+    tasks = [asyncio.create_task(_process_one(i, conv)) for i, conv in enumerate(conversations)]
+    await asyncio.gather(*tasks)
 
     return stats
 
