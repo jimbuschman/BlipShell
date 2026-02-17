@@ -66,7 +66,7 @@ class LLMRouter:
         """Get both model name and client for a task type."""
         return self.get_model(task_type), await self.get_client(task_type)
 
-    async def generate(self, task_type: str, prompt: str, system: Optional[str] = None, think: Optional[bool] = None) -> str:
+    async def generate(self, task_type: str, prompt: str, system: Optional[str] = None, think: Optional[bool | str] = None) -> str:
         """Route a generate request to the appropriate model/endpoint.
 
         If the primary model/endpoint fails and a fallback model is configured,

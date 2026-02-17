@@ -260,22 +260,20 @@ async def _generate_with_options(
     system: str | None = None,
     extra_options: dict | None = None,
 ) -> str:
-    """Call router.generate(), merging extra_options into the Ollama options dict.
+    """Call router.generate(), passing reasoning_effort via the think parameter.
 
-    When extra_options contains keys like reasoning_effort, we go through the
-    client directly so we can pass them in the options dict.
+    GPT-OSS and similar models accept think="low"/"medium"/"high" to control
+    thinking depth. Other models ignore the think parameter gracefully.
     """
     if not extra_options:
         return await router.generate(task_type, prompt, system=system)
 
-    # Bypass router to inject extra options
-    model, client = await router.get_model_and_client(task_type)
-    if not client:
-        raise RuntimeError(f"No available endpoint for task type: {task_type}")
+    # Pass reasoning_effort as the think parameter (not in options dict)
+    effort = extra_options.get("reasoning_effort")
+    if effort:
+        return await router.generate(task_type, prompt, system=system, think=effort)
 
-    gen_kwargs: dict = {"options": {**extra_options}}
-    result = await client.generate(prompt=prompt, model=model, system=system, **gen_kwargs)
-    return result
+    return await router.generate(task_type, prompt, system=system)
 
 
 def extract_response(response) -> tuple[str, list | None]:
@@ -375,7 +373,9 @@ async def benchmark_tool_calling(router: LLMRouter, extra_options: dict | None =
         start = time.perf_counter()
         chat_kwargs = {}
         if extra_options:
-            chat_kwargs["options"] = {**extra_options}
+            effort = extra_options.get("reasoning_effort")
+            if effort:
+                chat_kwargs["think"] = effort
         try:
             response = await client.chat(messages=messages, model=model, tools=MOCK_TOOLS, **chat_kwargs)
             content, tool_calls = extract_response(response)
