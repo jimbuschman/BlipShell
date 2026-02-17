@@ -217,16 +217,20 @@ console = Console()
 def parse_model_spec(spec: str) -> tuple[str, dict]:
     """Parse a model spec like 'gpt-oss:latest/low' into (model_name, extra_options).
 
-    Supports reasoning_effort suffix: /low, /medium, /high
-    Returns (model_name, options_dict) where options_dict may contain reasoning_effort.
+    Supported suffixes:
+      /low, /medium, /high  — reasoning_effort (for gpt-oss)
+      /nothink              — disable thinking (think=False)
+    Returns (model_name, options_dict).
     """
     if "/" in spec:
         parts = spec.rsplit("/", 1)
         model_name = parts[0]
-        effort = parts[1].lower()
-        if effort in ("low", "medium", "high"):
-            return model_name, {"reasoning_effort": effort}
-        # Not a known effort level — treat whole string as model name
+        suffix = parts[1].lower()
+        if suffix in ("low", "medium", "high"):
+            return model_name, {"reasoning_effort": suffix}
+        if suffix == "nothink":
+            return model_name, {"nothink": True}
+        # Not a known suffix — treat whole string as model name
     return spec, {}
 
 
@@ -268,7 +272,11 @@ async def _generate_with_options(
     if not extra_options:
         return await router.generate(task_type, prompt, system=system)
 
-    # Pass reasoning_effort as the think parameter (not in options dict)
+    # /nothink — disable thinking
+    if extra_options.get("nothink"):
+        return await router.generate(task_type, prompt, system=system, think=False)
+
+    # /low /medium /high — reasoning effort (gpt-oss)
     effort = extra_options.get("reasoning_effort")
     if effort:
         return await router.generate(task_type, prompt, system=system, think=effort)
@@ -373,6 +381,8 @@ async def benchmark_tool_calling(router: LLMRouter, extra_options: dict | None =
         start = time.perf_counter()
         chat_kwargs = {}
         if extra_options:
+            if extra_options.get("nothink"):
+                chat_kwargs["think"] = False
             effort = extra_options.get("reasoning_effort")
             if effort:
                 chat_kwargs["think"] = effort
