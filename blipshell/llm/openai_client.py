@@ -39,9 +39,15 @@ class OpenAICompatClient:
         )
 
     async def _retry_call(self, func, *args, **kwargs):
-        """Retry an async call with exponential backoff."""
+        """Retry an async call with exponential backoff.
+
+        Rate limit errors (429) get extra retries with longer delays
+        since they're temporary and shouldn't disable the endpoint.
+        """
         last_error = None
-        for attempt in range(self.max_retries + 1):
+        rate_limit_retries = 0
+        max_rate_limit_retries = 6  # up to ~2 min of waiting
+        for attempt in range(self.max_retries + 1 + max_rate_limit_retries):
             try:
                 return await asyncio.wait_for(
                     func(*args, **kwargs), timeout=self.timeout,
@@ -57,15 +63,19 @@ class OpenAICompatClient:
                 if attempt < self.max_retries:
                     delay = self.retry_base_delay * (2 ** attempt)
                     await asyncio.sleep(delay)
+                else:
+                    break
             except openai.RateLimitError as e:
                 last_error = e
-                if attempt < self.max_retries:
-                    delay = self.retry_base_delay * (2 ** attempt)
-                    logger.warning(
-                        "Rate limited (attempt %d/%d), retrying in %.1fs: %s",
-                        attempt + 1, self.max_retries + 1, delay, e,
-                    )
-                    await asyncio.sleep(delay)
+                rate_limit_retries += 1
+                if rate_limit_retries > max_rate_limit_retries:
+                    break
+                delay = 10.0 * rate_limit_retries
+                logger.warning(
+                    "Rate limited (%d/%d), waiting %.0fs...",
+                    rate_limit_retries, max_rate_limit_retries, delay,
+                )
+                await asyncio.sleep(delay)
             except Exception as e:
                 last_error = e
                 if attempt < self.max_retries:
@@ -75,6 +85,8 @@ class OpenAICompatClient:
                         attempt + 1, self.max_retries + 1, delay, e,
                     )
                     await asyncio.sleep(delay)
+                else:
+                    break
         raise last_error
 
     async def chat(
