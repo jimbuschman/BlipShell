@@ -230,7 +230,7 @@ def parse_model_spec(spec: str) -> tuple[str, dict]:
     return spec, {}
 
 
-def make_router(model_name: str) -> LLMRouter:
+def make_router(model_name: str, timeout: float = 300.0) -> LLMRouter:
     """Create a LLMRouter that routes ALL task types to the given model."""
     models = ModelsConfig(
         reasoning=model_name,
@@ -248,7 +248,8 @@ def make_router(model_name: str) -> LLMRouter:
         priority=1,
         max_concurrent=1,
     )
-    endpoint_manager = EndpointManager([endpoint_cfg], LLMConfig())
+    llm_config = LLMConfig(timeout=timeout)
+    endpoint_manager = EndpointManager([endpoint_cfg], llm_config)
     return LLMRouter(models, endpoint_manager)
 
 
