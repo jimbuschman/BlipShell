@@ -10,7 +10,7 @@ class ModelsConfig(BaseModel):
     reasoning: str = "qwen3:14b"
     tool_calling: str = "qwen3:14b"
     coding: str = "qwen3:14b"
-    summarization: str = "gemma3:4b"
+    summarization: str = "glm4:latest"
     ranking: str = "gemma3:4b"
     importance: str = "qwen3:14b"
     embedding: str = "nomic-embed-text"

@@ -5,7 +5,7 @@ models:
   reasoning: "qwen3:14b"               # local — lesson extraction
   tool_calling: "glm-5:cloud"
   coding: "qwen3-coder:480b-cloud"
-  summarization: "gemma3:4b"           # local — fast, good SKIP detection
+  summarization: "glm4:latest"          # local — best accuracy, correct role attribution
   ranking: "qwen2.5:14b"              # local — best rank distribution
   importance: "qwen3:14b"             # local — best importance distribution
   embedding: "nomic-embed-text"
