@@ -266,7 +266,7 @@ async def _generate_with_options(
     client directly so we can pass them in the options dict.
     """
     if not extra_options:
-        return await router.generate(task_type, prompt, system=system, think=False)
+        return await router.generate(task_type, prompt, system=system)
 
     # Bypass router to inject extra options
     model, client = await router.get_model_and_client(task_type)
@@ -274,10 +274,6 @@ async def _generate_with_options(
         raise RuntimeError(f"No available endpoint for task type: {task_type}")
 
     gen_kwargs: dict = {"options": {**extra_options}}
-    # Don't pass think=False when using reasoning_effort (they conflict)
-    if "reasoning_effort" not in extra_options:
-        gen_kwargs["think"] = False
-
     result = await client.generate(prompt=prompt, model=model, system=system, **gen_kwargs)
     return result
 
