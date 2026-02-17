@@ -222,12 +222,13 @@ def make_router(model_name: str) -> LLMRouter:
         coding=model_name,
         summarization=model_name,
         ranking=model_name,
+        importance=model_name,
         embedding=model_name,
     )
     endpoint_cfg = EndpointConfig(
         name="benchmark",
         url=OLLAMA_URL,
-        roles=["reasoning", "tool_calling", "coding", "summarization", "ranking", "embedding"],
+        roles=["reasoning", "tool_calling", "coding", "summarization", "ranking", "importance", "embedding"],
         priority=1,
         max_concurrent=1,
     )

@@ -161,12 +161,13 @@ def make_router(model_name: str) -> LLMRouter:
         coding=model_name,
         summarization=model_name,
         ranking=model_name,
+        importance=model_name,
         embedding=model_name,
     )
     endpoint_cfg = EndpointConfig(
         name="benchmark",
         url=OLLAMA_URL,
-        roles=["reasoning", "tool_calling", "coding", "summarization", "ranking", "embedding"],
+        roles=["reasoning", "tool_calling", "coding", "summarization", "ranking", "importance", "embedding"],
         priority=1,
         max_concurrent=1,
     )
@@ -230,7 +231,7 @@ async def benchmark_importance(router: LLMRouter) -> list[dict]:
         start = time.perf_counter()
         try:
             raw = await router.generate(
-                TaskType.RANKING, user_prompt, system=sys_prompt, think=False,
+                TaskType.IMPORTANCE, user_prompt, system=sys_prompt, think=False,
             )
             score = MemoryProcessor._parse_float(raw, default=0.3)
         except Exception as e:

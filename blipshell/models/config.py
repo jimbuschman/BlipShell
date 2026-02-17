@@ -12,6 +12,7 @@ class ModelsConfig(BaseModel):
     coding: str = "qwen3:14b"
     summarization: str = "gemma3:4b"
     ranking: str = "gemma3:4b"
+    importance: str = "qwen3:14b"
     embedding: str = "nomic-embed-text"
     # Fallback models used when cloud endpoints are unavailable
     reasoning_fallback: str = "gpt-oss:latest"
@@ -184,7 +185,7 @@ class BlipShellConfig(BaseModel):
         EndpointConfig(
             name="local",
             url="http://localhost:11434",
-            roles=["reasoning", "tool_calling", "coding", "embedding"],
+            roles=["reasoning", "tool_calling", "coding", "embedding", "importance"],
             priority=1,
             max_concurrent=2,
         )

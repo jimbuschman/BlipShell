@@ -90,7 +90,7 @@ async def reprocess_memories(
                 # Re-importance (0.0-1.0)
                 imp_system, imp_prompt = ask_importance(memory.content)
                 importance_text = await router.generate(
-                    TaskType.RANKING,
+                    TaskType.IMPORTANCE,
                     imp_prompt,
                     system=imp_system,
                     think=think,

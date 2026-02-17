@@ -199,7 +199,7 @@ class MemoryProcessor:
         try:
             imp_system, imp_prompt = ask_importance(text)
             importance_text = await self.router.generate(
-                TaskType.RANKING,
+                TaskType.IMPORTANCE,
                 imp_prompt,
                 system=imp_system,
             )

@@ -1,6 +1,6 @@
 """Task-type to model + endpoint routing.
 
-Maps task types (reasoning, coding, summarization, ranking, embedding)
+Maps task types (reasoning, coding, summarization, ranking, importance, embedding)
 to the appropriate model and endpoint based on configuration.
 """
 
@@ -21,6 +21,7 @@ class TaskType:
     CODING = "coding"
     SUMMARIZATION = "summarization"
     RANKING = "ranking"
+    IMPORTANCE = "importance"
     EMBEDDING = "embedding"
 
 
@@ -43,6 +44,7 @@ class LLMRouter:
             TaskType.CODING: self._models.coding,
             TaskType.SUMMARIZATION: self._models.summarization,
             TaskType.RANKING: self._models.ranking,
+            TaskType.IMPORTANCE: self._models.importance,
             TaskType.EMBEDDING: self._models.embedding,
         }
         return model_map.get(task_type, self._models.reasoning)
