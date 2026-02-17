@@ -312,6 +312,9 @@ async def _import_single_conversation(
     recency_bonus = config.importance_recency_bonus if config else 0.1
     tag_bonus = config.importance_tag_bonus if config else 0.05
 
+    title_short = conv.title[:40]
+    total_msgs = len(conv.messages)
+
     # ── Step 1: Filter noise + tag (no LLM) ────────────────────────────
     valid_messages: list[tuple[ParsedMessage, list[str]]] = []
     for msg in conv.messages:
@@ -320,11 +323,14 @@ async def _import_single_conversation(
             continue
         tags = tag_message(msg.content)
         valid_messages.append((msg, tags))
+    noise_count = total_msgs - len(valid_messages)
+    print(f"  [{title_short}] {len(valid_messages)}/{total_msgs} messages kept ({noise_count} noise)")
 
     # ── Step 2: Summarize all (one model load) ─────────────────────────
     # Messages where summary comes back as "SKIP" are filtered out.
     surviving: list[tuple[ParsedMessage, list[str], str]] = []
-    for msg, tags in valid_messages:
+    for i, (msg, tags) in enumerate(valid_messages):
+        print(f"  [{title_short}] Summarizing {i+1}/{len(valid_messages)}...", end="\r")
         try:
             sum_system, sum_prompt = summarize_memory(msg.content)
             summary = await router.generate(
@@ -338,10 +344,12 @@ async def _import_single_conversation(
             logger.error("Summarization failed, using raw text: %s", e)
             summary = msg.content
         surviving.append((msg, tags, summary))
+    print(f"  [{title_short}] Summarized {len(surviving)} messages" + " " * 20)
 
     # ── Step 3: Rank all (one model load) ──────────────────────────────
     ranks: list[int] = []
-    for msg, _tags, _summary in surviving:
+    for i, (msg, _tags, _summary) in enumerate(surviving):
+        print(f"  [{title_short}] Ranking {i+1}/{len(surviving)}...", end="\r")
         try:
             rank_system, rank_prompt = rank_memory(msg.content)
             rank_text = await router.generate(
@@ -351,6 +359,7 @@ async def _import_single_conversation(
         except Exception as e:
             logger.error("Ranking failed: %s", e)
             ranks.append(3)
+    print(f"  [{title_short}] Ranked {len(ranks)} messages" + " " * 20)
 
     # ── Step 4: DB create + tag all (no LLM) ──────────────────────────
     memory_ids: list[int] = []
@@ -373,6 +382,7 @@ async def _import_single_conversation(
             await sqlite.tag_memory(memory_id, tags)
         except Exception as e:
             logger.error("Tagging failed: %s", e)
+    print(f"  [{title_short}] Saved {len(memory_ids)} memories to DB")
 
     # ── Step 5: Embed all (one model load) ─────────────────────────────
     for i, memory_id in enumerate(memory_ids):
@@ -384,9 +394,11 @@ async def _import_single_conversation(
             })
         except Exception as e:
             logger.error("ChromaDB embed failed: %s", e)
+    print(f"  [{title_short}] Embedded {len(memory_ids)} memories")
 
     # ── Step 6: Importance all + update ranks (one model load) ─────────
     for i, memory_id in enumerate(memory_ids):
+        print(f"  [{title_short}] Importance {i+1}/{len(memory_ids)}...", end="\r")
         _msg, tags, _summary = surviving[i]
         try:
             imp_system, imp_prompt = ask_importance(surviving[i][0].content)
@@ -406,6 +418,7 @@ async def _import_single_conversation(
             await sqlite.update_memory(memory_id, rank=ranks[i], importance=importance)
         except Exception as e:
             logger.error("Rank/importance update failed: %s", e)
+    print(f"  [{title_short}] Scored importance for {len(memory_ids)} memories" + " " * 20)
 
     # Update session message count
     msg_count = len(memory_ids)
@@ -414,12 +427,15 @@ async def _import_single_conversation(
 
     # ── Step 7: Lessons (same model as importance — no swap) ───────────
     if not skip_lessons and len(conv.messages) >= 4:
+        print(f"  [{title_short}] Extracting lessons...")
         try:
             full_text = _build_conversation_text(conv)
             await processor.process_lesson(full_text, session_id)
             stats.lessons_extracted += 1
         except Exception as e:
             logger.error("Lesson extraction failed for '%s': %s", conv.title, e)
+
+    print(f"  [{title_short}] Done ({msg_count} messages processed)")
 
 
 def _build_conversation_text(conv: ParsedConversation) -> str:
