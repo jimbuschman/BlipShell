@@ -82,6 +82,25 @@ class ChromaStore:
             metadatas=[meta],
         )
 
+    def add_memories_batch(
+        self,
+        memory_ids: list[int],
+        texts: list[str],
+        metadatas: list[dict],
+    ):
+        """Add multiple memory embeddings in a single ChromaDB call.
+
+        Much faster than calling add_memory() in a loop because Ollama
+        embeds all documents in one request instead of N separate ones.
+        """
+        for meta in metadatas:
+            meta["source"] = "memory"
+        self._memories.upsert(
+            ids=[str(mid) for mid in memory_ids],
+            documents=texts,
+            metadatas=metadatas,
+        )
+
     def add_core_memory(self, core_memory_id: int, text: str, metadata: Optional[dict] = None):
         """Add a core memory embedding to ChromaDB."""
         meta = metadata or {}

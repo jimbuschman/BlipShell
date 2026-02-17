@@ -260,16 +260,16 @@ async def _import_single_conversation(
             logger.error("Tagging failed: %s", e)
     print(f"  [{title_short}] Saved {len(memory_ids)} memories to DB")
 
-    # ── Step 5: Embed all (one model load) ─────────────────────────────
-    for i, memory_id in enumerate(memory_ids):
-        msg, _tags, summary = surviving[i]
-        try:
-            chroma.add_memory(memory_id, summary, {
-                "session_id": str(session_id),
-                "role": msg.role,
-            })
-        except Exception as e:
-            logger.error("ChromaDB embed failed: %s", e)
+    # ── Step 5: Embed all (single batch call) ──────────────────────────
+    try:
+        texts = [summary for _msg, _tags, summary in surviving]
+        metadatas = [
+            {"session_id": str(session_id), "role": msg.role}
+            for msg, _tags, _summary in surviving
+        ]
+        chroma.add_memories_batch(memory_ids, texts, metadatas)
+    except Exception as e:
+        logger.error("ChromaDB batch embed failed: %s", e)
     print(f"  [{title_short}] Embedded {len(memory_ids)} memories")
 
     # ── Step 6: Importance all + update ranks (one model load) ─────────
