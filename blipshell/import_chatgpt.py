@@ -188,7 +188,7 @@ async def import_conversations(
     router: LLMRouter,
     config: MemoryConfig,
     conversations: list[ParsedConversation],
-    on_progress: Optional[Callable[[int, int, str], None]] = None,
+    on_progress: Optional[Callable[[int, int, str, "ImportStats"], None]] = None,
     skip_lessons: bool = False,
 ) -> ImportStats:
     """Import parsed ChatGPT conversations through the BlipShell memory pipeline.
@@ -216,7 +216,7 @@ async def import_conversations(
 
     for i, conv in enumerate(conversations):
         if on_progress:
-            on_progress(i, total, conv.title)
+            on_progress(i, total, conv.title, stats)
 
         # Resume support: skip complete conversations, re-import incomplete ones
         session_id, db_count = await sqlite.get_session_message_count(conv.title)

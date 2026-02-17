@@ -1201,12 +1201,11 @@ def conversations(ctx, file, max_count, skip_lessons):
         with Progress(console=console) as progress:
             task = progress.add_task("Importing...", total=len(convs))
 
-            def on_progress(idx, total, title):
-                skipped = stats.conversations_skipped
-                imported = stats.conversations_imported
+            def on_progress(idx, total, title, stats):
                 label = f"[cyan]{title[:40]}[/cyan]"
-                if skipped or imported:
-                    label += f"  [dim]({imported} imported, {skipped} skipped)[/dim]"
+                i, s = stats.conversations_imported, stats.conversations_skipped
+                if i or s:
+                    label += f"  [dim]({i} imported, {s} skipped)[/dim]"
                 progress.update(task, completed=idx, description=label)
 
             stats = await import_conversations(
