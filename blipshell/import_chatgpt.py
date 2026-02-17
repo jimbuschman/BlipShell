@@ -227,7 +227,7 @@ async def import_conversations(
             non_noise = sum(
                 1 for m in conv.messages if not should_skip_memory(m.content)
             )
-            if non_noise == 0 or db_count >= non_noise // 2:
+            if non_noise == 0 or db_count >= int(non_noise * 0.8):
                 logger.info("Skipping already imported: %s", conv.title)
                 stats.conversations_skipped += 1
                 continue
