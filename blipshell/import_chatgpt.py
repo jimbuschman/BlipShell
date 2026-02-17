@@ -221,19 +221,18 @@ async def import_conversations(
         # Resume support: skip complete conversations, re-import incomplete ones
         session_id, db_count = await sqlite.get_session_message_count(conv.title)
         if session_id is not None:
-            # Run noise filter (instant, no LLM) to get the real expected count.
-            non_noise = sum(
-                1 for m in conv.messages if not should_skip_memory(m.content)
-            )
-            if db_count >= non_noise:
-                logger.info("Skipping already imported: %s", conv.title)
+            # message_count is only set after all steps complete, so >0
+            # means the conversation was fully processed. If 0, it was
+            # interrupted mid-import and needs to be redone.
+            if db_count > 0:
+                logger.info("Skipping already imported (%d msgs): %s", db_count, conv.title)
                 stats.conversations_skipped += 1
                 continue
             else:
-                # Incomplete — delete and re-import
+                # Incomplete — session exists but message_count=0 (interrupted)
                 logger.info(
-                    "Re-importing incomplete '%s' (had %d/%d messages)",
-                    conv.title, db_count, non_noise,
+                    "Re-importing incomplete '%s' (interrupted, 0 messages saved)",
+                    conv.title,
                 )
                 try:
                     # Clean up ChromaDB entries for old memories
