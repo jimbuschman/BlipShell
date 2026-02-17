@@ -14,11 +14,15 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from blipshell.core.config import ConfigManager
+from blipshell.llm.prompts import ask_importance, rank_memory, summarize_memory
+from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.chroma_store import ChromaStore
+from blipshell.memory.noise import should_skip_memory
 from blipshell.memory.processor import MemoryProcessor
 from blipshell.memory.sqlite_store import SQLiteStore
-from blipshell.llm.router import LLMRouter
+from blipshell.memory.tagger import tag_message
 from blipshell.models.config import MemoryConfig
+from blipshell.models.memory import Memory, MemoryType
 
 logger = logging.getLogger(__name__)
 
@@ -259,7 +263,8 @@ async def import_conversations(
 
         try:
             await _import_single_conversation(
-                sqlite, processor, conv, stats, skip_lessons
+                sqlite, chroma, router, processor, config, conv, stats,
+                skip_lessons,
             )
             stats.conversations_imported += 1
         except Exception as e:
@@ -274,12 +279,29 @@ async def import_conversations(
 
 async def _import_single_conversation(
     sqlite: SQLiteStore,
+    chroma: ChromaStore,
+    router: LLMRouter,
     processor: MemoryProcessor,
+    config: MemoryConfig | None,
     conv: ParsedConversation,
     stats: ImportStats,
     skip_lessons: bool,
 ):
-    """Import a single conversation into BlipShell."""
+    """Import a single conversation using batch-by-task-type pipeline.
+
+    Instead of processing each message through the full 7-step pipeline
+    (which swaps LLM models at every step), this batches all messages by
+    task type so each model loads only once per conversation.
+
+    Batch order (minimizes model swaps):
+      1. Noise filter + tagging  (no LLM)
+      2. Summarize all           (glm4)
+      3. Rank all                (qwen2.5:14b)
+      4. DB create + tag all     (no LLM)
+      5. Embed all               (nomic-embed-text)
+      6. Importance all + ranks  (qwen3:14b)
+      7. Lessons                 (qwen3:14b — same model, no swap)
+    """
     # Create a session for this conversation (preserve original date)
     conv_ts = (
         datetime.fromtimestamp(conv.created_at, tz=UTC)
@@ -287,42 +309,110 @@ async def _import_single_conversation(
     )
     session_id = await sqlite.create_session(title=conv.title, created_at=conv_ts)
 
-    # Update message count on the session
-    msg_count = 0
+    recency_bonus = config.importance_recency_bonus if config else 0.1
+    tag_bonus = config.importance_tag_bonus if config else 0.05
 
-    # Process messages sequentially to avoid model-swap thrashing on limited VRAM
-    sem = asyncio.Semaphore(1)
-
-    async def _process_one(msg):
-        async with sem:
-            try:
-                ts = (
-                    datetime.fromtimestamp(msg.timestamp, tz=UTC)
-                    if msg.timestamp else None
-                )
-                result = await processor.process_message(
-                    text=msg.content,
-                    role=msg.role,
-                    session_id=session_id,
-                    timestamp=ts,
-                )
-                return result
-            except Exception as e:
-                logger.error("Failed to process message in '%s': %s", conv.title, e)
-                return None
-
-    results = await asyncio.gather(*[_process_one(msg) for msg in conv.messages])
-    for result in results:
-        if result is not None:
-            stats.messages_processed += 1
-            msg_count += 1
-        else:
+    # ── Step 1: Filter noise + tag (no LLM) ────────────────────────────
+    valid_messages: list[tuple[ParsedMessage, list[str]]] = []
+    for msg in conv.messages:
+        if should_skip_memory(msg.content):
             stats.messages_skipped_noise += 1
+            continue
+        tags = tag_message(msg.content)
+        valid_messages.append((msg, tags))
+
+    # ── Step 2: Summarize all (one model load) ─────────────────────────
+    # Messages where summary comes back as "SKIP" are filtered out.
+    surviving: list[tuple[ParsedMessage, list[str], str]] = []
+    for msg, tags in valid_messages:
+        try:
+            sum_system, sum_prompt = summarize_memory(msg.content)
+            summary = await router.generate(
+                TaskType.SUMMARIZATION, sum_prompt, system=sum_system,
+            )
+            if summary.strip().upper() == "SKIP":
+                logger.debug("Memory skipped (meta/self-referential): %s", msg.content[:50])
+                stats.messages_skipped_noise += 1
+                continue
+        except Exception as e:
+            logger.error("Summarization failed, using raw text: %s", e)
+            summary = msg.content
+        surviving.append((msg, tags, summary))
+
+    # ── Step 3: Rank all (one model load) ──────────────────────────────
+    ranks: list[int] = []
+    for msg, _tags, _summary in surviving:
+        try:
+            rank_system, rank_prompt = rank_memory(msg.content)
+            rank_text = await router.generate(
+                TaskType.RANKING, rank_prompt, system=rank_system,
+            )
+            ranks.append(MemoryProcessor._parse_rank(rank_text))
+        except Exception as e:
+            logger.error("Ranking failed: %s", e)
+            ranks.append(3)
+
+    # ── Step 4: DB create + tag all (no LLM) ──────────────────────────
+    memory_ids: list[int] = []
+    for msg, tags, summary in surviving:
+        ts = (
+            datetime.fromtimestamp(msg.timestamp, tz=UTC)
+            if msg.timestamp else None
+        )
+        memory = Memory(
+            session_id=session_id,
+            role=msg.role,
+            content=msg.content,
+            summary=summary,
+            timestamp=ts or datetime.now(timezone.utc),
+            memory_type=MemoryType.CONVERSATION,
+        )
+        memory_id = await sqlite.create_memory(memory)
+        memory_ids.append(memory_id)
+        try:
+            await sqlite.tag_memory(memory_id, tags)
+        except Exception as e:
+            logger.error("Tagging failed: %s", e)
+
+    # ── Step 5: Embed all (one model load) ─────────────────────────────
+    for i, memory_id in enumerate(memory_ids):
+        msg, _tags, summary = surviving[i]
+        try:
+            chroma.add_memory(memory_id, summary, {
+                "session_id": str(session_id),
+                "role": msg.role,
+            })
+        except Exception as e:
+            logger.error("ChromaDB embed failed: %s", e)
+
+    # ── Step 6: Importance all + update ranks (one model load) ─────────
+    for i, memory_id in enumerate(memory_ids):
+        _msg, tags, _summary = surviving[i]
+        try:
+            imp_system, imp_prompt = ask_importance(surviving[i][0].content)
+            importance_text = await router.generate(
+                TaskType.IMPORTANCE, imp_prompt, system=imp_system,
+            )
+            importance = MemoryProcessor._parse_float(importance_text, default=0.3)
+        except Exception:
+            importance = 0.3
+
+        importance += recency_bonus
+        if len(tags) > 6:
+            importance += tag_bonus
+        importance = min(importance, 1.0)
+
+        try:
+            await sqlite.update_memory(memory_id, rank=ranks[i], importance=importance)
+        except Exception as e:
+            logger.error("Rank/importance update failed: %s", e)
 
     # Update session message count
+    msg_count = len(memory_ids)
+    stats.messages_processed += msg_count
     await sqlite.update_session(session_id, message_count=msg_count)
 
-    # Extract lessons from the full conversation
+    # ── Step 7: Lessons (same model as importance — no swap) ───────────
     if not skip_lessons and len(conv.messages) >= 4:
         try:
             full_text = _build_conversation_text(conv)
