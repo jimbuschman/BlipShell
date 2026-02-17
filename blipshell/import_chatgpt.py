@@ -221,13 +221,11 @@ async def import_conversations(
         # Resume support: skip complete conversations, re-import incomplete ones
         session_id, db_count = await sqlite.get_session_message_count(conv.title)
         if session_id is not None:
-            # Count non-noise messages (instant, no LLM) to get expected max.
-            # db_count may still be slightly lower due to summarization SKIP
-            # detection, so we allow some slack (at least half).
+            # Run noise filter (instant, no LLM) to get the real expected count.
             non_noise = sum(
                 1 for m in conv.messages if not should_skip_memory(m.content)
             )
-            if non_noise == 0 or db_count >= int(non_noise * 0.8):
+            if db_count >= non_noise:
                 logger.info("Skipping already imported: %s", conv.title)
                 stats.conversations_skipped += 1
                 continue
