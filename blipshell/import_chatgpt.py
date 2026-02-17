@@ -223,7 +223,7 @@ async def import_conversations(
         if session_id is not None:
             expected = len(conv.messages)
             if db_count >= expected:
-                logger.debug("Skipping already imported: %s", conv.title)
+                logger.info("Skipping already imported: %s", conv.title)
                 stats.conversations_skipped += 1
                 continue
             else:
