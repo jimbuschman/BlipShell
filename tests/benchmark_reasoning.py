@@ -214,6 +214,22 @@ console = Console()
 # Helpers
 # ---------------------------------------------------------------------------
 
+def parse_model_spec(spec: str) -> tuple[str, dict]:
+    """Parse a model spec like 'gpt-oss:latest/low' into (model_name, extra_options).
+
+    Supports reasoning_effort suffix: /low, /medium, /high
+    Returns (model_name, options_dict) where options_dict may contain reasoning_effort.
+    """
+    if "/" in spec:
+        parts = spec.rsplit("/", 1)
+        model_name = parts[0]
+        effort = parts[1].lower()
+        if effort in ("low", "medium", "high"):
+            return model_name, {"reasoning_effort": effort}
+        # Not a known effort level — treat whole string as model name
+    return spec, {}
+
+
 def make_router(model_name: str) -> LLMRouter:
     """Create a LLMRouter that routes ALL task types to the given model."""
     models = ModelsConfig(
@@ -234,6 +250,35 @@ def make_router(model_name: str) -> LLMRouter:
     )
     endpoint_manager = EndpointManager([endpoint_cfg], LLMConfig())
     return LLMRouter(models, endpoint_manager)
+
+
+async def _generate_with_options(
+    router: LLMRouter,
+    task_type: str,
+    prompt: str,
+    system: str | None = None,
+    extra_options: dict | None = None,
+) -> str:
+    """Call router.generate(), merging extra_options into the Ollama options dict.
+
+    When extra_options contains keys like reasoning_effort, we go through the
+    client directly so we can pass them in the options dict.
+    """
+    if not extra_options:
+        return await router.generate(task_type, prompt, system=system, think=False)
+
+    # Bypass router to inject extra options
+    model, client = await router.get_model_and_client(task_type)
+    if not client:
+        raise RuntimeError(f"No available endpoint for task type: {task_type}")
+
+    gen_kwargs: dict = {"options": {**extra_options}}
+    # Don't pass think=False when using reasoning_effort (they conflict)
+    if "reasoning_effort" not in extra_options:
+        gen_kwargs["think"] = False
+
+    result = await client.generate(prompt=prompt, model=model, system=system, **gen_kwargs)
+    return result
 
 
 def extract_response(response) -> tuple[str, list | None]:
@@ -277,24 +322,25 @@ def extract_tool_call_info(tc) -> tuple[str, dict]:
 # Benchmark runners
 # ---------------------------------------------------------------------------
 
-async def benchmark_reasoning(router: LLMRouter) -> list[dict]:
+async def benchmark_reasoning(router: LLMRouter, extra_options: dict | None = None) -> list[dict]:
     results = []
     for test in REASONING_TESTS:
         start = time.perf_counter()
         try:
             if test.get("prompt_fn") == "generate_plan":
                 prompt = generate_plan(test["input"])
-                response = await router.generate(
-                    TaskType.REASONING, prompt, think=False,
+                response = await _generate_with_options(
+                    router, TaskType.REASONING, prompt, extra_options=extra_options,
                 )
             elif test.get("prompt_fn") == "reflect_on_response":
                 prompt = reflect_on_response(test["user_message"], test["response"])
-                response = await router.generate(
-                    TaskType.REASONING, prompt, think=False,
+                response = await _generate_with_options(
+                    router, TaskType.REASONING, prompt, extra_options=extra_options,
                 )
             else:
-                response = await router.generate(
-                    TaskType.REASONING, test["prompt"], system=test.get("system"), think=False,
+                response = await _generate_with_options(
+                    router, TaskType.REASONING, test["prompt"],
+                    system=test.get("system"), extra_options=extra_options,
                 )
         except Exception as e:
             response = f"ERROR: {e}"
@@ -304,13 +350,14 @@ async def benchmark_reasoning(router: LLMRouter) -> list[dict]:
     return results
 
 
-async def benchmark_coding(router: LLMRouter) -> list[dict]:
+async def benchmark_coding(router: LLMRouter, extra_options: dict | None = None) -> list[dict]:
     results = []
     for test in CODING_TESTS:
         start = time.perf_counter()
         try:
-            response = await router.generate(
-                TaskType.CODING, test["prompt"], system=test.get("system"), think=False,
+            response = await _generate_with_options(
+                router, TaskType.CODING, test["prompt"],
+                system=test.get("system"), extra_options=extra_options,
             )
         except Exception as e:
             response = f"ERROR: {e}"
@@ -320,7 +367,7 @@ async def benchmark_coding(router: LLMRouter) -> list[dict]:
     return results
 
 
-async def benchmark_tool_calling(router: LLMRouter) -> list[dict]:
+async def benchmark_tool_calling(router: LLMRouter, extra_options: dict | None = None) -> list[dict]:
     model, client = await router.get_model_and_client(TaskType.TOOL_CALLING)
     if not client:
         return [{"error": "No client available", "time": 0}] * len(TOOL_CALLING_TESTS)
@@ -329,8 +376,11 @@ async def benchmark_tool_calling(router: LLMRouter) -> list[dict]:
     for test in TOOL_CALLING_TESTS:
         messages = [{"role": "user", "content": test["message"]}]
         start = time.perf_counter()
+        chat_kwargs = {}
+        if extra_options:
+            chat_kwargs["options"] = {**extra_options}
         try:
-            response = await client.chat(messages=messages, model=model, tools=MOCK_TOOLS)
+            response = await client.chat(messages=messages, model=model, tools=MOCK_TOOLS, **chat_kwargs)
             content, tool_calls = extract_response(response)
 
             called_tools = []
@@ -455,25 +505,31 @@ async def run_benchmark(models: list[str]):
     # Only run models that were requested
     console.print(f"[bold]Running benchmarks for: {', '.join(models)}[/bold]\n")
 
-    for model in models:
-        console.rule(f"[bold blue]Benchmarking: {model}")
-        router = make_router(model)
+    for model_spec in models:
+        model_name, extra_options = parse_model_spec(model_spec)
+        # Use the full spec as the results key (e.g. "gpt-oss:latest/low")
+        result_key = model_spec
+        if extra_options:
+            console.print(f"  [yellow]Extra options: {extra_options}[/yellow]")
+
+        console.rule(f"[bold blue]Benchmarking: {result_key}")
+        router = make_router(model_name)
 
         console.print("  [dim]Running reasoning tests...[/dim]")
-        reasoning = await benchmark_reasoning(router)
+        reasoning = await benchmark_reasoning(router, extra_options)
 
         console.print("  [dim]Running coding tests...[/dim]")
-        coding = await benchmark_coding(router)
+        coding = await benchmark_coding(router, extra_options)
 
         console.print("  [dim]Running tool calling tests...[/dim]")
-        tool_calling = await benchmark_tool_calling(router)
+        tool_calling = await benchmark_tool_calling(router, extra_options)
 
-        all_results[model] = {
+        all_results[result_key] = {
             "reasoning": reasoning,
             "coding": coding,
             "tool_calling": tool_calling,
         }
-        console.print(f"  [green]Done with {model}[/green]\n")
+        console.print(f"  [green]Done with {result_key}[/green]\n")
 
     # Save merged results to JSON first (so data isn't lost if table rendering fails)
     with open(output_path, "w") as f:
