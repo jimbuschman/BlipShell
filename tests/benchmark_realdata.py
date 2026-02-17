@@ -117,6 +117,26 @@ def load_sample_messages(db_path: str, sample_size: int = 50) -> list[dict]:
     return unique[:sample_size]
 
 
+def load_messages_by_ids(db_path: str, ids: list[int]) -> list[dict]:
+    """Load specific messages by ID (for reusing a pinned sample)."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+
+    messages = []
+    for msg_id in ids:
+        row = c.execute(
+            """SELECT id, content, role, rank, importance, summary
+               FROM memories WHERE id = ?""",
+            (msg_id,),
+        ).fetchone()
+        if row:
+            messages.append(dict(row))
+
+    conn.close()
+    return messages
+
+
 def categorize_message(text: str) -> str:
     """Simple heuristic category for display."""
     text_lower = text.lower().strip()
@@ -134,6 +154,11 @@ def categorize_message(text: str) -> str:
     if any(kw in text_lower for kw in ["how", "what", "why", "explain", "?"]):
         return "question"
     return "general"
+
+
+def _model_keys(all_results: dict) -> list[str]:
+    """Return model names from results, excluding metadata keys."""
+    return [k for k in all_results if not k.startswith("_")]
 
 
 # ---------------------------------------------------------------------------
@@ -228,11 +253,27 @@ async def benchmark_summarization(router: LLMRouter, messages: list[dict]) -> li
         except Exception as e:
             response = f"ERROR: {e}"
         elapsed = time.perf_counter() - start
+
+        content = msg["content"]
+        summary = response.strip()
+        content_words = len(content.split())
+        summary_words = len(summary.split())
+
         results.append({
             "id": msg["id"],
             "original_summary": msg["summary"],
             "new_summary": response,
             "time": round(elapsed, 2),
+            "content_words": content_words,
+            "summary_words": summary_words,
+            "is_skip": summary.upper() == "SKIP",
+            "is_error": summary.startswith("ERROR:"),
+            "is_echo": summary == content or (content_words > 5 and summary == content[:len(summary)]),
+            "compression": round(summary_words / max(1, content_words), 2),
+            "under_30_words": summary_words <= 30,
+            "third_person": any(summary.lower().startswith(p) for p in [
+                "user ", "assistant ", "the user", "the assistant",
+            ]),
         })
         await asyncio.sleep(0.05)
     return results
@@ -249,8 +290,8 @@ def analyze_ranking(all_results: dict, messages: list[dict]):
     # Category map for messages
     msg_map = {m["id"]: m for m in messages}
 
-    for model, data in all_results.items():
-        ranks = data["ranking"]
+    for model in _model_keys(all_results):
+        ranks = all_results[model]["ranking"]
         dist = {}
         for r in ranks:
             dist[r["new_rank"]] = dist.get(r["new_rank"], 0) + 1
@@ -271,8 +312,8 @@ def analyze_importance(all_results: dict):
     """Print importance distribution stats."""
     console.rule("[bold]Importance Analysis")
 
-    for model, data in all_results.items():
-        scores = data["importance"]
+    for model in _model_keys(all_results):
+        scores = all_results[model]["importance"]
         valid = [s["new_importance"] for s in scores if s["new_importance"] >= 0]
         if not valid:
             continue
@@ -289,12 +330,89 @@ def analyze_importance(all_results: dict):
         )
 
 
+def analyze_summarization(all_results: dict, messages: list[dict]):
+    """Print summarization quality stats."""
+    console.rule("[bold]Summarization Analysis")
+
+    msg_map = {m["id"]: m for m in messages}
+
+    # Build comparison table
+    models = _model_keys(all_results)
+    table = Table(title="Summarization Quality", show_lines=True)
+    table.add_column("Model", style="cyan", width=22)
+    table.add_column("Avg Time", justify="right", width=8)
+    table.add_column("Compression", justify="right", width=11)
+    table.add_column("≤30 words", justify="right", width=9)
+    table.add_column("3rd Person", justify="right", width=10)
+    table.add_column("SKIPs", justify="right", width=6)
+    table.add_column("Echoes", justify="right", width=7)
+    table.add_column("Errors", justify="right", width=7)
+
+    for model in models:
+        sums = all_results[model]["summarization"]
+        total = len(sums)
+        if total == 0:
+            continue
+
+        avg_time = sum(s["time"] for s in sums) / total
+
+        # Handle results that may not have quality fields (old format)
+        if "compression" not in sums[0]:
+            table.add_row(model, f"{avg_time:.1f}s", "—", "—", "—", "—", "—", "—")
+            continue
+
+        avg_comp = sum(s["compression"] for s in sums) / total
+        under_30 = sum(1 for s in sums if s["under_30_words"])
+        third_p = sum(1 for s in sums if s["third_person"])
+        skips = sum(1 for s in sums if s["is_skip"])
+        echoes = sum(1 for s in sums if s["is_echo"])
+        errors = sum(1 for s in sums if s["is_error"])
+
+        # Count short-content messages where SKIP is appropriate
+        short_msgs = sum(1 for s in sums if msg_map.get(s["id"], {}).get("rank", 3) <= 2)
+
+        table.add_row(
+            model,
+            f"{avg_time:.1f}s",
+            f"{avg_comp:.0%}",
+            f"{under_30}/{total}",
+            f"{third_p}/{total}",
+            f"{skips}",
+            f"{echoes}",
+            f"{errors}",
+        )
+
+    console.print(table)
+
+    # Per-model detail
+    for model in models:
+        sums = all_results[model]["summarization"]
+        if not sums or "compression" not in sums[0]:
+            continue
+        total = len(sums)
+        skips = sum(1 for s in sums if s["is_skip"])
+        non_skip = [s for s in sums if not s["is_skip"] and not s["is_error"]]
+        if non_skip:
+            avg_sum_words = sum(s["summary_words"] for s in non_skip) / len(non_skip)
+            longest = max(s["summary_words"] for s in non_skip)
+            shortest = min(s["summary_words"] for s in non_skip)
+        else:
+            avg_sum_words = longest = shortest = 0
+
+        console.print(
+            f"\n[cyan]{model}[/cyan]  "
+            f"avg_words={avg_sum_words:.0f}  "
+            f"range={shortest}-{longest}  "
+            f"skips={skips}/{total}"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Display
 # ---------------------------------------------------------------------------
 
 def print_ranking_table(all_results: dict, messages: list[dict]):
-    models = list(all_results.keys())
+    models = _model_keys(all_results)
     msg_map = {m["id"]: m for m in messages}
 
     table = Table(title="Ranking Comparison (sample)", show_lines=True)
@@ -330,7 +448,7 @@ def print_ranking_table(all_results: dict, messages: list[dict]):
 
 
 def print_importance_table(all_results: dict, messages: list[dict]):
-    models = list(all_results.keys())
+    models = _model_keys(all_results)
     msg_map = {m["id"]: m for m in messages}
 
     table = Table(title="Importance Comparison (sample)", show_lines=True)
@@ -367,7 +485,7 @@ def print_importance_table(all_results: dict, messages: list[dict]):
 
 
 def print_summary_table(all_results: dict, messages: list[dict]):
-    models = list(all_results.keys())
+    models = _model_keys(all_results)
     msg_map = {m["id"]: m for m in messages}
 
     table = Table(title="Summarization Comparison (sample)", show_lines=True, expand=True)
@@ -403,15 +521,32 @@ def print_summary_table(all_results: dict, messages: list[dict]):
 # Main
 # ---------------------------------------------------------------------------
 
-async def run_benchmark(models: list[str], db_path: str, sample_size: int):
+async def run_benchmark(models: list[str], db_path: str, sample_size: int, fresh: bool = False):
     data_dir = Path("data")
     data_dir.mkdir(exist_ok=True)
     output_path = data_dir / "benchmark_realdata_results.json"
 
+    # Load existing results to merge with (and reuse pinned sample)
+    all_results = {}
+    pinned_ids = None
+    if not fresh and output_path.exists():
+        with open(output_path) as f:
+            all_results = json.load(f)
+        if all_results:
+            console.print(f"[yellow]Loaded existing results for: {', '.join(k for k in all_results if k != '_sample_ids')}[/yellow]")
+            # Reuse the same sample IDs so all models get the same messages
+            if "_sample_ids" in all_results:
+                pinned_ids = all_results["_sample_ids"]
+                console.print(f"[yellow]Reusing pinned sample of {len(pinned_ids)} message IDs[/yellow]")
+
     # Load sample messages from DB
-    console.print(f"[bold]Loading {sample_size} sample messages from {db_path}...[/bold]")
-    messages = load_sample_messages(db_path, sample_size)
-    console.print(f"[green]Loaded {len(messages)} messages[/green]")
+    if pinned_ids:
+        messages = load_messages_by_ids(db_path, pinned_ids)
+        console.print(f"[green]Loaded {len(messages)} pinned messages from {db_path}[/green]")
+    else:
+        console.print(f"[bold]Loading {sample_size} sample messages from {db_path}...[/bold]")
+        messages = load_sample_messages(db_path, sample_size)
+        console.print(f"[green]Loaded {len(messages)} messages (new random sample)[/green]")
 
     # Show category distribution
     categories = {}
@@ -419,14 +554,6 @@ async def run_benchmark(models: list[str], db_path: str, sample_size: int):
         cat = categorize_message(m["content"])
         categories[cat] = categories.get(cat, 0) + 1
     console.print(f"[dim]Categories: {categories}[/dim]\n")
-
-    # Load existing results to merge with
-    all_results = {}
-    if output_path.exists():
-        with open(output_path) as f:
-            all_results = json.load(f)
-        if all_results:
-            console.print(f"[yellow]Loaded existing results for: {', '.join(all_results.keys())}[/yellow]")
 
     console.print(f"[bold]Running benchmarks for: {', '.join(models)}[/bold]\n")
 
@@ -450,10 +577,13 @@ async def run_benchmark(models: list[str], db_path: str, sample_size: int):
         }
         console.print(f"  [green]Done with {model}[/green]\n")
 
+    # Pin the sample IDs so future runs use the same messages
+    all_results["_sample_ids"] = [m["id"] for m in messages]
+
     # Save results before rendering (crash-safe)
     with open(output_path, "w") as f:
         json.dump(all_results, f, indent=2)
-    console.print(f"\n[bold]Results saved to {output_path} ({len(all_results)} models)[/bold]")
+    console.print(f"\n[bold]Results saved to {output_path} ({len(all_results) - 1} models)[/bold]")
 
     # Print tables and analysis
     console.rule("[bold green]Results")
@@ -466,6 +596,8 @@ async def run_benchmark(models: list[str], db_path: str, sample_size: int):
     analyze_ranking(all_results, messages)
     console.print()
     analyze_importance(all_results)
+    console.print()
+    analyze_summarization(all_results, messages)
 
 
 def main():
@@ -476,9 +608,11 @@ def main():
                         help="Path to blipshell.db (default: data/blipshell.db)")
     parser.add_argument("--sample", type=int, default=50,
                         help="Number of messages to sample (default: 50)")
+    parser.add_argument("--fresh", action="store_true",
+                        help="Ignore existing results and pick a new random sample")
     args = parser.parse_args()
 
-    asyncio.run(run_benchmark(args.models, args.db, args.sample))
+    asyncio.run(run_benchmark(args.models, args.db, args.sample, fresh=args.fresh))
 
 
 if __name__ == "__main__":
