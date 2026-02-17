@@ -138,7 +138,7 @@ tagging:
 llm:
   max_retries: 2
   retry_base_delay: 1.0
-  timeout: 120  # per-call timeout in seconds (avoids cloud model hangs)
+  timeout: 300  # per-call timeout in seconds (5min for slower local models)
 
 auth:
   enabled: false
