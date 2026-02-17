@@ -44,6 +44,7 @@ class ParsedConversation:
 @dataclass
 class ImportStats:
     conversations_imported: int = 0
+    conversations_skipped: int = 0
     messages_processed: int = 0
     messages_skipped_noise: int = 0
     lessons_extracted: int = 0
@@ -211,6 +212,12 @@ async def import_conversations(
     for i, conv in enumerate(conversations):
         if on_progress:
             on_progress(i, total, conv.title)
+
+        # Resume support: skip conversations already imported
+        if await sqlite.session_exists(conv.title):
+            logger.debug("Skipping already imported: %s", conv.title)
+            stats.conversations_skipped += 1
+            continue
 
         try:
             await _import_single_conversation(

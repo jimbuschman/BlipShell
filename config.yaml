@@ -2,11 +2,11 @@
 # This file is self-modifiable by the agent
 
 models:
-  reasoning: "minimax-m2.5:cloud"   # free — used for lesson extraction during import
+  reasoning: "qwen3:14b"               # local — lesson extraction
   tool_calling: "glm-5:cloud"
   coding: "qwen3-coder:480b-cloud"
-  summarization: "minimax-m2.5:cloud"  # free — handles text-heavy summarization
-  ranking: "qwen2.5:14b"              # best local ranker (also handles importance)
+  summarization: "gemma3:4b"           # local — fast, good SKIP detection
+  ranking: "qwen2.5:14b"              # local — ranking + importance
   embedding: "nomic-embed-text"
   # Local fallbacks when cloud endpoints are unavailable
   reasoning_fallback: "gpt-oss:latest"

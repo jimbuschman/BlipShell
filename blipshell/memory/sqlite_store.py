@@ -263,6 +263,13 @@ class SQLiteStore:
             message_count=row["message_count"],
         )
 
+    async def session_exists(self, title: str) -> bool:
+        """Check if a session with the given title already exists."""
+        cursor = await self._db.execute(
+            "SELECT 1 FROM sessions WHERE title = ? LIMIT 1", (title,)
+        )
+        return await cursor.fetchone() is not None
+
     async def list_sessions(self, limit: int = 50, project: Optional[str] = None) -> list[Session]:
         """List sessions, optionally filtered by project."""
         if project:
