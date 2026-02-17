@@ -37,6 +37,7 @@ endpoints:
     max_concurrent: 2
     rate_limit_rpm: 5
     rate_limit_rpd: 1000
+    enabled: false  # 5 RPM free tier too slow for batch, revisit for interactive
     models:
       summarization: "gemini-2.5-flash"
       ranking: "gemini-2.5-flash"
