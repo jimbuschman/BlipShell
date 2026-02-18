@@ -25,23 +25,19 @@ endpoints:
     max_concurrent: 3
     rate_limit_rpm: 30
     rate_limit_rpd: 1000
-    enabled: false  # tested — rank skew, 200K TPD limit too low for batch
     models:
       summarization: "openai/gpt-oss-120b"
   - name: "gemini"
     url: "https://generativelanguage.googleapis.com/v1beta/openai/"
     provider: "openai"
     api_key: "${GEMINI_API_KEY}"
-    roles: ["summarization", "ranking", "importance"]
+    roles: ["summarization"]
     priority: 3
     max_concurrent: 2
     rate_limit_rpm: 5
     rate_limit_rpd: 1000
-    enabled: false  # 5 RPM free tier too slow for batch, revisit for interactive
     models:
       summarization: "gemini-2.5-flash"
-      ranking: "gemini-2.5-flash"
-      importance: "gemini-2.5-flash"
   - name: "local"
     url: "http://localhost:11434"
     roles: ["reasoning", "tool_calling", "coding", "embedding", "summarization", "ranking", "importance"]
