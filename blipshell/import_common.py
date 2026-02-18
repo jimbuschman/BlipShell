@@ -7,6 +7,7 @@ a list[ParsedConversation] and then call import_conversations().
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timezone
 from typing import Callable, Optional
@@ -276,7 +277,7 @@ async def _import_global_batch(
         title_short = conv.title[:40]
         prefix = f"  [{conv_idx+1}/{len(work_convs)}] [{title_short}]"
         total_msgs = len(conv.messages)
-        print(f"{prefix} Starting ({total_msgs} messages)")
+        print(f"{prefix} Starting ({total_msgs} messages)", flush=True)
 
         # ── Step 1: Filter + tag (no LLM) ────────────────────────────
         valid_msgs: list[tuple[ParsedMessage, list[str]]] = []
@@ -286,37 +287,51 @@ async def _import_global_batch(
                 continue
             tags = tag_message(msg.content)
             valid_msgs.append((msg, tags))
-        print(f"{prefix} Filtered: {len(valid_msgs)}/{total_msgs} kept")
+        print(f"{prefix} Filtered: {len(valid_msgs)}/{total_msgs} kept", flush=True)
 
         # ── Step 2: Summarize (cloud LLM) ────────────────────────────
         surviving: list[tuple[ParsedMessage, list[str], str]] = []
+        step_start = time.monotonic()
         for i, (msg, tags) in enumerate(valid_msgs):
-            print(f"{prefix} Summarizing {i+1}/{len(valid_msgs)}...", end="\r")
+            call_start = time.monotonic()
+            print(f"{prefix} Summarizing {i+1}/{len(valid_msgs)}...", flush=True)
             try:
                 sum_system, sum_prompt = summarize_memory(msg.content)
                 summary = await router.generate(
                     TaskType.SUMMARIZATION, sum_prompt, system=sum_system,
                 )
+                elapsed = time.monotonic() - call_start
                 if summary.strip().upper() == "SKIP":
+                    print(f"{prefix}   -> SKIP ({elapsed:.1f}s)", flush=True)
                     stats.messages_skipped_noise += 1
                     continue
+                print(f"{prefix}   -> OK ({elapsed:.1f}s)", flush=True)
             except Exception as e:
+                elapsed = time.monotonic() - call_start
+                print(f"{prefix}   -> FAILED ({elapsed:.1f}s): {e}", flush=True)
                 logger.error("Summarization failed, using raw text: %s", e)
                 summary = msg.content
             surviving.append((msg, tags, summary))
-        print(f"{prefix} Summarized: {len(surviving)} messages" + " " * 20)
+        step_elapsed = time.monotonic() - step_start
+        print(f"{prefix} Summarized: {len(surviving)} messages ({step_elapsed:.1f}s total)", flush=True)
 
         # ── Step 3: Rank + Importance (local LLM, combined prompt) ───
         scores: list[tuple[int, float]] = []
+        step_start = time.monotonic()
         for i, (msg, tags, _summary) in enumerate(surviving):
-            print(f"{prefix} Scoring {i+1}/{len(surviving)}...", end="\r")
+            call_start = time.monotonic()
+            print(f"{prefix} Scoring {i+1}/{len(surviving)}...", flush=True)
             try:
                 ri_system, ri_prompt = rank_and_importance(msg.content)
                 ri_text = await router.generate(
                     TaskType.RANKING_IMPORTANCE, ri_prompt, system=ri_system,
                 )
                 rank, importance = MemoryProcessor._parse_rank_and_importance(ri_text)
+                elapsed = time.monotonic() - call_start
+                print(f"{prefix}   -> rank={rank} imp={importance:.2f} ({elapsed:.1f}s)", flush=True)
             except Exception as e:
+                elapsed = time.monotonic() - call_start
+                print(f"{prefix}   -> FAILED ({elapsed:.1f}s): {e}", flush=True)
                 logger.error("Rank+importance failed: %s", e)
                 rank, importance = 3, 0.3
 
@@ -325,10 +340,11 @@ async def _import_global_batch(
                 importance += tag_bonus
             importance = min(importance, 1.0)
             scores.append((rank, importance))
-        print(f"{prefix} Scored: {len(scores)} messages" + " " * 20)
+        step_elapsed = time.monotonic() - step_start
+        print(f"{prefix} Scored: {len(scores)} messages ({step_elapsed:.1f}s total)", flush=True)
 
         # ── Step 4: DB insert + tag + score + embed ──────────────────
-        print(f"{prefix} Saving to DB...")
+        print(f"{prefix} Saving to DB...", flush=True)
         conv_ts = (
             datetime.fromtimestamp(conv.created_at, tz=UTC)
             if conv.created_at else None
@@ -364,7 +380,7 @@ async def _import_global_batch(
 
         # Batch embed
         if surviving:
-            print(f"{prefix} Embedding...")
+            print(f"{prefix} Embedding...", flush=True)
             try:
                 texts = [summary for _, _, summary in surviving]
                 metadatas = [
@@ -382,12 +398,17 @@ async def _import_global_batch(
 
         # ── Step 5: Lessons ──────────────────────────────────────────
         if not skip_lessons and len(conv.messages) >= 4:
-            print(f"{prefix} Extracting lessons...")
+            call_start = time.monotonic()
+            print(f"{prefix} Extracting lessons...", flush=True)
             try:
                 full_text = _build_conversation_text(conv)
                 await processor.process_lesson(full_text, session_id)
                 stats.lessons_extracted += 1
+                elapsed = time.monotonic() - call_start
+                print(f"{prefix}   -> lesson OK ({elapsed:.1f}s)", flush=True)
             except Exception as e:
+                elapsed = time.monotonic() - call_start
+                print(f"{prefix}   -> lesson FAILED ({elapsed:.1f}s): {e}", flush=True)
                 logger.error(
                     "Lesson extraction failed for '%s': %s", conv.title, e,
                 )
@@ -396,7 +417,7 @@ async def _import_global_batch(
         progress_count = stats.conversations_skipped + stats.conversations_imported
         if on_progress:
             on_progress(progress_count, total, conv.title, stats)
-        print(f"{prefix} Done — {msg_count} memories committed")
+        print(f"{prefix} Done — {msg_count} memories committed", flush=True)
 
     print(f"\nGlobal batch complete: {stats.conversations_imported} conversations, "
           f"{stats.messages_processed} messages")
