@@ -5,9 +5,9 @@ models:
   reasoning: "qwen3:14b"               # local — lesson extraction
   tool_calling: "glm-5:cloud"
   coding: "qwen3-coder:480b-cloud"
-  summarization: "qwen2.5:7b"           # local — fast import (was: glm4:latest for best accuracy)
-  ranking: "qwen2.5:7b"               # local — fast import (was: qwen2.5:14b for best rank distribution)
-  importance: "qwen2.5:7b"            # local — fast import (was: qwen3:14b for best importance distribution)
+  summarization: "glm4:latest"          # local — best accuracy, correct role attribution
+  ranking: "qwen2.5:14b"              # local — best rank distribution
+  importance: "qwen3:14b"             # local — best importance distribution
   embedding: "nomic-embed-text"
   # Local fallbacks when cloud endpoints are unavailable
   reasoning_fallback: "gpt-oss:latest"
@@ -25,7 +25,6 @@ endpoints:
     max_concurrent: 3
     rate_limit_rpm: 30
     rate_limit_rpd: 1000
-    enabled: false  # disabled for local-only import
     models:
       summarization: "openai/gpt-oss-120b"
   - name: "gemini"
@@ -37,7 +36,6 @@ endpoints:
     max_concurrent: 2
     rate_limit_rpm: 5
     rate_limit_rpd: 1000
-    enabled: false  # disabled for local-only import
     models:
       summarization: "gemini-2.5-flash"
   - name: "local"

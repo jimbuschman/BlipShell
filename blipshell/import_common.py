@@ -64,7 +64,7 @@ async def import_conversations(
     conversations: list[ParsedConversation],
     on_progress: Optional[Callable[[int, int, str, "ImportStats"], None]] = None,
     skip_lessons: bool = False,
-    max_concurrent: int = 1,
+    max_concurrent: int = 3,
 ) -> ImportStats:
     """Import parsed conversations through the BlipShell memory pipeline.
 

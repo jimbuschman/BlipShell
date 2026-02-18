@@ -5,7 +5,6 @@ noise check -> LLM summarize -> SQLite insert -> ChromaDB embed -> tag -> LLM ra
 """
 
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 
 from blipshell.llm.prompts import (
@@ -234,6 +233,7 @@ class MemoryProcessor:
         """Parse a float from LLM response."""
         text = text.strip()
         # Try to find a decimal number in the response
+        import re
         match = re.search(r"(\d+\.?\d*)", text)
         if match:
             try:

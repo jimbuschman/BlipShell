@@ -5,7 +5,6 @@ to the appropriate model and endpoint based on configuration.
 """
 
 import logging
-import time
 from typing import Optional
 
 from blipshell.llm.client import LLMClient
@@ -98,9 +97,8 @@ class LLMRouter:
                 gen_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
             if think is not None:
                 gen_kwargs["think"] = think
-            start = time.perf_counter()
             result = await client.generate(prompt=prompt, model=model, system=system, **gen_kwargs)
-            endpoint.record_success(time.perf_counter() - start)
+            endpoint.record_success(0)
             return result
         except Exception as primary_err:
             endpoint.record_failure()
