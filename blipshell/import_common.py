@@ -269,155 +269,166 @@ async def _import_global_batch(
     if not work_convs:
         return
 
+    max_concurrent = 3
     print(f"\nGlobal batch: {len(work_convs)} conversations to process "
-          f"({stats.conversations_skipped} skipped)")
+          f"({stats.conversations_skipped} skipped, {max_concurrent} concurrent)")
 
-    # ── Per-conversation pipeline ─────────────────────────────────────
-    for conv_idx, conv in enumerate(work_convs):
-        title_short = conv.title[:40]
-        prefix = f"  [{conv_idx+1}/{len(work_convs)}] [{title_short}]"
-        total_msgs = len(conv.messages)
-        print(f"{prefix} Starting ({total_msgs} messages)", flush=True)
+    # ── Per-conversation worker ───────────────────────────────────────
+    semaphore = asyncio.Semaphore(max_concurrent)
 
-        # ── Step 1: Filter + tag (no LLM) ────────────────────────────
-        valid_msgs: list[tuple[ParsedMessage, list[str]]] = []
-        for msg in conv.messages:
-            if should_skip_memory(msg.content):
-                stats.messages_skipped_noise += 1
-                continue
-            tags = tag_message(msg.content)
-            valid_msgs.append((msg, tags))
-        print(f"{prefix} Filtered: {len(valid_msgs)}/{total_msgs} kept", flush=True)
+    async def _process_conversation(conv_idx: int, conv: ParsedConversation):
+        async with semaphore:
+            title_short = conv.title[:40]
+            prefix = f"  [{conv_idx+1}/{len(work_convs)}] [{title_short}]"
+            total_msgs = len(conv.messages)
+            print(f"{prefix} Starting ({total_msgs} messages)", flush=True)
 
-        # ── Step 2: Summarize (cloud LLM) ────────────────────────────
-        surviving: list[tuple[ParsedMessage, list[str], str]] = []
-        step_start = time.monotonic()
-        for i, (msg, tags) in enumerate(valid_msgs):
-            call_start = time.monotonic()
-            print(f"{prefix} Summarizing {i+1}/{len(valid_msgs)}...", flush=True)
-            try:
-                sum_system, sum_prompt = summarize_memory(msg.content)
-                summary = await router.generate(
-                    TaskType.SUMMARIZATION, sum_prompt, system=sum_system,
-                )
-                elapsed = time.monotonic() - call_start
-                if summary.strip().upper() == "SKIP":
-                    print(f"{prefix}   -> SKIP ({elapsed:.1f}s)", flush=True)
+            # ── Step 1: Filter + tag (no LLM) ────────────────────────
+            valid_msgs: list[tuple[ParsedMessage, list[str]]] = []
+            for msg in conv.messages:
+                if should_skip_memory(msg.content):
                     stats.messages_skipped_noise += 1
                     continue
-                print(f"{prefix}   -> OK ({elapsed:.1f}s)", flush=True)
-            except Exception as e:
-                elapsed = time.monotonic() - call_start
-                print(f"{prefix}   -> FAILED ({elapsed:.1f}s): {e}", flush=True)
-                logger.error("Summarization failed, using raw text: %s", e)
-                summary = msg.content
-            surviving.append((msg, tags, summary))
-        step_elapsed = time.monotonic() - step_start
-        print(f"{prefix} Summarized: {len(surviving)} messages ({step_elapsed:.1f}s total)", flush=True)
+                tags = tag_message(msg.content)
+                valid_msgs.append((msg, tags))
+            print(f"{prefix} Filtered: {len(valid_msgs)}/{total_msgs} kept", flush=True)
 
-        # ── Step 3: Rank + Importance (local LLM, combined prompt) ───
-        scores: list[tuple[int, float]] = []
-        step_start = time.monotonic()
-        for i, (msg, tags, _summary) in enumerate(surviving):
-            call_start = time.monotonic()
-            print(f"{prefix} Scoring {i+1}/{len(surviving)}...", flush=True)
-            try:
-                ri_system, ri_prompt = rank_and_importance(msg.content)
-                ri_text = await router.generate(
-                    TaskType.RANKING_IMPORTANCE, ri_prompt, system=ri_system,
-                )
-                rank, importance = MemoryProcessor._parse_rank_and_importance(ri_text)
-                elapsed = time.monotonic() - call_start
-                print(f"{prefix}   -> rank={rank} imp={importance:.2f} ({elapsed:.1f}s)", flush=True)
-            except Exception as e:
-                elapsed = time.monotonic() - call_start
-                print(f"{prefix}   -> FAILED ({elapsed:.1f}s): {e}", flush=True)
-                logger.error("Rank+importance failed: %s", e)
-                rank, importance = 3, 0.3
+            # ── Step 2: Summarize (cloud LLM) ────────────────────────
+            surviving: list[tuple[ParsedMessage, list[str], str]] = []
+            step_start = time.monotonic()
+            for i, (msg, tags) in enumerate(valid_msgs):
+                call_start = time.monotonic()
+                print(f"{prefix} Summarizing {i+1}/{len(valid_msgs)}...", flush=True)
+                try:
+                    sum_system, sum_prompt = summarize_memory(msg.content)
+                    summary = await router.generate(
+                        TaskType.SUMMARIZATION, sum_prompt, system=sum_system,
+                    )
+                    elapsed = time.monotonic() - call_start
+                    if summary.strip().upper() == "SKIP":
+                        print(f"{prefix}   -> SKIP ({elapsed:.1f}s)", flush=True)
+                        stats.messages_skipped_noise += 1
+                        continue
+                    print(f"{prefix}   -> OK ({elapsed:.1f}s)", flush=True)
+                except Exception as e:
+                    elapsed = time.monotonic() - call_start
+                    print(f"{prefix}   -> FAILED ({elapsed:.1f}s): {e}", flush=True)
+                    logger.error("Summarization failed, using raw text: %s", e)
+                    summary = msg.content
+                surviving.append((msg, tags, summary))
+            step_elapsed = time.monotonic() - step_start
+            print(f"{prefix} Summarized: {len(surviving)} messages ({step_elapsed:.1f}s total)", flush=True)
 
-            importance += recency_bonus
-            if len(tags) > 6:
-                importance += tag_bonus
-            importance = min(importance, 1.0)
-            scores.append((rank, importance))
-        step_elapsed = time.monotonic() - step_start
-        print(f"{prefix} Scored: {len(scores)} messages ({step_elapsed:.1f}s total)", flush=True)
+            # ── Step 3: Rank + Importance (local LLM, combined prompt)
+            scores: list[tuple[int, float]] = []
+            step_start = time.monotonic()
+            for i, (msg, tags, _summary) in enumerate(surviving):
+                call_start = time.monotonic()
+                print(f"{prefix} Scoring {i+1}/{len(surviving)}...", flush=True)
+                try:
+                    ri_system, ri_prompt = rank_and_importance(msg.content)
+                    ri_text = await router.generate(
+                        TaskType.RANKING_IMPORTANCE, ri_prompt, system=ri_system,
+                    )
+                    rank, importance = MemoryProcessor._parse_rank_and_importance(ri_text)
+                    elapsed = time.monotonic() - call_start
+                    print(f"{prefix}   -> rank={rank} imp={importance:.2f} ({elapsed:.1f}s)", flush=True)
+                except Exception as e:
+                    elapsed = time.monotonic() - call_start
+                    print(f"{prefix}   -> FAILED ({elapsed:.1f}s): {e}", flush=True)
+                    logger.error("Rank+importance failed: %s", e)
+                    rank, importance = 3, 0.3
 
-        # ── Step 4: DB insert + tag + score + embed ──────────────────
-        print(f"{prefix} Saving to DB...", flush=True)
-        conv_ts = (
-            datetime.fromtimestamp(conv.created_at, tz=UTC)
-            if conv.created_at else None
-        )
-        session_id = await sqlite.create_session(title=conv.title, created_at=conv_ts)
+                importance += recency_bonus
+                if len(tags) > 6:
+                    importance += tag_bonus
+                importance = min(importance, 1.0)
+                scores.append((rank, importance))
+            step_elapsed = time.monotonic() - step_start
+            print(f"{prefix} Scored: {len(scores)} messages ({step_elapsed:.1f}s total)", flush=True)
 
-        memory_ids: list[int] = []
-        for msg_idx, (msg, tags, summary) in enumerate(surviving):
-            ts = (
-                datetime.fromtimestamp(msg.timestamp, tz=UTC)
-                if msg.timestamp else None
+            # ── Step 4: DB insert + tag + score + embed ──────────────
+            print(f"{prefix} Saving to DB...", flush=True)
+            conv_ts = (
+                datetime.fromtimestamp(conv.created_at, tz=UTC)
+                if conv.created_at else None
             )
-            memory = Memory(
-                session_id=session_id,
-                role=msg.role,
-                content=msg.content,
-                summary=summary,
-                timestamp=ts or datetime.now(timezone.utc),
-                memory_type=MemoryType.CONVERSATION,
-            )
-            memory_id = await sqlite.create_memory(memory)
-            memory_ids.append(memory_id)
-            try:
-                await sqlite.tag_memory(memory_id, tags)
-            except Exception as e:
-                logger.error("Tagging failed: %s", e)
+            session_id = await sqlite.create_session(title=conv.title, created_at=conv_ts)
 
-            rank, importance = scores[msg_idx]
-            try:
-                await sqlite.update_memory(memory_id, rank=rank, importance=importance)
-            except Exception as e:
-                logger.error("Score update failed: %s", e)
-
-        # Batch embed
-        if surviving:
-            print(f"{prefix} Embedding...", flush=True)
-            try:
-                texts = [summary for _, _, summary in surviving]
-                metadatas = [
-                    {"session_id": str(session_id), "role": msg.role}
-                    for msg, _, _ in surviving
-                ]
-                chroma.add_memories_batch(memory_ids, texts, metadatas)
-            except Exception as e:
-                logger.error("ChromaDB batch embed failed: %s", e)
-
-        msg_count = len(memory_ids)
-        await sqlite.update_session(session_id, message_count=msg_count)
-        stats.conversations_imported += 1
-        stats.messages_processed += msg_count
-
-        # ── Step 5: Lessons ──────────────────────────────────────────
-        if not skip_lessons and len(conv.messages) >= 4:
-            call_start = time.monotonic()
-            print(f"{prefix} Extracting lessons...", flush=True)
-            try:
-                full_text = _build_conversation_text(conv)
-                await processor.process_lesson(full_text, session_id)
-                stats.lessons_extracted += 1
-                elapsed = time.monotonic() - call_start
-                print(f"{prefix}   -> lesson OK ({elapsed:.1f}s)", flush=True)
-            except Exception as e:
-                elapsed = time.monotonic() - call_start
-                print(f"{prefix}   -> lesson FAILED ({elapsed:.1f}s): {e}", flush=True)
-                logger.error(
-                    "Lesson extraction failed for '%s': %s", conv.title, e,
+            memory_ids: list[int] = []
+            for msg_idx, (msg, tags, summary) in enumerate(surviving):
+                ts = (
+                    datetime.fromtimestamp(msg.timestamp, tz=UTC)
+                    if msg.timestamp else None
                 )
+                memory = Memory(
+                    session_id=session_id,
+                    role=msg.role,
+                    content=msg.content,
+                    summary=summary,
+                    timestamp=ts or datetime.now(timezone.utc),
+                    memory_type=MemoryType.CONVERSATION,
+                )
+                memory_id = await sqlite.create_memory(memory)
+                memory_ids.append(memory_id)
+                try:
+                    await sqlite.tag_memory(memory_id, tags)
+                except Exception as e:
+                    logger.error("Tagging failed: %s", e)
 
-        # ── Progress ─────────────────────────────────────────────────
-        progress_count = stats.conversations_skipped + stats.conversations_imported
-        if on_progress:
-            on_progress(progress_count, total, conv.title, stats)
-        print(f"{prefix} Done — {msg_count} memories committed", flush=True)
+                rank, importance = scores[msg_idx]
+                try:
+                    await sqlite.update_memory(memory_id, rank=rank, importance=importance)
+                except Exception as e:
+                    logger.error("Score update failed: %s", e)
+
+            # Batch embed
+            if surviving:
+                print(f"{prefix} Embedding...", flush=True)
+                try:
+                    texts = [summary for _, _, summary in surviving]
+                    metadatas = [
+                        {"session_id": str(session_id), "role": msg.role}
+                        for msg, _, _ in surviving
+                    ]
+                    chroma.add_memories_batch(memory_ids, texts, metadatas)
+                except Exception as e:
+                    logger.error("ChromaDB batch embed failed: %s", e)
+
+            msg_count = len(memory_ids)
+            await sqlite.update_session(session_id, message_count=msg_count)
+            stats.conversations_imported += 1
+            stats.messages_processed += msg_count
+
+            # ── Step 5: Lessons ──────────────────────────────────────
+            if not skip_lessons and len(conv.messages) >= 4:
+                call_start = time.monotonic()
+                print(f"{prefix} Extracting lessons...", flush=True)
+                try:
+                    full_text = _build_conversation_text(conv)
+                    await processor.process_lesson(full_text, session_id)
+                    stats.lessons_extracted += 1
+                    elapsed = time.monotonic() - call_start
+                    print(f"{prefix}   -> lesson OK ({elapsed:.1f}s)", flush=True)
+                except Exception as e:
+                    elapsed = time.monotonic() - call_start
+                    print(f"{prefix}   -> lesson FAILED ({elapsed:.1f}s): {e}", flush=True)
+                    logger.error(
+                        "Lesson extraction failed for '%s': %s", conv.title, e,
+                    )
+
+            # ── Progress ─────────────────────────────────────────────
+            progress_count = stats.conversations_skipped + stats.conversations_imported
+            if on_progress:
+                on_progress(progress_count, total, conv.title, stats)
+            print(f"{prefix} Done — {msg_count} memories committed", flush=True)
+
+    # Launch all and let semaphore control concurrency
+    tasks = [
+        asyncio.create_task(_process_conversation(i, conv))
+        for i, conv in enumerate(work_convs)
+    ]
+    await asyncio.gather(*tasks)
 
     print(f"\nGlobal batch complete: {stats.conversations_imported} conversations, "
           f"{stats.messages_processed} messages")
