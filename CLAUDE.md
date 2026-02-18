@@ -37,8 +37,20 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - Per-endpoint `models:` map overrides global model names for each task type
 - API keys via `${ENV_VAR}` syntax or plaintext in config
 - Rate limiting: `rate_limit_rpm` / `rate_limit_rpd` — when hit, falls back to next endpoint automatically
-- Groq: `openai/gpt-oss-120b` — same model as local gpt-oss but at 500 tok/s on Groq hardware
-- Gemini: `gemini-2.5-flash` via OpenAI-compatible endpoint
+- Groq: `openai/gpt-oss-120b` — summarization only (rank skew on scoring tasks, 200K TPD free limit)
+- Gemini: `gemini-2.5-flash` — summarization only (5 RPM free tier)
+- Both enabled as summarization overflow — keeps GPU free for interactive reasoning
+- Ranking/importance stay on validated local models (cloud models skew to rank 4)
+
+### Cloud endpoint testing results
+- Groq gpt-oss-120b: Good summaries, bad ranking (84% rank 4), 200K TPD burns fast on batch
+- Gemini 2.5 flash: 5 RPM free tier too slow for batch, untested on ranking quality
+- Both free tiers useless for batch import, fine for interactive background tasks
+
+### Revisit after import
+- **Mid-request 429 fallback** — currently retries on same endpoint instead of falling back to next. Should bubble up to router level and try a different endpoint.
+- **Context size on fallback** — if a request fails on Groq/Gemini and falls back to local, context window config needs to adjust. No handling for mismatched context limits across endpoints yet.
+- **Ollama cloud quota management** — decide whether background tasks (summarization/ranking/importance) should use cloud Ollama quota or stay purely local. Currently local-only for these to preserve cloud quota for interactive reasoning/tool_calling/coding.
 
 ## Architecture Notes
 - Two-PC setup: Development on one PC, Ollama/benchmarks on another
