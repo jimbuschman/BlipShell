@@ -93,19 +93,17 @@ async def import_conversations(
     async def _process_one(i: int, conv: ParsedConversation):
         nonlocal progress_count
 
-        # Resume support: skip complete conversations (no semaphore needed)
+        # Resume support: skip complete conversations, re-import incomplete ones
         session_id, db_count = await sqlite.get_session_message_count(conv.title)
-        if session_id is not None and db_count > 0:
-            logger.info("Skipping already imported (%d msgs): %s", db_count, conv.title)
-            stats.conversations_skipped += 1
-            progress_count += 1
-            if on_progress:
-                on_progress(progress_count, total, conv.title, stats)
-            return
-
-        async with semaphore:
-            # Re-import cleanup for incomplete conversations (inside semaphore to avoid races)
-            if session_id is not None and db_count == 0:
+        if session_id is not None:
+            if db_count > 0:
+                logger.info("Skipping already imported (%d msgs): %s", db_count, conv.title)
+                stats.conversations_skipped += 1
+                progress_count += 1
+                if on_progress:
+                    on_progress(progress_count, total, conv.title, stats)
+                return
+            else:
                 logger.info(
                     "Re-importing incomplete '%s' (interrupted, 0 messages saved)",
                     conv.title,
@@ -137,6 +135,7 @@ async def import_conversations(
                     logger.error("Failed to clean up incomplete '%s': %s", conv.title, e)
                     return
 
+        async with semaphore:
             try:
                 await _import_single_conversation(
                     sqlite, chroma, router, processor, config, conv, stats,
