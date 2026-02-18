@@ -218,6 +218,22 @@ class MemoryProcessor:
         return min(importance, 1.0)
 
     @staticmethod
+    def _parse_rank_and_importance(text: str) -> tuple[int, float]:
+        """Parse combined 'rank importance' from LLM response (e.g. '4 0.7')."""
+        import re
+        numbers = re.findall(r"(\d+\.?\d*)", text.strip())
+        rank = 3
+        importance = 0.3
+        if len(numbers) >= 1:
+            r = int(float(numbers[0]))
+            if 1 <= r <= 5:
+                rank = r
+        if len(numbers) >= 2:
+            imp = float(numbers[1])
+            importance = min(max(imp, 0.0), 1.0)
+        return rank, importance
+
+    @staticmethod
     def _parse_rank(text: str) -> int:
         """Parse a rank (1-5) from LLM response."""
         text = text.strip()

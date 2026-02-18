@@ -8,6 +8,7 @@ models:
   summarization: "glm4:latest"          # local — best accuracy, correct role attribution
   ranking: "qwen2.5:14b"              # local — best rank distribution
   importance: "qwen3:14b"             # local — best importance distribution
+  ranking_importance: "qwen2.5:14b"   # combined scoring for batch import
   embedding: "nomic-embed-text"
   # Local fallbacks when cloud endpoints are unavailable
   reasoning_fallback: "gpt-oss:latest"
@@ -40,7 +41,7 @@ endpoints:
       summarization: "gemini-2.5-flash"
   - name: "local"
     url: "http://localhost:11434"
-    roles: ["reasoning", "tool_calling", "coding", "embedding", "summarization", "ranking", "importance"]
+    roles: ["reasoning", "tool_calling", "coding", "embedding", "summarization", "ranking", "importance", "ranking_importance"]
     priority: 1
     max_concurrent: 5
     context_tokens: 131072  # 128K — cloud models route through local Ollama

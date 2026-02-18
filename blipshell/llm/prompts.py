@@ -128,6 +128,33 @@ def ask_importance(text: str) -> tuple[str, str]:
     return system, user
 
 
+def rank_and_importance(text: str) -> tuple[str, str]:
+    """Combined prompt for ranking (1-5) and importance (0.0-1.0) in one LLM call.
+
+    Returns (system_prompt, user_prompt). Used by the batch import pipeline to
+    halve the number of scoring calls and avoid model swaps between rank/importance.
+    """
+    system = (
+        "You rate messages on two scales.\n\n"
+        "RANK (1-5) — how valuable is this to remember?\n"
+        "1 = Noise: greetings, filler, system prompts, boilerplate, 'hello', 'thanks'\n"
+        "2 = Minor: short or vague messages with little substance\n"
+        "3 = Useful: contains a clear topic, question, or piece of information\n"
+        "4 = Important: meaningful insight, decision, preference, or technical detail\n"
+        "5 = Critical: core fact about the user, key decision, or turning point\n\n"
+        "IMPORTANCE (0.0-1.0) — how important to remember long-term?\n"
+        "0.1 = Throwaway: greetings, filler, system noise\n"
+        "0.3 = Low: casual chat, minor details\n"
+        "0.5 = Medium: useful context, specific question or topic\n"
+        "0.7 = High: user preference, project detail, recurring theme\n"
+        "0.9 = Critical: core identity fact, major decision, key personal info\n\n"
+        "Respond with ONLY two numbers separated by a space: rank importance\n"
+        "Example: 4 0.7"
+    )
+    user = f"Rate this message:\n\n{text}"
+    return system, user
+
+
 def extract_lesson(text: str) -> tuple[str, str]:
     """Prompt for extracting actionable lessons from a conversation.
 

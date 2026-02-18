@@ -22,6 +22,7 @@ class TaskType:
     SUMMARIZATION = "summarization"
     RANKING = "ranking"
     IMPORTANCE = "importance"
+    RANKING_IMPORTANCE = "ranking_importance"
     EMBEDDING = "embedding"
 
 
@@ -45,6 +46,7 @@ class LLMRouter:
             TaskType.SUMMARIZATION: self._models.summarization,
             TaskType.RANKING: self._models.ranking,
             TaskType.IMPORTANCE: self._models.importance,
+            TaskType.RANKING_IMPORTANCE: self._models.ranking_importance or self._models.ranking,
             TaskType.EMBEDDING: self._models.embedding,
         }
         return model_map.get(task_type, self._models.reasoning)

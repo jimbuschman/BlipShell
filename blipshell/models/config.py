@@ -21,6 +21,7 @@ class ModelsConfig(BaseModel):
     summarization: str = "glm4:latest"
     ranking: str = "gemma3:4b"
     importance: str = "qwen3:14b"
+    ranking_importance: Optional[str] = None  # combined scoring; falls back to ranking model
     embedding: str = "nomic-embed-text"
     # Fallback models used when cloud endpoints are unavailable
     reasoning_fallback: str = "gpt-oss:latest"
