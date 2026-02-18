@@ -32,8 +32,8 @@ from blipshell.models.config import get_ollama_url
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# Threshold: sessions at or above this ID have bad scores
-BAD_SCORE_SESSION_THRESHOLD = 650
+# Reprocess all sessions — sessions 1-600 had cloud model rank-4 skew,
+# sessions 650+ got default rank=3/importance=0.3 from scoring failures.
 
 
 async def reprocess_scores(sqlite: SQLiteStore, router: LLMRouter, config, dry_run: bool = False):
@@ -45,13 +45,11 @@ async def reprocess_scores(sqlite: SQLiteStore, router: LLMRouter, config, dry_r
     cursor = await sqlite._db.execute(
         """SELECT m.id, m.content, m.session_id
            FROM memories m
-           WHERE m.session_id >= ?
            ORDER BY m.session_id, m.id""",
-        (BAD_SCORE_SESSION_THRESHOLD,),
     )
     rows = await cursor.fetchall()
     total = len(rows)
-    print(f"\nScores: {total} memories to reprocess (sessions >= {BAD_SCORE_SESSION_THRESHOLD})")
+    print(f"\nScores: {total} memories to reprocess (all sessions)")
 
     if dry_run:
         print("  (dry run — no changes)")
@@ -61,10 +59,7 @@ async def reprocess_scores(sqlite: SQLiteStore, router: LLMRouter, config, dry_r
     tag_counts = {}
     cursor = await sqlite._db.execute(
         """SELECT mt.memory_id, COUNT(*) FROM memory_tags mt
-           JOIN memories m ON m.id = mt.memory_id
-           WHERE m.session_id >= ?
            GROUP BY mt.memory_id""",
-        (BAD_SCORE_SESSION_THRESHOLD,),
     )
     for row in await cursor.fetchall():
         tag_counts[row[0]] = row[1]
@@ -210,7 +205,7 @@ async def main():
 
     ollama_url = get_ollama_url(config.endpoints)
     chroma = ChromaStore(
-        persist_directory=config.database.chroma_path,
+        persist_dir=config.database.chroma_path,
         ollama_url=ollama_url,
         embedding_model=config.models.embedding,
     )
