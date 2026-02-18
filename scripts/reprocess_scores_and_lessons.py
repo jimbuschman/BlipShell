@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from blipshell.core.config import ConfigManager
+from blipshell.llm.endpoints import EndpointManager
 from blipshell.llm.prompts import extract_lesson, rank_and_importance
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.chroma_store import ChromaStore
@@ -210,7 +211,8 @@ async def main():
         embedding_model=config.models.embedding,
     )
 
-    router = LLMRouter(config.models, config.endpoints, llm_config=config.llm)
+    endpoint_mgr = EndpointManager(config.endpoints, llm_config=config.llm)
+    router = LLMRouter(config.models, endpoint_mgr)
     processor = MemoryProcessor(sqlite, chroma, router, config=config.memory)
 
     print(f"Config loaded. Scoring model: {router.get_model(TaskType.RANKING_IMPORTANCE)}")
