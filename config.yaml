@@ -2,10 +2,10 @@
 # This file is self-modifiable by the agent
 
 models:
-  reasoning: "qwen3:14b"               # local — lesson extraction
+  reasoning: "glm-5:cloud"              # cloud during import — avoids local model swaps
   tool_calling: "glm-5:cloud"
   coding: "qwen3-coder:480b-cloud"
-  summarization: "glm4:latest"          # local — best accuracy, correct role attribution
+  summarization: "glm-5:cloud"           # cloud — using Ollama cloud quota for import
   ranking: "qwen2.5:14b"              # local — best rank distribution
   importance: "qwen3:14b"             # local — best importance distribution
   ranking_importance: "qwen2.5:14b"   # combined scoring for batch import
@@ -88,6 +88,7 @@ memory:
   importance_tag_bonus: 0.05
   similarity_threshold: 0.5
   importance_boost_weight: 0.2
+  tag_overlap_boost: 0.1
   search_overfetch_multiplier: 2
   auto_prune_days: 90
   prune_max_importance: 0.3
