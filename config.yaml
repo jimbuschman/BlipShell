@@ -26,6 +26,7 @@ endpoints:
     max_concurrent: 3
     rate_limit_rpm: 30
     rate_limit_rpd: 1000
+    enabled: false  # disabled for batch import — free tier too slow
     models:
       summarization: "openai/gpt-oss-120b"
   - name: "gemini"
@@ -37,6 +38,7 @@ endpoints:
     max_concurrent: 2
     rate_limit_rpm: 5
     rate_limit_rpd: 1000
+    enabled: false  # disabled for batch import — free tier too slow
     models:
       summarization: "gemini-2.5-flash"
   - name: "local"
