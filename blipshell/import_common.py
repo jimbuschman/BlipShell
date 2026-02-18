@@ -215,28 +215,31 @@ async def _import_global_batch(
     skip_lessons: bool,
     on_progress: Optional[Callable] = None,
 ):
-    """Global batch pipeline — processes all conversations phase-by-phase.
+    """Global batch pipeline — processes each conversation fully before the next.
 
-    Minimizes model swaps by completing each LLM task type across ALL
-    conversations before moving to the next task type. This means each
-    model loads only once for the entire import instead of once per
-    conversation.
+    Each conversation goes through all phases (filter, summarize, score,
+    DB save, lessons) and is committed to DB before moving on. This means
+    a crash only loses work on the current conversation — all prior ones
+    are safely persisted and will be skipped on resume.
 
-    Phase order:
-      0. Resume check (skip already-imported conversations)
-      1. Filter + tag all (no LLM)
-      2. Summarize all messages (glm4 — one model load)
-      3. Rank + importance all messages (qwen2.5:14b — one model load, one call per msg)
-      4. DB insert + embed all (no LLM)
-      5. Lessons for all conversations (qwen3:14b — one model load)
+    Uses the combined rank_and_importance prompt (1 LLM call per message
+    for scoring) which is more efficient than the separate rank + importance
+    calls used by _import_single_conversation.
+
+    Per-conversation steps:
+      1. Filter + tag (no LLM)
+      2. Summarize all messages (cloud LLM)
+      3. Rank + importance all messages (local LLM, combined prompt)
+      4. DB insert + tag + score + embed
+      5. Lessons (if enabled)
     """
     total = len(conversations)
     recency_bonus = config.importance_recency_bonus if config else 0.1
     tag_bonus = config.importance_tag_bonus if config else 0.05
 
     # ── Phase 0: Resume check ─────────────────────────────────────────
-    # work_convs: conversations that need processing
-    work_convs: list[tuple[ParsedConversation, list]] = []
+    # Scan all conversations upfront to build the work list and skip count.
+    work_convs: list[ParsedConversation] = []
 
     for conv in conversations:
         session_id, db_count = await sqlite.get_session_message_count(conv.title)
@@ -260,7 +263,7 @@ async def _import_global_batch(
                     logger.error("Failed to clean up incomplete '%s': %s", conv.title, e)
                     continue
 
-        work_convs.append((conv, []))
+        work_convs.append(conv)
 
     if not work_convs:
         return
@@ -268,34 +271,24 @@ async def _import_global_batch(
     print(f"\nGlobal batch: {len(work_convs)} conversations to process "
           f"({stats.conversations_skipped} skipped)")
 
-    # ── Phase 1: Filter + tag all (no LLM) ────────────────────────────
-    for wi_idx in range(len(work_convs)):
-        conv, _ = work_convs[wi_idx]
-        valid: list[tuple[ParsedMessage, list[str]]] = []
+    # ── Per-conversation pipeline ─────────────────────────────────────
+    for conv_idx, conv in enumerate(work_convs):
+        title_short = conv.title[:40]
+
+        # ── Step 1: Filter + tag (no LLM) ────────────────────────────
+        valid_msgs: list[tuple[ParsedMessage, list[str]]] = []
         for msg in conv.messages:
             if should_skip_memory(msg.content):
                 stats.messages_skipped_noise += 1
                 continue
             tags = tag_message(msg.content)
-            valid.append((msg, tags))
-        work_convs[wi_idx] = (conv, valid)
+            valid_msgs.append((msg, tags))
 
-    total_msgs = sum(len(msgs) for _, msgs in work_convs)
-    print(f"Phase 1 complete: {total_msgs} messages to process "
-          f"({stats.messages_skipped_noise} noise filtered)")
-
-    # ── Phase 2: Summarize all (one model load) ───────────────────────
-    # After this phase, surviving_convs has summaries attached to each message.
-    surviving_convs: list[tuple[ParsedConversation, list[tuple[ParsedMessage, list[str], str]]]] = []
-    msg_counter = 0
-
-    for conv, valid_msgs in work_convs:
+        # ── Step 2: Summarize (cloud LLM) ────────────────────────────
         surviving: list[tuple[ParsedMessage, list[str], str]] = []
-        title_short = conv.title[:40]
-        for msg, tags in valid_msgs:
-            msg_counter += 1
-            print(f"  Phase 2 — Summarizing {msg_counter}/{total_msgs} "
-                  f"[{title_short}]...", end="\r")
+        for i, (msg, tags) in enumerate(valid_msgs):
+            print(f"  [{conv_idx+1}/{len(work_convs)}] [{title_short}] "
+                  f"Summarizing {i+1}/{len(valid_msgs)}...", end="\r")
             try:
                 sum_system, sum_prompt = summarize_memory(msg.content)
                 summary = await router.generate(
@@ -308,23 +301,12 @@ async def _import_global_batch(
                 logger.error("Summarization failed, using raw text: %s", e)
                 summary = msg.content
             surviving.append((msg, tags, summary))
-        surviving_convs.append((conv, surviving))
 
-    total_surviving = sum(len(s) for _, s in surviving_convs)
-    print(f"\nPhase 2 complete: {total_surviving} messages summarized" + " " * 30)
-
-    # ── Phase 3: Rank + Importance all (one model load) ───────────────
-    # all_scores[i][j] = (rank, importance) for surviving_convs[i][j]
-    all_scores: list[list[tuple[int, float]]] = []
-    score_counter = 0
-
-    for conv, surviving in surviving_convs:
-        conv_scores: list[tuple[int, float]] = []
-        title_short = conv.title[:40]
-        for msg, tags, _summary in surviving:
-            score_counter += 1
-            print(f"  Phase 3 — Scoring {score_counter}/{total_surviving} "
-                  f"[{title_short}]...", end="\r")
+        # ── Step 3: Rank + Importance (local LLM, combined prompt) ───
+        scores: list[tuple[int, float]] = []
+        for i, (msg, tags, _summary) in enumerate(surviving):
+            print(f"  [{conv_idx+1}/{len(work_convs)}] [{title_short}] "
+                  f"Scoring {i+1}/{len(surviving)}...", end="\r")
             try:
                 ri_system, ri_prompt = rank_and_importance(msg.content)
                 ri_text = await router.generate(
@@ -339,25 +321,14 @@ async def _import_global_batch(
             if len(tags) > 6:
                 importance += tag_bonus
             importance = min(importance, 1.0)
-            conv_scores.append((rank, importance))
-        all_scores.append(conv_scores)
+            scores.append((rank, importance))
 
-    print(f"\nPhase 3 complete: {total_surviving} messages scored" + " " * 30)
-
-    # ── Phase 4: DB insert + embed all (no LLM) ──────────────────────
-    session_ids: list[int] = []
-    progress_count = stats.conversations_skipped
-
-    for wi_idx, (conv, surviving) in enumerate(surviving_convs):
-        conv_scores = all_scores[wi_idx]
-        title_short = conv.title[:40]
-
+        # ── Step 4: DB insert + tag + score + embed ──────────────────
         conv_ts = (
             datetime.fromtimestamp(conv.created_at, tz=UTC)
             if conv.created_at else None
         )
         session_id = await sqlite.create_session(title=conv.title, created_at=conv_ts)
-        session_ids.append(session_id)
 
         memory_ids: list[int] = []
         for msg_idx, (msg, tags, summary) in enumerate(surviving):
@@ -380,50 +351,46 @@ async def _import_global_batch(
             except Exception as e:
                 logger.error("Tagging failed: %s", e)
 
-            rank, importance = conv_scores[msg_idx]
+            rank, importance = scores[msg_idx]
             try:
                 await sqlite.update_memory(memory_id, rank=rank, importance=importance)
             except Exception as e:
                 logger.error("Score update failed: %s", e)
 
         # Batch embed
-        try:
-            texts = [summary for _, _, summary in surviving]
-            metadatas = [
-                {"session_id": str(session_id), "role": msg.role}
-                for msg, _, _ in surviving
-            ]
-            chroma.add_memories_batch(memory_ids, texts, metadatas)
-        except Exception as e:
-            logger.error("ChromaDB batch embed failed: %s", e)
+        if surviving:
+            try:
+                texts = [summary for _, _, summary in surviving]
+                metadatas = [
+                    {"session_id": str(session_id), "role": msg.role}
+                    for msg, _, _ in surviving
+                ]
+                chroma.add_memories_batch(memory_ids, texts, metadatas)
+            except Exception as e:
+                logger.error("ChromaDB batch embed failed: %s", e)
 
         msg_count = len(memory_ids)
         await sqlite.update_session(session_id, message_count=msg_count)
         stats.conversations_imported += 1
         stats.messages_processed += msg_count
 
-        progress_count += 1
+        # ── Step 5: Lessons ──────────────────────────────────────────
+        if not skip_lessons and len(conv.messages) >= 4:
+            try:
+                full_text = _build_conversation_text(conv)
+                await processor.process_lesson(full_text, session_id)
+                stats.lessons_extracted += 1
+            except Exception as e:
+                logger.error(
+                    "Lesson extraction failed for '%s': %s", conv.title, e,
+                )
+
+        # ── Progress ─────────────────────────────────────────────────
+        progress_count = stats.conversations_skipped + stats.conversations_imported
         if on_progress:
             on_progress(progress_count, total, conv.title, stats)
-        print(f"  [{title_short}] Committed {msg_count} memories")
-
-    print(f"Phase 4 complete: {stats.messages_processed} memories committed to DB")
-
-    # ── Phase 5: Lessons (one model load) ─────────────────────────────
-    if not skip_lessons:
-        for wi_idx, (conv, surviving) in enumerate(surviving_convs):
-            if len(conv.messages) >= 4:
-                title_short = conv.title[:40]
-                print(f"  Phase 5 — Lessons [{title_short}]...")
-                try:
-                    full_text = _build_conversation_text(conv)
-                    await processor.process_lesson(full_text, session_ids[wi_idx])
-                    stats.lessons_extracted += 1
-                except Exception as e:
-                    logger.error(
-                        "Lesson extraction failed for '%s': %s", conv.title, e,
-                    )
-        print(f"Phase 5 complete: {stats.lessons_extracted} lessons extracted")
+        print(f"  [{conv_idx+1}/{len(work_convs)}] [{title_short}] "
+              f"Done — {msg_count} memories committed" + " " * 20)
 
     print(f"\nGlobal batch complete: {stats.conversations_imported} conversations, "
           f"{stats.messages_processed} messages")
