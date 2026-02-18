@@ -274,6 +274,9 @@ async def _import_global_batch(
     # ── Per-conversation pipeline ─────────────────────────────────────
     for conv_idx, conv in enumerate(work_convs):
         title_short = conv.title[:40]
+        prefix = f"  [{conv_idx+1}/{len(work_convs)}] [{title_short}]"
+        total_msgs = len(conv.messages)
+        print(f"{prefix} Starting ({total_msgs} messages)")
 
         # ── Step 1: Filter + tag (no LLM) ────────────────────────────
         valid_msgs: list[tuple[ParsedMessage, list[str]]] = []
@@ -283,12 +286,12 @@ async def _import_global_batch(
                 continue
             tags = tag_message(msg.content)
             valid_msgs.append((msg, tags))
+        print(f"{prefix} Filtered: {len(valid_msgs)}/{total_msgs} kept")
 
         # ── Step 2: Summarize (cloud LLM) ────────────────────────────
         surviving: list[tuple[ParsedMessage, list[str], str]] = []
         for i, (msg, tags) in enumerate(valid_msgs):
-            print(f"  [{conv_idx+1}/{len(work_convs)}] [{title_short}] "
-                  f"Summarizing {i+1}/{len(valid_msgs)}...", end="\r")
+            print(f"{prefix} Summarizing {i+1}/{len(valid_msgs)}...", end="\r")
             try:
                 sum_system, sum_prompt = summarize_memory(msg.content)
                 summary = await router.generate(
@@ -301,12 +304,12 @@ async def _import_global_batch(
                 logger.error("Summarization failed, using raw text: %s", e)
                 summary = msg.content
             surviving.append((msg, tags, summary))
+        print(f"{prefix} Summarized: {len(surviving)} messages" + " " * 20)
 
         # ── Step 3: Rank + Importance (local LLM, combined prompt) ───
         scores: list[tuple[int, float]] = []
         for i, (msg, tags, _summary) in enumerate(surviving):
-            print(f"  [{conv_idx+1}/{len(work_convs)}] [{title_short}] "
-                  f"Scoring {i+1}/{len(surviving)}...", end="\r")
+            print(f"{prefix} Scoring {i+1}/{len(surviving)}...", end="\r")
             try:
                 ri_system, ri_prompt = rank_and_importance(msg.content)
                 ri_text = await router.generate(
@@ -322,8 +325,10 @@ async def _import_global_batch(
                 importance += tag_bonus
             importance = min(importance, 1.0)
             scores.append((rank, importance))
+        print(f"{prefix} Scored: {len(scores)} messages" + " " * 20)
 
         # ── Step 4: DB insert + tag + score + embed ──────────────────
+        print(f"{prefix} Saving to DB...")
         conv_ts = (
             datetime.fromtimestamp(conv.created_at, tz=UTC)
             if conv.created_at else None
@@ -359,6 +364,7 @@ async def _import_global_batch(
 
         # Batch embed
         if surviving:
+            print(f"{prefix} Embedding...")
             try:
                 texts = [summary for _, _, summary in surviving]
                 metadatas = [
@@ -376,6 +382,7 @@ async def _import_global_batch(
 
         # ── Step 5: Lessons ──────────────────────────────────────────
         if not skip_lessons and len(conv.messages) >= 4:
+            print(f"{prefix} Extracting lessons...")
             try:
                 full_text = _build_conversation_text(conv)
                 await processor.process_lesson(full_text, session_id)
@@ -389,8 +396,7 @@ async def _import_global_batch(
         progress_count = stats.conversations_skipped + stats.conversations_imported
         if on_progress:
             on_progress(progress_count, total, conv.title, stats)
-        print(f"  [{conv_idx+1}/{len(work_convs)}] [{title_short}] "
-              f"Done — {msg_count} memories committed" + " " * 20)
+        print(f"{prefix} Done — {msg_count} memories committed")
 
     print(f"\nGlobal batch complete: {stats.conversations_imported} conversations, "
           f"{stats.messages_processed} messages")
