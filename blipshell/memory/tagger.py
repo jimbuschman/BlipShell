@@ -176,6 +176,30 @@ BACKGROUND_TRIGGER_PATTERNS: dict[str, list[str]] = {
 }
 
 
+def register_topic_patterns(patterns: dict[str, list[str]]):
+    """Merge discovered patterns into the module-level TOPIC_PATTERNS.
+
+    Called during agent initialization after loading from SQLite.
+    Invalid regexes are silently skipped.
+    """
+    for tag_name, regex_strs in patterns.items():
+        compiled = []
+        for p in regex_strs:
+            try:
+                compiled.append(re.compile(p, re.IGNORECASE))
+            except re.error:
+                continue
+        if compiled:
+            if tag_name in TOPIC_PATTERNS:
+                # Avoid adding duplicate patterns
+                existing_strs = {pat.pattern for pat in TOPIC_PATTERNS[tag_name]}
+                TOPIC_PATTERNS[tag_name].extend(
+                    p for p in compiled if p.pattern not in existing_strs
+                )
+            else:
+                TOPIC_PATTERNS[tag_name] = compiled
+
+
 def tag_topics(message: str) -> list[str]:
     """Extract topic tags from a message using regex patterns."""
     tags = set()

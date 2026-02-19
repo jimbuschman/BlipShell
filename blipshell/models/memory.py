@@ -38,6 +38,8 @@ class Memory(BaseModel):
     metadata_json: Optional[str] = None
     access_count: int = 0
     last_accessed: Optional[datetime] = None
+    consolidated_at: Optional[datetime] = None
+    entities_extracted_at: Optional[datetime] = None
 
 
 class CoreMemory(BaseModel):

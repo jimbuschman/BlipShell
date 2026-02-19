@@ -179,6 +179,56 @@ CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(statu
 CREATE INDEX IF NOT EXISTS idx_core_memories_active ON core_memories(is_active);
 CREATE INDEX IF NOT EXISTS idx_tags_name_category ON tags(name, category);
 
+CREATE TABLE IF NOT EXISTS discovered_tag_patterns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tag_name TEXT NOT NULL,
+    pattern TEXT NOT NULL,
+    discovered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    is_active BOOLEAN DEFAULT 1,
+    UNIQUE(tag_name, pattern)
+);
+
+CREATE TABLE IF NOT EXISTS app_metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS entities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    entity_type TEXT DEFAULT 'concept',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(name, entity_type)
+);
+
+CREATE TABLE IF NOT EXISTS entity_relationships (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id INTEGER NOT NULL,
+    predicate TEXT NOT NULL,
+    object_id INTEGER NOT NULL,
+    source_memory_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (subject_id) REFERENCES entities(id),
+    FOREIGN KEY (object_id) REFERENCES entities(id),
+    FOREIGN KEY (source_memory_id) REFERENCES memories(id) ON DELETE CASCADE,
+    UNIQUE(subject_id, predicate, object_id)
+);
+
+CREATE TABLE IF NOT EXISTS entity_mentions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id INTEGER NOT NULL,
+    memory_id INTEGER NOT NULL,
+    FOREIGN KEY (entity_id) REFERENCES entities(id),
+    FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE,
+    UNIQUE(entity_id, memory_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_mentions_memory ON entity_mentions(memory_id);
+CREATE INDEX IF NOT EXISTS idx_entity_mentions_entity ON entity_mentions(entity_id);
+CREATE INDEX IF NOT EXISTS idx_entity_relationships_subject ON entity_relationships(subject_id);
+CREATE INDEX IF NOT EXISTS idx_entity_relationships_object ON entity_relationships(object_id);
+CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
+
 -- FTS5 full-text search on memory summaries
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     summary, content=memories, content_rowid=id
@@ -222,6 +272,8 @@ class SQLiteStore:
         for col_sql in (
             "ALTER TABLE memories ADD COLUMN access_count INTEGER DEFAULT 0",
             "ALTER TABLE memories ADD COLUMN last_accessed DATETIME",
+            "ALTER TABLE memories ADD COLUMN consolidated_at DATETIME",
+            "ALTER TABLE memories ADD COLUMN entities_extracted_at DATETIME",
         ):
             try:
                 await self._db.execute(col_sql)
@@ -441,6 +493,14 @@ class SQLiteStore:
             last_accessed = row["last_accessed"]
         except (IndexError, KeyError):
             last_accessed = None
+        try:
+            consolidated_at = row["consolidated_at"]
+        except (IndexError, KeyError):
+            consolidated_at = None
+        try:
+            entities_extracted_at = row["entities_extracted_at"]
+        except (IndexError, KeyError):
+            entities_extracted_at = None
         return Memory(
             id=row["id"],
             session_id=row["session_id"],
@@ -455,6 +515,8 @@ class SQLiteStore:
             metadata_json=row["metadata_json"],
             access_count=access_count,
             last_accessed=last_accessed,
+            consolidated_at=consolidated_at,
+            entities_extracted_at=entities_extracted_at,
         )
 
     async def get_distinct_memory_session_ids(self) -> list[int]:
@@ -473,6 +535,42 @@ class SQLiteStore:
         await self._db.executemany(
             "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
             [(now, mid) for mid in memory_ids],
+        )
+        await self._db.commit()
+
+    async def get_unconsolidated_memory_ids(self, limit: int = 100) -> list[int]:
+        """Get memory IDs that haven't been consolidation-checked yet."""
+        cursor = await self._db.execute(
+            """SELECT id FROM memories
+               WHERE consolidated_at IS NULL AND is_archived = 0 AND summary IS NOT NULL
+               ORDER BY timestamp ASC LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [r["id"] for r in rows]
+
+    async def mark_memories_consolidated(self, memory_ids: list[int]):
+        """Set consolidated_at timestamp for checked memories."""
+        if not memory_ids:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        await self._db.executemany(
+            "UPDATE memories SET consolidated_at = ? WHERE id = ?",
+            [(now, mid) for mid in memory_ids],
+        )
+        await self._db.commit()
+
+    async def delete_memory(self, memory_id: int):
+        """Delete a single memory by ID (tags cleaned by ON DELETE CASCADE)."""
+        await self._db.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+        await self._db.commit()
+
+    async def transfer_memory_tags(self, from_id: int, to_id: int):
+        """Copy tags from one memory to another (union, skip duplicates)."""
+        await self._db.execute(
+            """INSERT OR IGNORE INTO memory_tags (memory_id, tag_id, timestamp)
+               SELECT ?, tag_id, timestamp FROM memory_tags WHERE memory_id = ?""",
+            (to_id, from_id),
         )
         await self._db.commit()
 
@@ -1110,6 +1208,186 @@ class SQLiteStore:
             )
         rows = await cursor.fetchall()
         return [self._row_to_background_task(r) for r in rows]
+
+    # --- Tag Discovery ---
+
+    async def get_discovered_tag_patterns(self) -> dict[str, list[str]]:
+        """Load active discovered tag patterns as {tag_name: [regex_str, ...]}."""
+        cursor = await self._db.execute(
+            "SELECT tag_name, pattern FROM discovered_tag_patterns WHERE is_active = 1"
+        )
+        rows = await cursor.fetchall()
+        result: dict[str, list[str]] = {}
+        for r in rows:
+            result.setdefault(r["tag_name"], []).append(r["pattern"])
+        return result
+
+    async def save_discovered_tag_patterns(self, patterns: dict[str, list[str]]):
+        """Persist newly discovered patterns (skip duplicates)."""
+        rows = [
+            (tag_name, pattern)
+            for tag_name, pattern_list in patterns.items()
+            for pattern in pattern_list
+        ]
+        if not rows:
+            return
+        await self._db.executemany(
+            "INSERT OR IGNORE INTO discovered_tag_patterns (tag_name, pattern) VALUES (?, ?)",
+            rows,
+        )
+        await self._db.commit()
+
+    async def get_poorly_tagged_memory_summaries(
+        self, max_tags: int = 1, limit: int = 20,
+    ) -> list[str]:
+        """Get summaries of non-archived memories with few tags for LLM review."""
+        cursor = await self._db.execute(
+            """SELECT m.summary FROM memories m
+               LEFT JOIN memory_tags mt ON mt.memory_id = m.id
+               WHERE m.is_archived = 0 AND m.summary IS NOT NULL
+               GROUP BY m.id
+               HAVING COUNT(mt.id) <= ?
+               ORDER BY m.timestamp DESC
+               LIMIT ?""",
+            (max_tags, limit),
+        )
+        rows = await cursor.fetchall()
+        return [r["summary"] for r in rows]
+
+    # --- Entity Graph ---
+
+    async def get_or_create_entity(self, name: str, entity_type: str = "concept") -> int:
+        """Get existing entity ID or create a new one. Names are lowercased."""
+        name = name.strip().lower()
+        cursor = await self._db.execute(
+            "SELECT id FROM entities WHERE name = ? AND entity_type = ?",
+            (name, entity_type),
+        )
+        row = await cursor.fetchone()
+        if row:
+            return row["id"]
+        cursor = await self._db.execute(
+            "INSERT INTO entities (name, entity_type) VALUES (?, ?)",
+            (name, entity_type),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def create_entity_relationship(
+        self, subject_id: int, predicate: str, object_id: int, memory_id: int | None,
+    ) -> int | None:
+        """Create a relationship triple. Returns ID or None if duplicate."""
+        try:
+            cursor = await self._db.execute(
+                """INSERT OR IGNORE INTO entity_relationships
+                   (subject_id, predicate, object_id, source_memory_id)
+                   VALUES (?, ?, ?, ?)""",
+                (subject_id, predicate.strip().lower(), object_id, memory_id),
+            )
+            await self._db.commit()
+            return cursor.lastrowid if cursor.lastrowid else None
+        except Exception as e:
+            logger.warning("Failed to create relationship: %s", e)
+            return None
+
+    async def create_entity_mention(self, entity_id: int, memory_id: int):
+        """Record that an entity is mentioned in a memory."""
+        await self._db.execute(
+            "INSERT OR IGNORE INTO entity_mentions (entity_id, memory_id) VALUES (?, ?)",
+            (entity_id, memory_id),
+        )
+        await self._db.commit()
+
+    async def get_unextracted_memory_ids(self, limit: int = 50) -> list[int]:
+        """Get memory IDs that haven't had entities extracted yet."""
+        cursor = await self._db.execute(
+            """SELECT id FROM memories
+               WHERE entities_extracted_at IS NULL AND is_archived = 0
+               AND summary IS NOT NULL
+               ORDER BY timestamp ASC LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [r["id"] for r in rows]
+
+    async def mark_entities_extracted(self, memory_ids: list[int]):
+        """Set entities_extracted_at timestamp for processed memories."""
+        if not memory_ids:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        await self._db.executemany(
+            "UPDATE memories SET entities_extracted_at = ? WHERE id = ?",
+            [(now, mid) for mid in memory_ids],
+        )
+        await self._db.commit()
+
+    async def get_entity_ids_by_names(self, names: list[str]) -> list[int]:
+        """Get entity IDs matching any of the given names (case-insensitive)."""
+        if not names:
+            return []
+        lowered = [n.strip().lower() for n in names]
+        placeholders = ",".join("?" * len(lowered))
+        cursor = await self._db.execute(
+            f"SELECT id FROM entities WHERE name IN ({placeholders})",
+            lowered,
+        )
+        rows = await cursor.fetchall()
+        return [r["id"] for r in rows]
+
+    async def get_connected_entity_ids(self, entity_ids: list[int]) -> list[int]:
+        """Get entity IDs connected to the given entities via relationships."""
+        if not entity_ids:
+            return []
+        placeholders = ",".join("?" * len(entity_ids))
+        cursor = await self._db.execute(
+            f"""SELECT DISTINCT object_id AS eid FROM entity_relationships
+                WHERE subject_id IN ({placeholders})
+                UNION
+                SELECT DISTINCT subject_id AS eid FROM entity_relationships
+                WHERE object_id IN ({placeholders})""",
+            entity_ids + entity_ids,
+        )
+        rows = await cursor.fetchall()
+        # Return connected entities that aren't in the original set
+        original = set(entity_ids)
+        return [r["eid"] for r in rows if r["eid"] not in original]
+
+    async def get_memory_ids_for_entities(self, entity_ids: list[int]) -> list[int]:
+        """Get memory IDs that mention any of the given entities."""
+        if not entity_ids:
+            return []
+        placeholders = ",".join("?" * len(entity_ids))
+        cursor = await self._db.execute(
+            f"""SELECT DISTINCT memory_id FROM entity_mentions
+                WHERE entity_id IN ({placeholders})""",
+            entity_ids,
+        )
+        rows = await cursor.fetchall()
+        return [r["memory_id"] for r in rows]
+
+    async def get_all_entity_names(self) -> list[str]:
+        """Get all entity names (for fast in-memory matching at search time)."""
+        cursor = await self._db.execute("SELECT DISTINCT name FROM entities")
+        rows = await cursor.fetchall()
+        return [r["name"] for r in rows]
+
+    async def get_metadata(self, key: str) -> Optional[str]:
+        """Get an app metadata value by key."""
+        cursor = await self._db.execute(
+            "SELECT value FROM app_metadata WHERE key = ?", (key,)
+        )
+        row = await cursor.fetchone()
+        return row["value"] if row else None
+
+    async def set_metadata(self, key: str, value: str):
+        """Set an app metadata value (upsert)."""
+        await self._db.execute(
+            "INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+        await self._db.commit()
+
+    # --- Background Tasks ---
 
     def _row_to_background_task(self, row) -> BackgroundTask:
         return BackgroundTask(

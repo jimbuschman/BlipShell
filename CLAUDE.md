@@ -52,6 +52,12 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - **Context size on fallback** — if a request fails on Groq/Gemini and falls back to local, context window config needs to adjust. No handling for mismatched context limits across endpoints yet.
 - **Ollama cloud quota management** — decide whether background tasks (summarization/ranking/importance) should use cloud Ollama quota or stay purely local. Currently local-only for these to preserve cloud quota for interactive reasoning/tool_calling/coding.
 
+## Feature Roadmap
+Completed: 4 (memory consolidation), 5 (contradiction detection), 10 (dynamic pool allocation)
+- **6. Upgrade embedding model** — Benchmark new embedding models, then full re-embed. Blocked until Ollama GPU is free (currently running re-embedding). Benchmark first with real queries before committing.
+- **7. LLM-powered tag discovery** — LLM reviews recent memories periodically and suggests new regex patterns for the tagger. Route to cloud endpoint, run as scheduled background task.
+- **9. Graph memory layer** — Entity relationship triples (Jim, prefers, Python). New subsystem, do last. Significant undertaking, long-term payoff.
+
 ## Architecture Notes
 - Two-PC setup: Development on one PC, Ollama/benchmarks on another
 - Code synced via git (github.com/jimbuschman/BlipShell)

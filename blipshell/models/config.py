@@ -82,6 +82,13 @@ class MemoryConfig(BaseModel):
     auto_prune_days: int = 90
     prune_max_importance: float = 0.3
     prune_max_rank: int = 2
+    consolidation_similarity: float = 0.85  # min cosine similarity to merge
+    consolidation_batch_size: int = 100  # memories checked per startup run
+    contradiction_similarity_threshold: float = 0.7  # min similarity to check for contradiction
+    tag_discovery_interval_days: int = 7  # days between discovery runs
+    tag_discovery_sample_size: int = 20  # poorly-tagged memories to sample
+    entity_extraction_batch_size: int = 50  # memories processed per startup run
+    entity_boost: float = 0.15  # boost for memories found via entity graph
 
 
 class SessionConfig(BaseModel):

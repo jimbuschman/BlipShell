@@ -299,6 +299,104 @@ def reflect_on_response(user_message: str, response: str) -> str:
     )
 
 
+def detect_contradiction(new_memory: str, existing_memory: str) -> tuple[str, str]:
+    """Prompt for detecting if two core memories contradict each other.
+
+    Returns (system_prompt, user_prompt). Used when a new core memory is saved
+    to check against existing similar core memories.
+    """
+    system = (
+        "You determine whether two personal facts contradict each other.\n\n"
+        "A contradiction means they CANNOT both be true at the same time:\n"
+        "- Direct opposites: 'prefers dark mode' vs 'prefers light mode' → YES\n"
+        "- Stale updates: 'uses Windows 10' vs 'uses Windows 11' → YES\n"
+        "- Preference reversals: 'likes Python' vs 'dislikes Python' → YES\n\n"
+        "NOT contradictions (both can be true):\n"
+        "- Complementary: 'likes coffee' vs 'likes tea' → NO\n"
+        "- Different topics: 'cat named Luna' vs 'works at Acme' → NO\n"
+        "- Additive: 'knows Python' vs 'knows Rust' → NO\n\n"
+        "Respond with ONLY: YES or NO"
+    )
+    user = (
+        f"New fact: {new_memory}\n"
+        f"Existing fact: {existing_memory}\n\n"
+        "Do these contradict each other?"
+    )
+    return system, user
+
+
+def discover_tag_patterns(
+    summaries: list[str], existing_tags: list[str],
+) -> tuple[str, str]:
+    """Prompt for discovering new tag regex patterns from poorly-tagged memories.
+
+    Returns (system_prompt, user_prompt). The existing_tags list is included
+    so the LLM avoids re-suggesting already-covered topics.
+    """
+    system = (
+        "You are a tag pattern discovery system. You analyze memory summaries "
+        "and suggest new topic tags with regex patterns.\n\n"
+        "Rules:\n"
+        "- Suggest tags for RECURRING topics that appear in multiple summaries\n"
+        "- Each tag needs a short lowercase name (e.g., 'minecraft', 'home-automation')\n"
+        "- Each regex must be a valid Python regex pattern\n"
+        "- Use word boundaries (\\b) to avoid substring matches\n"
+        "- Keep patterns simple and specific\n"
+        "- Do NOT suggest tags that overlap with the existing tags listed below\n"
+        "- If no new tags are needed, respond with: NONE\n\n"
+        "Output format (one per line):\n"
+        "tag_name: regex_pattern\n\n"
+        "Example output:\n"
+        "minecraft: \\bminecraft\\b\n"
+        "home-automation: \\bhome.?automation\\b|\\bsmarthome\\b\n"
+        "3d-printing: \\b3d.?print\\b|\\bfilament\\b|\\bslicer\\b"
+    )
+    existing_str = ", ".join(existing_tags)
+    summaries_str = "\n".join(f"- {s}" for s in summaries)
+    user = (
+        f"Existing tags (DO NOT re-suggest these):\n{existing_str}\n\n"
+        f"Memory summaries to analyze:\n{summaries_str}\n\n"
+        "Suggest new tag patterns:"
+    )
+    return system, user
+
+
+def extract_entities(summary: str) -> tuple[str, str]:
+    """Prompt for extracting entity relationship triples from a memory summary.
+
+    Returns (system_prompt, user_prompt). Output format is pipe-delimited:
+    subject | predicate | object | subject_type | object_type
+    """
+    system = (
+        "You extract entity relationship triples from memory summaries.\n\n"
+        "Output format (one triple per line):\n"
+        "subject | predicate | object | subject_type | object_type\n\n"
+        "Entity types: person, project, technology, concept, preference, place, organization\n\n"
+        "Rules:\n"
+        "- Extract concrete entities: people, tools, projects, technologies, preferences\n"
+        "- Skip vague/abstract entities ('something', 'it', 'the thing', 'a problem')\n"
+        "- Predicate should be a short verb phrase: prefers, uses, works_on, asked_about, "
+        "built_with, knows, dislikes, lives_in, runs_on, depends_on\n"
+        "- 'User' is always entity type 'person'\n"
+        "- Normalize names to lowercase\n"
+        "- Extract 1-5 triples per summary\n"
+        "- If no meaningful entities can be extracted, respond with: NONE\n\n"
+        "Examples:\n"
+        "Input: User asked about Python performance tuning for BlipShell.\n"
+        "Output:\n"
+        "user | asked_about | python | person | technology\n"
+        "blipshell | built_with | python | project | technology\n\n"
+        "Input: Assistant explained how to configure Ollama with GPU support.\n"
+        "Output:\n"
+        "user | asked_about | ollama | person | technology\n"
+        "ollama | uses | gpu | technology | technology\n\n"
+        "Input: User said hello and asked how the assistant is doing.\n"
+        "Output:\nNONE"
+    )
+    user = f"Extract entity triples from this memory:\n\n{summary}"
+    return system, user
+
+
 def summarize_plan_results(user_request: str, step_results: list[str]) -> str:
     """Prompt for summarizing all completed plan steps into a final response."""
     results_text = ""

@@ -45,9 +45,14 @@ from blipshell.llm.job_queue import LLMJobQueue
 from blipshell.llm.prompts import reflect_on_response, summarize_session_chunk
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.chroma_store import ChromaStore
+from blipshell.memory.consolidation import MemoryConsolidator
+from blipshell.memory.entity_extractor import EntityExtractor
 from blipshell.memory.manager import MemoryManager, PoolItem, estimate_tokens
 from blipshell.memory.processor import MemoryProcessor
+from blipshell.memory.query_profiles import classify_query, compute_pool_budgets
 from blipshell.memory.search import MemorySearch
+from blipshell.memory.tag_discovery import TagDiscovery
+from blipshell.memory.tagger import register_topic_patterns
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.models.config import BlipShellConfig, get_ollama_url
 from blipshell.models.session import MessageRole
@@ -190,8 +195,20 @@ class Agent:
         # Auto-prune old low-value memories
         await self._auto_prune_memories()
 
+        # Merge near-duplicate memories
+        await self._auto_consolidate_memories()
+
+        # Load discovered tag patterns into tagger
+        await self._load_discovered_tags()
+
         # Health check endpoints on startup (detect remote PCs)
         await self.endpoint_manager.startup_health_check()
+
+        # Run tag discovery if due (after health check so endpoints are available)
+        await self._auto_tag_discovery()
+
+        # Extract entity triples from unprocessed memories
+        await self._auto_extract_entities()
 
         # Start periodic health check (re-detects endpoints that come/go)
         self._health_check_task = self.endpoint_manager.start_health_loop(interval=60)
@@ -334,6 +351,70 @@ class Agent:
                 logger.info("Auto-pruned %d memories", count)
         except Exception as e:
             logger.error("Auto-prune failed: %s", e)
+
+    async def _auto_consolidate_memories(self):
+        """Merge near-duplicate memories on startup."""
+        try:
+            consolidator = MemoryConsolidator(
+                self.sqlite, self.chroma, self.config.memory,
+            )
+            stats = await consolidator.consolidate_batch()
+            if stats["merged"] > 0:
+                logger.info(
+                    "Consolidated %d duplicate memories (checked %d)",
+                    stats["merged"], stats["checked"],
+                )
+        except Exception as e:
+            logger.error("Memory consolidation failed: %s", e)
+
+    async def _load_discovered_tags(self):
+        """Load previously discovered tag patterns into the tagger."""
+        try:
+            discovered = await self.sqlite.get_discovered_tag_patterns()
+            if discovered:
+                register_topic_patterns(discovered)
+                total = sum(len(v) for v in discovered.values())
+                logger.info("Loaded %d discovered tag patterns", total)
+        except Exception as e:
+            logger.error("Failed to load discovered tags: %s", e)
+
+    async def _auto_tag_discovery(self):
+        """Run LLM-powered tag discovery if enough time has elapsed."""
+        try:
+            cfg = self.config.memory
+            discovery = TagDiscovery(
+                self.sqlite, self.router,
+                interval_days=cfg.tag_discovery_interval_days,
+                sample_size=cfg.tag_discovery_sample_size,
+            )
+            stats = await discovery.maybe_run()
+            if stats["discovered"] > 0:
+                # Reload newly discovered patterns into tagger
+                new_patterns = await self.sqlite.get_discovered_tag_patterns()
+                register_topic_patterns(new_patterns)
+                logger.info("Discovered %d new tag patterns", stats["discovered"])
+        except Exception as e:
+            logger.error("Tag discovery failed: %s", e)
+
+    async def _auto_extract_entities(self):
+        """Extract entity relationship triples from unprocessed memories on startup."""
+        try:
+            extractor = EntityExtractor(
+                self.sqlite, self.router,
+                batch_size=self.config.memory.entity_extraction_batch_size,
+            )
+            stats = await extractor.extract_batch()
+            if stats["triples"] > 0:
+                logger.info(
+                    "Extracted %d entity triples from %d memories",
+                    stats["triples"], stats["extracted"],
+                )
+            if stats["errors"] > 0:
+                logger.warning(
+                    "Entity extraction had %d errors", stats["errors"],
+                )
+        except Exception as e:
+            logger.error("Entity extraction failed: %s", e)
 
     async def _load_recent_sessions(self):
         """Load recent session summaries into RecentHistory pool."""
@@ -638,8 +719,17 @@ class Agent:
             - MemoryManager.OVERHEAD_TOKENS
         )
 
-        # Gather memory from all pools
-        memory_items = self.memory_manager.gather_memory(token_budget=available)
+        # Classify query and compute dynamic pool budgets
+        profile = classify_query(user_message)
+        pool_budgets = compute_pool_budgets(
+            profile, available, self.memory_manager.get_hard_caps(),
+        )
+        logger.debug("Query profile: %s", profile)
+
+        # Gather memory from all pools with dynamic budgets
+        memory_items = self.memory_manager.gather_memory(
+            token_budget=available, pool_budgets=pool_budgets,
+        )
 
         # Build memory context string organized by pool
         # Order: Core first (stable facts, LLM attends to start), history in

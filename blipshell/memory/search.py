@@ -71,6 +71,7 @@ class MemorySearch:
             self.tag_overlap_boost = config.tag_overlap_boost
             self.decay_rate = config.decay_rate
             self.fts_weight = config.fts_weight
+            self.entity_boost = config.entity_boost
         else:
             self.min_rank = min_rank
             self.search_limit = search_limit
@@ -80,6 +81,7 @@ class MemorySearch:
             self.tag_overlap_boost = 0.1
             self.decay_rate = 0.001
             self.fts_weight = 0.3
+            self.entity_boost = 0.15
 
     async def search(
         self,
@@ -199,7 +201,32 @@ class MemorySearch:
                 tag_boost=tag_boost,
             ))
 
-        # Step 6: Sort by boosted score
+        # Step 6: Entity graph expansion — find memories connected via entities
+        existing_ids = {r.memory_id for r in results}
+        try:
+            entity_memory_ids = await self._expand_via_entities(query)
+            for eid in entity_memory_ids:
+                if eid in existing_ids:
+                    continue
+                emem = await self.sqlite.get_memory(eid)
+                if not emem or emem.rank < self.min_rank or emem.is_archived:
+                    continue
+                if current_session_id and emem.session_id == current_session_id:
+                    continue
+                results.append(SearchResult(
+                    memory_id=eid,
+                    text=emem.content,
+                    summary=emem.summary or emem.content,
+                    similarity=0.0,
+                    boosted_score=self.entity_boost,
+                    rank=emem.rank,
+                    importance=emem.importance,
+                ))
+                existing_ids.add(eid)
+        except Exception as e:
+            logger.warning("Entity expansion failed: %s", e)
+
+        # Step 7: Sort by boosted score
         results.sort(key=lambda r: r.boosted_score, reverse=True)
         final = results[:n_results]
 
@@ -212,6 +239,37 @@ class MemorySearch:
                 logger.warning("Failed to record memory access: %s", e)
 
         return final
+
+    async def _expand_via_entities(self, query: str) -> list[int]:
+        """Find memory IDs connected to entities mentioned in the query.
+
+        1. Load all known entity names (fast — typically hundreds, not millions)
+        2. Find entity names that appear in the query (substring match)
+        3. Get their entity IDs
+        4. Get connected entity IDs via relationships
+        5. Get memory IDs mentioning any of these entities
+        """
+        entity_names = await self.sqlite.get_all_entity_names()
+        if not entity_names:
+            return []
+
+        # Find entity names present in the query (case-insensitive substring)
+        query_lower = query.lower()
+        matched_names = [name for name in entity_names if name in query_lower]
+        if not matched_names:
+            return []
+
+        # Get entity IDs for matched names
+        entity_ids = await self.sqlite.get_entity_ids_by_names(matched_names)
+        if not entity_ids:
+            return []
+
+        # Get connected entities via relationships
+        connected_ids = await self.sqlite.get_connected_entity_ids(entity_ids)
+        all_entity_ids = entity_ids + connected_ids
+
+        # Get memory IDs mentioning any of these entities
+        return await self.sqlite.get_memory_ids_for_entities(all_entity_ids)
 
     async def search_core_memories(self, query: str, n_results: int = 10) -> list[dict]:
         """Search core memories by semantic similarity."""

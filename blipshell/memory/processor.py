@@ -9,6 +9,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from blipshell.llm.prompts import (
+    detect_contradiction,
     extract_lesson,
     rank_and_importance,
     summarize_memory,
@@ -43,6 +44,7 @@ class MemoryProcessor:
         self.router = router
         self._recency_bonus = config.importance_recency_bonus if config else 0.1
         self._tag_bonus = config.importance_tag_bonus if config else 0.05
+        self._contradiction_threshold = config.contradiction_similarity_threshold if config else 0.7
         self._max_tags = max_tags
 
     async def process_message(
@@ -151,6 +153,17 @@ class MemoryProcessor:
         except Exception as e:
             logger.error("Core memory tagging failed: %s", e)
 
+        # Contradiction check — deactivate stale/contradicted core memories
+        try:
+            deactivated = await self._check_core_memory_contradictions(
+                mem_id, text,
+                similarity_threshold=self._contradiction_threshold,
+            )
+            if deactivated:
+                logger.info("Deactivated %d contradicted core memories", deactivated)
+        except Exception as e:
+            logger.error("Contradiction check failed: %s", e)
+
         return mem_id
 
     async def process_lesson(self, conversation_text: str, session_id: int) -> int:
@@ -187,6 +200,45 @@ class MemoryProcessor:
             logger.error("Lesson tagging failed: %s", e)
 
         return lesson_id
+
+    async def _check_core_memory_contradictions(
+        self, core_memory_id: int, text: str,
+        similarity_threshold: float = 0.7,
+    ) -> int:
+        """Check new core memory against existing ones for contradictions.
+
+        Searches ChromaDB for similar core memories and asks the LLM whether
+        each pair contradicts. Deactivates older contradicted memories.
+        Returns count of deactivated memories.
+        """
+        results = self.chroma.search_core_memories(text, n_results=3)
+
+        deactivated = 0
+        for r in results:
+            if r["id"] == core_memory_id:
+                continue
+            if r["similarity"] < similarity_threshold:
+                continue
+
+            # Ask LLM if they contradict
+            system, prompt = detect_contradiction(text, r["document"])
+            answer = await self.router.generate(
+                TaskType.REASONING, prompt, system=system, think=False,
+            )
+
+            if answer.strip().upper().startswith("YES"):
+                await self.sqlite.deactivate_core_memory(r["id"])
+                try:
+                    self.chroma.delete_core_memory(r["id"])
+                except Exception:
+                    pass
+                deactivated += 1
+                logger.info(
+                    "Deactivated contradicted core memory %d (superseded by %d)",
+                    r["id"], core_memory_id,
+                )
+
+        return deactivated
 
     @staticmethod
     def _parse_rank_and_importance(text: str) -> tuple[int, float]:

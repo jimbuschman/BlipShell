@@ -61,11 +61,11 @@ class Pool:
         self._items.append(item)
         self._items.sort(key=lambda x: x.priority_score, reverse=True)
 
-    def get_top_entries(self, available_tokens: int) -> list[PoolItem]:
+    def get_top_entries(self, available_tokens: int, max_override: int | None = None) -> list[PoolItem]:
         """Get top entries that fit within available tokens."""
         selected = []
         used = 0
-        effective_cap = min(available_tokens, self.hard_cap or self.max_tokens)
+        effective_cap = min(available_tokens, max_override or self.hard_cap or self.max_tokens)
 
         for item in self._items:
             if used + item.estimated_tokens <= effective_cap:
@@ -157,8 +157,13 @@ class MemoryManager:
 
         pool.add(item)
 
-    def gather_memory(self, token_budget: int | None = None) -> list[PoolItem]:
-        """Gather memory items from all pools within budget."""
+    def gather_memory(self, token_budget: int | None = None,
+                      pool_budgets: dict[str, int] | None = None) -> list[PoolItem]:
+        """Gather memory items from all pools within budget.
+
+        If pool_budgets is provided, each pool's effective cap is overridden
+        for this call only (used by dynamic query profiles).
+        """
         if token_budget is None:
             token_budget = self.global_budget
 
@@ -166,7 +171,8 @@ class MemoryManager:
         result = []
 
         for pool in self._pools.values():
-            entries = pool.get_top_entries(remaining)
+            cap = pool_budgets.get(pool.name) if pool_budgets else None
+            entries = pool.get_top_entries(remaining, max_override=cap)
             for entry in entries:
                 if remaining >= entry.estimated_tokens:
                     entry.pool_name = "Lessons" if entry.session_role == "system2" else pool.name
@@ -229,6 +235,10 @@ class MemoryManager:
             }
             for name, pool in self._pools.items()
         }
+
+    def get_hard_caps(self) -> dict[str, int | None]:
+        """Get hard caps for all pools (used by query profile budget computation)."""
+        return {name: pool.hard_cap for name, pool in self._pools.items()}
 
     def print_usage(self):
         """Log memory usage for debugging."""
