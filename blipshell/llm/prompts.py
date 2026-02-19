@@ -131,23 +131,46 @@ def ask_importance(text: str) -> tuple[str, str]:
 def rank_and_importance(text: str) -> tuple[str, str]:
     """Combined prompt for ranking (1-5) and importance (0.0-1.0) in one LLM call.
 
-    Returns (system_prompt, user_prompt). Used by the batch import pipeline to
-    halve the number of scoring calls and avoid model swaps between rank/importance.
+    Returns (system_prompt, user_prompt). Used by the batch import pipeline and
+    the reprocessing script. Includes few-shot examples to push the model to
+    use the full 1-5 scale (without examples, models tend to cluster at 3).
     """
     system = (
         "You rate messages on two scales.\n\n"
         "RANK (1-5) — how valuable is this to remember?\n"
-        "1 = Noise: greetings, filler, system prompts, boilerplate, 'hello', 'thanks'\n"
-        "2 = Minor: short or vague messages with little substance\n"
-        "3 = Useful: contains a clear topic, question, or piece of information\n"
-        "4 = Important: meaningful insight, decision, preference, or technical detail\n"
-        "5 = Critical: core fact about the user, key decision, or turning point\n\n"
+        "1 = Noise: greetings, filler, \"ok\", \"thanks\", \"sure\", short acknowledgments\n"
+        "2 = Minor: vague or context-dependent messages, simple yes/no, "
+        "\"still not working\", \"can you fix it?\"\n"
+        "3 = Useful: contains a clear topic or question with enough context "
+        "to be standalone\n"
+        "4 = Important: meaningful insight, decision, preference, technical "
+        "detail, or personal fact\n"
+        "5 = Critical: core identity fact, major life decision, architectural "
+        "choice, or turning point\n\n"
         "IMPORTANCE (0.0-1.0) — how important to remember long-term?\n"
         "0.1 = Throwaway: greetings, filler, system noise\n"
-        "0.3 = Low: casual chat, minor details\n"
-        "0.5 = Medium: useful context, specific question or topic\n"
-        "0.7 = High: user preference, project detail, recurring theme\n"
+        "0.3 = Low: casual chat, minor details, context-dependent fragments\n"
+        "0.5 = Medium: useful context, specific technical question\n"
+        "0.7 = High: user preference, project decision, recurring theme, "
+        "personal detail\n"
         "0.9 = Critical: core identity fact, major decision, key personal info\n\n"
+        "IMPORTANT: Use the FULL scale. Most conversations contain a mix of "
+        "filler (1-2) and substance (3-5). Short context-dependent messages "
+        "without standalone meaning should be 1-2, not 3.\n\n"
+        "Examples:\n"
+        "\"ok sounds good\" → 1 0.1\n"
+        "\"can you fix that?\" → 2 0.2\n"
+        "\"still not working\" → 1 0.1\n"
+        "\"whichever you wanna do first\" → 1 0.1\n"
+        "\"I want to swing an x/y point in an arch, how can i do that "
+        "with a c# function?\" → 3 0.5\n"
+        "\"I decided to switch from MongoDB to PostgreSQL for the project\" "
+        "→ 4 0.7\n"
+        "\"My cat's name is Luna and she's 3 years old\" → 5 0.9\n"
+        "\"Here's how to add a heatsink to the back of the PCB when the "
+        "chip is blocked...\" → 4 0.7\n"
+        "\"I'm thinking about quitting my job to focus on this full-time\" "
+        "→ 5 0.9\n\n"
         "Respond with ONLY two numbers separated by a space: rank importance\n"
         "Example: 4 0.7"
     )
