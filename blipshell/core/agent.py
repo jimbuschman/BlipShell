@@ -642,24 +642,36 @@ class Agent:
         memory_items = self.memory_manager.gather_memory(token_budget=available)
 
         # Build memory context string organized by pool
-        context_parts = {}
+        # Order: Core first (stable facts, LLM attends to start), history in
+        # the middle (lowest attention), Recall last (most relevant, LLM
+        # attends to end) — mitigates lost-in-the-middle effect.
+        pool_labels = {
+            "Core": "CoreFoundation",
+            "Lessons": "RelevantLessons",
+            "Recall": "RelevantMemory",
+            "RecentHistory": "RecentHistory",
+            "Buffer": "RecentHistory",
+            "ActiveSession": "ActiveSession",
+        }
+        pool_order = ["Core", "Lessons", "RecentHistory", "Buffer", "ActiveSession", "Recall"]
+        context_parts: dict[str, list[str]] = {}
         for item in memory_items:
             pool = item.pool_name
             if pool not in context_parts:
-                label = {
-                    "Core": "CoreFoundation",
-                    "Lessons": "RelevantLessons",
-                    "Recall": "RelevantMemory",
-                    "RecentHistory": "RecentHistory",
-                    "Buffer": "RecentHistory",
-                    "ActiveSession": "ActiveSession",
-                }.get(pool, pool)
-                context_parts[pool] = (label, [])
-            context_parts[pool][1].append(f"   - {item.text}")
+                context_parts[pool] = []
+            context_parts[pool].append(f"   - {item.text}")
 
         memory_text = ""
-        for pool_name, (label, items) in context_parts.items():
-            memory_text += f"{label}:\n" + "\n".join(items) + "\n\n"
+        for pool_name in pool_order:
+            if pool_name not in context_parts:
+                continue
+            label = pool_labels.get(pool_name, pool_name)
+            memory_text += f"{label}:\n" + "\n".join(context_parts[pool_name]) + "\n\n"
+        # Include any pools not in the explicit order (future-proofing)
+        for pool_name, items in context_parts.items():
+            if pool_name not in pool_order:
+                label = pool_labels.get(pool_name, pool_name)
+                memory_text += f"{label}:\n" + "\n".join(items) + "\n\n"
 
         # Build messages
         messages = [
