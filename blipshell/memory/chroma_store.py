@@ -72,10 +72,15 @@ class ChromaStore:
             self._lessons.count(),
         )
 
+    def _require_collections(self):
+        """Raise if collections haven't been initialized."""
+        if self._memories is None or self._core_memories is None or self._lessons is None:
+            raise RuntimeError("ChromaStore not initialized — call initialize() first")
+
     def add_memory(self, memory_id: int, text: str, metadata: Optional[dict] = None):
         """Add a memory embedding to ChromaDB."""
-        meta = metadata or {}
-        meta["source"] = "memory"
+        self._require_collections()
+        meta = {**(metadata or {}), "source": "memory"}
         self._memories.upsert(
             ids=[str(memory_id)],
             documents=[text],
@@ -93,18 +98,18 @@ class ChromaStore:
         Much faster than calling add_memory() in a loop because Ollama
         embeds all documents in one request instead of N separate ones.
         """
-        for meta in metadatas:
-            meta["source"] = "memory"
+        self._require_collections()
+        safe_metas = [{**m, "source": "memory"} for m in metadatas]
         self._memories.upsert(
             ids=[str(mid) for mid in memory_ids],
             documents=texts,
-            metadatas=metadatas,
+            metadatas=safe_metas,
         )
 
     def add_core_memory(self, core_memory_id: int, text: str, metadata: Optional[dict] = None):
         """Add a core memory embedding to ChromaDB."""
-        meta = metadata or {}
-        meta["source"] = "core_memory"
+        self._require_collections()
+        meta = {**(metadata or {}), "source": "core_memory"}
         self._core_memories.upsert(
             ids=[str(core_memory_id)],
             documents=[text],
@@ -113,8 +118,8 @@ class ChromaStore:
 
     def add_lesson(self, lesson_id: int, text: str, metadata: Optional[dict] = None):
         """Add a lesson embedding to ChromaDB."""
-        meta = metadata or {}
-        meta["source"] = "lesson"
+        self._require_collections()
+        meta = {**(metadata or {}), "source": "lesson"}
         self._lessons.upsert(
             ids=[str(lesson_id)],
             documents=[text],
@@ -133,6 +138,7 @@ class ChromaStore:
         Distance is cosine distance (lower = more similar).
         Similarity = 1 - distance.
         """
+        self._require_collections()
         kwargs = {"query_texts": [query], "n_results": n_results}
         if where:
             kwargs["where"] = where
@@ -147,6 +153,7 @@ class ChromaStore:
 
     def search_core_memories(self, query: str, n_results: int = 10) -> list[dict]:
         """Search core memories by semantic similarity."""
+        self._require_collections()
         try:
             results = self._core_memories.query(
                 query_texts=[query], n_results=n_results
@@ -159,6 +166,7 @@ class ChromaStore:
 
     def search_lessons(self, query: str, n_results: int = 10) -> list[dict]:
         """Search lessons by semantic similarity."""
+        self._require_collections()
         try:
             results = self._lessons.query(
                 query_texts=[query], n_results=n_results
