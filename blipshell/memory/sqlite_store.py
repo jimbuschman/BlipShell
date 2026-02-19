@@ -178,6 +178,28 @@ CREATE INDEX IF NOT EXISTS idx_background_tasks_session ON background_tasks(sess
 CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status);
 CREATE INDEX IF NOT EXISTS idx_core_memories_active ON core_memories(is_active);
 CREATE INDEX IF NOT EXISTS idx_tags_name_category ON tags(name, category);
+
+-- FTS5 full-text search on memory summaries
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    summary, content=memories, content_rowid=id
+);
+
+-- Keep FTS index in sync with memories table
+CREATE TRIGGER IF NOT EXISTS memories_fts_insert AFTER INSERT ON memories
+WHEN NEW.summary IS NOT NULL BEGIN
+    INSERT INTO memories_fts(rowid, summary) VALUES (NEW.id, NEW.summary);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_fts_update AFTER UPDATE OF summary ON memories
+WHEN NEW.summary IS NOT NULL BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, summary) VALUES('delete', OLD.id, OLD.summary);
+    INSERT INTO memories_fts(rowid, summary) VALUES (NEW.id, NEW.summary);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_fts_delete AFTER DELETE ON memories
+WHEN OLD.summary IS NOT NULL BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, summary) VALUES('delete', OLD.id, OLD.summary);
+END;
 """
 
 
@@ -205,6 +227,11 @@ class SQLiteStore:
                 await self._db.execute(col_sql)
             except Exception:
                 pass  # column already exists
+        # Backfill FTS5 index with existing summaries
+        await self._db.execute(
+            """INSERT OR IGNORE INTO memories_fts(rowid, summary)
+               SELECT id, summary FROM memories WHERE summary IS NOT NULL"""
+        )
         await self._db.commit()
 
     async def close(self):
@@ -448,6 +475,23 @@ class SQLiteStore:
             [(now, mid) for mid in memory_ids],
         )
         await self._db.commit()
+
+    async def search_fts(self, query: str, limit: int = 20) -> list[dict]:
+        """Full-text search on memory summaries using FTS5.
+
+        Returns list of {id, fts_rank} dicts sorted by relevance.
+        """
+        try:
+            cursor = await self._db.execute(
+                """SELECT rowid AS id, rank AS fts_rank
+                   FROM memories_fts WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?""",
+                (query, limit),
+            )
+            rows = await cursor.fetchall()
+            return [{"id": r["id"], "fts_rank": r["fts_rank"]} for r in rows]
+        except Exception as e:
+            logger.warning("FTS5 search failed: %s", e)
+            return []
 
     # --- Core Memories ---
 

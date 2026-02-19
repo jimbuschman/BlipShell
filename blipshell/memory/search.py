@@ -70,6 +70,7 @@ class MemorySearch:
             self.search_overfetch_multiplier = config.search_overfetch_multiplier
             self.tag_overlap_boost = config.tag_overlap_boost
             self.decay_rate = config.decay_rate
+            self.fts_weight = config.fts_weight
         else:
             self.min_rank = min_rank
             self.search_limit = search_limit
@@ -78,6 +79,7 @@ class MemorySearch:
             self.search_overfetch_multiplier = 2
             self.tag_overlap_boost = 0.1
             self.decay_rate = 0.001
+            self.fts_weight = 0.3
 
     async def search(
         self,
@@ -109,6 +111,26 @@ class MemorySearch:
             query=query,
             n_results=n_results * self.search_overfetch_multiplier,
         )
+
+        # Step 2b: FTS5 keyword search
+        fts_results = await self.sqlite.search_fts(
+            query, limit=n_results * self.search_overfetch_multiplier,
+        )
+
+        # Build RRF (Reciprocal Rank Fusion) scores from both result lists
+        rrf_k = 60
+        rrf_scores: dict[int, float] = {}
+        for rank_pos, cr in enumerate(chroma_results):
+            rrf_scores[cr["id"]] = 1.0 / (rrf_k + rank_pos)
+        for rank_pos, fr in enumerate(fts_results):
+            fts_id = fr["id"]
+            rrf_scores[fts_id] = rrf_scores.get(fts_id, 0.0) + 1.0 / (rrf_k + rank_pos)
+
+        # Merge FTS-only hits into chroma_results with similarity=0.0
+        chroma_ids = {cr["id"] for cr in chroma_results}
+        for fr in fts_results:
+            if fr["id"] not in chroma_ids:
+                chroma_results.append({"id": fr["id"], "similarity": 0.0, "metadata": {}})
 
         if not chroma_results:
             return []
@@ -160,7 +182,10 @@ class MemorySearch:
                 overlap_count = len(query_tags & set(memory_tags))
                 tag_boost = (overlap_count / len(query_tags)) * self.tag_overlap_boost
 
-            boosted_score = similarity + importance_boost + tag_boost
+            # RRF boost from hybrid search fusion
+            rrf_boost = rrf_scores.get(memory_id, 0.0) * self.fts_weight
+
+            boosted_score = similarity + importance_boost + tag_boost + rrf_boost
 
             results.append(SearchResult(
                 memory_id=memory_id,
