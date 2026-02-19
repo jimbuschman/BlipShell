@@ -7,12 +7,17 @@ Fixes two issues from the initial batch import:
 2. Lessons: ~275 lessons are raw conversation dumps instead of behavioral
    insights. Deletes bad lessons and regenerates them.
 
+Resume support: saves progress to data/reprocess_progress.json after each
+memory/lesson. On restart, skips already-processed items automatically.
+Use --reset to start from scratch.
+
 Usage:
-    python scripts/reprocess_scores_and_lessons.py [--scores-only] [--lessons-only] [--dry-run]
+    python scripts/reprocess_scores_and_lessons.py [--scores-only] [--lessons-only] [--dry-run] [--reset]
 """
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 import time
@@ -33,27 +38,65 @@ from blipshell.models.config import get_ollama_url
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
+PROGRESS_FILE = Path(__file__).resolve().parent.parent / "data" / "reprocess_progress.json"
+
 # Reprocess all sessions — sessions 1-600 had cloud model rank-4 skew,
 # sessions 650+ got default rank=3/importance=0.3 from scoring failures.
 
 
-async def reprocess_scores(sqlite: SQLiteStore, router: LLMRouter, config, dry_run: bool = False):
+def load_progress() -> dict:
+    """Load resume progress from file."""
+    if PROGRESS_FILE.exists():
+        try:
+            return json.loads(PROGRESS_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"last_scored_memory_id": 0, "last_lesson_session_id": 0}
+
+
+def save_progress(progress: dict):
+    """Save resume progress to file."""
+    PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PROGRESS_FILE.write_text(json.dumps(progress))
+
+
+async def reprocess_scores(sqlite: SQLiteStore, router: LLMRouter, config,
+                           dry_run: bool = False, progress: dict | None = None):
     """Reprocess rank+importance for all memories in sessions >= threshold."""
     recency_bonus = config.memory.importance_recency_bonus
     tag_bonus = config.memory.importance_tag_bonus
+    if progress is None:
+        progress = load_progress()
 
-    # Get all memories that need rescoring
+    last_id = progress.get("last_scored_memory_id", 0)
+
+    # Get all memories that need rescoring (skip already done)
     cursor = await sqlite._db.execute(
         """SELECT m.id, m.content, m.session_id
            FROM memories m
-           ORDER BY m.session_id, m.id""",
+           WHERE m.id > ?
+           ORDER BY m.id""",
+        (last_id,),
     )
     rows = await cursor.fetchall()
+
+    # Also count total for display
+    cursor = await sqlite._db.execute("SELECT COUNT(*) FROM memories")
+    total_all = (await cursor.fetchone())[0]
+    skipped = total_all - len(rows)
     total = len(rows)
-    print(f"\nScores: {total} memories to reprocess (all sessions)")
+
+    if skipped > 0:
+        print(f"\nScores: resuming — {skipped} already done, {total} remaining (of {total_all} total)")
+    else:
+        print(f"\nScores: {total} memories to reprocess")
 
     if dry_run:
         print("  (dry run — no changes)")
+        return
+
+    if total == 0:
+        print("  Nothing to do — all memories already scored.")
         return
 
     # Get tags for importance bonus calculation
@@ -80,7 +123,7 @@ async def reprocess_scores(sqlite: SQLiteStore, router: LLMRouter, config, dry_r
             title = (title_row[0] if title_row else "?")[:40]
 
         call_start = time.monotonic()
-        print(f"  [{i+1}/{total}] Scoring mem {mem_id} [{title}]...", flush=True)
+        print(f"  [{skipped + i + 1}/{total_all}] Scoring mem {mem_id} [{title}]...", flush=True)
 
         try:
             ri_system, ri_prompt = rank_and_importance(content)
@@ -100,19 +143,28 @@ async def reprocess_scores(sqlite: SQLiteStore, router: LLMRouter, config, dry_r
             await sqlite.update_memory(mem_id, rank=rank, importance=importance)
             updated += 1
             print(f"    -> rank={rank} imp={importance:.2f} ({elapsed:.1f}s)", flush=True)
+
+            # Save progress after each successful update
+            progress["last_scored_memory_id"] = mem_id
+            save_progress(progress)
         except Exception as e:
             failed += 1
             elapsed = time.monotonic() - call_start
             print(f"    -> FAILED ({elapsed:.1f}s): {e}", flush=True)
 
-    print(f"\nScores complete: {updated} updated, {failed} failed")
+    print(f"\nScores complete: {updated} updated, {failed} failed (+ {skipped} previously done)")
 
 
 async def reprocess_lessons(
     sqlite: SQLiteStore, chroma: ChromaStore, router: LLMRouter,
-    processor: MemoryProcessor, dry_run: bool = False,
+    processor: MemoryProcessor, dry_run: bool = False, progress: dict | None = None,
 ):
     """Delete bad lessons and regenerate them."""
+    if progress is None:
+        progress = load_progress()
+
+    last_session = progress.get("last_lesson_session_id", 0)
+
     # Find bad lessons (conversation dumps)
     cursor = await sqlite._db.execute(
         """SELECT id, source_session_id FROM lessons
@@ -142,6 +194,13 @@ async def reprocess_lessons(
 
     # Get unique session IDs that need new lessons
     session_ids = sorted(set(sid for _, sid in bad_lessons))
+    total_sessions = len(session_ids)
+
+    # Filter out already-processed sessions for resume
+    if last_session > 0:
+        session_ids = [sid for sid in session_ids if sid > last_session]
+        skipped = total_sessions - len(session_ids)
+        print(f"  Resuming — {skipped} sessions already done, {len(session_ids)} remaining")
 
     # Regenerate lessons
     generated = 0
@@ -178,6 +237,10 @@ async def reprocess_lessons(
             generated += 1
             elapsed = time.monotonic() - call_start
             print(f"    -> OK ({elapsed:.1f}s)", flush=True)
+
+            # Save progress after each successful lesson
+            progress["last_lesson_session_id"] = session_id
+            save_progress(progress)
         except Exception as e:
             failed += 1
             elapsed = time.monotonic() - call_start
@@ -191,10 +254,19 @@ async def main():
     parser.add_argument("--scores-only", action="store_true", help="Only reprocess scores")
     parser.add_argument("--lessons-only", action="store_true", help="Only reprocess lessons")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be done without changes")
+    parser.add_argument("--reset", action="store_true", help="Reset progress and start from scratch")
     args = parser.parse_args()
 
     do_scores = not args.lessons_only
     do_lessons = not args.scores_only
+
+    # Load or reset progress
+    if args.reset:
+        progress = {"last_scored_memory_id": 0, "last_lesson_session_id": 0}
+        save_progress(progress)
+        print("Progress reset — starting from scratch.")
+    else:
+        progress = load_progress()
 
     # Load config
     config_mgr = ConfigManager()
@@ -217,12 +289,16 @@ async def main():
 
     print(f"Config loaded. Scoring model: {router.get_model(TaskType.RANKING_IMPORTANCE)}")
     print(f"Reasoning model (lessons): {router.get_model(TaskType.REASONING)}")
+    print(f"Progress file: {PROGRESS_FILE}")
+    if progress["last_scored_memory_id"] > 0 or progress["last_lesson_session_id"] > 0:
+        print(f"  Resuming from: scores after mem {progress['last_scored_memory_id']}, "
+              f"lessons after session {progress['last_lesson_session_id']}")
 
     if do_scores:
-        await reprocess_scores(sqlite, router, config, dry_run=args.dry_run)
+        await reprocess_scores(sqlite, router, config, dry_run=args.dry_run, progress=progress)
 
     if do_lessons:
-        await reprocess_lessons(sqlite, chroma, router, processor, dry_run=args.dry_run)
+        await reprocess_lessons(sqlite, chroma, router, processor, dry_run=args.dry_run, progress=progress)
 
     print("\nDone.")
 

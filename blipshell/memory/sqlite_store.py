@@ -554,6 +554,23 @@ class SQLiteStore:
         rows = await cursor.fetchall()
         return [r["name"] for r in rows]
 
+    async def get_tags_for_memories(self, memory_ids: list[int]) -> dict[int, list[str]]:
+        """Batch-load tag names for multiple memories in a single query."""
+        if not memory_ids:
+            return {}
+        placeholders = ",".join("?" * len(memory_ids))
+        cursor = await self._db.execute(
+            f"""SELECT mt.memory_id, t.name FROM tags t
+                INNER JOIN memory_tags mt ON mt.tag_id = t.id
+                WHERE mt.memory_id IN ({placeholders})""",
+            memory_ids,
+        )
+        rows = await cursor.fetchall()
+        result: dict[int, list[str]] = {mid: [] for mid in memory_ids}
+        for r in rows:
+            result[r["memory_id"]].append(r["name"])
+        return result
+
     async def get_tag_count_for_memory(self, memory_id: int) -> int:
         """Get number of tags for a memory (used in importance calculation)."""
         cursor = await self._db.execute(

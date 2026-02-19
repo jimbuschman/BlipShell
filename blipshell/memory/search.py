@@ -11,6 +11,7 @@ from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.chroma_store import ChromaStore
 from blipshell.memory.noise import contains_signal_words, should_skip_memory
 from blipshell.memory.sqlite_store import SQLiteStore
+from blipshell.memory.tagger import tag_message
 from blipshell.models.config import MemoryConfig
 from blipshell.models.memory import MemorySearchResult
 
@@ -27,6 +28,12 @@ class SearchResult:
     boosted_score: float
     rank: int
     importance: float
+    tags: list[str] = None
+    tag_boost: float = 0.0
+
+    def __post_init__(self):
+        if self.tags is None:
+            self.tags = []
 
 
 class MemorySearch:
@@ -61,7 +68,7 @@ class MemorySearch:
             self.importance_boost_weight = config.importance_boost_weight
             self.search_overfetch_multiplier = config.search_overfetch_multiplier
             self.importance_recency_bonus = config.importance_recency_bonus
-            self.importance_tag_bonus = config.importance_tag_bonus
+            self.tag_overlap_boost = config.tag_overlap_boost
         else:
             self.min_rank = min_rank
             self.search_limit = search_limit
@@ -69,7 +76,7 @@ class MemorySearch:
             self.importance_boost_weight = 0.2
             self.search_overfetch_multiplier = 2
             self.importance_recency_bonus = 0.1
-            self.importance_tag_bonus = 0.05
+            self.tag_overlap_boost = 0.1
 
     async def search(
         self,
@@ -106,6 +113,13 @@ class MemorySearch:
         if not chroma_results:
             return []
 
+        # Tag the query (pure regex, <1ms)
+        query_tags = set(tag_message(query))
+
+        # Collect candidate memory IDs for batch tag loading
+        candidate_ids = [cr["id"] for cr in chroma_results]
+        tags_by_memory = await self.sqlite.get_tags_for_memories(candidate_ids)
+
         # Step 4+5: Filter and boost
         results = []
         for cr in chroma_results:
@@ -133,7 +147,15 @@ class MemorySearch:
             # Importance boost based on rank (port of C# logic)
             normalized_importance = (memory.rank - 1) / 4.0  # 1→0.0, 5→1.0
             importance_boost = normalized_importance * self.importance_boost_weight
-            boosted_score = similarity + importance_boost
+
+            # Tag overlap boost
+            memory_tags = tags_by_memory.get(memory_id, [])
+            tag_boost = 0.0
+            if query_tags and memory_tags:
+                overlap_count = len(query_tags & set(memory_tags))
+                tag_boost = (overlap_count / len(query_tags)) * self.tag_overlap_boost
+
+            boosted_score = similarity + importance_boost + tag_boost
 
             results.append(SearchResult(
                 memory_id=memory_id,
@@ -143,6 +165,8 @@ class MemorySearch:
                 boosted_score=boosted_score,
                 rank=memory.rank,
                 importance=memory.importance,
+                tags=memory_tags,
+                tag_boost=tag_boost,
             ))
 
         # Step 6: Sort by boosted score

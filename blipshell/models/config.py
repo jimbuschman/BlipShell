@@ -75,6 +75,7 @@ class MemoryConfig(BaseModel):
     importance_tag_bonus: float = 0.05
     similarity_threshold: float = 0.5
     importance_boost_weight: float = 0.2
+    tag_overlap_boost: float = 0.1
     search_overfetch_multiplier: int = 2
     auto_prune_days: int = 90
     prune_max_importance: float = 0.3
