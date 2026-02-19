@@ -176,6 +176,8 @@ CREATE INDEX IF NOT EXISTS idx_task_plans_session ON task_plans(session_id);
 CREATE INDEX IF NOT EXISTS idx_task_steps_plan ON task_steps(plan_id);
 CREATE INDEX IF NOT EXISTS idx_background_tasks_session ON background_tasks(session_id);
 CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_core_memories_active ON core_memories(is_active);
+CREATE INDEX IF NOT EXISTS idx_tags_name_category ON tags(name, category);
 """
 
 
@@ -513,34 +515,51 @@ class SQLiteStore:
         await self._db.commit()
         return cursor.lastrowid
 
+    async def _ensure_tags_exist(self, tag_names: list[str], category: str = "topic") -> dict[str, int]:
+        """Batch-ensure tags exist and return {name: id} mapping.
+
+        Uses INSERT OR IGNORE to create missing tags in bulk, then a single
+        SELECT to retrieve all IDs.
+        """
+        if not tag_names:
+            return {}
+        await self._db.executemany(
+            "INSERT OR IGNORE INTO tags (name, category) VALUES (?, ?)",
+            [(name, category) for name in tag_names],
+        )
+        placeholders = ",".join("?" * len(tag_names))
+        cursor = await self._db.execute(
+            f"SELECT id, name FROM tags WHERE name IN ({placeholders}) AND category = ?",
+            [*tag_names, category],
+        )
+        rows = await cursor.fetchall()
+        return {r["name"]: r["id"] for r in rows}
+
     async def tag_memory(self, memory_id: int, tag_names: list[str]):
         """Associate tags with a memory."""
-        for tag_name in tag_names:
-            tag_id = await self.create_or_get_tag(tag_name)
-            await self._db.execute(
-                "INSERT OR IGNORE INTO memory_tags (memory_id, tag_id) VALUES (?, ?)",
-                (memory_id, tag_id),
-            )
+        tag_ids = await self._ensure_tags_exist(tag_names)
+        await self._db.executemany(
+            "INSERT OR IGNORE INTO memory_tags (memory_id, tag_id) VALUES (?, ?)",
+            [(memory_id, tid) for tid in tag_ids.values()],
+        )
         await self._db.commit()
 
     async def tag_core_memory(self, core_memory_id: int, tag_names: list[str]):
         """Associate tags with a core memory."""
-        for tag_name in tag_names:
-            tag_id = await self.create_or_get_tag(tag_name)
-            await self._db.execute(
-                "INSERT OR IGNORE INTO core_memory_tags (core_memory_id, tag_id) VALUES (?, ?)",
-                (core_memory_id, tag_id),
-            )
+        tag_ids = await self._ensure_tags_exist(tag_names)
+        await self._db.executemany(
+            "INSERT OR IGNORE INTO core_memory_tags (core_memory_id, tag_id) VALUES (?, ?)",
+            [(core_memory_id, tid) for tid in tag_ids.values()],
+        )
         await self._db.commit()
 
     async def tag_lesson(self, lesson_id: int, tag_names: list[str]):
         """Associate tags with a lesson."""
-        for tag_name in tag_names:
-            tag_id = await self.create_or_get_tag(tag_name)
-            await self._db.execute(
-                "INSERT OR IGNORE INTO lesson_tags (lesson_id, tag_id) VALUES (?, ?)",
-                (lesson_id, tag_id),
-            )
+        tag_ids = await self._ensure_tags_exist(tag_names)
+        await self._db.executemany(
+            "INSERT OR IGNORE INTO lesson_tags (lesson_id, tag_id) VALUES (?, ?)",
+            [(lesson_id, tid) for tid in tag_ids.values()],
+        )
         await self._db.commit()
 
     async def get_memory_tags(self, memory_id: int) -> list[str]:
