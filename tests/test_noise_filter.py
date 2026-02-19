@@ -6,7 +6,6 @@ from blipshell.memory.noise import (
     _is_noise,
     _normalize,
     contains_signal_words,
-    is_noise,
     should_skip_memory,
 )
 
@@ -102,13 +101,3 @@ class TestShouldSkipMemory:
         )
 
 
-class TestIsNoisePublic:
-    def test_noise_returns_true(self):
-        assert is_noise("hi") is True
-        assert is_noise("ok") is True
-
-    def test_short_no_signal(self):
-        assert is_noise("test thing") is True
-
-    def test_long_meaningful(self):
-        assert is_noise("I need help understanding the database schema for our project") is False

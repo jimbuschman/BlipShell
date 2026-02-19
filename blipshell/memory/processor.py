@@ -5,6 +5,7 @@ noise check -> LLM summarize -> SQLite insert -> ChromaDB embed -> tag -> LLM ra
 """
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 from blipshell.llm.prompts import (
@@ -38,12 +39,13 @@ class MemoryProcessor:
     """
 
     def __init__(self, sqlite: SQLiteStore, chroma: ChromaStore, router: LLMRouter,
-                 config: MemoryConfig | None = None):
+                 config: MemoryConfig | None = None, max_tags: int = 7):
         self.sqlite = sqlite
         self.chroma = chroma
         self.router = router
         self._recency_bonus = config.importance_recency_bonus if config else 0.1
         self._tag_bonus = config.importance_tag_bonus if config else 0.05
+        self._max_tags = max_tags
 
     async def process_message(
         self,
@@ -100,7 +102,7 @@ class MemoryProcessor:
 
         # Step 5: Tag
         try:
-            tags = tag_message(text)
+            tags = tag_message(text, max_tags=self._max_tags)
             await self.sqlite.tag_memory(memory_id, tags)
         except Exception as e:
             logger.error("Tagging failed: %s", e)
@@ -146,7 +148,7 @@ class MemoryProcessor:
 
         # Tag
         try:
-            tags = tag_message(text)
+            tags = tag_message(text, max_tags=self._max_tags)
             await self.sqlite.tag_core_memory(mem_id, tags)
         except Exception as e:
             logger.error("Core memory tagging failed: %s", e)
@@ -181,7 +183,7 @@ class MemoryProcessor:
 
         # Tag
         try:
-            tags = tag_message(lesson_text)
+            tags = tag_message(lesson_text, max_tags=self._max_tags)
             await self.sqlite.tag_lesson(lesson_id, tags)
         except Exception as e:
             logger.error("Lesson tagging failed: %s", e)
@@ -210,9 +212,8 @@ class MemoryProcessor:
         # Recency bonus (always recent at creation time)
         importance += self._recency_bonus
 
-        # Tag bonus if many tags (>6)
-        tag_count = await self.sqlite.get_tag_count_for_memory(memory_id)
-        if tag_count > 6:
+        # Tag bonus if many tags (>6) — use len(tags) directly to avoid DB round-trip
+        if len(tags) > 6:
             importance += self._tag_bonus
 
         return min(importance, 1.0)
@@ -220,7 +221,6 @@ class MemoryProcessor:
     @staticmethod
     def _parse_rank_and_importance(text: str) -> tuple[int, float]:
         """Parse combined 'rank importance' from LLM response (e.g. '4 0.7')."""
-        import re
         numbers = re.findall(r"(\d+\.?\d*)", text.strip())
         rank = 3
         importance = 0.3
@@ -249,7 +249,6 @@ class MemoryProcessor:
         """Parse a float from LLM response."""
         text = text.strip()
         # Try to find a decimal number in the response
-        import re
         match = re.search(r"(\d+\.?\d*)", text)
         if match:
             try:

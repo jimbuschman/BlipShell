@@ -69,35 +69,3 @@ class MemorySearchResult(BaseModel):
     boosted_score: float  # after importance/recency boosting
 
 
-class MemoryItem(BaseModel):
-    """Generic memory item for the token budget pool system."""
-    id: str  # unique identifier
-    content: str
-    token_count: int = 0
-    priority: int = 0  # higher = more important to keep
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    source: str = ""  # which pool this belongs to
-    metadata: dict = Field(default_factory=dict)
-
-
-class MemoryPool(BaseModel):
-    """Configuration for a memory token budget pool."""
-    name: str
-    percentage: float  # fraction of total budget
-    max_tokens: Optional[int] = None  # hard cap
-    priority: int = 0  # rollover priority (higher = gets leftover tokens first)
-    current_tokens: int = 0
-    items: list[MemoryItem] = Field(default_factory=list)
-
-    @property
-    def budget(self) -> int:
-        """Calculate budget from total context and percentage."""
-        return self.current_tokens
-
-    def calculate_budget(self, available_tokens: int) -> int:
-        """Calculate token budget based on available tokens and percentage."""
-        budget = int(available_tokens * self.percentage)
-        if self.max_tokens is not None:
-            budget = min(budget, self.max_tokens)
-        self.current_tokens = budget
-        return budget

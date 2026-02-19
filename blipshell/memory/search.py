@@ -6,7 +6,6 @@ Pipeline: noise filter → rephrase query → ChromaDB search → filter by rank
 import logging
 from dataclasses import dataclass
 
-from blipshell.llm.prompts import rephrase_as_memory_style
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.chroma_store import ChromaStore
 from blipshell.memory.noise import contains_signal_words, should_skip_memory
@@ -101,8 +100,7 @@ class MemorySearch:
         if should_skip_memory(query, max_length=20) and not contains_signal_words(query):
             return []
 
-        # Step 2: ChromaDB semantic search (nomic-embed-text handles
-        # question-to-statement matching well enough without rephrasing)
+        # Step 2: ChromaDB semantic search
         chroma_results = self.chroma.search_memories(
             query=query,
             n_results=n_results * self.search_overfetch_multiplier,

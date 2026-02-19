@@ -31,14 +31,14 @@ NOISE_PHRASES = {
     "imho", "tbh", "omg", "omfg", "ikr", "yeet", "fr", "nvm", "ffs", "wtf", "wth",
 }
 
-# Filler words (noise only when used alone)
-FILLER_WORDS = {"um", "uh", "well", "like", "you know", "i mean"}
+# Filler words — single-word (noise only when used alone)
+FILLER_WORDS = {"um", "uh", "well", "like"}
+
+# Multi-word filler phrases (checked separately after normalization)
+FILLER_PHRASES = {"you know", "i mean"}
 
 # Laughter pattern
 LAUGHTER_PATTERN = re.compile(r"^(ha|lol|lmao|rofl)+[!]*$", re.IGNORECASE)
-
-# Declarative sentence pattern
-DECLARATIVE_START = re.compile(r"^(I|My|This|The|It|There is|\b[A-Z][a-z]+)\b")
 
 
 def _normalize(text: str) -> str:
@@ -68,8 +68,8 @@ def _is_noise(text: str) -> bool:
     if normalized in NOISE_PHRASES:
         return True
 
-    # Check for short filler words alone
-    if normalized in FILLER_WORDS:
+    # Check for filler words/phrases alone
+    if normalized in FILLER_WORDS or normalized in FILLER_PHRASES:
         return True
 
     # Very short message (under 2 words, 10 chars)
@@ -84,55 +84,16 @@ def _is_noise(text: str) -> bool:
     return False
 
 
-def _is_declarative(text: str) -> bool:
-    """Check if text is a declarative sentence."""
-    if not text or not text.strip():
-        return False
-
-    text = text.strip()
-
-    # Check it starts with a subject
-    starts_with_subject = bool(DECLARATIVE_START.match(text))
-
-    # No question marks
-    no_questions = "?" not in text
-
-    # Ends with strong punctuation
-    ends_with_punct = text.endswith(".") or text.endswith("!")
-
-    # Low clause complexity (under 2 commas)
-    low_complexity = text.count(",") < 2
-
-    return starts_with_subject and no_questions and ends_with_punct and low_complexity
-
-
-def is_noise(text: str, max_length: int = 80) -> bool:
-    """Check if a message is noise and should be filtered from memory.
-
-    Port of NoiseCheck.Check():
-    Returns True if the text is too short AND not noise AND is declarative.
-    (The C# logic: short + not-noise + declarative = skip it)
-
-    For memory filtering, we return True if the message should be SKIPPED.
-    """
-    if not text or not text.strip():
-        return True
-
-    # Short messages that are noise phrases get filtered
-    if _is_noise(text):
-        return True
-
-    # Very short messages need signal words to be kept
-    if len(text) < max_length and not contains_signal_words(text):
-        return True
-
-    return False
-
-
-def should_skip_memory(text: str, max_length: int = 80) -> bool:
+def should_skip_memory(text: str, max_length: int = 80, min_word_count: int = 3) -> bool:
     """Determine if a message should be skipped for memory processing.
 
     Combines noise check with signal word detection.
+
+    Args:
+        text: The message text.
+        max_length: Messages shorter than this without signal words are skipped.
+        min_word_count: Messages with fewer words than this are skipped.
+            Defaults to 3; can be overridden via NoiseConfig.min_word_count.
     """
     if _is_noise(text):
         return True
@@ -140,9 +101,9 @@ def should_skip_memory(text: str, max_length: int = 80) -> bool:
     if len(text) < max_length and not contains_signal_words(text):
         return True
 
-    # Additional: check word count
+    # Check word count (configurable via min_word_count)
     words = text.split()
-    if len(words) < 3:
+    if len(words) < min_word_count:
         return True
 
     return False
