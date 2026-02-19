@@ -36,6 +36,8 @@ class Memory(BaseModel):
     memory_type: MemoryType = MemoryType.CONVERSATION
     is_archived: bool = False
     metadata_json: Optional[str] = None
+    access_count: int = 0
+    last_accessed: Optional[datetime] = None
 
 
 class CoreMemory(BaseModel):

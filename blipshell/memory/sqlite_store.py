@@ -196,6 +196,15 @@ class SQLiteStore:
         await self._db.execute("PRAGMA foreign_keys = ON")
         await self._db.execute("PRAGMA journal_mode = WAL")
         await self._db.executescript(SCHEMA_SQL)
+        # Schema migrations for existing databases
+        for col_sql in (
+            "ALTER TABLE memories ADD COLUMN access_count INTEGER DEFAULT 0",
+            "ALTER TABLE memories ADD COLUMN last_accessed DATETIME",
+        ):
+            try:
+                await self._db.execute(col_sql)
+            except Exception:
+                pass  # column already exists
         await self._db.commit()
 
     async def close(self):
@@ -396,6 +405,15 @@ class SQLiteStore:
         return self._row_to_memory(row)
 
     def _row_to_memory(self, row) -> Memory:
+        # access_count / last_accessed may not exist in very old DBs
+        try:
+            access_count = row["access_count"] or 0
+        except (IndexError, KeyError):
+            access_count = 0
+        try:
+            last_accessed = row["last_accessed"]
+        except (IndexError, KeyError):
+            last_accessed = None
         return Memory(
             id=row["id"],
             session_id=row["session_id"],
@@ -408,6 +426,8 @@ class SQLiteStore:
             memory_type=MemoryType(row["memory_type"]),
             is_archived=bool(row["is_archived"]),
             metadata_json=row["metadata_json"],
+            access_count=access_count,
+            last_accessed=last_accessed,
         )
 
     async def get_distinct_memory_session_ids(self) -> list[int]:
@@ -417,6 +437,17 @@ class SQLiteStore:
         )
         rows = await cursor.fetchall()
         return [r["session_id"] for r in rows]
+
+    async def record_memory_access(self, memory_ids: list[int]):
+        """Increment access_count and set last_accessed for retrieved memories."""
+        if not memory_ids:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        await self._db.executemany(
+            "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
+            [(now, mid) for mid in memory_ids],
+        )
+        await self._db.commit()
 
     # --- Core Memories ---
 

@@ -77,6 +77,7 @@ class MemoryConfig(BaseModel):
     importance_boost_weight: float = 0.2
     tag_overlap_boost: float = 0.1
     search_overfetch_multiplier: int = 2
+    decay_rate: float = 0.001  # temporal decay rate (~50% after 29 days)
     auto_prune_days: int = 90
     prune_max_importance: float = 0.3
     prune_max_rank: int = 2

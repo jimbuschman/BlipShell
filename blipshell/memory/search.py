@@ -5,6 +5,8 @@ Pipeline: noise filter → rephrase query → ChromaDB search → filter by rank
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from math import exp, tanh
 
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.chroma_store import ChromaStore
@@ -67,6 +69,7 @@ class MemorySearch:
             self.importance_boost_weight = config.importance_boost_weight
             self.search_overfetch_multiplier = config.search_overfetch_multiplier
             self.tag_overlap_boost = config.tag_overlap_boost
+            self.decay_rate = config.decay_rate
         else:
             self.min_rank = min_rank
             self.search_limit = search_limit
@@ -74,6 +77,7 @@ class MemorySearch:
             self.importance_boost_weight = 0.2
             self.search_overfetch_multiplier = 2
             self.tag_overlap_boost = 0.1
+            self.decay_rate = 0.001
 
     async def search(
         self,
@@ -140,9 +144,14 @@ class MemorySearch:
             if memory.rank < self.min_rank:
                 continue
 
-            # Importance boost — uses the stored importance score (0.0-1.0)
-            # which already factors in LLM assessment + recency/tag bonuses
-            importance_boost = memory.importance * self.importance_boost_weight
+            # Temporal decay — recent memories score higher, old unused ones fade
+            now = datetime.now(timezone.utc)
+            mem_ts = memory.timestamp if memory.timestamp.tzinfo else memory.timestamp.replace(tzinfo=timezone.utc)
+            hours_age = (now - mem_ts).total_seconds() / 3600
+            recency_factor = exp(-self.decay_rate * hours_age)
+            # Consolidation — frequently accessed memories resist decay
+            consolidation = 1.0 + 0.1 * tanh(memory.access_count / 5)
+            importance_boost = memory.importance * self.importance_boost_weight * recency_factor * consolidation
 
             # Tag overlap boost
             memory_tags = tags_by_memory.get(memory_id, [])
@@ -167,7 +176,17 @@ class MemorySearch:
 
         # Step 6: Sort by boosted score
         results.sort(key=lambda r: r.boosted_score, reverse=True)
-        return results[:n_results]
+        final = results[:n_results]
+
+        # Record access for returned memories (reinforces frequently recalled items)
+        accessed_ids = [r.memory_id for r in final]
+        if accessed_ids:
+            try:
+                await self.sqlite.record_memory_access(accessed_ids)
+            except Exception as e:
+                logger.warning("Failed to record memory access: %s", e)
+
+        return final
 
     async def search_core_memories(self, query: str, n_results: int = 10) -> list[dict]:
         """Search core memories by semantic similarity."""
