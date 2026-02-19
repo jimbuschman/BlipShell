@@ -141,7 +141,6 @@ class ToolsConfig(BaseModel):
 class NoiseConfig(BaseModel):
     """Noise filter configuration."""
     min_word_count: int = 3
-    max_filler_ratio: float = 0.6
 
 
 class TaggingConfig(BaseModel):
