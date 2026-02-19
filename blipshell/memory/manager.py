@@ -195,7 +195,7 @@ class MemoryManager:
                     loop = asyncio.get_running_loop()
                     loop.create_task(self._summarize_and_store(combined))
                 except RuntimeError:
-                    pass  # No event loop running
+                    logger.warning("No event loop — overflow not summarized")
 
             pool.remove_items(oldest)
 
