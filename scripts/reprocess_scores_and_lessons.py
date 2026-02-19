@@ -282,6 +282,7 @@ async def main():
         ollama_url=ollama_url,
         embedding_model=config.models.embedding,
     )
+    chroma.initialize()
 
     endpoint_mgr = EndpointManager(config.endpoints, llm_config=config.llm)
     router = LLMRouter(config.models, endpoint_mgr)
