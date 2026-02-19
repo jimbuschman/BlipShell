@@ -3,10 +3,16 @@
 Extracts topic tags, behavior tags, and background triggers from messages.
 """
 
-import re
+from __future__ import annotations
 
-# Topic patterns: tag_name -> list of regex patterns
-TOPIC_PATTERNS: dict[str, list[str]] = {
+import re
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from blipshell.models.config import TaggingConfig
+
+# Topic patterns: tag_name -> list of regex patterns (strings)
+_TOPIC_PATTERN_STRS: dict[str, list[str]] = {
     "c#": [r"\bc#\b", r"\.NET", r"asp\.net", r"razor"],
     "sql": [r"\bsql\b", r"\bquery\b", r"sqlite", r"dapper", r"SELECT\s+\*?\s*FROM"],
     "python": [r"\bpython\b", r"\bpip\b", r"\bwhisper\b", r"huggingface"],
@@ -63,9 +69,15 @@ TOPIC_PATTERNS: dict[str, list[str]] = {
              r"\bclass\b", r"namespace\b", r"#include"],
 }
 
+# Pre-compiled topic patterns: tag_name -> list of compiled regex
+TOPIC_PATTERNS: dict[str, list[re.Pattern]] = {
+    tag: [re.compile(p, re.IGNORECASE) for p in patterns]
+    for tag, patterns in _TOPIC_PATTERN_STRS.items()
+}
+
 # Behavior tag patterns: tag_name -> (strong_triggers, soft_triggers)
 # Strong triggers get score +2, soft triggers get score +1
-BEHAVIOR_PATTERNS: dict[str, tuple[list[str], list[str]]] = {
+_BEHAVIOR_PATTERN_STRS: dict[str, tuple[list[str], list[str]]] = {
     "identity": (
         ["sense of self", "who I am", "selfhood", "core identity"],
         ["identity", "i am", "self"],
@@ -116,6 +128,18 @@ BEHAVIOR_PATTERNS: dict[str, tuple[list[str], list[str]]] = {
     ),
 }
 
+# Pre-compiled behavior patterns: tag_name -> (strong compiled, soft compiled)
+# Strong triggers use word-boundary matching to prevent substring false positives
+# (e.g. "identity" inside "identification")
+# Soft triggers also use word-boundary matching
+BEHAVIOR_PATTERNS: dict[str, tuple[list[re.Pattern], list[re.Pattern]]] = {
+    tag: (
+        [re.compile(rf"\b{re.escape(t)}\b", re.IGNORECASE) for t in strong],
+        [re.compile(rf"\b{re.escape(t)}\b", re.IGNORECASE) for t in soft],
+    )
+    for tag, (strong, soft) in _BEHAVIOR_PATTERN_STRS.items()
+}
+
 # Background trigger patterns for detecting actionable items
 BACKGROUND_TRIGGER_PATTERNS: dict[str, list[str]] = {
     "research-idea": [
@@ -157,7 +181,7 @@ def tag_topics(message: str) -> list[str]:
     tags = set()
     for tag_name, patterns in TOPIC_PATTERNS.items():
         for pattern in patterns:
-            if re.search(pattern, message, re.IGNORECASE):
+            if pattern.search(message):
                 tags.add(tag_name)
                 break
     return list(tags)
@@ -171,14 +195,13 @@ def tag_behavior(message: str, confidence_threshold: int = 1) -> list[str]:
     """
     scores: dict[str, int] = {}
 
-    for tag_name, (strong, soft) in BEHAVIOR_PATTERNS.items():
-        for trigger in strong:
-            if trigger.lower() in message.lower():
+    for tag_name, (strong_patterns, soft_patterns) in BEHAVIOR_PATTERNS.items():
+        for pattern in strong_patterns:
+            if pattern.search(message):
                 scores[tag_name] = scores.get(tag_name, 0) + 2
 
-        for trigger in soft:
-            pattern = rf"\b{re.escape(trigger)}\b"
-            if re.search(pattern, message, re.IGNORECASE):
+        for pattern in soft_patterns:
+            if pattern.search(message):
                 scores[tag_name] = scores.get(tag_name, 0) + 1
 
     result = [tag for tag, score in scores.items() if score >= confidence_threshold]
@@ -196,12 +219,22 @@ def detect_background_triggers(message: str) -> list[str]:
     return list(triggers)
 
 
-def tag_message(message: str, max_tags: int = 7) -> list[str]:
+def tag_message(
+    message: str,
+    config: TaggingConfig | None = None,
+    max_tags: int = 7,
+) -> list[str]:
     """Combined tagger: behavior tags + topic tags, capped at max_tags.
 
     Port of CombinedTagger.TagMessage().
     Behavior tags are prioritized over topic tags.
+
+    Args:
+        message: The text to tag.
+        config: Optional TaggingConfig; if provided, max_tags is read from it.
+        max_tags: Fallback max tags if no config is provided.
     """
+    effective_max = config.max_tags if config else max_tags
     topic_tags = tag_topics(message)
     behavior_tags = tag_behavior(message)
 
@@ -213,9 +246,9 @@ def tag_message(message: str, max_tags: int = 7) -> list[str]:
         all_tags.remove("neutral")
 
     # Cap total tags, prioritizing behavior over topic
-    if len(all_tags) > max_tags:
+    if len(all_tags) > effective_max:
         behavior_set = set(behavior_tags)
         topic_only = [t for t in topic_tags if t not in behavior_set]
-        all_tags = (behavior_tags + topic_only)[:max_tags]
+        all_tags = (behavior_tags + topic_only)[:effective_max]
 
     return all_tags
