@@ -67,7 +67,6 @@ class MemorySearch:
             self.similarity_threshold = config.similarity_threshold
             self.importance_boost_weight = config.importance_boost_weight
             self.search_overfetch_multiplier = config.search_overfetch_multiplier
-            self.importance_recency_bonus = config.importance_recency_bonus
             self.tag_overlap_boost = config.tag_overlap_boost
         else:
             self.min_rank = min_rank
@@ -75,7 +74,6 @@ class MemorySearch:
             self.similarity_threshold = 0.5
             self.importance_boost_weight = 0.2
             self.search_overfetch_multiplier = 2
-            self.importance_recency_bonus = 0.1
             self.tag_overlap_boost = 0.1
 
     async def search(
@@ -144,9 +142,9 @@ class MemorySearch:
             if memory.rank < self.min_rank:
                 continue
 
-            # Importance boost based on rank (port of C# logic)
-            normalized_importance = (memory.rank - 1) / 4.0  # 1→0.0, 5→1.0
-            importance_boost = normalized_importance * self.importance_boost_weight
+            # Importance boost — uses the stored importance score (0.0-1.0)
+            # which already factors in LLM assessment + recency/tag bonuses
+            importance_boost = memory.importance * self.importance_boost_weight
 
             # Tag overlap boost
             memory_tags = tags_by_memory.get(memory_id, [])
