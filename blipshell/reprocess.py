@@ -9,9 +9,8 @@ import logging
 from typing import Callable, Optional
 
 from blipshell.llm.prompts import (
-    ask_importance,
     extract_lesson,
-    rank_memory,
+    rank_and_importance,
     summarize_memory,
 )
 from blipshell.llm.router import LLMRouter, TaskType
@@ -77,25 +76,15 @@ async def reprocess_memories(
                 if summary.strip().upper() == "SKIP":
                     summary = memory.summary or memory.content[:200]
 
-                # Re-rank (1-5)
-                rank_system, rank_prompt = rank_memory(memory.content)
-                rank_text = await router.generate(
-                    TaskType.RANKING,
-                    rank_prompt,
-                    system=rank_system,
+                # Re-rank + importance (combined call)
+                ri_system, ri_prompt = rank_and_importance(memory.content)
+                ri_text = await router.generate(
+                    TaskType.RANKING_IMPORTANCE,
+                    ri_prompt,
+                    system=ri_system,
                     think=think,
                 )
-                rank = MemoryProcessor._parse_rank(rank_text)
-
-                # Re-importance (0.0-1.0)
-                imp_system, imp_prompt = ask_importance(memory.content)
-                importance_text = await router.generate(
-                    TaskType.IMPORTANCE,
-                    imp_prompt,
-                    system=imp_system,
-                    think=think,
-                )
-                importance = MemoryProcessor._parse_float(importance_text, default=0.3)
+                rank, importance = MemoryProcessor._parse_rank_and_importance(ri_text)
 
                 # Tag bonus
                 tag_count = await sqlite.get_tag_count_for_memory(memory.id)

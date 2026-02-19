@@ -1,7 +1,7 @@
 """Background memory processing pipeline.
 
 Port of MemoryDB.CreateMemoryAsync pipeline:
-noise check -> LLM summarize -> SQLite insert -> ChromaDB embed -> tag -> LLM rank -> LLM importance
+noise check -> LLM summarize -> SQLite insert -> ChromaDB embed -> tag -> LLM rank+importance
 """
 
 import logging
@@ -9,9 +9,8 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from blipshell.llm.prompts import (
-    ask_importance,
     extract_lesson,
-    rank_memory,
+    rank_and_importance,
     summarize_memory,
 )
 from blipshell.llm.router import LLMRouter, TaskType
@@ -34,8 +33,7 @@ class MemoryProcessor:
     3. SQLite insert (persist structured data)
     4. ChromaDB embed (store vector for semantic search)
     5. Tag (extract topic/behavior tags)
-    6. LLM rank (quality 1-5)
-    7. LLM importance (0.0-1.0 with recency/tag bonuses)
+    6. LLM rank+importance (combined call: rank 1-5, importance 0.0-1.0)
     """
 
     def __init__(self, sqlite: SQLiteStore, chroma: ChromaStore, router: LLMRouter,
@@ -108,25 +106,25 @@ class MemoryProcessor:
             logger.error("Tagging failed: %s", e)
             tags = []
 
-        # Step 6: Rank (1-5)
+        # Step 6+7: Combined rank (1-5) + importance (0.0-1.0) in one LLM call
         try:
-            rank_system, rank_prompt = rank_memory(text)
-            rank_text = await self.router.generate(
-                TaskType.RANKING,
-                rank_prompt,
-                system=rank_system,
+            ri_system, ri_prompt = rank_and_importance(text)
+            ri_text = await self.router.generate(
+                TaskType.RANKING_IMPORTANCE,
+                ri_prompt,
+                system=ri_system,
             )
-            rank = self._parse_rank(rank_text)
-            await self.sqlite.update_memory(memory_id, rank=rank)
-        except Exception as e:
-            logger.error("Ranking failed: %s", e)
+            rank, importance = self._parse_rank_and_importance(ri_text)
 
-        # Step 7: Importance (0.0-1.0)
-        try:
-            importance = await self._calculate_importance(memory_id, text, tags)
-            await self.sqlite.update_memory(memory_id, importance=importance)
+            # Apply bonuses
+            importance += self._recency_bonus
+            if len(tags) > 6:
+                importance += self._tag_bonus
+            importance = min(importance, 1.0)
+
+            await self.sqlite.update_memory(memory_id, rank=rank, importance=importance)
         except Exception as e:
-            logger.error("Importance calculation failed: %s", e)
+            logger.error("Rank+importance failed: %s", e)
 
         return memory_id
 
@@ -189,34 +187,6 @@ class MemoryProcessor:
             logger.error("Lesson tagging failed: %s", e)
 
         return lesson_id
-
-    async def _calculate_importance(
-        self, memory_id: int, text: str, tags: list[str]
-    ) -> float:
-        """Calculate importance score with recency and tag bonuses.
-
-        Port of MemoryDB.CalculateImportance().
-        """
-        # Base importance from LLM
-        try:
-            imp_system, imp_prompt = ask_importance(text)
-            importance_text = await self.router.generate(
-                TaskType.IMPORTANCE,
-                imp_prompt,
-                system=imp_system,
-            )
-            importance = self._parse_float(importance_text, default=0.3)
-        except Exception:
-            importance = 0.3
-
-        # Recency bonus (always recent at creation time)
-        importance += self._recency_bonus
-
-        # Tag bonus if many tags (>6) — use len(tags) directly to avoid DB round-trip
-        if len(tags) > 6:
-            importance += self._tag_bonus
-
-        return min(importance, 1.0)
 
     @staticmethod
     def _parse_rank_and_importance(text: str) -> tuple[int, float]:
