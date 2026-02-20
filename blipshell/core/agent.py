@@ -366,7 +366,9 @@ class Agent:
             logger.error("Auto-prune failed: %s", e)
 
     async def _auto_consolidate_memories(self):
-        """Merge near-duplicate memories on startup."""
+        """Merge near-duplicate memories on startup (disabled when batch_size=0)."""
+        if self.config.memory.consolidation_batch_size <= 0:
+            return
         try:
             consolidator = MemoryConsolidator(
                 self.sqlite, self.chroma, self.config.memory,

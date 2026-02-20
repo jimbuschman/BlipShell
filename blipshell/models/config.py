@@ -87,7 +87,7 @@ class MemoryConfig(BaseModel):
     prune_max_importance: float = 0.3
     prune_max_rank: int = 2
     consolidation_similarity: float = 0.85  # min cosine similarity to merge
-    consolidation_batch_size: int = 100  # memories checked per startup run
+    consolidation_batch_size: int = 0  # 0 = disabled; was 100 but deletes data silently
     contradiction_similarity_threshold: float = 0.7  # min similarity to check for contradiction
     tag_discovery_interval_days: int = 7  # days between discovery runs
     tag_discovery_sample_size: int = 20  # poorly-tagged memories to sample
