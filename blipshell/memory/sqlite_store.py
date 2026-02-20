@@ -587,16 +587,29 @@ class SQLiteStore:
         )
         await self._db.commit()
 
+    @staticmethod
+    def _sanitize_fts_query(query: str) -> str:
+        """Strip FTS5 special characters to prevent syntax errors."""
+        # Remove characters that FTS5 interprets as operators
+        sanitized = query.replace('"', ' ').replace("'", ' ')
+        for ch in '?*(){}[]^~:\\/<>!@#$%&+=|':
+            sanitized = sanitized.replace(ch, ' ')
+        # Collapse whitespace and strip
+        return ' '.join(sanitized.split())
+
     async def search_fts(self, query: str, limit: int = 20) -> list[dict]:
         """Full-text search on memory summaries using FTS5.
 
         Returns list of {id, fts_rank} dicts sorted by relevance.
         """
+        sanitized = self._sanitize_fts_query(query)
+        if not sanitized:
+            return []
         try:
             cursor = await self._db.execute(
                 """SELECT rowid AS id, rank AS fts_rank
                    FROM memories_fts WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?""",
-                (query, limit),
+                (sanitized, limit),
             )
             rows = await cursor.fetchall()
             return [{"id": r["id"], "fts_rank": r["fts_rank"]} for r in rows]
