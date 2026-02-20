@@ -31,7 +31,7 @@ class TestStoreAndSearch:
 
         # Process a message through the full pipeline
         mem_id = await memory_processor.process_message(
-            text="Python performance tuning with cProfile and line_profiler tools",
+            text="I think Python performance tuning with cProfile and line_profiler tools is what I want to explore next for my project",
             role="user",
             session_id=session_id,
         )
@@ -71,7 +71,7 @@ class TestStoreAndSearch:
         """After a search, last_search_stats should be populated."""
         session_id = await sqlite_store.create_session("Test")
         mem_id = await memory_processor.process_message(
-            text="Rust memory safety and ownership model discussion",
+            text="I think Rust memory safety and ownership model is really interesting, want to learn more about how it prevents data races",
             role="user",
             session_id=session_id,
         )
@@ -184,7 +184,7 @@ class TestSessionLifecycle:
         # Add messages
         for i in range(5):
             role = MessageRole.USER if i % 2 == 0 else MessageRole.ASSISTANT
-            session_mgr.add_message(role, f"Test message about Python topic {i}")
+            session_mgr.add_message(role, f"I think we should discuss Python topic {i} in more detail because it affects how we design the system")
 
         # Dump to memory
         await session_mgr.dump_to_memory()
@@ -221,7 +221,7 @@ class TestSessionLifecycle:
             role = MessageRole.USER if i % 2 == 0 else MessageRole.ASSISTANT
             session_mgr.add_message(
                 role,
-                f"Discussion about Python performance optimization and profiling tools message {i}",
+                f"I think we should discuss Python performance optimization and profiling tools because you mentioned it earlier in message {i}",
             )
 
         await session_mgr.end_session()
