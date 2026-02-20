@@ -96,21 +96,22 @@ class TestMemorySearch:
 
     async def test_results_sorted_by_boosted_score(self, memory_search, sqlite_store):
         session_id = await sqlite_store.create_session("Test")
-        mem1 = Memory(session_id=session_id, role="user", content="low rank",
-                      summary="low", rank=3, importance=0.5)
+        mem1 = Memory(session_id=session_id, role="user", content="low importance",
+                      summary="low importance memory", rank=3, importance=0.2)
         mid1 = await sqlite_store.create_memory(mem1)
 
-        mem2 = Memory(session_id=session_id, role="user", content="high rank",
-                      summary="high", rank=5, importance=0.9)
+        mem2 = Memory(session_id=session_id, role="user", content="high importance",
+                      summary="high importance memory", rank=5, importance=0.9)
         mid2 = await sqlite_store.create_memory(mem2)
 
         memory_search.chroma.search_memories.return_value = [
-            {"id": mid1, "similarity": 0.8, "metadata": {}},
-            {"id": mid2, "similarity": 0.7, "metadata": {}},
+            {"id": mid1, "similarity": 0.70, "metadata": {}},
+            {"id": mid2, "similarity": 0.65, "metadata": {}},
         ]
         result = await memory_search.search("architecture discussion topic details")
         assert len(result) == 2
-        # mid2 has higher boost despite lower similarity
+        # mem2 importance boost (0.9*0.2=0.18) overcomes 0.05 similarity gap
+        # mem1: 0.70 + 0.04 + rrf ≈ 0.745  mem2: 0.65 + 0.18 + rrf ≈ 0.835
         assert result[0].rank == 5
 
     async def test_search_lessons_delegates(self, memory_search):
