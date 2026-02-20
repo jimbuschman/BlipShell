@@ -83,7 +83,7 @@ class MemoryConfig(BaseModel):
     search_overfetch_multiplier: int = 2
     decay_rate: float = 0.001  # temporal decay rate (~50% after 29 days)
     fts_weight: float = 0.3  # weight for FTS5 RRF boost in hybrid search
-    auto_prune_days: int = 90
+    auto_prune_days: int = 0  # 0 = disabled; was 90 but archived 1083 imported memories
     prune_max_importance: float = 0.3
     prune_max_rank: int = 2
     consolidation_similarity: float = 0.85  # min cosine similarity to merge

@@ -337,8 +337,10 @@ class Agent:
         logger.info("Loaded %d lessons", len(lessons))
 
     async def _auto_prune_memories(self):
-        """Prune old low-value memories on startup."""
+        """Prune old low-value memories on startup (disabled when auto_prune_days=0)."""
         cfg = self.config.memory
+        if cfg.auto_prune_days <= 0:
+            return
         try:
             # Get IDs before archiving (for ChromaDB cleanup)
             ids_to_archive = await self.sqlite.get_archived_memory_ids(
