@@ -1,11 +1,26 @@
 """Quick debug script to check why process_message returns None."""
 import asyncio
+import sys
+import os
+import tempfile
 from unittest.mock import AsyncMock, MagicMock
-from tests.conftest import _canned_generate
+
+# Ensure project root is on path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from blipshell.memory.processor import MemoryProcessor
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.models.config import MemoryConfig
-import tempfile, os
+
+def _canned_generate(task_type, prompt="", system=None, think=None):
+    if task_type == "summarization":
+        return "User discussed Python performance tuning and optimization strategies."
+    if task_type == "ranking_importance":
+        return "3 0.5"
+    if task_type == "reasoning":
+        return "When discussing performance, focus on profiling before optimizing."
+    return "test response"
+
 
 async def main():
     # Test the mock router
