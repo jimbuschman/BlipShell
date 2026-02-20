@@ -5,6 +5,7 @@ For each memory, calls the LLM to extract (subject, predicate, object) triples,
 then stores entities, relationships, and mentions in SQLite.
 """
 
+import asyncio
 import logging
 
 from blipshell.llm.prompts import extract_entities
@@ -22,13 +23,20 @@ class EntityExtractor:
         sqlite: SQLiteStore,
         router: LLMRouter,
         batch_size: int = 50,
+        task_type: str = TaskType.REASONING,
     ):
         self.sqlite = sqlite
         self.router = router
         self.batch_size = batch_size
+        self.task_type = task_type
 
-    async def extract_batch(self) -> dict:
-        """Process a batch of unextracted memories. Returns stats dict."""
+    async def extract_batch(self, concurrency: int = 1) -> dict:
+        """Process a batch of unextracted memories. Returns stats dict.
+
+        Args:
+            concurrency: Number of LLM calls to run in parallel.
+                         Use 1 for local models, higher for cloud.
+        """
         stats = {"extracted": 0, "triples": 0, "errors": 0}
 
         memory_ids = await self.sqlite.get_unextracted_memory_ids(
@@ -37,50 +45,77 @@ class EntityExtractor:
         if not memory_ids:
             return stats
 
-        for memory_id in memory_ids:
-            try:
-                memory = await self.sqlite.get_memory(memory_id)
-                if not memory or not memory.summary:
-                    # Mark as extracted even if no summary — nothing to process
-                    await self.sqlite.mark_entities_extracted([memory_id])
-                    continue
+        if concurrency <= 1:
+            for memory_id in memory_ids:
+                result = await self._extract_one(memory_id)
+                stats["extracted"] += result["extracted"]
+                stats["triples"] += result["triples"]
+                stats["errors"] += result["errors"]
+        else:
+            semaphore = asyncio.Semaphore(concurrency)
 
-                system, user = extract_entities(memory.summary)
-                response = await self.router.generate(
-                    TaskType.REASONING, user, system=system, think=False,
-                )
+            async def _limited(mid):
+                async with semaphore:
+                    return await self._extract_one(mid)
 
-                triples = self._parse_triples(response)
-                for subj, pred, obj, s_type, o_type in triples:
-                    try:
-                        subj_id = await self.sqlite.get_or_create_entity(subj, s_type)
-                        obj_id = await self.sqlite.get_or_create_entity(obj, o_type)
-                        await self.sqlite.create_entity_relationship(
-                            subj_id, pred, obj_id, memory_id,
-                        )
-                        await self.sqlite.create_entity_mention(subj_id, memory_id)
-                        await self.sqlite.create_entity_mention(obj_id, memory_id)
-                        stats["triples"] += 1
-                    except Exception as e:
-                        logger.warning(
-                            "Failed to store triple from memory %d: %s", memory_id, e,
-                        )
-
-                await self.sqlite.mark_entities_extracted([memory_id])
-                stats["extracted"] += 1
-
-            except Exception as e:
-                stats["errors"] += 1
-                logger.warning(
-                    "Entity extraction failed for memory %d: %s", memory_id, e,
-                )
-                # Mark as extracted to avoid retrying forever
-                try:
-                    await self.sqlite.mark_entities_extracted([memory_id])
-                except Exception:
-                    pass
+            results = await asyncio.gather(
+                *[_limited(mid) for mid in memory_ids],
+                return_exceptions=True,
+            )
+            for r in results:
+                if isinstance(r, Exception):
+                    stats["errors"] += 1
+                else:
+                    stats["extracted"] += r["extracted"]
+                    stats["triples"] += r["triples"]
+                    stats["errors"] += r["errors"]
 
         return stats
+
+    async def _extract_one(self, memory_id: int) -> dict:
+        """Extract entities from a single memory. Returns per-memory stats."""
+        result = {"extracted": 0, "triples": 0, "errors": 0}
+        try:
+            memory = await self.sqlite.get_memory(memory_id)
+            if not memory or not memory.summary:
+                await self.sqlite.mark_entities_extracted([memory_id])
+                return result
+
+            system, user = extract_entities(memory.summary)
+            response = await self.router.generate(
+                self.task_type, user, system=system, think=False,
+            )
+
+            triples = self._parse_triples(response)
+            for subj, pred, obj, s_type, o_type in triples:
+                try:
+                    subj_id = await self.sqlite.get_or_create_entity(subj, s_type)
+                    obj_id = await self.sqlite.get_or_create_entity(obj, o_type)
+                    await self.sqlite.create_entity_relationship(
+                        subj_id, pred, obj_id, memory_id,
+                    )
+                    await self.sqlite.create_entity_mention(subj_id, memory_id)
+                    await self.sqlite.create_entity_mention(obj_id, memory_id)
+                    result["triples"] += 1
+                except Exception as e:
+                    logger.warning(
+                        "Failed to store triple from memory %d: %s", memory_id, e,
+                    )
+
+            await self.sqlite.mark_entities_extracted([memory_id])
+            result["extracted"] = 1
+
+        except Exception as e:
+            result["errors"] = 1
+            logger.warning(
+                "Entity extraction failed for memory %d: %s", memory_id, e,
+            )
+            try:
+                await self.sqlite.mark_entities_extracted([memory_id])
+            except Exception:
+                pass
+
+        return result
 
     def _parse_triples(self, response: str) -> list[tuple[str, str, str, str, str]]:
         """Parse 'subject | predicate | object | subject_type | object_type' lines.
