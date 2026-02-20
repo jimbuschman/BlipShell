@@ -57,6 +57,7 @@ Completed: 4 (memory consolidation), 5 (contradiction detection), 10 (dynamic po
 - **6. Upgrade embedding model** — Benchmark new embedding models, then full re-embed. Blocked until Ollama GPU is free (currently running re-embedding). Benchmark first with real queries before committing.
 - **7. LLM-powered tag discovery** — LLM reviews recent memories periodically and suggests new regex patterns for the tagger. Route to cloud endpoint, run as scheduled background task.
 - **9. Graph memory layer** — Entity relationship triples (Jim, prefers, Python). New subsystem, do last. Significant undertaking, long-term payoff.
+- **11. Usage analytics / observability** — Track how memory subsystems contribute to search results (entity graph hits, FTS boosts, tag overlaps, lesson surfacing, decay effects). Lightweight event logging to a table for periodic review. Helps validate whether features are working as expected and identify improvement opportunities.
 
 ## Architecture Notes
 - Two-PC setup: Development on one PC, Ollama/benchmarks on another
