@@ -81,7 +81,7 @@ class TestProcessMessagePipeline:
     async def test_full_pipeline(self, memory_processor, sqlite_store, mock_chroma):
         """Full pipeline: summarize → SQLite → Chroma → tag → rank."""
         mem_id = await memory_processor.process_message(
-            text="We discussed Python performance tuning and how to use cProfile for profiling.",
+            text="I think we should discuss Python performance tuning and how to use cProfile for profiling because you mentioned it helps find bottlenecks",
             role="user",
             session_id=1,
         )
@@ -130,7 +130,7 @@ class TestProcessMessagePipeline:
         canned_router.generate.side_effect = skip_summarize
 
         result = await memory_processor.process_message(
-            text="I am an AI assistant and I process information.",
+            text="I think I am an AI assistant and I process information about what you asked me to do earlier in the conversation",
             role="assistant",
             session_id=1,
         )
