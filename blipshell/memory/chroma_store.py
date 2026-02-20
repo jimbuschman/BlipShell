@@ -13,9 +13,10 @@ from chromadb.config import Settings
 
 logger = logging.getLogger(__name__)
 
-# Ollama embedding models may have a low default num_ctx (e.g. 2048 tokens).
-# Truncate to ~500 tokens to stay safely under any context limit.
-MAX_EMBED_CHARS = 2000
+# snowflake-arctic-embed:335m has 512 token context (~2000 chars).
+# Truncate to 500 chars (~125 tokens) to stay safely under.
+# Benchmark showed this is plenty for good similarity matching.
+MAX_EMBED_CHARS = 500
 
 # Collection names
 MEMORIES_COLLECTION = "memories"
