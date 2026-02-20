@@ -80,10 +80,11 @@ class TestParseFloat:
 class TestProcessMessagePipeline:
     async def test_full_pipeline(self, memory_processor, sqlite_store, mock_chroma):
         """Full pipeline: summarize → SQLite → Chroma → tag → rank."""
+        session_id = await sqlite_store.create_session("Test")
         mem_id = await memory_processor.process_message(
             text="I think we should discuss Python performance tuning and how to use cProfile for profiling because you mentioned it helps find bottlenecks",
             role="user",
-            session_id=1,
+            session_id=session_id,
         )
 
         assert mem_id is not None
@@ -91,7 +92,7 @@ class TestProcessMessagePipeline:
         # Verify memory stored in SQLite
         memory = await sqlite_store.get_memory(mem_id)
         assert memory is not None
-        assert memory.session_id == 1
+        assert memory.session_id == session_id
         assert memory.role == "user"
         assert memory.summary is not None
         assert len(memory.summary) > 0
@@ -108,17 +109,19 @@ class TestProcessMessagePipeline:
         assert isinstance(tags, list)
         assert "python" in tags
 
-    async def test_noise_skipped(self, memory_processor):
+    async def test_noise_skipped(self, memory_processor, sqlite_store):
         """Short noise messages should be filtered out."""
+        session_id = await sqlite_store.create_session("Test")
         result = await memory_processor.process_message(
             text="ok",
             role="user",
-            session_id=1,
+            session_id=session_id,
         )
         assert result is None
 
-    async def test_skip_response(self, memory_processor, canned_router):
+    async def test_skip_response(self, memory_processor, sqlite_store, canned_router):
         """LLM returning SKIP should filter the message."""
+        session_id = await sqlite_store.create_session("Test")
         # Override canned router to return SKIP for summarization
         original_side_effect = canned_router.generate.side_effect
 
@@ -132,7 +135,7 @@ class TestProcessMessagePipeline:
         result = await memory_processor.process_message(
             text="I think I am an AI assistant and I process information about what you asked me to do earlier in the conversation",
             role="assistant",
-            session_id=1,
+            session_id=session_id,
         )
         assert result is None
 
