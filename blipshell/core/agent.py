@@ -120,16 +120,24 @@ class Agent:
         self._turn_number: int = 0
         self._last_context_stats: Optional[dict] = None
 
-    async def initialize(self):
-        """Initialize all subsystems."""
+    async def initialize(self, on_status=None):
+        """Initialize all subsystems.
+
+        Args:
+            on_status: Optional callback(msg: str) for progress reporting.
+        """
         if self._initialized:
             return
 
-        # Database
+        def _status(msg: str):
+            if on_status:
+                on_status(msg)
+
+        _status("Loading database...")
         self.sqlite = SQLiteStore(self.config.database.path)
         await self.sqlite.initialize()
 
-        # ChromaDB
+        _status("Connecting to ChromaDB...")
         self.chroma = ChromaStore(
             persist_dir=self.config.database.chroma_path,
             embedding_model=self.config.models.embedding,
@@ -195,22 +203,22 @@ class Agent:
         # Register tools
         self._register_tools()
 
-        # Auto-prune old low-value memories
+        _status("Pruning old memories...")
         await self._auto_prune_memories()
 
-        # Merge near-duplicate memories
+        _status("Consolidating memories...")
         await self._auto_consolidate_memories()
 
         # Load discovered tag patterns into tagger
         await self._load_discovered_tags()
 
-        # Health check endpoints on startup (detect remote PCs)
+        _status("Checking endpoints...")
         await self.endpoint_manager.startup_health_check()
 
-        # Run tag discovery if due (after health check so endpoints are available)
+        _status("Running tag discovery...")
         await self._auto_tag_discovery()
 
-        # Extract entity triples from unprocessed memories
+        _status("Extracting entities...")
         await self._auto_extract_entities()
 
         # Start periodic health check (re-detects endpoints that come/go)

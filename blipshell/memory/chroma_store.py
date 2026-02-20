@@ -13,9 +13,9 @@ from chromadb.config import Settings
 
 logger = logging.getLogger(__name__)
 
-# nomic-embed-text context limit is 8192 tokens (~32K chars).
-# Truncate well under that to avoid "input length exceeds context length" errors.
-MAX_EMBED_CHARS = 8000
+# Ollama embedding models may have a low default num_ctx (e.g. 2048 tokens).
+# Truncate to ~500 tokens to stay safely under any context limit.
+MAX_EMBED_CHARS = 2000
 
 # Collection names
 MEMORIES_COLLECTION = "memories"
