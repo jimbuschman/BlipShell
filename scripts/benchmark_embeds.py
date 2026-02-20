@@ -31,6 +31,10 @@ DEFAULT_MODELS = [
     "bge-m3",
 ]
 
+# Max chars to send per document — some models have small context (512 tokens).
+# 500 chars ≈ 125 tokens, safe for all models.
+EMBED_MAX_CHARS = 500
+
 # Real queries a user would type — mix of recall, topical, and specific
 TEST_QUERIES = [
     "python performance profiling",
@@ -62,7 +66,8 @@ async def load_sample(db_path: str, sample_size: int) -> list[dict]:
     rows = await cursor.fetchall()
     await sqlite.close()
 
-    return [dict(r) for r in rows]
+    # Filter out empty/whitespace-only summaries (cause NaN embeddings)
+    return [dict(r) for r in rows if r["summary"] and r["summary"].strip()]
 
 
 def benchmark_model(
@@ -93,7 +98,7 @@ def benchmark_model(
             batch = memories[i:i + batch_size]
             coll.upsert(
                 ids=[str(m["id"]) for m in batch],
-                documents=[m["summary"][:2000] for m in batch],
+                documents=[m["summary"][:EMBED_MAX_CHARS] for m in batch],
                 metadatas=[{"session_id": str(m["session_id"] or "")} for m in batch],
             )
 
@@ -227,7 +232,7 @@ async def main():
     parser.add_argument("--ollama-url", default="http://localhost:11434")
     parser.add_argument("--models", nargs="*", default=DEFAULT_MODELS)
     parser.add_argument("--sample", type=int, default=500)
-    parser.add_argument("--batch-size", type=int, default=100)
+    parser.add_argument("--batch-size", type=int, default=50)
     args = parser.parse_args()
 
     console.print("[bold]Embedding Model Benchmark[/bold]")
