@@ -34,7 +34,7 @@ VALID_TASK_TYPES = [
 
 
 async def run(batch_size: int, dry_run: bool, concurrency: int, task_type: str,
-              min_rank: int):
+              min_rank: int, model: str | None = None):
     config_mgr = ConfigManager()
     config = config_mgr.config
 
@@ -46,8 +46,9 @@ async def run(batch_size: int, dry_run: bool, concurrency: int, task_type: str,
     router = LLMRouter(config.models, endpoint_mgr)
 
     # Show which model/endpoint will be used
-    model, client = await router.get_model_and_client(task_type)
-    print(f"Task type: {task_type}, Model: {model}, Concurrency: {concurrency}")
+    routed_model, client = await router.get_model_and_client(task_type)
+    effective_model = model or routed_model
+    print(f"Task type: {task_type}, Model: {effective_model}, Concurrency: {concurrency}")
 
     # Count total unprocessed
     rank_filter = f"AND rank >= {min_rank}" if min_rank > 0 else ""
@@ -97,6 +98,7 @@ async def run(batch_size: int, dry_run: bool, concurrency: int, task_type: str,
 
     extractor = EntityExtractor(
         sqlite, router, batch_size=batch_size, task_type=task_type,
+        model_override=model,
     )
 
     while processed < total:
@@ -142,12 +144,14 @@ def main():
                         help="Task type for routing (default: reasoning)")
     parser.add_argument("--min-rank", type=int, default=0,
                         help="Skip memories below this rank (default: 0 = all)")
+    parser.add_argument("--model", default=None,
+                        help="Override model name (e.g. qwen3:14b, glm4:latest)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Count unprocessed memories without extracting")
     args = parser.parse_args()
 
     asyncio.run(run(args.batch_size, args.dry_run, args.concurrency,
-                    args.task_type, args.min_rank))
+                    args.task_type, args.min_rank, args.model))
 
 
 if __name__ == "__main__":

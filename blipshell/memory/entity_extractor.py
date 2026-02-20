@@ -24,11 +24,13 @@ class EntityExtractor:
         router: LLMRouter,
         batch_size: int = 50,
         task_type: str = TaskType.REASONING,
+        model_override: str | None = None,
     ):
         self.sqlite = sqlite
         self.router = router
         self.batch_size = batch_size
         self.task_type = task_type
+        self.model_override = model_override
 
     async def extract_batch(self, concurrency: int = 1) -> dict:
         """Process a batch of unextracted memories. Returns stats dict.
@@ -82,9 +84,19 @@ class EntityExtractor:
                 return result
 
             system, user = extract_entities(memory.summary)
-            response = await self.router.generate(
-                self.task_type, user, system=system, think=False,
-            )
+            if self.model_override:
+                # Bypass router model selection, use specified model directly
+                model, client = await self.router.get_model_and_client(self.task_type)
+                if client is None:
+                    raise RuntimeError(f"No endpoint available for {self.task_type}")
+                response = await client.generate(
+                    prompt=user, model=self.model_override, system=system,
+                    think=False,
+                )
+            else:
+                response = await self.router.generate(
+                    self.task_type, user, system=system, think=False,
+                )
 
             triples = self._parse_triples(response)
             for subj, pred, obj, s_type, o_type in triples:
