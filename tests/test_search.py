@@ -76,8 +76,9 @@ class TestMemorySearch:
         result = await memory_search.search("tell me about the project architecture")
         assert len(result) == 1
         assert result[0].rank == 5
-        # Boost: (5-1)/4 * 0.2 = 0.2 → boosted = 0.85 + 0.2 = 1.05
-        assert result[0].boosted_score == pytest.approx(1.05)
+        # Boost: importance * weight * recency * consolidation
+        # 0.9 * 0.2 * ~1.0 * 1.0 = 0.18 → boosted ≈ 0.85 + 0.18 = 1.03
+        assert result[0].boosted_score == pytest.approx(1.03, abs=0.01)
 
     async def test_current_session_excluded(self, memory_search, sqlite_store):
         session_id = await sqlite_store.create_session("Test")
