@@ -13,6 +13,10 @@ from chromadb.config import Settings
 
 logger = logging.getLogger(__name__)
 
+# nomic-embed-text context limit is 8192 tokens (~32K chars).
+# Truncate well under that to avoid "input length exceeds context length" errors.
+MAX_EMBED_CHARS = 8000
+
 # Collection names
 MEMORIES_COLLECTION = "memories"
 CORE_MEMORIES_COLLECTION = "core_memories"
@@ -77,13 +81,21 @@ class ChromaStore:
         if self._memories is None or self._core_memories is None or self._lessons is None:
             raise RuntimeError("ChromaStore not initialized — call initialize() first")
 
+    @staticmethod
+    def _truncate(text: str) -> str:
+        """Truncate text to fit within the embedding model's context window."""
+        if len(text) <= MAX_EMBED_CHARS:
+            return text
+        logger.debug("Truncating text from %d to %d chars for embedding", len(text), MAX_EMBED_CHARS)
+        return text[:MAX_EMBED_CHARS]
+
     def add_memory(self, memory_id: int, text: str, metadata: Optional[dict] = None):
         """Add a memory embedding to ChromaDB."""
         self._require_collections()
         meta = {**(metadata or {}), "source": "memory"}
         self._memories.upsert(
             ids=[str(memory_id)],
-            documents=[text],
+            documents=[self._truncate(text)],
             metadatas=[meta],
         )
 
@@ -102,7 +114,7 @@ class ChromaStore:
         safe_metas = [{**m, "source": "memory"} for m in metadatas]
         self._memories.upsert(
             ids=[str(mid) for mid in memory_ids],
-            documents=texts,
+            documents=[self._truncate(t) for t in texts],
             metadatas=safe_metas,
         )
 
@@ -112,7 +124,7 @@ class ChromaStore:
         meta = {**(metadata or {}), "source": "core_memory"}
         self._core_memories.upsert(
             ids=[str(core_memory_id)],
-            documents=[text],
+            documents=[self._truncate(text)],
             metadatas=[meta],
         )
 
@@ -122,7 +134,7 @@ class ChromaStore:
         meta = {**(metadata or {}), "source": "lesson"}
         self._lessons.upsert(
             ids=[str(lesson_id)],
-            documents=[text],
+            documents=[self._truncate(text)],
             metadatas=[meta],
         )
 
@@ -139,7 +151,7 @@ class ChromaStore:
         Similarity = 1 - distance.
         """
         self._require_collections()
-        kwargs = {"query_texts": [query], "n_results": n_results}
+        kwargs = {"query_texts": [self._truncate(query)], "n_results": n_results}
         if where:
             kwargs["where"] = where
 
@@ -156,7 +168,7 @@ class ChromaStore:
         self._require_collections()
         try:
             results = self._core_memories.query(
-                query_texts=[query], n_results=n_results
+                query_texts=[self._truncate(query)], n_results=n_results
             )
         except Exception as e:
             logger.error("ChromaDB core memory search failed: %s", e)
@@ -169,7 +181,7 @@ class ChromaStore:
         self._require_collections()
         try:
             results = self._lessons.query(
-                query_texts=[query], n_results=n_results
+                query_texts=[self._truncate(query)], n_results=n_results
             )
         except Exception as e:
             logger.error("ChromaDB lesson search failed: %s", e)
