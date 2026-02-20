@@ -40,8 +40,9 @@ class TestMemorySearch:
         assert result == []
 
     async def test_low_similarity_filtered(self, memory_search, sqlite_store):
-        # Create a memory in SQLite
-        mem = Memory(session_id=1, role="user", content="test content",
+        # Create a session first (FK constraint), then a memory in SQLite
+        session_id = await sqlite_store.create_session("Test")
+        mem = Memory(session_id=session_id, role="user", content="test content",
                      summary="test summary", rank=4, importance=0.8)
         mid = await sqlite_store.create_memory(mem)
 
@@ -52,7 +53,8 @@ class TestMemorySearch:
         assert len(result) == 0
 
     async def test_low_rank_filtered(self, memory_search, sqlite_store):
-        mem = Memory(session_id=1, role="user", content="test content",
+        session_id = await sqlite_store.create_session("Test")
+        mem = Memory(session_id=session_id, role="user", content="test content",
                      summary="test summary", rank=1, importance=0.8)
         mid = await sqlite_store.create_memory(mem)
 
@@ -63,7 +65,8 @@ class TestMemorySearch:
         assert len(result) == 0  # rank 1 < min_rank 3
 
     async def test_successful_search_with_boost(self, memory_search, sqlite_store):
-        mem = Memory(session_id=1, role="user", content="architecture discussion",
+        session_id = await sqlite_store.create_session("Test")
+        mem = Memory(session_id=session_id, role="user", content="architecture discussion",
                      summary="We discussed microservice architecture", rank=5, importance=0.9)
         mid = await sqlite_store.create_memory(mem)
 
@@ -77,24 +80,26 @@ class TestMemorySearch:
         assert result[0].boosted_score == pytest.approx(1.05)
 
     async def test_current_session_excluded(self, memory_search, sqlite_store):
-        mem = Memory(session_id=42, role="user", content="test",
+        session_id = await sqlite_store.create_session("Test")
+        mem = Memory(session_id=session_id, role="user", content="test",
                      summary="test", rank=5, importance=0.9)
         mid = await sqlite_store.create_memory(mem)
 
         memory_search.chroma.search_memories.return_value = [
-            {"id": mid, "similarity": 0.9, "metadata": {"session_id": "42"}},
+            {"id": mid, "similarity": 0.9, "metadata": {"session_id": str(session_id)}},
         ]
         result = await memory_search.search(
-            "tell me about the project architecture", current_session_id=42,
+            "tell me about the project architecture", current_session_id=session_id,
         )
         assert len(result) == 0
 
     async def test_results_sorted_by_boosted_score(self, memory_search, sqlite_store):
-        mem1 = Memory(session_id=1, role="user", content="low rank",
+        session_id = await sqlite_store.create_session("Test")
+        mem1 = Memory(session_id=session_id, role="user", content="low rank",
                       summary="low", rank=3, importance=0.5)
         mid1 = await sqlite_store.create_memory(mem1)
 
-        mem2 = Memory(session_id=1, role="user", content="high rank",
+        mem2 = Memory(session_id=session_id, role="user", content="high rank",
                       summary="high", rank=5, importance=0.9)
         mid2 = await sqlite_store.create_memory(mem2)
 
