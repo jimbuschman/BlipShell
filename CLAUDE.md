@@ -13,7 +13,7 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - ranking: qwen2.5:14b (local)
 - importance: qwen3:14b (local)
 - embedding: nomic-embed-text (local)
-- Fallbacks: gpt-oss:latest (local) for reasoning/tool_calling/coding
+- Fallbacks: gpt-oss:latest (local) for reasoning/tool_calling/coding; local models as safety net for summarization/ranking/importance
 
 ## Completed Work
 - Memory consolidation (feature 4)
@@ -28,36 +28,43 @@ Config-driven model routing per task type with per-endpoint model overrides.
 
 ## Road to Usable — Priority Task List
 
-### 1. LLM Routing Audit & Fallback Fixes
-- Verify which model handles each task type in the running system
-- Audit fallback logic: what happens when an endpoint goes down?
-- Fix mid-request 429 fallback (currently retries same endpoint instead of falling to next)
-- Fix context size mismatch on fallback (Groq/Gemini → local has different context limits)
-- Decide cloud vs local for background tasks (summarization/ranking/importance)
-- Document the final routing decisions
+### 1. LLM Routing Audit & Fallback Fixes — CODE WRITTEN, NEEDS TESTING
+- [x] Fix mid-request 429 fallback — `RateLimitExhaustedError` signals router to try next endpoint (was retrying same endpoint up to 6 times, now 2 retries then move on)
+- [x] Fix context size mismatch on fallback — fallback path now passes `num_ctx` from endpoint config
+- [x] Don't penalize endpoints for model-level errors — `is_model_error()` in `exceptions.py` distinguishes model not found / cloud proxy 502-504 from real endpoint failures
+- [x] Add fallback models for all task types — summarization/ranking/importance/ranking_importance fallbacks in config
+- [x] Decide cloud vs local — reasoning back to local qwen3:14b, Groq+Gemini re-enabled for summarization overflow (priority-ordered)
+- [ ] **NEEDS TESTING**: Verify 429 fallback actually cascades (Groq → Gemini → local)
+- [ ] **NEEDS TESTING**: Verify model-not-found doesn't disable the endpoint
+- [ ] **NEEDS TESTING**: Verify context tokens pass through on fallback path
+- [ ] Document the final routing decisions
 
-### 2. Conversation Flow Observability
-- Log what searches return (ChromaDB hits, FTS hits, entity expansion hits)
-- Log what context gets built and sent to the LLM
-- Track which memory pools contribute to each response
-- Provide a way to review/audit conversation flow after the fact
-- Lightweight — event logging to a table, not heavy instrumentation
+### 2. Conversation Flow Observability — CODE WRITTEN, NEEDS TESTING
+- [x] `turn_events` table in SQLite — logs event_type + JSON data per turn per session
+- [x] Events logged: `turn_start` (route, query length), `search_complete` (chroma/FTS/entity hits, final count), `context_built` (pool budgets, pool usage, total items), `llm_complete` (endpoint, model, fallback, tools, response length)
+- [x] `MemorySearch.last_search_stats` tracks per-search hit counts
+- [x] `/flow` CLI command — summary table of last 5 turns
+- [x] `/flow <n>` CLI command — detailed event breakdown for a specific turn
+- [x] `/api/flow` web endpoint — same data via REST
+- [ ] **NEEDS TESTING**: Run a few interactive turns and check `/flow` output makes sense
+- [ ] **NEEDS TESTING**: Verify events log correctly across simple and planned paths
 
-### 3. Full Integration Test Suite
-- End-to-end test of the complete conversation flow on a DB copy
-- Test memory storage → summarization → scoring → embedding → search → retrieval
-- Test entity extraction → graph expansion → search enrichment
-- Test lesson extraction and retrieval
-- Test tag discovery and tag-based search
-- Verify on real-world data, then clean up test artifacts
-- Run against a copy of the DB so tests don't clutter production data
+### 3. Full Integration Test Suite — CODE WRITTEN, NEEDS TESTING
+- [x] `tests/test_integration_pipeline.py` — end-to-end pipeline test
+- [x] `tests/test_processor.py` — memory processor unit tests
+- [x] `tests/test_entity_extractor.py` — entity extractor unit tests
+- [x] `tests/test_tag_discovery.py` — tag discovery tests
+- [x] `tests/conftest.py` — shared fixtures
+- [ ] **NEEDS TESTING**: Run full test suite (`pytest tests/`) and fix failures
 
-### 4. Unified Prompt Test Suite
-- Test all LLM prompts with real-world data (existing benchmarks may cover some)
-- Prompts to test: summarization, rank_and_importance, extract_entities, extract_lesson, contradiction_detection
-- Unify existing benchmark scripts into a single "test everything" runner
-- Verify each prompt produces expected output format and quality
-- Use results to tweak prompts or choose different models where needed
+### 4. Unified Prompt Test Suite — CODE WRITTEN, NEEDS TESTING
+- [x] `tests/benchmark_all.py` — unified runner, `--suite pipeline|reasoning|realdata`, `--models`, `--db`
+- [x] Entity extraction benchmark (5 curated summaries + real-data on first 20 DB summaries)
+- [x] Contradiction detection benchmark (6 YES/NO pairs + real core memory pairs from DB)
+- [x] Combined `rank_and_importance` benchmark (production prompt, parsed with `_parse_rank_and_importance`)
+- [ ] **NEEDS TESTING**: `python tests/benchmark_all.py --suite pipeline --models qwen3:14b`
+- [ ] **NEEDS TESTING**: `python tests/benchmark_realdata.py --models qwen3:14b --sample 10`
+- [ ] Use results to tweak prompts or choose different models where needed
 
 ### 5. Embedding Model Upgrade
 - Benchmark newer embedding models for quality AND speed on local hardware
