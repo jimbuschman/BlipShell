@@ -105,7 +105,8 @@ class TestProcessMessagePipeline:
         mock_chroma.add_memory.assert_called_once()
 
         # Verify tags were assigned (python should match)
-        tags = await sqlite_store.get_tags_for_memory(mem_id)
+        tags = await sqlite_store.get_tags_for_memories([mem_id])
+        tags = tags.get(mem_id, [])
         assert isinstance(tags, list)
         assert "python" in tags
 
