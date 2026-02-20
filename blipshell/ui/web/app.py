@@ -314,6 +314,19 @@ def create_app(config_path: str | None = None) -> FastAPI:
     async def get_endpoints():
         return _agent.endpoint_manager.get_status()
 
+    # --- Flow Observability ---
+
+    @app.get("/api/flow", dependencies=[Depends(verify_auth)])
+    async def get_flow(turn: int | None = None):
+        session_id = _agent.session_manager.session_id if _agent.session_manager else None
+        if not session_id:
+            return {"events": []}
+        if turn is not None:
+            events = await _agent.sqlite.get_turn_events_for_turn(session_id, turn)
+        else:
+            events = await _agent.sqlite.get_turn_events(session_id, limit=50)
+        return {"events": events}
+
     # --- Data Export ---
 
     @app.get("/api/export/sessions", dependencies=[Depends(verify_auth)])

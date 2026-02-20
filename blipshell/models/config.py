@@ -27,6 +27,10 @@ class ModelsConfig(BaseModel):
     reasoning_fallback: str = "gpt-oss:latest"
     tool_calling_fallback: str = "gpt-oss:latest"
     coding_fallback: str = "gpt-oss:latest"
+    summarization_fallback: Optional[str] = None
+    ranking_fallback: Optional[str] = None
+    importance_fallback: Optional[str] = None
+    ranking_importance_fallback: Optional[str] = None
     # Disable thinking for fallback models (faster conversational responses)
     fallback_think: bool = False
 

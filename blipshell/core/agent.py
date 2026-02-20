@@ -41,6 +41,7 @@ from blipshell.core.tools.web import WebFetchTool, WebSearchTool
 from blipshell.core.workflows import WorkflowExecutor, WorkflowRegistry
 from blipshell.llm.client import LLMClient
 from blipshell.llm.endpoints import EndpointManager
+from blipshell.llm.exceptions import is_model_error
 from blipshell.llm.job_queue import LLMJobQueue
 from blipshell.llm.prompts import reflect_on_response, summarize_session_chunk
 from blipshell.llm.router import LLMRouter, TaskType
@@ -116,6 +117,8 @@ class Agent:
         self._initialized = False
         self.think_enabled: bool = False  # /think toggle — off for fast simple chat, complex auto-enables
         self.reflect_enabled: bool = False  # /reflect toggle — second-pass self-critique
+        self._turn_number: int = 0
+        self._last_context_stats: Optional[dict] = None
 
     async def initialize(self):
         """Initialize all subsystems."""
@@ -490,7 +493,17 @@ class Agent:
         self.session_manager.add_message(MessageRole.USER, user_message)
 
         # Decide execution path
-        if force_plan or self.complexity_classifier.needs_planning(user_message):
+        needs_planning = force_plan or self.complexity_classifier.needs_planning(user_message)
+
+        # Event: turn_start
+        self._turn_number += 1
+        session_id = self.session_manager.session_id
+        await self._log_event("turn_start", {
+            "query_length": len(user_message),
+            "route": "planned" if needs_planning else "simple",
+        })
+
+        if needs_planning:
             logger.info("Message classified as complex — using planned execution")
             response = await self._chat_planned(user_message, on_token=on_token)
         else:
@@ -523,6 +536,10 @@ class Agent:
         # Build message list
         messages = self._build_messages(user_message)
 
+        # Event: context_built (stats computed in _build_messages)
+        if self._last_context_stats:
+            await self._log_event("context_built", self._last_context_stats)
+
         # Get model and client (with fallback if cloud is down)
         model = self.router.get_model(TaskType.REASONING)
         client = await self.router.get_client(TaskType.REASONING)
@@ -543,6 +560,8 @@ class Agent:
         max_iterations = self.config.agent.max_tool_iterations if tools else 0
         logger.info("Passing %d tools to model", len(tools) if tools else 0)
         full_response = ""
+        tool_call_names: list[str] = []
+        endpoint_name = ""
 
         for iteration in range(max_iterations + 1):
             endpoint = None
@@ -551,6 +570,7 @@ class Agent:
                 if endpoint:
                     endpoint.start_request()
                     self._last_endpoint_used = endpoint.name
+                    endpoint_name = endpoint.name
 
                 # Pass context window size to Ollama so it doesn't truncate
                 ctx_tokens = endpoint.context_tokens if endpoint and endpoint.context_tokens else None
@@ -579,6 +599,7 @@ class Agent:
 
                     for tc in tool_calls:
                         name, arguments = self._extract_tool_call_info(tc)
+                        tool_call_names.append(name)
                         tool_call = ToolCall(name=name, arguments=arguments)
 
                         if on_token:
@@ -603,13 +624,28 @@ class Agent:
                     break
             except Exception as e:
                 if endpoint:
-                    endpoint.record_failure()
+                    if is_model_error(e):
+                        logger.warning(
+                            "Model-level error on endpoint '%s' (not penalizing): %s",
+                            endpoint.name, e,
+                        )
+                    else:
+                        endpoint.record_failure()
                 logger.error("Chat error: %s", e)
                 full_response = f"Error: {e}"
                 break
             finally:
                 if endpoint:
                     endpoint.complete_request()
+
+        # Event: llm_complete
+        await self._log_event("llm_complete", {
+            "endpoint": endpoint_name,
+            "model": model,
+            "fallback": using_fallback,
+            "tool_calls": tool_call_names,
+            "response_length": len(full_response),
+        })
 
         return full_response
 
@@ -669,12 +705,14 @@ class Agent:
     async def _search_relevant_memories(self, query: str):
         """Search for relevant memories and lessons, add to Recall pool."""
         # Search conversation memories
+        memory_count = 0
         try:
             results = await self.search.search(
                 query=query,
                 current_session_id=self.session_manager.session_id,
                 n_results=10,
             )
+            memory_count = len(results)
             for r in results:
                 self.memory_manager.add_memory("Recall", PoolItem(
                     text=r.summary,
@@ -685,12 +723,14 @@ class Agent:
             logger.error("Memory search failed: %s", e)
 
         # Search lessons semantically (closes the lessons loop)
+        lesson_count = 0
         try:
             lesson_results = await self.search.search_lessons(query, n_results=5)
             for lr in lesson_results:
                 similarity = lr.get("similarity", 0.0)
                 if similarity < 0.4:
                     continue
+                lesson_count += 1
                 self.memory_manager.add_memory("Recall", PoolItem(
                     text=lr.get("document", ""),
                     session_role="system2",  # labeled as "RelevantLessons" in context
@@ -698,6 +738,14 @@ class Agent:
                 ))
         except Exception as e:
             logger.error("Lesson search failed: %s", e)
+
+        # Event: search_complete
+        search_stats = self.search.last_search_stats or {}
+        await self._log_event("search_complete", {
+            "memory_results": memory_count,
+            "lesson_results": lesson_count,
+            **search_stats,
+        })
 
     def _build_messages(self, user_message: str) -> list[dict]:
         """Build the full message list with memory context.
@@ -751,6 +799,23 @@ class Agent:
                 context_parts[pool] = []
             context_parts[pool].append(f"   - {item.text}")
 
+        # Compute context stats for observability
+        pool_usage = {}
+        for item in memory_items:
+            p = item.pool_name
+            if p not in pool_usage:
+                pool_usage[p] = {"items": 0, "tokens": 0}
+            pool_usage[p]["items"] += 1
+            pool_usage[p]["tokens"] += item.estimated_tokens
+        self._last_context_stats = {
+            "query_profile": profile,
+            "context_limit": context_limit,
+            "available_tokens": available,
+            "pool_budgets": pool_budgets,
+            "pool_usage": pool_usage,
+            "total_context_items": len(memory_items),
+        }
+
         memory_text = ""
         for pool_name in pool_order:
             if pool_name not in context_parts:
@@ -776,6 +841,16 @@ class Agent:
             messages.append(msg.to_ollama_message())
 
         return messages
+
+    async def _log_event(self, event_type: str, data: dict):
+        """Log a conversation flow event. Fire-and-forget safe."""
+        try:
+            session_id = self.session_manager.session_id if self.session_manager else 0
+            await self.sqlite.log_turn_event(
+                session_id, self._turn_number, event_type, data,
+            )
+        except Exception as e:
+            logger.debug("Failed to log event %s: %s", event_type, e)
 
     async def _background_memory_processing(self):
         """Background task to dump and process session memories."""

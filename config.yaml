@@ -2,18 +2,22 @@
 # This file is self-modifiable by the agent
 
 models:
-  reasoning: "glm-5:cloud"              # cloud during import — avoids local model swaps
+  reasoning: "qwen3:14b"               # local — best speed/quality for interactive chat
   tool_calling: "glm-5:cloud"
   coding: "qwen3-coder:480b-cloud"
-  summarization: "glm-5:cloud"           # cloud — using Ollama cloud quota for import
-  ranking: "qwen2.5:14b"              # local — best rank distribution
-  importance: "qwen3:14b"             # local — best importance distribution
-  ranking_importance: "qwen2.5:14b"   # combined scoring for batch import
+  summarization: "glm4:latest"          # local default — cloud endpoints tried first via priority
+  ranking: "qwen2.5:14b"               # local — best rank distribution
+  importance: "qwen3:14b"              # local — best importance distribution
+  ranking_importance: "qwen2.5:14b"    # combined scoring for batch import
   embedding: "nomic-embed-text"
   # Local fallbacks when cloud endpoints are unavailable
   reasoning_fallback: "gpt-oss:latest"
   tool_calling_fallback: "gpt-oss:latest"
   coding_fallback: "gpt-oss:latest"
+  summarization_fallback: "glm4:latest"     # validated local model
+  ranking_fallback: "qwen2.5:14b"           # same as primary (local safety net)
+  importance_fallback: "qwen3:14b"          # same as primary (local safety net)
+  ranking_importance_fallback: "qwen2.5:14b"
   fallback_think: false  # Disable thinking for fallback models (faster chat)
 
 endpoints:
@@ -22,11 +26,11 @@ endpoints:
     provider: "openai"
     api_key: "${GROQ_API_KEY}"
     roles: ["summarization"]
-    priority: 3
+    priority: 3                          # tried first for summarization (fast, 30 RPM)
     max_concurrent: 3
     rate_limit_rpm: 30
     rate_limit_rpd: 1000
-    enabled: false  # disabled for batch import — free tier too slow
+    enabled: true
     models:
       summarization: "openai/gpt-oss-120b"
   - name: "gemini"
@@ -34,11 +38,11 @@ endpoints:
     provider: "openai"
     api_key: "${GEMINI_API_KEY}"
     roles: ["summarization"]
-    priority: 3
+    priority: 2                          # tried second when Groq rate-limited (5 RPM)
     max_concurrent: 2
     rate_limit_rpm: 5
     rate_limit_rpd: 1000
-    enabled: false  # disabled for batch import — free tier too slow
+    enabled: true
     models:
       summarization: "gemini-2.5-flash"
   - name: "local"

@@ -109,3 +109,78 @@ def mock_llm_client():
     client.generate = AsyncMock(return_value="test result")
     client.check_health = AsyncMock(return_value=True)
     return client
+
+
+# --- Canned response fixtures for integration tests ---
+
+_CANNED_RESPONSES = {
+    "summarization": "User discussed Python performance tuning and optimization strategies.",
+    "ranking_importance": "3 0.5",
+    "reasoning": "When discussing performance, focus on profiling before optimizing.",
+    "entity_extraction": (
+        "user | discussed | python | person | technology\n"
+        "python | is_a | programming_language | technology | concept"
+    ),
+}
+
+
+def _canned_generate(task_type, prompt="", system=None, think=None):
+    """Side-effect function for canned_router.generate()."""
+    if task_type == "summarization":
+        return _CANNED_RESPONSES["summarization"]
+    if task_type == "ranking_importance":
+        return _CANNED_RESPONSES["ranking_importance"]
+    if task_type == "reasoning":
+        # Detect entity extraction by checking prompt/system content
+        if system and "triple" in system.lower():
+            return _CANNED_RESPONSES["entity_extraction"]
+        # Detect tag discovery
+        if system and "tag" in system.lower() and "pattern" in system.lower():
+            return "docker: \\bdocker\\b|\\bcontainer\\b"
+        # Detect contradiction check
+        if system and "contradict" in system.lower():
+            return "NO"
+        # Default reasoning (lesson extraction, etc.)
+        return _CANNED_RESPONSES["reasoning"]
+    return "test response"
+
+
+@pytest.fixture
+def canned_router():
+    """Mock LLMRouter with realistic canned responses per task type.
+
+    Uses side_effect to return different responses based on the task_type
+    argument, enabling integration tests without Ollama.
+    """
+    router = MagicMock()
+    router.generate = AsyncMock(side_effect=_canned_generate)
+    router.get_model.return_value = "test-model"
+    router.get_fallback_model.return_value = None
+    router.get_client = AsyncMock(return_value=MagicMock())
+    router.get_model_and_client = AsyncMock(
+        return_value=("test-model", MagicMock()),
+    )
+    return router
+
+
+@pytest.fixture
+async def memory_processor(sqlite_store, mock_chroma, canned_router, memory_config):
+    """MemoryProcessor wired to real SQLite + mocked Chroma/LLM."""
+    from blipshell.memory.processor import MemoryProcessor
+    return MemoryProcessor(
+        sqlite=sqlite_store,
+        chroma=mock_chroma,
+        router=canned_router,
+        config=memory_config,
+    )
+
+
+@pytest.fixture
+async def entity_extractor(sqlite_store, canned_router):
+    """EntityExtractor wired to real SQLite + mocked LLM."""
+    from blipshell.memory.entity_extractor import EntityExtractor
+    return EntityExtractor(
+        sqlite=sqlite_store,
+        router=canned_router,
+        batch_size=10,
+    )

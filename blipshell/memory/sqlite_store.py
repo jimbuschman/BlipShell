@@ -229,6 +229,19 @@ CREATE INDEX IF NOT EXISTS idx_entity_relationships_subject ON entity_relationsh
 CREATE INDEX IF NOT EXISTS idx_entity_relationships_object ON entity_relationships(object_id);
 CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
 
+CREATE TABLE IF NOT EXISTS turn_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    turn_number INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    data_json TEXT,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_turn_events_session ON turn_events(session_id);
+CREATE INDEX IF NOT EXISTS idx_turn_events_session_turn ON turn_events(session_id, turn_number);
+
 -- FTS5 full-text search on memory summaries
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     summary, content=memories, content_rowid=id
@@ -1407,3 +1420,62 @@ class SQLiteStore:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+    # --- Turn Events (Conversation Flow Observability) ---
+
+    async def log_turn_event(self, session_id: int, turn_number: int,
+                             event_type: str, data: dict):
+        """Log a conversation flow event. Fire-and-forget safe."""
+        try:
+            await self._db.execute(
+                """INSERT INTO turn_events (session_id, turn_number, event_type, data_json)
+                   VALUES (?, ?, ?, ?)""",
+                (session_id, turn_number, event_type, json.dumps(data)),
+            )
+            await self._db.commit()
+        except Exception as e:
+            logger.debug("Failed to log turn event: %s", e)
+
+    async def get_turn_events(self, session_id: int, limit: int = 20) -> list[dict]:
+        """Get recent turn events for a session."""
+        cursor = await self._db.execute(
+            """SELECT id, session_id, turn_number, event_type, timestamp, data_json
+               FROM turn_events WHERE session_id = ?
+               ORDER BY id DESC LIMIT ?""",
+            (session_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": r["id"],
+                "session_id": r["session_id"],
+                "turn_number": r["turn_number"],
+                "event_type": r["event_type"],
+                "timestamp": r["timestamp"],
+                "data": json.loads(r["data_json"]) if r["data_json"] else {},
+            }
+            for r in reversed(rows)  # chronological order
+        ]
+
+    async def get_turn_events_for_turn(self, session_id: int,
+                                       turn_number: int) -> list[dict]:
+        """Get all events for a specific turn."""
+        cursor = await self._db.execute(
+            """SELECT id, session_id, turn_number, event_type, timestamp, data_json
+               FROM turn_events
+               WHERE session_id = ? AND turn_number = ?
+               ORDER BY id""",
+            (session_id, turn_number),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": r["id"],
+                "session_id": r["session_id"],
+                "turn_number": r["turn_number"],
+                "event_type": r["event_type"],
+                "timestamp": r["timestamp"],
+                "data": json.loads(r["data_json"]) if r["data_json"] else {},
+            }
+            for r in rows
+        ]

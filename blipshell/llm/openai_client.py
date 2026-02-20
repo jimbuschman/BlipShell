@@ -11,6 +11,8 @@ from typing import Any, AsyncIterator, Optional
 
 import openai
 
+from blipshell.llm.exceptions import RateLimitExhaustedError
+
 logger = logging.getLogger(__name__)
 
 # Shared response cache (same as client.py)
@@ -46,7 +48,7 @@ class OpenAICompatClient:
         """
         last_error = None
         rate_limit_retries = 0
-        max_rate_limit_retries = 6  # up to ~2 min of waiting
+        max_rate_limit_retries = 2  # ~15s total (5+10) then let router try next endpoint
         for attempt in range(self.max_retries + 1 + max_rate_limit_retries):
             try:
                 return await asyncio.wait_for(
@@ -69,8 +71,15 @@ class OpenAICompatClient:
                 last_error = e
                 rate_limit_retries += 1
                 if rate_limit_retries > max_rate_limit_retries:
-                    break
-                delay = 10.0 * rate_limit_retries
+                    logger.warning(
+                        "Rate limit retries exhausted (%d), signaling router to try next endpoint",
+                        max_rate_limit_retries,
+                    )
+                    raise RateLimitExhaustedError(
+                        endpoint_name=self.base_url,
+                        message=f"Rate limit retries exhausted after {max_rate_limit_retries} attempts: {e}",
+                    ) from e
+                delay = 5.0 * rate_limit_retries
                 logger.warning(
                     "Rate limited (%d/%d), waiting %.0fs...",
                     rate_limit_retries, max_rate_limit_retries, delay,

@@ -9,6 +9,7 @@ from typing import Optional
 
 from blipshell.llm.client import LLMClient
 from blipshell.llm.endpoints import EndpointManager
+from blipshell.llm.exceptions import is_model_error
 from blipshell.models.config import ModelsConfig
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,10 @@ class LLMRouter:
             TaskType.REASONING: self._models.reasoning_fallback,
             TaskType.TOOL_CALLING: self._models.tool_calling_fallback,
             TaskType.CODING: self._models.coding_fallback,
+            TaskType.SUMMARIZATION: self._models.summarization_fallback,
+            TaskType.RANKING: self._models.ranking_fallback,
+            TaskType.IMPORTANCE: self._models.importance_fallback,
+            TaskType.RANKING_IMPORTANCE: self._models.ranking_importance_fallback,
         }
         return fallback_map.get(task_type)
 
@@ -103,7 +108,13 @@ class LLMRouter:
             endpoint.record_success(0)
             return result
         except Exception as primary_err:
-            endpoint.record_failure()
+            if is_model_error(primary_err):
+                logger.warning(
+                    "Model-level error on endpoint '%s' (not penalizing): %s",
+                    endpoint.name, primary_err,
+                )
+            else:
+                endpoint.record_failure()
             # Try fallback model if available
             fallback_model = self.get_fallback_model(task_type)
             if fallback_model and fallback_model != model:
@@ -114,6 +125,8 @@ class LLMRouter:
                         fb_kwargs = {}
                         if not self._models.fallback_think:
                             fb_kwargs["think"] = False
+                        if fallback_ep.context_tokens:
+                            fb_kwargs["options"] = {"num_ctx": fallback_ep.context_tokens}
                         result = await fallback_ep.client.generate(
                             prompt=prompt, model=fallback_model, system=system,
                             **fb_kwargs,

@@ -194,6 +194,16 @@ async def chat_loop(
                         offload_msg = user_input[len("/offload "):]
                         await _submit_offload(agent, offload_msg)
                     continue
+                elif cmd[0] == "flow":
+                    turn = None
+                    if len(cmd) > 1:
+                        try:
+                            turn = int(cmd[1])
+                        except ValueError:
+                            console.print("[yellow]Usage: /flow [turn_number][/yellow]")
+                            continue
+                    await _print_flow(agent, turn)
+                    continue
                 elif cmd[0] in ("help", "commands"):
                     _print_help()
                     continue
@@ -748,6 +758,122 @@ def _print_memory_usage(agent: Agent):
     console.print(table)
 
 
+async def _print_flow(agent: Agent, turn: int | None = None):
+    """Print conversation flow events for observability."""
+    if not agent.sqlite or not agent.session_manager:
+        console.print("[yellow]No active session.[/yellow]")
+        return
+
+    session_id = agent.session_manager.session_id
+
+    if turn is not None:
+        # Detailed view for a specific turn
+        events = await agent.sqlite.get_turn_events_for_turn(session_id, turn)
+        if not events:
+            console.print(f"[yellow]No events for turn {turn}.[/yellow]")
+            return
+
+        console.print(f"\n[bold]Turn {turn} — Detailed Flow[/bold]")
+        for evt in events:
+            data = evt["data"]
+            etype = evt["event_type"]
+            ts = evt["timestamp"]
+
+            if etype == "turn_start":
+                console.print(f"\n  [cyan]turn_start[/cyan] ({ts})")
+                console.print(f"    Route: {data.get('route', '?')}")
+                console.print(f"    Query length: {data.get('query_length', '?')} chars")
+
+            elif etype == "search_complete":
+                console.print(f"\n  [cyan]search_complete[/cyan]")
+                console.print(f"    ChromaDB hits: {data.get('chroma_hits', '?')}")
+                console.print(f"    FTS5 hits: {data.get('fts_hits', '?')}")
+                console.print(f"    Entity hits: {data.get('entity_hits', '?')}")
+                console.print(f"    Post-filter: {data.get('post_filter', '?')}")
+                console.print(f"    Final returned: {data.get('final_returned', '?')}")
+                console.print(f"    Memories used: {data.get('memory_results', '?')}")
+                console.print(f"    Lessons used: {data.get('lesson_results', '?')}")
+                if data.get("skipped"):
+                    console.print(f"    [dim]Skipped: {data['skipped']}[/dim]")
+
+            elif etype == "context_built":
+                console.print(f"\n  [cyan]context_built[/cyan]")
+                console.print(f"    Query profile: {data.get('query_profile', '?')}")
+                console.print(f"    Context limit: {data.get('context_limit', '?'):,} tokens")
+                console.print(f"    Available: {data.get('available_tokens', '?'):,} tokens")
+                console.print(f"    Total items: {data.get('total_context_items', '?')}")
+                pool_usage = data.get("pool_usage", {})
+                if pool_usage:
+                    for pool, stats in pool_usage.items():
+                        console.print(f"      {pool}: {stats['items']} items, {stats['tokens']} tokens")
+
+            elif etype == "llm_complete":
+                console.print(f"\n  [cyan]llm_complete[/cyan]")
+                console.print(f"    Endpoint: {data.get('endpoint', '?')}")
+                console.print(f"    Model: {data.get('model', '?')}")
+                console.print(f"    Fallback: {data.get('fallback', False)}")
+                tools = data.get("tool_calls", [])
+                if tools:
+                    console.print(f"    Tools: {', '.join(tools)}")
+                console.print(f"    Response: {data.get('response_length', '?')} chars")
+
+            else:
+                console.print(f"\n  [cyan]{etype}[/cyan]")
+                for k, v in data.items():
+                    console.print(f"    {k}: {v}")
+    else:
+        # Summary view — last 5 turns
+        events = await agent.sqlite.get_turn_events(session_id, limit=100)
+        if not events:
+            console.print("[dim]No flow events yet. Send a message first.[/dim]")
+            return
+
+        # Group events by turn
+        turns: dict[int, dict] = {}
+        for evt in events:
+            tn = evt["turn_number"]
+            if tn not in turns:
+                turns[tn] = {}
+            turns[tn][evt["event_type"]] = evt["data"]
+
+        # Show last 5 turns
+        table = Table(title="Conversation Flow (recent turns)")
+        table.add_column("Turn", style="cyan", justify="right")
+        table.add_column("Route")
+        table.add_column("Profile")
+        table.add_column("Search", justify="right")
+        table.add_column("Context", justify="right")
+        table.add_column("Endpoint")
+        table.add_column("Tools")
+        table.add_column("Resp", justify="right")
+
+        recent = sorted(turns.items())[-5:]
+        for tn, evts in recent:
+            start = evts.get("turn_start", {})
+            search = evts.get("search_complete", {})
+            ctx = evts.get("context_built", {})
+            llm = evts.get("llm_complete", {})
+
+            search_str = f"{search.get('final_returned', '?')}m/{search.get('lesson_results', '?')}l"
+            ctx_str = str(ctx.get("total_context_items", "?"))
+            tools = llm.get("tool_calls", [])
+            tools_str = ", ".join(tools) if tools else "-"
+
+            table.add_row(
+                str(tn),
+                start.get("route", "?"),
+                ctx.get("query_profile", "?"),
+                search_str,
+                ctx_str,
+                llm.get("endpoint", "?"),
+                tools_str,
+                str(llm.get("response_length", "?")),
+            )
+
+        console.print(table)
+        console.print("[dim]Use /flow <turn_number> for details[/dim]")
+
+
 async def _print_active_plan(agent: Agent):
     """Print the current active plan and step statuses."""
     if not agent.sqlite or not agent.session_manager:
@@ -980,6 +1106,8 @@ def _print_help():
         "[bold]/code <path> [msg][/bold]  - Send code to LLM for review (--model name to override)\n"
         "[bold]/feedback <msg>[/bold]    - Save feedback as a lesson (e.g. 'be more concise')\n"
         "[bold]/offload <msg>[/bold]     - Run a task on the remote PC in the background\n"
+        "[bold]/flow[/bold]              - Show conversation flow events (last 5 turns)\n"
+        "[bold]/flow <n>[/bold]          - Show detailed flow for turn N\n"
         "[bold]/plan[/bold]              - Show current active plan\n"
         "[bold]/plans[/bold]             - List all plans for this session\n"
         "[bold]/tasks[/bold]             - Show background tasks\n"

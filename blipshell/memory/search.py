@@ -82,6 +82,7 @@ class MemorySearch:
             self.decay_rate = 0.001
             self.fts_weight = 0.3
             self.entity_boost = 0.15
+        self.last_search_stats: dict | None = None
 
     async def search(
         self,
@@ -104,8 +105,10 @@ class MemorySearch:
 
         # Step 1: Noise filter
         if should_skip_memory(query, max_length=10):
+            self.last_search_stats = {"chroma_hits": 0, "fts_hits": 0, "entity_hits": 0, "post_filter": 0, "final_returned": 0, "skipped": "noise_filter"}
             return []
         if should_skip_memory(query, max_length=20) and not contains_signal_words(query):
+            self.last_search_stats = {"chroma_hits": 0, "fts_hits": 0, "entity_hits": 0, "post_filter": 0, "final_returned": 0, "skipped": "noise_filter"}
             return []
 
         # Step 2: ChromaDB semantic search
@@ -135,6 +138,7 @@ class MemorySearch:
                 chroma_results.append({"id": fr["id"], "similarity": 0.0, "metadata": {}})
 
         if not chroma_results:
+            self.last_search_stats = {"chroma_hits": 0, "fts_hits": len(fts_results), "entity_hits": 0, "post_filter": 0, "final_returned": 0}
             return []
 
         # Tag the query (pure regex, <1ms)
@@ -203,6 +207,7 @@ class MemorySearch:
 
         # Step 6: Entity graph expansion — find memories connected via entities
         existing_ids = {r.memory_id for r in results}
+        entity_memory_ids = []
         try:
             entity_memory_ids = await self._expand_via_entities(query)
             for eid in entity_memory_ids:
@@ -237,6 +242,15 @@ class MemorySearch:
                 await self.sqlite.record_memory_access(accessed_ids)
             except Exception as e:
                 logger.warning("Failed to record memory access: %s", e)
+
+        # Populate search stats for observability
+        self.last_search_stats = {
+            "chroma_hits": len(chroma_results),
+            "fts_hits": len(fts_results),
+            "entity_hits": len(entity_memory_ids),
+            "post_filter": len(results),
+            "final_returned": len(final),
+        }
 
         return final
 
