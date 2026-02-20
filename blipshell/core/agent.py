@@ -203,7 +203,7 @@ class Agent:
         # Register tools
         self._register_tools()
 
-        _status("Pruning old memories...")
+        _status("Checking memories...")
         await self._auto_prune_memories()
 
         _status("Consolidating memories...")
