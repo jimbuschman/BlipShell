@@ -15,13 +15,72 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - embedding: nomic-embed-text (local)
 - Fallbacks: gpt-oss:latest (local) for reasoning/tool_calling/coding
 
-## Pending Tasks
+## Completed Work
+- Memory consolidation (feature 4)
+- Contradiction detection (feature 5)
+- Dynamic pool allocation (feature 10)
+- Graph memory layer (feature 9) — entity relationship triples extracted from all memories
+- All imports complete (ChatGPT, Claude official, Claude scraped, DeepSeek)
+- Ranking/importance scores reprocessed with validated local models
+- Lessons regenerated
+- Entity graph cleaned (31,469 entities, 56K relationships, 95K mentions)
+- Entity type corrections applied
 
-### After ChatGPT Import Completes
-1. **Switch reasoning to cloud by default** — Use a cloud model (e.g., gpt-oss) for interactive chat quality, with qwen3:14b as local fallback. Don't change during import since import doesn't use reasoning.
-2. **Reprocess ranking/importance scores** — The first ~59% of imported conversations were scored by a cloud model that skewed heavily to rank 4 (~74%) and importance 0.8 (~52%). Need to reprocess all scores using the validated local models (qwen2.5:14b for ranking, qwen3:14b for importance) for a better distribution.
-3. **Benchmark cloud vs local for background tasks** — Test whether cloud models produce better summaries/rankings/importance than local. Determine if the quality difference justifies the latency/cost for pipeline tasks (summarization, ranking, importance).
-4. **Benchmark cloud models for task routing** — Test which specific cloud model is best for each task type (reasoning, tool_calling, coding). Current assignments are based on limited testing.
+## Road to Usable — Priority Task List
+
+### 1. LLM Routing Audit & Fallback Fixes
+- Verify which model handles each task type in the running system
+- Audit fallback logic: what happens when an endpoint goes down?
+- Fix mid-request 429 fallback (currently retries same endpoint instead of falling to next)
+- Fix context size mismatch on fallback (Groq/Gemini → local has different context limits)
+- Decide cloud vs local for background tasks (summarization/ranking/importance)
+- Document the final routing decisions
+
+### 2. Conversation Flow Observability
+- Log what searches return (ChromaDB hits, FTS hits, entity expansion hits)
+- Log what context gets built and sent to the LLM
+- Track which memory pools contribute to each response
+- Provide a way to review/audit conversation flow after the fact
+- Lightweight — event logging to a table, not heavy instrumentation
+
+### 3. Full Integration Test Suite
+- End-to-end test of the complete conversation flow on a DB copy
+- Test memory storage → summarization → scoring → embedding → search → retrieval
+- Test entity extraction → graph expansion → search enrichment
+- Test lesson extraction and retrieval
+- Test tag discovery and tag-based search
+- Verify on real-world data, then clean up test artifacts
+- Run against a copy of the DB so tests don't clutter production data
+
+### 4. Unified Prompt Test Suite
+- Test all LLM prompts with real-world data (existing benchmarks may cover some)
+- Prompts to test: summarization, rank_and_importance, extract_entities, extract_lesson, contradiction_detection
+- Unify existing benchmark scripts into a single "test everything" runner
+- Verify each prompt produces expected output format and quality
+- Use results to tweak prompts or choose different models where needed
+
+### 5. Embedding Model Upgrade
+- Benchmark newer embedding models for quality AND speed on local hardware
+- Test with real queries against real memories (not synthetic data)
+- Verify the system can handle re-embedding the full corpus
+- Only commit to upgrade if benchmark shows clear improvement
+
+### 6. Automated Audit / Health Check
+- Script that checks DB health: entity quality, orphans, score distribution, missing summaries
+- Check for LLM artifacts (reuse cleanup_entities patterns)
+- Check endpoint health and model availability
+- Output a summary report with severity levels
+- Can run on-demand or as a quick startup check
+
+### 7. Auto DB Backups
+- Timestamped backup before destructive operations
+- Periodic scheduled backups with rotation (keep last N)
+- Could hook into startup flow
+
+### 8. Prompt & Model Refinement (based on test results)
+- Tweak prompts where tests show quality issues
+- Swap models for specific task types if better options found
+- Re-run extraction/scoring if prompts change significantly
 
 ## Benchmark Results (tests/benchmark_reasoning.py)
 - Results stored in data/benchmark_reasoning_results.json on the Ollama PC
@@ -47,17 +106,9 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - Gemini 2.5 flash: 5 RPM free tier too slow for batch, untested on ranking quality
 - Both free tiers useless for batch import, fine for interactive background tasks
 
-### Revisit after import
-- **Mid-request 429 fallback** — currently retries on same endpoint instead of falling back to next. Should bubble up to router level and try a different endpoint.
-- **Context size on fallback** — if a request fails on Groq/Gemini and falls back to local, context window config needs to adjust. No handling for mismatched context limits across endpoints yet.
-- **Ollama cloud quota management** — decide whether background tasks (summarization/ranking/importance) should use cloud Ollama quota or stay purely local. Currently local-only for these to preserve cloud quota for interactive reasoning/tool_calling/coding.
-
-## Feature Roadmap
-Completed: 4 (memory consolidation), 5 (contradiction detection), 10 (dynamic pool allocation)
-- **6. Upgrade embedding model** — Benchmark new embedding models, then full re-embed. Blocked until Ollama GPU is free (currently running re-embedding). Benchmark first with real queries before committing.
+## Feature Roadmap (Future)
+- **6. Upgrade embedding model** — Benchmark new embedding models, then full re-embed. Benchmark first with real queries before committing.
 - **7. LLM-powered tag discovery** — LLM reviews recent memories periodically and suggests new regex patterns for the tagger. Route to cloud endpoint, run as scheduled background task.
-- **9. Graph memory layer** — Entity relationship triples (Jim, prefers, Python). New subsystem, do last. Significant undertaking, long-term payoff.
-- **11. Usage analytics / observability** — Track how memory subsystems contribute to search results (entity graph hits, FTS boosts, tag overlaps, lesson surfacing, decay effects). Lightweight event logging to a table for periodic review. Helps validate whether features are working as expected and identify improvement opportunities.
 
 ## Architecture Notes
 - Two-PC setup: Development on one PC, Ollama/benchmarks on another
