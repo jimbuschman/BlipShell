@@ -23,11 +23,15 @@ from rich.table import Table
 from blipshell.llm.endpoints import EndpointManager
 from blipshell.llm.prompts import (
     ask_importance,
+    detect_contradiction,
+    extract_entities,
     extract_lesson,
+    rank_and_importance,
     rank_memory,
     summarize_memory,
 )
 from blipshell.llm.router import LLMRouter, TaskType
+from blipshell.memory.entity_extractor import EntityExtractor
 from blipshell.memory.processor import MemoryProcessor
 from blipshell.models.config import EndpointConfig, LLMConfig, ModelsConfig
 
@@ -146,6 +150,46 @@ MESSAGE_LABELS = [
     "sanding paint",
 ]
 
+# ---------------------------------------------------------------------------
+# Test data — Entity Extraction
+# ---------------------------------------------------------------------------
+ENTITY_TEST_SUMMARIES = [
+    "User asked about Python performance tuning for data analysis.",
+    "User decided to use a two-module design for the desk robot with JST connectors.",
+    "Assistant explained how to configure Ollama with GPU acceleration.",
+    "User's daughter has a Minecraft performance issue on her HP laptop.",
+    "User said hello.",
+]
+
+ENTITY_LABELS = [
+    "python perf tuning",
+    "desk robot design",
+    "ollama gpu config",
+    "daughter minecraft",
+    "hello (expect NONE)",
+]
+
+# ---------------------------------------------------------------------------
+# Test data — Contradiction Detection
+# ---------------------------------------------------------------------------
+CONTRADICTION_PAIRS = [
+    ("User prefers dark mode", "User prefers light mode", True),
+    ("User uses Windows 10", "User upgraded to Windows 11", True),
+    ("User likes Python", "User dislikes Python", True),
+    ("User likes coffee", "User likes tea", False),
+    ("User has a cat named Luna", "User works at Acme", False),
+    ("User knows Python", "User also knows Rust", False),
+]
+
+CONTRADICTION_LABELS = [
+    "dark/light mode",
+    "Win10/Win11",
+    "likes/dislikes Python",
+    "coffee & tea",
+    "cat & job",
+    "Python & Rust",
+]
+
 console = Console()
 
 
@@ -261,6 +305,93 @@ async def benchmark_lessons(router: LLMRouter) -> list[dict]:
     return results
 
 
+async def benchmark_entity_extraction(router: LLMRouter) -> list[dict]:
+    extractor = EntityExtractor.__new__(EntityExtractor)  # only need _parse_triples
+    results = []
+    for summary in ENTITY_TEST_SUMMARIES:
+        sys_prompt, user_prompt = extract_entities(summary)
+        start = time.perf_counter()
+        try:
+            raw = await router.generate(
+                TaskType.REASONING, user_prompt, system=sys_prompt, think=False,
+            )
+            triples = extractor._parse_triples(raw)
+            entities = sorted({t[0].lower() for t in triples} | {t[2].lower() for t in triples})
+        except Exception as e:
+            raw = f"ERROR: {e}"
+            triples = []
+            entities = []
+        elapsed = time.perf_counter() - start
+        results.append({
+            "raw": raw,
+            "triple_count": len(triples),
+            "entities": entities,
+            "time": round(elapsed, 2),
+        })
+        await asyncio.sleep(0.1)
+    return results
+
+
+async def benchmark_contradiction(router: LLMRouter) -> list[dict]:
+    results = []
+    for new_mem, existing_mem, expected_yes in CONTRADICTION_PAIRS:
+        sys_prompt, user_prompt = detect_contradiction(new_mem, existing_mem)
+        start = time.perf_counter()
+        try:
+            raw = await router.generate(
+                TaskType.REASONING, user_prompt, system=sys_prompt, think=False,
+            )
+            answer = raw.strip().upper()
+            if answer.startswith("YES"):
+                parsed = "YES"
+            elif answer.startswith("NO"):
+                parsed = "NO"
+            else:
+                parsed = "INVALID"
+            expected = "YES" if expected_yes else "NO"
+            correct = parsed == expected
+        except Exception as e:
+            raw = f"ERROR: {e}"
+            parsed = "ERROR"
+            expected = "YES" if expected_yes else "NO"
+            correct = False
+        elapsed = time.perf_counter() - start
+        results.append({
+            "raw": raw,
+            "parsed": parsed,
+            "expected": expected,
+            "correct": correct,
+            "time": round(elapsed, 2),
+        })
+        await asyncio.sleep(0.1)
+    return results
+
+
+async def benchmark_rank_and_importance(router: LLMRouter) -> list[dict]:
+    results = []
+    for msg in TEST_MESSAGES:
+        sys_prompt, user_prompt = rank_and_importance(msg["content"])
+        start = time.perf_counter()
+        try:
+            raw = await router.generate(
+                TaskType.RANKING, user_prompt, system=sys_prompt, think=False,
+            )
+            rank, importance = MemoryProcessor._parse_rank_and_importance(raw)
+        except Exception as e:
+            raw = f"ERROR: {e}"
+            rank = -1
+            importance = -1.0
+        elapsed = time.perf_counter() - start
+        results.append({
+            "raw": raw,
+            "rank": rank,
+            "importance": importance,
+            "time": round(elapsed, 2),
+        })
+        await asyncio.sleep(0.1)
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Display
 # ---------------------------------------------------------------------------
@@ -335,6 +466,78 @@ def print_lessons_table(all_results: dict):
     console.print(table)
 
 
+def print_entity_extraction_table(all_results: dict):
+    models = list(all_results.keys())
+    table = Table(title="Entity Extraction", show_lines=True, expand=True)
+    table.add_column("Model", style="cyan", width=20, no_wrap=True)
+    for label in ENTITY_LABELS:
+        table.add_column(label, ratio=1)
+
+    for model in models:
+        if "entity_extraction" not in all_results[model]:
+            continue
+        row = [model]
+        for i in range(len(ENTITY_LABELS)):
+            r = all_results[model]["entity_extraction"][i]
+            ents = ", ".join(r["entities"]) if r["entities"] else "(none)"
+            cell = (
+                f"[bold]{r['triple_count']} triples[/bold]\n"
+                f"{escape(ents)}\n"
+                f"[dim]({r['time']}s)[/dim]"
+            )
+            row.append(cell)
+        table.add_row(*row)
+
+    console.print(table)
+
+
+def print_contradiction_table(all_results: dict):
+    models = list(all_results.keys())
+    table = Table(title="Contradiction Detection", show_lines=True)
+    table.add_column("Model", style="cyan", width=20, no_wrap=True)
+    for label in CONTRADICTION_LABELS:
+        table.add_column(label, justify="center", width=14)
+
+    for model in models:
+        if "contradiction" not in all_results[model]:
+            continue
+        row = [model]
+        for i in range(len(CONTRADICTION_LABELS)):
+            r = all_results[model]["contradiction"][i]
+            if r["correct"]:
+                mark = f"[green]{r['parsed']}[/green]"
+            else:
+                mark = f"[red]{r['parsed']}[/red]"
+            cell = f"{mark} (exp: {r['expected']})\n[dim]{r['time']}s[/dim]"
+            row.append(cell)
+        table.add_row(*row)
+
+    console.print(table)
+
+
+def print_rank_and_importance_table(all_results: dict):
+    models = list(all_results.keys())
+    table = Table(title="Combined Rank + Importance", show_lines=True)
+    table.add_column("Model", style="cyan", width=20, no_wrap=True)
+    for label in MESSAGE_LABELS:
+        table.add_column(label, justify="center", width=12)
+
+    for model in models:
+        if "rank_and_importance" not in all_results[model]:
+            continue
+        row = [model]
+        for i in range(len(MESSAGE_LABELS)):
+            r = all_results[model]["rank_and_importance"][i]
+            cell = (
+                f"R=[bold]{r['rank']}[/bold] I=[bold]{r['importance']}[/bold]\n"
+                f"[dim]{r['time']}s[/dim]"
+            )
+            row.append(cell)
+        table.add_row(*row)
+
+    console.print(table)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -373,11 +576,23 @@ async def run_benchmark(models: list[str]):
         console.print(f"  [dim]Running lesson extraction...[/dim]")
         lessons = await benchmark_lessons(router)
 
+        console.print(f"  [dim]Running entity extraction...[/dim]")
+        entity_extraction = await benchmark_entity_extraction(router)
+
+        console.print(f"  [dim]Running contradiction detection...[/dim]")
+        contradiction = await benchmark_contradiction(router)
+
+        console.print(f"  [dim]Running combined rank+importance...[/dim]")
+        rank_imp = await benchmark_rank_and_importance(router)
+
         all_results[model] = {
             "summarization": summarization,
             "ranking": ranking,
             "importance": importance,
             "lessons": lessons,
+            "entity_extraction": entity_extraction,
+            "contradiction": contradiction,
+            "rank_and_importance": rank_imp,
         }
         console.print(f"  [green]Done with {model}[/green]\n")
 
@@ -395,6 +610,12 @@ async def run_benchmark(models: list[str]):
     print_importance_table(all_results)
     console.print()
     print_lessons_table(all_results)
+    console.print()
+    print_entity_extraction_table(all_results)
+    console.print()
+    print_contradiction_table(all_results)
+    console.print()
+    print_rank_and_importance_table(all_results)
 
 
 def test_benchmark():

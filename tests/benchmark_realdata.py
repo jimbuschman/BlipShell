@@ -24,7 +24,14 @@ from rich.markup import escape
 from rich.table import Table
 
 from blipshell.llm.endpoints import EndpointManager
-from blipshell.llm.prompts import ask_importance, rank_memory, summarize_memory
+from blipshell.llm.prompts import (
+    ask_importance,
+    detect_contradiction,
+    extract_entities,
+    rank_memory,
+    summarize_memory,
+)
+from blipshell.memory.entity_extractor import EntityExtractor
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.processor import MemoryProcessor
 from blipshell.models.config import EndpointConfig, LLMConfig, ModelsConfig
@@ -279,6 +286,104 @@ async def benchmark_summarization(router: LLMRouter, messages: list[dict]) -> li
     return results
 
 
+async def benchmark_entity_extraction_realdata(
+    router: LLMRouter, messages: list[dict],
+) -> list[dict]:
+    """Benchmark entity extraction on real message summaries."""
+    extractor = EntityExtractor.__new__(EntityExtractor)  # only need _parse_triples
+    results = []
+    # Use first 20 messages that have summaries
+    with_summary = [m for m in messages if m.get("summary")][:20]
+    for msg in with_summary:
+        sys_prompt, user_prompt = extract_entities(msg["summary"])
+        start = time.perf_counter()
+        try:
+            raw = await router.generate(
+                TaskType.REASONING, user_prompt, system=sys_prompt, think=False,
+            )
+            triples = extractor._parse_triples(raw)
+            entities = sorted({t[0].lower() for t in triples} | {t[2].lower() for t in triples})
+            entity_types = {}
+            for t in triples:
+                entity_types[t[3]] = entity_types.get(t[3], 0) + 1
+                entity_types[t[4]] = entity_types.get(t[4], 0) + 1
+            is_none = raw.strip().upper() == "NONE"
+        except Exception as e:
+            raw = f"ERROR: {e}"
+            triples = []
+            entities = []
+            entity_types = {}
+            is_none = False
+        elapsed = time.perf_counter() - start
+        results.append({
+            "id": msg["id"],
+            "summary": msg["summary"],
+            "raw": raw,
+            "triple_count": len(triples),
+            "entities": entities,
+            "entity_types": entity_types,
+            "is_none": is_none,
+            "time": round(elapsed, 2),
+        })
+        await asyncio.sleep(0.05)
+    return results
+
+
+async def benchmark_contradiction_realdata(
+    router: LLMRouter, db_path: str,
+) -> list[dict]:
+    """Benchmark contradiction detection on real core memory pairs."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+
+    # Pull active core memories to form test pairs
+    rows = c.execute(
+        "SELECT id, content FROM core_memories WHERE active = 1 ORDER BY RANDOM() LIMIT 20"
+    ).fetchall()
+    conn.close()
+
+    if len(rows) < 2:
+        console.print("[yellow]Not enough core memories for contradiction benchmark[/yellow]")
+        return []
+
+    # Form 10 pairs from the random sample
+    pairs = []
+    for i in range(min(10, len(rows) - 1)):
+        pairs.append((dict(rows[i]), dict(rows[i + 1])))
+
+    results = []
+    for mem_a, mem_b in pairs:
+        sys_prompt, user_prompt = detect_contradiction(mem_a["content"], mem_b["content"])
+        start = time.perf_counter()
+        try:
+            raw = await router.generate(
+                TaskType.REASONING, user_prompt, system=sys_prompt, think=False,
+            )
+            answer = raw.strip().upper()
+            if answer.startswith("YES"):
+                parsed = "YES"
+            elif answer.startswith("NO"):
+                parsed = "NO"
+            else:
+                parsed = "INVALID"
+        except Exception as e:
+            raw = f"ERROR: {e}"
+            parsed = "ERROR"
+        elapsed = time.perf_counter() - start
+        results.append({
+            "id_a": mem_a["id"],
+            "id_b": mem_b["id"],
+            "content_a": mem_a["content"],
+            "content_b": mem_b["content"],
+            "raw": raw,
+            "parsed": parsed,
+            "time": round(elapsed, 2),
+        })
+        await asyncio.sleep(0.05)
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Analysis
 # ---------------------------------------------------------------------------
@@ -404,6 +509,63 @@ def analyze_summarization(all_results: dict, messages: list[dict]):
             f"avg_words={avg_sum_words:.0f}  "
             f"range={shortest}-{longest}  "
             f"skips={skips}/{total}"
+        )
+
+
+def analyze_entity_extraction(all_results: dict):
+    """Print entity extraction quality stats."""
+    console.rule("[bold]Entity Extraction Analysis")
+
+    for model in _model_keys(all_results):
+        if "entity_extraction" not in all_results[model]:
+            continue
+        results = all_results[model]["entity_extraction"]
+        total = len(results)
+        if total == 0:
+            continue
+
+        none_count = sum(1 for r in results if r["is_none"])
+        avg_triples = sum(r["triple_count"] for r in results) / total
+        avg_time = sum(r["time"] for r in results) / total
+
+        # Aggregate entity type distribution
+        type_dist = {}
+        for r in results:
+            for t, c in r["entity_types"].items():
+                type_dist[t] = type_dist.get(t, 0) + c
+
+        console.print(
+            f"\n[cyan]{model}[/cyan]  "
+            f"avg_triples={avg_triples:.1f}  "
+            f"NONE_rate={none_count}/{total}  "
+            f"avg_time={avg_time:.1f}s"
+        )
+        if type_dist:
+            dist_str = "  ".join(f"{t}={c}" for t, c in sorted(type_dist.items(), key=lambda x: -x[1]))
+            console.print(f"  Entity types: {dist_str}")
+
+
+def analyze_contradiction(all_results: dict):
+    """Print contradiction detection stats."""
+    console.rule("[bold]Contradiction Detection Analysis")
+
+    for model in _model_keys(all_results):
+        if "contradiction" not in all_results[model]:
+            continue
+        results = all_results[model]["contradiction"]
+        total = len(results)
+        if total == 0:
+            continue
+
+        yes_count = sum(1 for r in results if r["parsed"] == "YES")
+        no_count = sum(1 for r in results if r["parsed"] == "NO")
+        invalid_count = sum(1 for r in results if r["parsed"] not in ("YES", "NO"))
+        avg_time = sum(r["time"] for r in results) / total
+
+        console.print(
+            f"\n[cyan]{model}[/cyan]  "
+            f"YES={yes_count}  NO={no_count}  INVALID={invalid_count}  "
+            f"avg_time={avg_time:.1f}s"
         )
 
 
@@ -570,10 +732,18 @@ async def run_benchmark(models: list[str], db_path: str, sample_size: int, fresh
         console.print("  [dim]Running summarization...[/dim]")
         summarization = await benchmark_summarization(router, messages)
 
+        console.print("  [dim]Running entity extraction...[/dim]")
+        entity_extraction = await benchmark_entity_extraction_realdata(router, messages)
+
+        console.print("  [dim]Running contradiction detection...[/dim]")
+        contradiction = await benchmark_contradiction_realdata(router, db_path)
+
         all_results[model] = {
             "ranking": ranking,
             "importance": importance,
             "summarization": summarization,
+            "entity_extraction": entity_extraction,
+            "contradiction": contradiction,
         }
         console.print(f"  [green]Done with {model}[/green]\n")
 
@@ -598,6 +768,10 @@ async def run_benchmark(models: list[str], db_path: str, sample_size: int, fresh
     analyze_importance(all_results)
     console.print()
     analyze_summarization(all_results, messages)
+    console.print()
+    analyze_entity_extraction(all_results)
+    console.print()
+    analyze_contradiction(all_results)
 
 
 def main():
