@@ -587,15 +587,19 @@ class SQLiteStore:
         )
         await self._db.commit()
 
+    _FTS5_RESERVED = {'AND', 'OR', 'NOT', 'NEAR'}
+
     @staticmethod
     def _sanitize_fts_query(query: str) -> str:
-        """Strip FTS5 special characters to prevent syntax errors."""
+        """Strip FTS5 special characters and reserved keywords to prevent syntax errors."""
         # Remove characters that FTS5 interprets as operators
         sanitized = query.replace('"', ' ').replace("'", ' ')
-        for ch in '?*(){}[]^~:\\/<>!@#$%&+=|,;.':
+        for ch in '?*(){}[]^~:\\/<>!@#$%&+=|,;.-':
             sanitized = sanitized.replace(ch, ' ')
-        # Collapse whitespace and strip
-        return ' '.join(sanitized.split())
+        # Remove FTS5 reserved keywords (AND, OR, NOT, NEAR)
+        tokens = sanitized.split()
+        tokens = [t for t in tokens if t.upper() not in SQLiteStore._FTS5_RESERVED]
+        return ' '.join(tokens)
 
     async def search_fts(self, query: str, limit: int = 20) -> list[dict]:
         """Full-text search on memory summaries using FTS5.
