@@ -705,6 +705,173 @@ class Agent:
             return f" {args['paths'][:60]}"
         return ""
 
+    @staticmethod
+    def _should_auto_continue(text: str) -> bool:
+        """Detect if the LLM stopped but clearly intends to continue.
+
+        Catches two patterns:
+        1. Permission-asking: "Should I proceed?", "Want me to...", etc.
+        2. Continuation-intent: "Now let me verify...", "Next I'll...", etc.
+           where the LLM narrates its next action but doesn't actually do it.
+
+        Returns True if the LLM should be nudged to continue.
+        """
+        text_lower = text.lower().strip()
+
+        # Pattern 1: asking permission (question in the tail)
+        if "?" in text_lower[-200:]:
+            permission_patterns = [
+                "should i ", "want me to", "shall i ",
+                "would you like me to", "which direction",
+                "which approach", "which option", "ready to ",
+                "go ahead", "start coding", "start building",
+                "start implementing", "proceed with",
+                "do you want", "prefer option", "what do you think",
+                "let me know", "what happens",
+            ]
+            if any(p in text_lower for p in permission_patterns):
+                return True
+
+        # Pattern 2: continuation intent — the LLM says it's going to do
+        # something but stopped without actually doing it
+        # Check the last ~300 chars for these patterns
+        tail = text_lower[-300:]
+        continuation_patterns = [
+            "now let me ", "let me also ", "let me check",
+            "let me fix", "let me update", "let me verify",
+            "let me read", "let me look", "next i'll",
+            "next step", "next i need", "i still need to",
+            "i need to ", "i'm going to", "i'll also ",
+            "remaining:", "what remains", "todo:",
+            "need to fix", "need to wire", "need to hook",
+            "need to add", "need to update",
+        ]
+        if any(p in tail for p in continuation_patterns):
+            return True
+
+        return False
+
+    async def _continue_tool_loop(
+        self,
+        messages: list[dict],
+        client,
+        model: str,
+        tools,
+        chat_kwargs: dict,
+        initial_content: str,
+        initial_tool_calls: list,
+        tool_call_names: list[str],
+        remaining_iterations: int,
+        on_token=None,
+        task_type=None,
+    ) -> str:
+        """Continue the tool call loop after auto-nudge triggered new tool calls."""
+        # Process the initial tool calls from the nudge response
+        messages.append({"role": "assistant", "content": initial_content,
+                        "tool_calls": initial_tool_calls})
+
+        for tc in initial_tool_calls:
+            name, arguments = self._extract_tool_call_info(tc)
+            tool_call_names.append(name)
+            tool_call = ToolCall(name=name, arguments=arguments)
+
+            if on_token:
+                arg_hint = self._format_tool_arg_hint(tool_call)
+                on_token(f"\n\x1b[36m\x1b[1m[Tool: {tool_call.name}{arg_hint}]\x1b[0m\n")
+
+            result = await self.tool_registry.execute_tool_call(tool_call)
+            messages.append(result.to_ollama_message())
+
+            if result.success and name in ("read_file", "list_directory"):
+                read_path = arguments.get("path", "")
+                if read_path:
+                    self._files_read.add(read_path)
+            if result.success and name in ("write_file", "edit_file"):
+                file_path = arguments.get("path", "")
+                self._file_changes.append({
+                    "path": file_path, "tool": name,
+                    "turn_number": self._turn_number,
+                })
+
+            if on_token:
+                preview = result.result[:120].replace("\n", " ")
+                if result.success:
+                    on_token(f"\x1b[2m[{preview}]\x1b[0m\n\n")
+                else:
+                    on_token(f"\x1b[31m[{preview}]\x1b[0m\n\n")
+
+        # Continue the main loop for remaining iterations
+        full_response = ""
+        for iteration in range(max(remaining_iterations, 5)):
+            try:
+                endpoint = await self.endpoint_manager.get_endpoint_for_role(task_type)
+                if endpoint:
+                    endpoint.start_request()
+
+                response = await client.chat(
+                    messages=messages, model=model,
+                    tools=tools if iteration < max(remaining_iterations, 5) - 1 else None,
+                    **chat_kwargs,
+                )
+
+                content, new_tc = self._extract_response(response)
+
+                if new_tc and iteration < max(remaining_iterations, 5) - 1:
+                    messages.append({"role": "assistant", "content": content,
+                                    "tool_calls": new_tc})
+                    for tc in new_tc:
+                        name, arguments = self._extract_tool_call_info(tc)
+                        tool_call_names.append(name)
+                        tool_call = ToolCall(name=name, arguments=arguments)
+
+                        if on_token:
+                            arg_hint = self._format_tool_arg_hint(tool_call)
+                            on_token(f"\n\x1b[36m\x1b[1m[Tool: {tool_call.name}{arg_hint}]\x1b[0m\n")
+
+                        result = await self.tool_registry.execute_tool_call(tool_call)
+                        messages.append(result.to_ollama_message())
+
+                        if result.success and name in ("read_file", "list_directory"):
+                            read_path = arguments.get("path", "")
+                            if read_path:
+                                self._files_read.add(read_path)
+                        if result.success and name in ("write_file", "edit_file"):
+                            file_path = arguments.get("path", "")
+                            self._file_changes.append({
+                                "path": file_path, "tool": name,
+                                "turn_number": self._turn_number,
+                            })
+
+                        if on_token:
+                            preview = result.result[:120].replace("\n", " ")
+                            if result.success:
+                                on_token(f"\x1b[2m[{preview}]\x1b[0m\n\n")
+                            else:
+                                on_token(f"\x1b[31m[{preview}]\x1b[0m\n\n")
+
+                    if endpoint:
+                        endpoint.record_success(0)
+                    continue
+                else:
+                    full_response = content
+                    if on_token and content:
+                        on_token(content)
+                    if endpoint:
+                        endpoint.record_success(0)
+                    break
+            except Exception as e:
+                logger.error("Continue tool loop error: %s", e)
+                full_response = f"Error: {e}"
+                break
+            finally:
+                if endpoint:
+                    endpoint.complete_request()
+
+        if not full_response:
+            full_response = "[Completed tool calls — no final summary generated]"
+
+        return full_response
+
     async def chat(
         self,
         user_message: str,
@@ -950,6 +1117,42 @@ class Agent:
                 logger.error("Auto-continue failed: %s", e)
                 full_response = f"[Hit tool limit after {len(tool_call_names)} calls]"
 
+        # Auto-nudge: if we're in project mode and the LLM stopped mid-task
+        # (asking permission or narrating intent without acting), nudge it.
+        if (self.active_project and full_response and tool_call_names
+                and self._should_auto_continue(full_response)):
+            if on_token:
+                on_token("\n\x1b[2m[Auto-continuing...]\x1b[0m\n")
+            messages.append({"role": "assistant", "content": full_response})
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Yes, go ahead. Execute the full task autonomously. "
+                    "Do not ask for permission again — just do it."
+                ),
+            })
+            try:
+                response = await client.chat(
+                    messages=messages, model=model, tools=tools,
+                    **chat_kwargs,
+                )
+                content, new_tool_calls = self._extract_response(response)
+                if new_tool_calls:
+                    # The LLM wants to use tools — re-enter the tool loop
+                    full_response = await self._continue_tool_loop(
+                        messages, client, model, tools, chat_kwargs,
+                        content, new_tool_calls, tool_call_names,
+                        max_iterations - len(tool_call_names),
+                        on_token, task_type,
+                    )
+                elif content:
+                    full_response = content
+                    if on_token:
+                        on_token(content)
+            except Exception as e:
+                logger.error("Auto-nudge failed: %s", e)
+                # Keep original response
+
         # Event: llm_complete
         await self._log_event("llm_complete", {
             "endpoint": endpoint_name,
@@ -1147,20 +1350,35 @@ class Agent:
         # Build messages
         system_prompt = self.config.agent.system_prompt
         if self.active_project and self._project_context:
+            root_path = self.active_project.get("root_path", "")
             system_prompt += (
                 "\n\n--- PROJECT CONTEXT ---\n"
                 f"You are working on the project \"{self.active_project['name']}\".\n"
-                "Use grep_files to search for code patterns before making changes.\n"
-                "Use glob_files to discover relevant files.\n"
-                "Always read a file before editing it.\n"
-                "After making changes, run tests if a test framework is detected.\n"
-                "Use git_status, git_diff, git_add, git_commit for version control.\n"
-                "All relative file paths resolve against the project root.\n\n"
-                "IMPORTANT tool usage rules:\n"
+                f"Project root: {root_path}\n"
+                "All file tools (read_file, write_file, edit_file, list_directory) resolve "
+                "relative paths against this project root. Use relative paths like "
+                "'blipshell/ui/cli.py', NOT absolute paths.\n"
+                "The run_command tool also runs from the project root.\n\n"
+                "EXECUTION MODE: You are an autonomous coding agent. When given a task:\n"
+                "1. Execute the FULL task without stopping to ask for permission or confirmation.\n"
+                "2. Do NOT ask 'should I continue?', 'want me to...?', or 'which direction?'.\n"
+                "3. Make decisions yourself and proceed. If there are multiple valid approaches, pick the best one.\n"
+                "4. Only stop to ask the user if you genuinely cannot determine a critical requirement.\n"
+                "5. When you finish coding, summarize what you built and how to test it.\n\n"
+                "Tool usage:\n"
+                "- Use grep_files to search for code patterns before making changes.\n"
+                "- Use glob_files to discover relevant files.\n"
+                "- Always read a file before editing it.\n"
+                "- Use git_status, git_diff, git_add, git_commit for version control.\n"
                 "- Do NOT re-read files you have already read in this conversation.\n"
                 "- Do NOT run the same grep or glob search twice.\n"
-                "- Produce your final answer within 10 tool calls — do not explore endlessly.\n"
-                "- This is Windows: use 'dir' not 'ls', 'type' not 'cat'. Do not use 'wc' or 'grep' shell commands — use the grep_files tool instead.\n\n"
+                "- Produce your final answer within 15 tool calls — do not explore endlessly.\n\n"
+                "PLATFORM: This is Windows. Important:\n"
+                f"- The project root is: {root_path}\n"
+                "- Do NOT use Linux paths like /home/... or /usr/...\n"
+                "- Do NOT use 'cd' in run_command — the tool already runs from the project root.\n"
+                "- Use 'dir' not 'ls', 'type' not 'cat' in shell commands.\n"
+                "- Use the grep_files tool instead of shell 'grep' or 'wc'.\n\n"
                 + self._project_context
             )
 
