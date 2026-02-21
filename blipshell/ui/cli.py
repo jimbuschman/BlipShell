@@ -262,6 +262,8 @@ async def chat_loop(
             await asyncio.wait_for(agent.end_session(), timeout=30)
         except asyncio.TimeoutError:
             console.print("[yellow]Session cleanup timed out (30s). Data is safe, skipping summary/lessons.[/yellow]")
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            console.print("[yellow]Session cleanup interrupted. Data is safe.[/yellow]")
         except Exception as e:
             console.print(f"[yellow]Session cleanup error: {e}[/yellow]")
         console.print("[dim]Session saved. Goodbye![/dim]")
