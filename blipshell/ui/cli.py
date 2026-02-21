@@ -258,17 +258,33 @@ async def chat_loop(
 
     finally:
         console.print()
-        with console.status("[dim]Ending session...[/dim]", spinner="dots") as status:
-            def _on_status(msg: str):
-                status.update(f"[dim]{msg}[/dim]")
-            try:
-                await agent.end_session(on_status=_on_status)
-            except (KeyboardInterrupt, asyncio.CancelledError):
-                console.print("[yellow]Session cleanup interrupted. Data is safe.[/yellow]")
-            except Exception as e:
-                console.print(f"[yellow]Session cleanup error: {e}[/yellow]")
-        # Always clean up background tasks even if end_session was interrupted
-        await agent.force_cleanup()
+        # Suppress Ctrl+C during cleanup so it can finish.
+        # A second Ctrl+C will still force-quit.
+        import signal
+        _force_quit = False
+        _orig_handler = signal.getsignal(signal.SIGINT)
+
+        def _cleanup_sigint(sig, frame):
+            nonlocal _force_quit
+            if _force_quit:
+                raise KeyboardInterrupt
+            _force_quit = True
+            console.print("\n[yellow]Press Ctrl+C again to force quit.[/yellow]")
+
+        signal.signal(signal.SIGINT, _cleanup_sigint)
+        try:
+            with console.status("[dim]Ending session...[/dim]", spinner="dots") as status:
+                def _on_status(msg: str):
+                    status.update(f"[dim]{msg}[/dim]")
+                try:
+                    await agent.end_session(on_status=_on_status)
+                except Exception as e:
+                    console.print(f"[yellow]Session cleanup error: {e}[/yellow]")
+        except KeyboardInterrupt:
+            console.print("[yellow]Force quit.[/yellow]")
+        finally:
+            signal.signal(signal.SIGINT, _orig_handler)
+            await agent.force_cleanup()
         console.print("[dim]Session saved. Goodbye![/dim]")
 
 
