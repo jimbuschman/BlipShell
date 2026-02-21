@@ -237,6 +237,209 @@ class TestSessionLifecycle:
         assert len(lessons) >= 1
 
 
+class TestTagOverlapBoost:
+    """Test that tag overlap boosts search scores."""
+
+    async def test_tag_overlap_increases_score(
+        self, sqlite_store, mock_chroma, canned_router, memory_config
+    ):
+        """Memories with overlapping tags should score higher."""
+        session_id = await sqlite_store.create_session("Test")
+
+        # Create two memories
+        mem_tagged = Memory(
+            session_id=session_id, role="user",
+            content="I set up Docker containers for the Python project deployment pipeline",
+            summary="User set up Docker containers for Python project deployment",
+            memory_type=MemoryType.CONVERSATION, rank=4, importance=0.6,
+        )
+        mem_tagged_id = await sqlite_store.create_memory(mem_tagged)
+        await sqlite_store.tag_memory(mem_tagged_id, ["docker", "python"])
+
+        mem_untagged = Memory(
+            session_id=session_id, role="user",
+            content="I also looked at some random performance benchmarks online",
+            summary="User looked at performance benchmarks online",
+            memory_type=MemoryType.CONVERSATION, rank=4, importance=0.6,
+        )
+        mem_untagged_id = await sqlite_store.create_memory(mem_untagged)
+
+        # Both come from Chroma with same similarity
+        mock_chroma.search_memories.return_value = [
+            {"id": mem_tagged_id, "similarity": 0.7, "metadata": {}},
+            {"id": mem_untagged_id, "similarity": 0.7, "metadata": {}},
+        ]
+
+        search = MemorySearch(
+            sqlite=sqlite_store,
+            chroma=mock_chroma,
+            router=canned_router,
+            config=memory_config,
+        )
+        # Query contains "docker" which should overlap with the tagged memory
+        results = await search.search(
+            query="how did I set up docker containers for the project",
+            current_session_id=session_id + 1,
+            n_results=10,
+        )
+
+        tagged_result = [r for r in results if r.memory_id == mem_tagged_id]
+        untagged_result = [r for r in results if r.memory_id == mem_untagged_id]
+        assert len(tagged_result) == 1
+        assert len(untagged_result) == 1
+        # Tagged memory should have a higher boosted score due to tag overlap
+        assert tagged_result[0].boosted_score >= untagged_result[0].boosted_score
+        assert tagged_result[0].tag_boost > 0
+
+
+class TestLessonSearchEnrichment:
+    """Test that lessons are found via search and usable in recall."""
+
+    async def test_create_and_retrieve_lesson(self, sqlite_store):
+        """Lessons stored in SQLite can be retrieved."""
+        session_id = await sqlite_store.create_session("Test")
+        lesson_id = await sqlite_store.create_lesson(
+            content="User prefers direct troubleshooting steps over lengthy explanations.",
+            summary="Prefer direct troubleshooting over lengthy explanations",
+            source_session_id=session_id,
+        )
+        assert lesson_id is not None
+
+        lessons = await sqlite_store.get_all_lessons()
+        assert len(lessons) >= 1
+        found = [l for l in lessons if l.id == lesson_id]
+        assert len(found) == 1
+        assert "troubleshooting" in found[0].content
+
+    async def test_lesson_tagging(self, sqlite_store):
+        """Lessons can be tagged and tags retrieved."""
+        session_id = await sqlite_store.create_session("Test")
+        lesson_id = await sqlite_store.create_lesson(
+            content="When discussing hardware projects, always clarify which specific board.",
+            summary="Clarify hardware board when discussing projects",
+            source_session_id=session_id,
+        )
+        await sqlite_store.tag_lesson(lesson_id, ["hardware", "communication"])
+
+        # Verify tags exist (no direct get_lesson_tags, but we can check the junction table)
+        cursor = await sqlite_store._db.execute(
+            "SELECT COUNT(*) as cnt FROM lesson_tags WHERE lesson_id = ?",
+            (lesson_id,),
+        )
+        row = await cursor.fetchone()
+        assert row["cnt"] == 2
+
+
+class TestSearchStatsEnhanced:
+    """Test the enhanced search statistics."""
+
+    async def test_filter_counts_in_stats(
+        self, sqlite_store, mock_chroma, canned_router, memory_config
+    ):
+        """Search stats should include filtering breakdown."""
+        session_id = await sqlite_store.create_session("Test")
+
+        # Create a low-rank memory (should be filtered)
+        mem_low = Memory(
+            session_id=session_id, role="user",
+            content="ok thanks",
+            summary="User said ok thanks",
+            memory_type=MemoryType.CONVERSATION, rank=1, importance=0.1,
+        )
+        mem_low_id = await sqlite_store.create_memory(mem_low)
+
+        # Create a high-rank memory
+        mem_high = Memory(
+            session_id=session_id, role="user",
+            content="I decided to use PostgreSQL for the project database",
+            summary="User decided to use PostgreSQL for the project",
+            memory_type=MemoryType.CONVERSATION, rank=4, importance=0.7,
+        )
+        mem_high_id = await sqlite_store.create_memory(mem_high)
+
+        mock_chroma.search_memories.return_value = [
+            {"id": mem_high_id, "similarity": 0.8, "metadata": {}},
+            {"id": mem_low_id, "similarity": 0.7, "metadata": {}},  # rank too low
+        ]
+
+        search = MemorySearch(
+            sqlite=sqlite_store,
+            chroma=mock_chroma,
+            router=canned_router,
+            config=memory_config,
+        )
+        results = await search.search(
+            query="what database did I choose for the project",
+            current_session_id=session_id + 1,
+            n_results=10,
+        )
+
+        stats = search.last_search_stats
+        assert stats is not None
+        assert "filtered_by_similarity" in stats
+        assert "filtered_by_rank" in stats
+        assert "filtered_by_session" in stats
+        assert stats["filtered_by_rank"] >= 1  # low-rank memory should be filtered
+        assert "entity_names" in stats
+        assert isinstance(stats["entity_names"], list)
+
+
+class TestFullConversationFlow:
+    """End-to-end test: message → store → process → search → retrieve."""
+
+    async def test_message_stored_then_searchable(
+        self, sqlite_store, mock_chroma, canned_router, memory_config
+    ):
+        """A processed message should be findable via FTS search."""
+        from blipshell.memory.processor import MemoryProcessor
+
+        processor = MemoryProcessor(
+            sqlite=sqlite_store, chroma=mock_chroma,
+            router=canned_router, config=memory_config,
+        )
+
+        # Simulate a user sending a meaningful message
+        session_id = await sqlite_store.create_session("Integration Test")
+        mem_id = await processor.process_message(
+            text="I want to learn about Kubernetes cluster management and pod orchestration for my microservices project",
+            role="user",
+            session_id=session_id,
+        )
+        assert mem_id is not None
+
+        # Verify memory is fully processed
+        memory = await sqlite_store.get_memory(mem_id)
+        assert memory.summary is not None
+        assert memory.rank >= 1
+        assert memory.importance > 0.0
+
+        # Verify FTS search finds it
+        fts_results = await sqlite_store.search_fts("kubernetes", limit=10)
+        fts_ids = [r["id"] for r in fts_results]
+        assert mem_id in fts_ids
+
+        # Simulate second message that should recall first
+        mock_chroma.search_memories.return_value = [
+            {"id": mem_id, "similarity": 0.85, "metadata": {}},
+        ]
+
+        search = MemorySearch(
+            sqlite=sqlite_store,
+            chroma=mock_chroma,
+            router=canned_router,
+            config=memory_config,
+        )
+        results = await search.search(
+            query="tell me about kubernetes and microservices",
+            current_session_id=session_id + 1,
+            n_results=10,
+        )
+
+        assert len(results) >= 1
+        found = [r for r in results if r.memory_id == mem_id]
+        assert len(found) == 1
+
+
 class TestTurnEvents:
     """Test that conversation flow events are logged."""
 

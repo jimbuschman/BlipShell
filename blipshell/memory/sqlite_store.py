@@ -592,7 +592,7 @@ class SQLiteStore:
         """Strip FTS5 special characters to prevent syntax errors."""
         # Remove characters that FTS5 interprets as operators
         sanitized = query.replace('"', ' ').replace("'", ' ')
-        for ch in '?*(){}[]^~:\\/<>!@#$%&+=|,;':
+        for ch in '?*(){}[]^~:\\/<>!@#$%&+=|,;.':
             sanitized = sanitized.replace(ch, ' ')
         # Collapse whitespace and strip
         return ' '.join(sanitized.split())

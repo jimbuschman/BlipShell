@@ -150,17 +150,22 @@ class MemorySearch:
 
         # Step 4+5: Filter and boost
         results = []
+        filtered_by_similarity = 0
+        filtered_by_session = 0
+        filtered_by_rank = 0
         for cr in chroma_results:
             memory_id = cr["id"]
             similarity = cr["similarity"]
 
             # Skip if similarity too low
             if similarity < self.similarity_threshold:
+                filtered_by_similarity += 1
                 continue
 
             # Skip current session memories
             metadata = cr.get("metadata", {})
             if current_session_id and metadata.get("session_id") == str(current_session_id):
+                filtered_by_session += 1
                 continue
 
             # Load full memory from SQLite for rank check
@@ -170,6 +175,7 @@ class MemorySearch:
 
             # Filter by rank
             if memory.rank < self.min_rank:
+                filtered_by_rank += 1
                 continue
 
             # Temporal decay — recent memories score higher, old unused ones fade
@@ -208,8 +214,10 @@ class MemorySearch:
         # Step 6: Entity graph expansion — find memories connected via entities
         existing_ids = {r.memory_id for r in results}
         entity_memory_ids = []
+        matched_entity_names: list[str] = []
+        connected_entity_count = 0
         try:
-            entity_memory_ids = await self._expand_via_entities(query)
+            entity_memory_ids, matched_entity_names, connected_entity_count = await self._expand_via_entities(query)
             for eid in entity_memory_ids:
                 if eid in existing_ids:
                     continue
@@ -248,13 +256,18 @@ class MemorySearch:
             "chroma_hits": len(chroma_results),
             "fts_hits": len(fts_results),
             "entity_hits": len(entity_memory_ids),
+            "entity_names": matched_entity_names,
+            "connected_entities": connected_entity_count,
+            "filtered_by_similarity": filtered_by_similarity,
+            "filtered_by_rank": filtered_by_rank,
+            "filtered_by_session": filtered_by_session,
             "post_filter": len(results),
             "final_returned": len(final),
         }
 
         return final
 
-    async def _expand_via_entities(self, query: str) -> list[int]:
+    async def _expand_via_entities(self, query: str) -> tuple[list[int], list[str], int]:
         """Find memory IDs connected to entities mentioned in the query.
 
         1. Load all known entity names (fast — typically hundreds, not millions)
@@ -262,28 +275,32 @@ class MemorySearch:
         3. Get their entity IDs
         4. Get connected entity IDs via relationships
         5. Get memory IDs mentioning any of these entities
+
+        Returns:
+            (memory_ids, matched_entity_names, connected_entity_count)
         """
         entity_names = await self.sqlite.get_all_entity_names()
         if not entity_names:
-            return []
+            return [], [], 0
 
         # Find entity names present in the query (case-insensitive substring)
         query_lower = query.lower()
         matched_names = [name for name in entity_names if name in query_lower]
         if not matched_names:
-            return []
+            return [], [], 0
 
         # Get entity IDs for matched names
         entity_ids = await self.sqlite.get_entity_ids_by_names(matched_names)
         if not entity_ids:
-            return []
+            return [], matched_names, 0
 
         # Get connected entities via relationships
         connected_ids = await self.sqlite.get_connected_entity_ids(entity_ids)
         all_entity_ids = entity_ids + connected_ids
 
         # Get memory IDs mentioning any of these entities
-        return await self.sqlite.get_memory_ids_for_entities(all_entity_ids)
+        memory_ids = await self.sqlite.get_memory_ids_for_entities(all_entity_ids)
+        return memory_ids, matched_names, len(connected_ids)
 
     async def search_core_memories(self, query: str, n_results: int = 10) -> list[dict]:
         """Search core memories by semantic similarity."""

@@ -1,10 +1,11 @@
-"""Tests for the endpoint manager (llm/endpoints.py)."""
+"""Tests for the endpoint manager (llm/endpoints.py) and LLM router."""
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from blipshell.llm.endpoints import Endpoint, EndpointManager
-from blipshell.models.config import EndpointConfig, LLMConfig
+from blipshell.llm.router import LLMRouter, TaskType
+from blipshell.models.config import EndpointConfig, LLMConfig, ModelsConfig
 
 
 @pytest.fixture
@@ -156,3 +157,63 @@ class TestEndpointManager:
         ep2 = await endpoint_manager.get_endpoint_for_role("reasoning")
         assert ep1 is not None
         assert ep2 is not None
+
+
+class TestLLMRouter:
+    """Tests for the LLM router — model selection, failure tracking, fallback."""
+
+    @pytest.fixture
+    def router(self, endpoint_configs):
+        models = ModelsConfig(
+            reasoning="qwen3:14b",
+            tool_calling="glm-5:cloud",
+            coding="qwen3-coder:480b-cloud",
+            summarization="glm4:latest",
+            ranking="qwen2.5:14b",
+            importance="qwen3:14b",
+            embedding="nomic-embed-text",
+            tool_calling_fallback="gpt-oss:latest",
+            coding_fallback="gpt-oss:latest",
+            reasoning_fallback="gpt-oss:latest",
+        )
+        mgr = EndpointManager(endpoint_configs, LLMConfig())
+        return LLMRouter(models, mgr)
+
+    def test_get_model(self, router):
+        assert router.get_model(TaskType.TOOL_CALLING) == "glm-5:cloud"
+        assert router.get_model(TaskType.CODING) == "qwen3-coder:480b-cloud"
+        assert router.get_model(TaskType.REASONING) == "qwen3:14b"
+        assert router.get_model(TaskType.SUMMARIZATION) == "glm4:latest"
+
+    def test_get_fallback_model(self, router):
+        assert router.get_fallback_model(TaskType.TOOL_CALLING) == "gpt-oss:latest"
+        assert router.get_fallback_model(TaskType.CODING) == "gpt-oss:latest"
+        assert router.get_fallback_model(TaskType.EMBEDDING) is None  # no fallback
+
+    def test_mark_model_failed(self, router):
+        assert not router.is_model_failed("glm-5:cloud")
+        router.mark_model_failed("glm-5:cloud")
+        assert router.is_model_failed("glm-5:cloud")
+
+    def test_clear_failed_models(self, router):
+        router.mark_model_failed("glm-5:cloud")
+        router.mark_model_failed("qwen3-coder:480b-cloud")
+        assert router.is_model_failed("glm-5:cloud")
+        assert router.is_model_failed("qwen3-coder:480b-cloud")
+
+        router.clear_failed_models()
+        assert not router.is_model_failed("glm-5:cloud")
+        assert not router.is_model_failed("qwen3-coder:480b-cloud")
+
+    def test_clear_empty_is_noop(self, router):
+        """Clearing when nothing is failed should be silent."""
+        router.clear_failed_models()  # should not raise
+
+    def test_unknown_task_type_defaults_to_reasoning(self, router):
+        model = router.get_model("unknown_task")
+        assert model == "qwen3:14b"  # defaults to reasoning model
+
+    async def test_get_model_and_client(self, router):
+        model, client = await router.get_model_and_client(TaskType.TOOL_CALLING)
+        assert model == "glm-5:cloud"
+        assert client is not None

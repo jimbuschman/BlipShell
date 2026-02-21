@@ -833,6 +833,18 @@ async def _print_flow(agent: Agent, turn: int | None = None):
                 console.print(f"    ChromaDB hits: {data.get('chroma_hits', '?')}")
                 console.print(f"    FTS5 hits: {data.get('fts_hits', '?')}")
                 console.print(f"    Entity hits: {data.get('entity_hits', '?')}")
+                entity_names = data.get("entity_names", [])
+                if entity_names:
+                    console.print(f"    Entity names matched: {', '.join(entity_names[:10])}")
+                    connected = data.get("connected_entities", 0)
+                    if connected:
+                        console.print(f"    Connected entities: {connected}")
+                # Filtering breakdown
+                f_sim = data.get("filtered_by_similarity", 0)
+                f_rank = data.get("filtered_by_rank", 0)
+                f_sess = data.get("filtered_by_session", 0)
+                if f_sim or f_rank or f_sess:
+                    console.print(f"    Filtered: {f_sim} by similarity, {f_rank} by rank, {f_sess} by session")
                 console.print(f"    Post-filter: {data.get('post_filter', '?')}")
                 console.print(f"    Final returned: {data.get('final_returned', '?')}")
                 console.print(f"    Memories used: {data.get('memory_results', '?')}")
@@ -846,10 +858,18 @@ async def _print_flow(agent: Agent, turn: int | None = None):
                 console.print(f"    Context limit: {data.get('context_limit', '?'):,} tokens")
                 console.print(f"    Available: {data.get('available_tokens', '?'):,} tokens")
                 console.print(f"    Total items: {data.get('total_context_items', '?')}")
+                pool_budgets = data.get("pool_budgets", {})
                 pool_usage = data.get("pool_usage", {})
-                if pool_usage:
-                    for pool, stats in pool_usage.items():
-                        console.print(f"      {pool}: {stats['items']} items, {stats['tokens']} tokens")
+                all_pools = sorted(set(list(pool_budgets.keys()) + list(pool_usage.keys())))
+                if all_pools:
+                    console.print("    [bold]Pool breakdown:[/bold]")
+                    for pool in all_pools:
+                        budget = pool_budgets.get(pool, "?")
+                        usage = pool_usage.get(pool, {})
+                        items = usage.get("items", 0)
+                        tokens = usage.get("tokens", 0)
+                        budget_str = f"{budget:,}" if isinstance(budget, int) else str(budget)
+                        console.print(f"      {pool}: {items} items, {tokens} tokens (budget: {budget_str})")
 
             elif etype == "llm_complete":
                 console.print(f"\n  [cyan]llm_complete[/cyan]")
@@ -886,6 +906,7 @@ async def _print_flow(agent: Agent, turn: int | None = None):
         table.add_column("Route")
         table.add_column("Profile")
         table.add_column("Search", justify="right")
+        table.add_column("Sources")
         table.add_column("Context", justify="right")
         table.add_column("Model")
         table.add_column("Endpoint")
@@ -900,6 +921,14 @@ async def _print_flow(agent: Agent, turn: int | None = None):
             llm = evts.get("llm_complete", {})
 
             search_str = f"{search.get('final_returned', '?')}m/{search.get('lesson_results', '?')}l"
+            # Search source breakdown
+            if search.get("skipped"):
+                sources_str = f"[dim]{search['skipped']}[/dim]"
+            else:
+                chroma = search.get("chroma_hits", 0)
+                fts = search.get("fts_hits", 0)
+                entity = search.get("entity_hits", 0)
+                sources_str = f"c:{chroma} f:{fts} e:{entity}"
             ctx_str = str(ctx.get("total_context_items", "?"))
             tools = llm.get("tool_calls", [])
             tools_str = ", ".join(tools) if tools else "-"
@@ -909,6 +938,7 @@ async def _print_flow(agent: Agent, turn: int | None = None):
                 start.get("route", "?"),
                 ctx.get("query_profile", "?"),
                 search_str,
+                sources_str,
                 ctx_str,
                 llm.get("model", "?"),
                 llm.get("endpoint", "?"),

@@ -24,7 +24,7 @@ from rich.console import Console
 
 console = Console()
 
-SUITE_CHOICES = ["pipeline", "reasoning", "realdata"]
+SUITE_CHOICES = ["pipeline", "reasoning", "realdata", "validate"]
 
 
 async def run_pipeline(models: list[str]) -> dict:
@@ -72,6 +72,51 @@ async def run_realdata(models: list[str], db_path: str, sample_size: int) -> dic
         return {"status": "error", "error": str(e), "time": elapsed}
 
 
+async def run_validate(config_path: str) -> dict:
+    """Run prompt validation against configured production models."""
+    console.rule("[bold magenta]Suite: Validate (prompt format check with production models)")
+    start = time.perf_counter()
+    try:
+        from scripts.validate_prompts import (
+            ValidationResult,
+            validate_contradiction,
+            validate_entity_extraction,
+            validate_importance,
+            validate_lesson_extraction,
+            validate_rank_and_importance,
+            validate_ranking,
+            validate_summarization,
+        )
+        from blipshell.core.config import ConfigManager
+        from blipshell.llm.endpoints import EndpointManager
+        from blipshell.llm.router import LLMRouter
+
+        config_mgr = ConfigManager(config_path)
+        config = config_mgr.config
+        endpoint_manager = EndpointManager(config.endpoints, config.llm)
+        router = LLMRouter(config.models, endpoint_manager)
+        result = ValidationResult()
+
+        await validate_ranking(router, result)
+        await validate_importance(router, result)
+        await validate_summarization(router, result)
+        await validate_entity_extraction(router, result)
+        await validate_contradiction(router, result)
+        await validate_lesson_extraction(router, result)
+        await validate_rank_and_importance(router, result)
+
+        result.print_report()
+        elapsed = round(time.perf_counter() - start, 1)
+        status = "ok" if result.all_passed else "error"
+        passed = sum(1 for r in result.results if r["passed"])
+        total = len(result.results)
+        return {"status": status, "time": elapsed, "passed": passed, "total": total}
+    except Exception as e:
+        elapsed = round(time.perf_counter() - start, 1)
+        console.print(f"[red]Validate suite error: {e}[/red]")
+        return {"status": "error", "error": str(e), "time": elapsed}
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Unified benchmark runner for all suites")
     parser.add_argument("--suite", nargs="*", choices=SUITE_CHOICES,
@@ -82,6 +127,8 @@ async def main():
                         help="Path to blipshell.db for realdata suite")
     parser.add_argument("--sample", type=int, default=50,
                         help="Sample size for realdata suite (default: 50)")
+    parser.add_argument("--config", default="config.yaml",
+                        help="Config file path (for validate suite)")
     args = parser.parse_args()
 
     suites = args.suite or SUITE_CHOICES
@@ -111,6 +158,10 @@ async def main():
         from tests.benchmark_realdata import BENCHMARK_MODELS as REALDATA_MODELS
         models = args.models or REALDATA_MODELS
         summary["realdata"] = await run_realdata(models, args.db, args.sample)
+        console.print()
+
+    if "validate" in suites:
+        summary["validate"] = await run_validate(args.config)
         console.print()
 
     total_elapsed = round(time.perf_counter() - total_start, 1)
