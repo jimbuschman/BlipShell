@@ -122,7 +122,7 @@ class TaskPlanner:
         # Generate plan via LLM
         prompt = generate_plan(user_request)
         raw_response = await self.router.generate(
-            TaskType.REASONING, prompt, system=UTILITY_SYSTEM_PROMPT,
+            TaskType.TOOL_CALLING, prompt, system=UTILITY_SYSTEM_PROMPT,
         )
 
         # Parse steps

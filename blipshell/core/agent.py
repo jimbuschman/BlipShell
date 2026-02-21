@@ -547,17 +547,17 @@ class Agent:
             await self._log_event("context_built", self._last_context_stats)
 
         # Get model and client (with fallback if cloud is down)
-        model = self.router.get_model(TaskType.REASONING)
-        client = await self.router.get_client(TaskType.REASONING)
+        model = self.router.get_model(TaskType.TOOL_CALLING)
+        client = await self.router.get_client(TaskType.TOOL_CALLING)
         using_fallback = False
         if not client:
             # Try fallback model
-            fallback = self.router.get_fallback_model(TaskType.REASONING)
+            fallback = self.router.get_fallback_model(TaskType.TOOL_CALLING)
             if fallback:
                 logger.warning("Primary endpoint down, using fallback model '%s'", fallback)
                 model = fallback
                 using_fallback = True
-                client = await self.router.get_client(TaskType.REASONING)
+                client = await self.router.get_client(TaskType.TOOL_CALLING)
             if not client:
                 return "Error: No available LLM endpoint."
 
@@ -572,7 +572,7 @@ class Agent:
         for iteration in range(max_iterations + 1):
             endpoint = None
             try:
-                endpoint = await self.endpoint_manager.get_endpoint_for_role(TaskType.REASONING)
+                endpoint = await self.endpoint_manager.get_endpoint_for_role(TaskType.TOOL_CALLING)
                 if endpoint:
                     endpoint.start_request()
                     self._last_endpoint_used = endpoint.name
@@ -763,7 +763,7 @@ class Agent:
 
         # Use endpoint-specific context window if available
         context_limit = self.endpoint_manager.get_context_tokens_for_role(
-            TaskType.REASONING,
+            TaskType.TOOL_CALLING,
             default=self.config.memory.total_context_tokens,
         )
 

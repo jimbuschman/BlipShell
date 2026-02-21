@@ -168,8 +168,8 @@ class TaskExecutor:
         ]
 
         # Get model and client
-        model = self.router.get_model(TaskType.REASONING)
-        client = await self.router.get_client(TaskType.REASONING)
+        model = self.router.get_model(TaskType.TOOL_CALLING)
+        client = await self.router.get_client(TaskType.TOOL_CALLING)
         if not client:
             raise RuntimeError("No available LLM endpoint")
 
@@ -224,7 +224,7 @@ class TaskExecutor:
         """
         prompt = summarize_plan_results(user_request, step_results)
         return await self.router.generate(
-            TaskType.REASONING, prompt, system=UTILITY_SYSTEM_PROMPT,
+            TaskType.TOOL_CALLING, prompt, system=UTILITY_SYSTEM_PROMPT,
         )
 
     @staticmethod
