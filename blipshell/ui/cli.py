@@ -29,6 +29,36 @@ from blipshell.models.session import MessageRole
 console = Console()
 
 
+async def _poll_for_escape():
+    """Poll for Esc keypress. Returns when Esc is detected.
+
+    Uses msvcrt on Windows. On other platforms, blocks forever (no-op).
+    """
+    try:
+        import msvcrt
+    except ImportError:
+        await asyncio.Event().wait()
+        return
+
+    while True:
+        if msvcrt.kbhit():
+            key = msvcrt.getch()
+            if key == b'\x1b':
+                return
+            # Discard other keypresses so they don't bleed into next input
+        await asyncio.sleep(0.05)
+
+
+def _drain_keyboard():
+    """Drain any buffered keypresses to prevent bleed-through."""
+    try:
+        import msvcrt
+        while msvcrt.kbhit():
+            msvcrt.getch()
+    except ImportError:
+        pass
+
+
 def setup_logging(verbose: bool = False):
     """Configure logging."""
     level = logging.DEBUG if verbose else logging.WARNING
@@ -116,7 +146,7 @@ async def chat_loop(
         f"[bold cyan]BlipShell[/bold cyan] v0.1.0\n"
         f"Session #{sid}"
         + (f" | Project: {project}" if project else "")
-        + f"\nType [bold]/help[/bold] for commands, [bold]/quit[/bold] to exit"
+        + f"\nType [bold]/help[/bold] for commands, [bold]/quit[/bold] to exit, [bold]Esc[/bold] to cancel"
         + f"\nThinking: [bold]{'ON' if agent.think_enabled else 'OFF'}[/bold]",
         border_style="cyan",
     ))
@@ -244,10 +274,11 @@ async def chat_loop(
                 force_plan = True
                 message = user_input[6:]
 
-            # Stream response with thinking spinner
+            # Stream response with thinking spinner (Esc to cancel)
             response_parts = []
             thinking_status = console.status("[dim]Thinking...[/dim]", spinner="dots")
             thinking_active = True
+            cancelled = False
 
             def on_token(token: str):
                 nonlocal thinking_active
@@ -260,13 +291,49 @@ async def chat_loop(
 
             console.print()  # blank line before response
             thinking_status.start()
+
+            chat_task = asyncio.create_task(
+                agent.chat(message, on_token=on_token, force_plan=force_plan)
+            )
+            esc_task = asyncio.create_task(_poll_for_escape())
+
             try:
-                response = await agent.chat(message, on_token=on_token, force_plan=force_plan)
+                done, pending = await asyncio.wait(
+                    {chat_task, esc_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in pending:
+                    task.cancel()
+                for task in pending:
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+                if chat_task in done and not chat_task.cancelled():
+                    try:
+                        response = chat_task.result()
+                    except Exception as e:
+                        response = f"Error: {e}"
+                else:
+                    cancelled = True
+                    response = "".join(response_parts)
+            except Exception as e:
+                response = f"Error: {e}"
             finally:
                 if thinking_active:
                     thinking_status.stop()
+                _drain_keyboard()
 
-            if not response_parts:
+            if cancelled:
+                console.print("\n[dim][Cancelled][/dim]")
+                # Save partial response so conversation history stays coherent
+                if response_parts:
+                    agent.session_manager.add_message(
+                        MessageRole.ASSISTANT,
+                        "".join(response_parts) + " [cancelled]",
+                    )
+            elif not response_parts:
                 # Response wasn't streamed (e.g., tool calls happened)
                 console.print(Markdown(response))
             else:
@@ -562,9 +629,11 @@ async def _handle_code_command(agent: Agent, args_str: str):
     thinking_status = console.status("[dim]Thinking...[/dim]", spinner="dots")
     thinking_active = True
     thinking_status.start()
+    full_response = []
+    code_cancelled = False
 
-    try:
-        full_response = []
+    async def _stream_code():
+        nonlocal thinking_active
         async for chunk in client.chat_stream(messages=messages, model=model, **stream_kwargs):
             msg = getattr(chunk, "message", None)
             if msg:
@@ -582,26 +651,54 @@ async def _handle_code_command(agent: Agent, args_str: str):
                 sys.stdout.flush()
                 full_response.append(content)
 
+    code_task = asyncio.create_task(_stream_code())
+    esc_task = asyncio.create_task(_poll_for_escape())
+
+    try:
+        done, pending = await asyncio.wait(
+            {code_task, esc_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        for task in pending:
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        if code_task in done and not code_task.cancelled():
+            try:
+                code_task.result()  # re-raise any exception
+            except Exception as e:
+                console.print(f"\n[red]Code review failed: {e}[/red]")
+                return
+        else:
+            code_cancelled = True
+    except Exception as e:
+        console.print(f"\n[red]Code review failed: {e}[/red]")
+        return
+    finally:
         if thinking_active:
             thinking_status.stop()
-            thinking_active = False
+        _drain_keyboard()
+
+    if code_cancelled:
+        console.print("\n[dim][Cancelled][/dim]")
+    else:
         console.print()  # newline after streaming
 
-        # Inject result into session context so the main LLM knows about it
-        if agent.session_manager and full_response:
-            result_text = "".join(full_response)
-            file_names = ", ".join(files_content.keys())
-            context_msg = (
-                f"[Code review completed] The user ran /code on {file_names}.\n"
-                f"Instruction: {instruction}\n"
-                f"Result:\n{result_text[:2000]}"
-            )
-            agent.session_manager.add_message(MessageRole.SYSTEM, context_msg)
-
-    except Exception as e:
-        if thinking_active:
-            thinking_status.stop()
-        console.print(f"\n[red]Code review failed: {e}[/red]")
+    # Inject result into session context so the main LLM knows about it
+    if agent.session_manager and full_response:
+        result_text = "".join(full_response)
+        file_names = ", ".join(files_content.keys())
+        suffix = " [cancelled]" if code_cancelled else ""
+        context_msg = (
+            f"[Code review completed] The user ran /code on {file_names}.\n"
+            f"Instruction: {instruction}\n"
+            f"Result:\n{result_text[:2000]}{suffix}"
+        )
+        agent.session_manager.add_message(MessageRole.SYSTEM, context_msg)
 
 
 async def _submit_offload(agent: Agent, message: str):
@@ -1192,6 +1289,7 @@ def _print_help():
         "[bold]/workflow show <n>[/bold] - Show workflow steps\n"
         "[bold]/workflow run <n>[/bold]  - Run a workflow\n"
         "[bold]/help[/bold]              - Show this help\n\n"
+        "[dim]Press [bold]Esc[/bold] during a response to cancel the LLM call[/dim]\n"
         "[dim]Prefix with !plan to force planning: !plan <message>[/dim]",
         title="Commands",
         border_style="blue",
