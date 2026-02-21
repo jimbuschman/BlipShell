@@ -121,6 +121,11 @@ class AgentConfig(BaseModel):
         "When a user asks you to search or you need current information, ALWAYS call web_search."
     )
     stream: bool = True
+    # Tool approval: tools listed here require user confirmation before execution
+    tools_requiring_approval: list[str] = Field(default_factory=lambda: [
+        "write_file", "edit_file", "run_command",
+    ])
+    auto_approve_tools: bool = False  # bypass approval for all tools
 
 
 class ShellToolConfig(BaseModel):

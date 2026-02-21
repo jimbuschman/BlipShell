@@ -35,6 +35,7 @@ class ChromaStore:
         self._memories: Optional[chromadb.Collection] = None
         self._core_memories: Optional[chromadb.Collection] = None
         self._lessons: Optional[chromadb.Collection] = None
+        self._closed = False
 
     def initialize(self):
         """Initialize ChromaDB client and collections."""
@@ -76,8 +77,30 @@ class ChromaStore:
             self._lessons.count(),
         )
 
+    def close(self):
+        """Close ChromaDB and prevent further writes.
+
+        Must be called before process exit to avoid HNSW index corruption
+        from in-flight writes.
+        """
+        self._closed = True
+        self._memories = None
+        self._core_memories = None
+        self._lessons = None
+        if self._client is not None:
+            try:
+                # PersistentClient doesn't expose close(), but clearing
+                # references ensures no further writes go through.
+                del self._client
+            except Exception:
+                pass
+            self._client = None
+        logger.info("ChromaDB closed")
+
     def _require_collections(self):
-        """Raise if collections haven't been initialized."""
+        """Raise if collections haven't been initialized or store is closed."""
+        if self._closed:
+            raise RuntimeError("ChromaStore is closed — cannot perform operations")
         if self._memories is None or self._core_memories is None or self._lessons is None:
             raise RuntimeError("ChromaStore not initialized — call initialize() first")
 

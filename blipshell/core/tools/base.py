@@ -4,9 +4,12 @@ import logging
 import re
 import time
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Callable, Awaitable, Optional
 
 from blipshell.models.tools import ToolCall, ToolDefinition, ToolParameter, ToolResult
+
+# Type for the approval callback: (tool_name, arguments) -> approved?
+ApprovalCallback = Callable[[str, dict[str, Any]], Awaitable[bool]]
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +84,8 @@ class ToolRegistry:
     def __init__(self):
         self._tools: dict[str, Tool] = {}
         self._tool_groups: dict[str, str] = {}  # tool_name -> group
+        self._approval_callback: Optional[ApprovalCallback] = None
+        self._tools_requiring_approval: set[str] = set()
 
     def register(self, tool: Tool, group: str = "general"):
         """Register a tool with a group name."""
@@ -93,6 +98,22 @@ class ToolRegistry:
         """Unregister a tool by name."""
         self._tools.pop(name, None)
         self._tool_groups.pop(name, None)
+
+    def set_approval_callback(
+        self,
+        callback: ApprovalCallback,
+        tools_requiring_approval: set[str],
+    ):
+        """Configure tool approval.
+
+        Args:
+            callback: Async function(tool_name, arguments) -> bool.
+                      Called before executing tools in the approval set.
+                      Returns True to allow, False to deny.
+            tools_requiring_approval: Set of tool names that require approval.
+        """
+        self._approval_callback = callback
+        self._tools_requiring_approval = tools_requiring_approval
 
     def get_tool(self, name: str) -> Tool | None:
         """Get a tool by name."""
@@ -117,7 +138,11 @@ class ToolRegistry:
         return list(self._tools.keys())
 
     async def execute_tool_call(self, tool_call: ToolCall) -> ToolResult:
-        """Execute a tool call and return the result."""
+        """Execute a tool call and return the result.
+
+        If the tool requires approval and a callback is set, the callback
+        is invoked first. The tool is only executed if approved.
+        """
         tool = self._tools.get(tool_call.name)
         if not tool:
             return ToolResult(
@@ -126,6 +151,27 @@ class ToolRegistry:
                 result=f"Error: Unknown tool '{tool_call.name}'",
                 success=False,
             )
+
+        # Check approval for dangerous tools
+        if (
+            self._approval_callback
+            and tool_call.name in self._tools_requiring_approval
+        ):
+            try:
+                approved = await self._approval_callback(
+                    tool_call.name, tool_call.arguments,
+                )
+            except Exception as e:
+                logger.error("Approval callback error: %s", e)
+                approved = False
+
+            if not approved:
+                return ToolResult(
+                    tool_call_id=tool_call.id,
+                    name=tool_call.name,
+                    result=f"Tool '{tool_call.name}' was denied by the user.",
+                    success=False,
+                )
 
         start = time.monotonic()
         try:

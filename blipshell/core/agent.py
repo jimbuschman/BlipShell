@@ -118,6 +118,7 @@ class Agent:
         self.workflow_executor: Optional[WorkflowExecutor] = None
 
         self._health_check_task: Optional[asyncio.Task] = None
+        self._background_tasks: set[asyncio.Task] = set()
         self._last_endpoint_used: Optional[str] = None
         self._initialized = False
         self.think_enabled: bool = False  # /think toggle — off for fast simple chat, complex auto-enables
@@ -732,8 +733,10 @@ class Agent:
         # Add assistant response to session
         self.session_manager.add_message(MessageRole.ASSISTANT, response)
 
-        # Background: dump to memory periodically
-        asyncio.create_task(self._background_memory_processing())
+        # Background: dump to memory periodically (tracked for clean shutdown)
+        task = asyncio.create_task(self._background_memory_processing())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
         return response
 
@@ -1167,6 +1170,8 @@ class Agent:
 
     async def end_session(self, on_status=None):
         """End the current session and clean up."""
+        # Cancel background memory tasks first to prevent writes during shutdown
+        await self._cancel_background_tasks()
         if self._health_check_task:
             self._health_check_task.cancel()
             self._health_check_task = None
@@ -1174,9 +1179,18 @@ class Agent:
             await self.session_manager.end_session(on_status=on_status)
         if self.job_queue:
             await self.job_queue.stop()
+        # Close ChromaDB after all writes are done
+        if self.chroma:
+            self.chroma.close()
 
     async def force_cleanup(self):
-        """Cancel all background tasks so the process can exit cleanly."""
+        """Cancel all background tasks so the process can exit cleanly.
+
+        Order matters: cancel in-flight writes → close ChromaDB → close SQLite.
+        """
+        # 1. Cancel background memory processing tasks (prevents mid-write corruption)
+        await self._cancel_background_tasks()
+
         if self._health_check_task:
             self._health_check_task.cancel()
             self._health_check_task = None
@@ -1185,11 +1199,28 @@ class Agent:
                 await self.job_queue.stop()
             except Exception:
                 pass
+        # 2. Close ChromaDB before SQLite (ChromaDB may reference SQLite data)
+        if self.chroma:
+            try:
+                self.chroma.close()
+            except Exception:
+                pass
+        # 3. Close SQLite last
         if self.sqlite:
             try:
                 await self.sqlite.close()
             except Exception:
                 pass
+
+    async def _cancel_background_tasks(self):
+        """Cancel all tracked background tasks and wait for them to finish."""
+        if not self._background_tasks:
+            return
+        for task in self._background_tasks:
+            task.cancel()
+        # Give cancelled tasks a moment to clean up
+        await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
 
     @property
     def last_endpoint_used(self) -> Optional[str]:

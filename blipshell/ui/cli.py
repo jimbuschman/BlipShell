@@ -29,6 +29,56 @@ from blipshell.models.session import MessageRole
 
 console = Console()
 
+# Session-level auto-approve set: tools the user has approved for the rest of the session
+_session_approved_tools: set[str] = set()
+
+
+async def _tool_approval_prompt(tool_name: str, arguments: dict) -> bool:
+    """Prompt the user before executing a dangerous tool.
+
+    Returns True to allow, False to deny.
+    """
+    # If user already approved this tool for the session, skip the prompt
+    if tool_name in _session_approved_tools:
+        return True
+
+    # Build a readable summary of what the tool wants to do
+    arg_summary = ""
+    if tool_name == "run_command":
+        arg_summary = arguments.get("command", "")
+    elif tool_name in ("write_file", "edit_file", "read_file"):
+        arg_summary = arguments.get("path", "")
+    elif tool_name == "create_project":
+        arg_summary = f"{arguments.get('name', '')} at {arguments.get('path', '')}"
+    else:
+        # Generic: show first argument value
+        for v in arguments.values():
+            arg_summary = str(v)[:80]
+            break
+
+    console.print(
+        f"\n\x1b[33m[Approval required]\x1b[0m "
+        f"\x1b[1m{tool_name}\x1b[0m: {arg_summary}"
+    )
+    try:
+        choice = console.input(
+            "[bold yellow](a)[/bold yellow]llow  "
+            "[bold yellow](s)[/bold yellow]ession  "
+            "[bold yellow](d)[/bold yellow]eny  "
+            "[bold yellow]>[/bold yellow] "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+
+    if choice in ("a", "allow", "y", "yes"):
+        return True
+    elif choice in ("s", "session"):
+        _session_approved_tools.add(tool_name)
+        console.print(f"[dim]{tool_name} auto-approved for this session[/dim]")
+        return True
+    else:
+        return False
+
 
 async def _poll_for_escape():
     """Poll for Esc keypress. Returns when Esc is detected.
@@ -140,6 +190,13 @@ async def chat_loop(
             resume_id = latest.id
             console.print(f"[dim]Resuming session #{latest.id}: {latest.title}[/dim]")
 
+    # Set up tool approval callback (prompts user before dangerous tool calls)
+    if not config.agent.auto_approve_tools and config.agent.tools_requiring_approval:
+        agent.tool_registry.set_approval_callback(
+            callback=_tool_approval_prompt,
+            tools_requiring_approval=set(config.agent.tools_requiring_approval),
+        )
+
     sid = await agent.start_session(project=project, resume_session_id=resume_id)
 
     # Auto-activate project if specified via --project flag
@@ -243,6 +300,23 @@ async def chat_loop(
                         agent.reflect_enabled = not agent.reflect_enabled
                     state = "[green]ON[/green]" if agent.reflect_enabled else "[yellow]OFF[/yellow]"
                     console.print(f"[dim]Self-reflection: {state}[/dim]")
+                    continue
+                elif cmd[0] == "approve":
+                    if len(cmd) > 1 and cmd[1] == "all":
+                        # Auto-approve everything for this session
+                        for t in config.agent.tools_requiring_approval:
+                            _session_approved_tools.add(t)
+                        console.print("[dim]All tools auto-approved for this session[/dim]")
+                    elif len(cmd) > 1 and cmd[1] == "reset":
+                        _session_approved_tools.clear()
+                        console.print("[dim]Tool approvals reset — will prompt again[/dim]")
+                    else:
+                        approved = ", ".join(sorted(_session_approved_tools)) if _session_approved_tools else "none"
+                        requiring = ", ".join(config.agent.tools_requiring_approval)
+                        console.print(f"[dim]Tools requiring approval: {requiring}[/dim]")
+                        console.print(f"[dim]Session-approved: {approved}[/dim]")
+                        console.print("[dim]  /approve all   — auto-approve all for this session[/dim]")
+                        console.print("[dim]  /approve reset — reset all approvals[/dim]")
                     continue
                 elif cmd[0] == "code":
                     if len(cmd) < 2:
@@ -1519,6 +1593,7 @@ def _print_help():
         "[bold]/core[/bold]                  - Show core memories and lessons\n"
         "[bold]/think[/bold]                 - Toggle LLM thinking mode on/off\n"
         "[bold]/reflect[/bold]               - Toggle self-reflection on/off\n"
+        "[bold]/approve[/bold] [dim]all|reset[/dim]     - Manage tool approval (write/edit/run)\n"
         "[bold]/code <path> [msg][/bold]     - Send code to LLM for review\n"
         "[bold]/feedback <msg>[/bold]        - Save feedback as a lesson\n"
         "[bold]/offload <msg>[/bold]         - Run a task on remote PC in background\n"
