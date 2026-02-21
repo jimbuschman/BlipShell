@@ -133,6 +133,7 @@ class Agent:
         self.active_project: Optional[dict] = None
         self._project_context: str = ""
         self._file_changes: list[dict] = []
+        self._files_read: set[str] = set()  # tracks files/dirs already read this session
 
     async def initialize(self, on_status=None):
         """Initialize all subsystems.
@@ -492,6 +493,7 @@ class Agent:
         """Start or resume a session."""
         await self.initialize()
         self._file_changes = []
+        self._files_read = set()
 
         session_id = await self.session_manager.start_session(
             project=project,
@@ -806,7 +808,7 @@ class Agent:
         tools = self.tool_registry.get_all_ollama_tools() or None
         max_iterations = self.config.agent.max_tool_iterations if tools else 0
         if self.active_project and tools:
-            max_iterations = max(max_iterations, 15)
+            max_iterations = max(max_iterations, 30)
         logger.info("Passing %d tools to model", len(tools) if tools else 0)
         full_response = ""
         tool_call_names: list[str] = []
@@ -857,6 +859,12 @@ class Agent:
 
                         result = await self.tool_registry.execute_tool_call(tool_call)
                         messages.append(result.to_ollama_message())
+
+                        # Track files/dirs already read (prevents re-reading across turns)
+                        if result.success and name in ("read_file", "list_directory"):
+                            read_path = arguments.get("path", "")
+                            if read_path:
+                                self._files_read.add(read_path)
 
                         # Track file modifications
                         if result.success and name in ("write_file", "edit_file"):
@@ -916,6 +924,31 @@ class Agent:
             finally:
                 if endpoint:
                     endpoint.complete_request()
+
+        # Auto-continue: if the loop ended without a text response (hit iteration
+        # limit mid-task), nudge the model to wrap up instead of going silent.
+        if not full_response and tool_call_names:
+            if on_token:
+                on_token("\n\x1b[2m[Continuing...]\x1b[0m\n")
+            messages.append({
+                "role": "user",
+                "content": (
+                    "You hit the tool call limit. Summarize what you've done so far "
+                    "and what remains. Do NOT call any more tools — just respond."
+                ),
+            })
+            try:
+                response = await client.chat(
+                    messages=messages, model=model, tools=None,
+                    **chat_kwargs,
+                )
+                content, _ = self._extract_response(response)
+                full_response = content
+                if on_token and content:
+                    on_token(content)
+            except Exception as e:
+                logger.error("Auto-continue failed: %s", e)
+                full_response = f"[Hit tool limit after {len(tool_call_names)} calls]"
 
         # Event: llm_complete
         await self._log_event("llm_complete", {
@@ -1121,7 +1154,7 @@ class Agent:
                 "Use glob_files to discover relevant files.\n"
                 "Always read a file before editing it.\n"
                 "After making changes, run tests if a test framework is detected.\n"
-                "Use git via run_command for version control operations.\n"
+                "Use git_status, git_diff, git_add, git_commit for version control.\n"
                 "All relative file paths resolve against the project root.\n\n"
                 "IMPORTANT tool usage rules:\n"
                 "- Do NOT re-read files you have already read in this conversation.\n"
@@ -1137,6 +1170,15 @@ class Agent:
 
         if memory_text.strip():
             messages.append({"role": "system", "content": memory_text})
+
+        # Inject files-already-read list so the model doesn't re-read across turns
+        if self._files_read:
+            files_list = "\n".join(f"  - {f}" for f in sorted(self._files_read))
+            messages.append({"role": "system", "content": (
+                "FILES ALREADY READ THIS SESSION (do NOT re-read these):\n"
+                + files_list
+                + "\nSkip straight to your task — do not list directories or read files you already have."
+            )})
 
         # Add conversation history from ActiveSession (last messages)
         for msg in self.session_manager.get_messages()[-20:]:
