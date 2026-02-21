@@ -54,13 +54,17 @@ def main(ctx, resume_last, session_id, project, config_path, verbose):
     ctx.obj["config_path"] = config_path
 
     if ctx.invoked_subcommand is None:
-        # Default: start chat
-        asyncio.run(chat_loop(
-            config_path=config_path,
-            resume_last=resume_last,
-            session_id=session_id,
-            project=project,
-        ))
+        # Default: start chat — catch KeyboardInterrupt so Click
+        # doesn't print "Aborted!" and skip our cleanup.
+        try:
+            asyncio.run(chat_loop(
+                config_path=config_path,
+                resume_last=resume_last,
+                session_id=session_id,
+                project=project,
+            ))
+        except KeyboardInterrupt:
+            pass  # cleanup already handled in chat_loop's finally block
 
 
 async def chat_loop(
@@ -70,6 +74,22 @@ async def chat_loop(
     project: str | None = None,
 ):
     """Main interactive chat loop."""
+    import signal
+
+    # Custom Ctrl+C handler: first press sets _exit_requested to break the
+    # loop cleanly; during cleanup it's suppressed; second press force-quits.
+    _exit_requested = False
+    _in_cleanup = False
+
+    def _sigint_handler(sig, frame):
+        nonlocal _exit_requested
+        if _in_cleanup:
+            # During cleanup, second Ctrl+C force-quits
+            raise KeyboardInterrupt
+        _exit_requested = True
+
+    signal.signal(signal.SIGINT, _sigint_handler)
+
     # Load config
     config_manager = ConfigManager(config_path)
     config = config_manager.load()
@@ -103,6 +123,9 @@ async def chat_loop(
 
     try:
         while True:
+            if _exit_requested:
+                break
+
             # Notify about background tasks that finished
             await _check_completed_tasks(agent)
 
@@ -258,33 +281,17 @@ async def chat_loop(
 
     finally:
         console.print()
-        # Suppress Ctrl+C during cleanup so it can finish.
-        # A second Ctrl+C will still force-quit.
-        import signal
-        _force_quit = False
-        _orig_handler = signal.getsignal(signal.SIGINT)
-
-        def _cleanup_sigint(sig, frame):
-            nonlocal _force_quit
-            if _force_quit:
-                raise KeyboardInterrupt
-            _force_quit = True
-            console.print("\n[yellow]Press Ctrl+C again to force quit.[/yellow]")
-
-        signal.signal(signal.SIGINT, _cleanup_sigint)
+        _in_cleanup = True
         try:
             with console.status("[dim]Ending session...[/dim]", spinner="dots") as status:
                 def _on_status(msg: str):
                     status.update(f"[dim]{msg}[/dim]")
-                try:
-                    await agent.end_session(on_status=_on_status)
-                except Exception as e:
-                    console.print(f"[yellow]Session cleanup error: {e}[/yellow]")
+                await agent.end_session(on_status=_on_status)
         except KeyboardInterrupt:
             console.print("[yellow]Force quit.[/yellow]")
-        finally:
-            signal.signal(signal.SIGINT, _orig_handler)
-            await agent.force_cleanup()
+        except Exception as e:
+            console.print(f"[yellow]Session cleanup error: {e}[/yellow]")
+        await agent.force_cleanup()
         console.print("[dim]Session saved. Goodbye![/dim]")
 
 
