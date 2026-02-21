@@ -265,10 +265,12 @@ class EndpointManager:
             logger.info("Endpoint '%s' (%s): %s", ep.name, ep.url,
                        "available" if ep.enabled else "unavailable")
 
-    def start_health_loop(self, interval: int = 60) -> asyncio.Task:
+    def start_health_loop(self, interval: int = 60, on_check=None) -> asyncio.Task:
         """Start a background loop that periodically checks all endpoints.
 
         Re-enables endpoints that come back online, disables ones that go down.
+        on_check is an optional callback called after each health check cycle
+        (used to clear model failure caches so primaries get retried).
         Returns the asyncio.Task so the caller can cancel it on shutdown.
         """
         async def _loop():
@@ -276,6 +278,8 @@ class EndpointManager:
                 await asyncio.sleep(interval)
                 try:
                     await self.health_check_all()
+                    if on_check:
+                        on_check()
                 except Exception as e:
                     logger.debug("Health check loop error: %s", e)
 

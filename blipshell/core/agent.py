@@ -216,7 +216,9 @@ class Agent:
         await self._auto_extract_entities()
 
         # Start periodic health check (re-detects endpoints that come/go)
-        self._health_check_task = self.endpoint_manager.start_health_loop(interval=60)
+        self._health_check_task = self.endpoint_manager.start_health_loop(
+            interval=60, on_check=self.router.clear_failed_models,
+        )
 
         self._initialized = True
         logger.info("Agent initialized")
@@ -550,6 +552,15 @@ class Agent:
         model = self.router.get_model(TaskType.TOOL_CALLING)
         client = await self.router.get_client(TaskType.TOOL_CALLING)
         using_fallback = False
+
+        # Skip straight to fallback if primary model is known to be down
+        if self.router.is_model_failed(model):
+            fallback = self.router.get_fallback_model(TaskType.TOOL_CALLING)
+            if fallback:
+                logger.info("Skipping failed model '%s', using fallback '%s'", model, fallback)
+                model = fallback
+                using_fallback = True
+
         if not client:
             # Try fallback model
             fallback = self.router.get_fallback_model(TaskType.TOOL_CALLING)
@@ -635,6 +646,7 @@ class Agent:
                             "Model-level error on endpoint '%s' (not penalizing): %s",
                             endpoint.name, e,
                         )
+                        self.router.mark_model_failed(model)
                     else:
                         endpoint.record_failure()
 

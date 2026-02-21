@@ -522,6 +522,12 @@ async def _handle_code_command(agent: Agent, args_str: str):
         client = await agent.router.get_client(TaskType.CODING)
     else:
         model = agent.router.get_model(TaskType.CODING)
+        # Skip straight to fallback if primary model is known to be down
+        if agent.router.is_model_failed(model):
+            fallback = agent.router.get_fallback_model(TaskType.CODING)
+            if fallback:
+                console.print(f"[yellow]Model {model} is down, using {fallback}[/yellow]")
+                model = fallback
         client = await agent.router.get_client(TaskType.CODING)
 
     if not client:

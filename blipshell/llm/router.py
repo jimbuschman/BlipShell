@@ -5,6 +5,7 @@ to the appropriate model and endpoint based on configuration.
 """
 
 import logging
+import time
 from typing import Optional
 
 from blipshell.llm.client import LLMClient
@@ -37,6 +38,7 @@ class LLMRouter:
     def __init__(self, models_config: ModelsConfig, endpoint_manager: EndpointManager):
         self._models = models_config
         self._endpoint_manager = endpoint_manager
+        self._failed_models: dict[str, float] = {}  # model_name → failure timestamp
 
     def get_model(self, task_type: str) -> str:
         """Get the configured model name for a task type."""
@@ -64,6 +66,21 @@ class LLMRouter:
             TaskType.RANKING_IMPORTANCE: self._models.ranking_importance_fallback,
         }
         return fallback_map.get(task_type)
+
+    def mark_model_failed(self, model: str):
+        """Mark a model as failed. Subsequent calls skip straight to fallback."""
+        self._failed_models[model] = time.time()
+        logger.warning("Model '%s' marked as failed, will use fallback", model)
+
+    def clear_failed_models(self):
+        """Clear all model failures so primaries get retried."""
+        if self._failed_models:
+            logger.info("Clearing %d failed model(s), will retry primaries", len(self._failed_models))
+            self._failed_models.clear()
+
+    def is_model_failed(self, model: str) -> bool:
+        """Check if a model is currently marked as failed."""
+        return model in self._failed_models
 
     async def get_client(self, task_type: str) -> Optional[LLMClient]:
         """Get the LLMClient for the best endpoint matching a task type."""
@@ -95,15 +112,24 @@ class LLMRouter:
         # Use per-endpoint model override if configured
         model = endpoint.models.get(task_type) or self.get_model(task_type)
         client = endpoint.client
+        use_fallback = False
+
+        # Skip straight to fallback if primary model is known to be down
+        if self.is_model_failed(model):
+            fallback_model = self.get_fallback_model(task_type)
+            if fallback_model:
+                model = fallback_model
+                use_fallback = True
 
         endpoint.start_request()
         try:
-            # Pass context window size to Ollama
             gen_kwargs = {}
             if endpoint.context_tokens:
                 gen_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
             if think is not None:
                 gen_kwargs["think"] = think
+            if use_fallback and not self._models.fallback_think:
+                gen_kwargs["think"] = False
             result = await client.generate(prompt=prompt, model=model, system=system, **gen_kwargs)
             endpoint.record_success(0)
             return result
@@ -113,27 +139,29 @@ class LLMRouter:
                     "Model-level error on endpoint '%s' (not penalizing): %s",
                     endpoint.name, primary_err,
                 )
+                self.mark_model_failed(model)
             else:
                 endpoint.record_failure()
-            # Try fallback model if available
-            fallback_model = self.get_fallback_model(task_type)
-            if fallback_model and fallback_model != model:
-                logger.warning("Primary model '%s' failed, trying fallback '%s'", model, fallback_model)
-                try:
-                    fallback_ep = await self._endpoint_manager.get_endpoint_for_role(task_type)
-                    if fallback_ep:
-                        fb_kwargs = {}
-                        if not self._models.fallback_think:
-                            fb_kwargs["think"] = False
-                        if fallback_ep.context_tokens:
-                            fb_kwargs["options"] = {"num_ctx": fallback_ep.context_tokens}
-                        result = await fallback_ep.client.generate(
-                            prompt=prompt, model=fallback_model, system=system,
-                            **fb_kwargs,
-                        )
-                        return result
-                except Exception as fallback_err:
-                    logger.error("Fallback model '%s' also failed: %s", fallback_model, fallback_err)
+            # Try fallback model if we aren't already on it
+            if not use_fallback:
+                fallback_model = self.get_fallback_model(task_type)
+                if fallback_model and fallback_model != model:
+                    logger.warning("Primary model '%s' failed, trying fallback '%s'", model, fallback_model)
+                    try:
+                        fallback_ep = await self._endpoint_manager.get_endpoint_for_role(task_type)
+                        if fallback_ep:
+                            fb_kwargs = {}
+                            if not self._models.fallback_think:
+                                fb_kwargs["think"] = False
+                            if fallback_ep.context_tokens:
+                                fb_kwargs["options"] = {"num_ctx": fallback_ep.context_tokens}
+                            result = await fallback_ep.client.generate(
+                                prompt=prompt, model=fallback_model, system=system,
+                                **fb_kwargs,
+                            )
+                            return result
+                    except Exception as fallback_err:
+                        logger.error("Fallback model '%s' also failed: %s", fallback_model, fallback_err)
             raise primary_err
         finally:
             endpoint.complete_request()
