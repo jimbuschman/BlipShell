@@ -488,22 +488,29 @@ async def _handle_code_command(agent: Agent, args_str: str):
         "Suggest concrete fixes when possible. Be concise but thorough."
     )
 
-    # Use specified model or default to reasoning (GLM-5)
+    # Use specified model or default coding model (qwen3-coder:480b-cloud)
     if model_override:
         model = model_override
-        client = await agent.router.get_client(TaskType.REASONING)
+        client = await agent.router.get_client(TaskType.CODING)
     else:
-        model = agent.router.get_model(TaskType.REASONING)
-        client = await agent.router.get_client(TaskType.REASONING)
+        model = agent.router.get_model(TaskType.CODING)
+        client = await agent.router.get_client(TaskType.CODING)
 
     if not client:
-        console.print("[red]No LLM endpoint available.[/red]")
-        return
+        # Try fallback model (coding_fallback from config)
+        fallback = agent.router.get_fallback_model(TaskType.CODING)
+        if fallback:
+            console.print(f"[yellow]Cloud unavailable, falling back to {fallback}[/yellow]")
+            model = fallback
+            client = await agent.router.get_client(TaskType.CODING)
+        if not client:
+            console.print("[red]No LLM endpoint available.[/red]")
+            return
 
     # Get context window for the endpoint
     ctx_tokens = None
     if agent.endpoint_manager:
-        ctx_tokens = agent.endpoint_manager.get_context_tokens_for_role(TaskType.REASONING)
+        ctx_tokens = agent.endpoint_manager.get_context_tokens_for_role(TaskType.CODING)
     stream_kwargs = {}
     if ctx_tokens:
         stream_kwargs["options"] = {"num_ctx": ctx_tokens}
