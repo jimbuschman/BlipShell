@@ -123,7 +123,7 @@ class AgentConfig(BaseModel):
     stream: bool = True
     # Tool approval: tools listed here require user confirmation before execution
     tools_requiring_approval: list[str] = Field(default_factory=lambda: [
-        "write_file", "edit_file", "run_command",
+        "write_file", "edit_file", "run_command", "git_add", "git_commit",
     ])
     auto_approve_tools: bool = False  # bypass approval for all tools
 

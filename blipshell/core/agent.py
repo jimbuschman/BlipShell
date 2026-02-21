@@ -22,6 +22,9 @@ from blipshell.core.executor import TaskExecutor
 from blipshell.core.planner import ComplexityClassifier, TaskPlanner
 from blipshell.core.tools.base import ToolRegistry, detect_tool_groups
 from blipshell.core.tools.code_tools import GlobTool, GrepTool
+from blipshell.core.tools.git_tools import (
+    GitAddTool, GitCommitTool, GitDiffTool, GitStatusTool,
+)
 from blipshell.core.tools.filesystem import (
     EditFileTool,
     ListDirectoryTool,
@@ -129,6 +132,7 @@ class Agent:
         # Project (BlipCode)
         self.active_project: Optional[dict] = None
         self._project_context: str = ""
+        self._file_changes: list[dict] = []
 
     async def initialize(self, on_status=None):
         """Initialize all subsystems.
@@ -317,6 +321,12 @@ class Agent:
         self.tool_registry.register(GrepTool(root_path=root), group="coding")
         self.tool_registry.register(GlobTool(root_path=root), group="coding")
 
+        # Register git tools
+        self.tool_registry.register(GitStatusTool(root_path=root), group="coding")
+        self.tool_registry.register(GitDiffTool(root_path=root), group="coding")
+        self.tool_registry.register(GitAddTool(root_path=root), group="coding")
+        self.tool_registry.register(GitCommitTool(root_path=root), group="coding")
+
         # Tag current session with this project
         if self.session_manager and self.session_manager.session_id:
             await self.sqlite.update_session_project(
@@ -357,9 +367,13 @@ class Agent:
         # Re-register file tools without root
         self._register_tools_with_root(None)
 
-        # Remove coding tools
+        # Remove coding and git tools
         self.tool_registry.unregister("grep_files")
         self.tool_registry.unregister("glob_files")
+        self.tool_registry.unregister("git_status")
+        self.tool_registry.unregister("git_diff")
+        self.tool_registry.unregister("git_add")
+        self.tool_registry.unregister("git_commit")
 
         logger.info("Deactivated project")
 
@@ -477,6 +491,7 @@ class Agent:
     ) -> int:
         """Start or resume a session."""
         await self.initialize()
+        self._file_changes = []
 
         session_id = await self.session_manager.start_session(
             project=project,
@@ -682,6 +697,10 @@ class Agent:
             return f" {args['command'][:60]}"
         if "query" in args:
             return f" {args['query'][:50]}"
+        if "message" in args:
+            return f" {args['message'][:60]}"
+        if "paths" in args:
+            return f" {args['paths'][:60]}"
         return ""
 
     async def chat(
@@ -838,6 +857,18 @@ class Agent:
 
                         result = await self.tool_registry.execute_tool_call(tool_call)
                         messages.append(result.to_ollama_message())
+
+                        # Track file modifications
+                        if result.success and name in ("write_file", "edit_file"):
+                            file_path = arguments.get("path", "")
+                            self._file_changes.append({
+                                "path": file_path,
+                                "tool": name,
+                                "turn_number": self._turn_number,
+                            })
+                            await self._log_event("file_modified", {
+                                "path": file_path, "tool": name,
+                            })
 
                         if on_token:
                             preview = result.result[:120].replace("\n", " ")
@@ -1221,6 +1252,11 @@ class Agent:
         # Give cancelled tasks a moment to clean up
         await asyncio.gather(*self._background_tasks, return_exceptions=True)
         self._background_tasks.clear()
+
+    @property
+    def file_changes(self) -> list[dict]:
+        """Files modified during this session."""
+        return list(self._file_changes)
 
     @property
     def last_endpoint_used(self) -> Optional[str]:

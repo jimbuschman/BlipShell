@@ -12,9 +12,11 @@ Usage:
 """
 
 import asyncio
+import difflib
 import logging
 import os
 import sys
+from pathlib import Path
 
 import click
 from rich.console import Console
@@ -33,9 +35,37 @@ console = Console()
 _session_approved_tools: set[str] = set()
 
 
+def _generate_colored_diff(old_lines: list[str], new_lines: list[str],
+                           filename: str, max_lines: int = 50) -> str:
+    """Generate a colored unified diff string using ANSI codes."""
+    diff = list(difflib.unified_diff(old_lines, new_lines,
+                                     fromfile=f"a/{filename}", tofile=f"b/{filename}",
+                                     lineterm=""))
+    if not diff:
+        return ""
+
+    colored = []
+    for i, line in enumerate(diff):
+        if i >= max_lines:
+            colored.append(f"\x1b[2m  ... ({len(diff) - max_lines} more lines)\x1b[0m")
+            break
+        if line.startswith("---") or line.startswith("+++"):
+            colored.append(f"\x1b[1m{line}\x1b[0m")
+        elif line.startswith("@@"):
+            colored.append(f"\x1b[36m{line}\x1b[0m")
+        elif line.startswith("-"):
+            colored.append(f"\x1b[31m{line}\x1b[0m")
+        elif line.startswith("+"):
+            colored.append(f"\x1b[32m{line}\x1b[0m")
+        else:
+            colored.append(line)
+    return "\n".join(colored)
+
+
 async def _tool_approval_prompt(tool_name: str, arguments: dict) -> bool:
     """Prompt the user before executing a dangerous tool.
 
+    Shows a colored diff for file edit/write operations.
     Returns True to allow, False to deny.
     """
     # If user already approved this tool for the session, skip the prompt
@@ -44,14 +74,40 @@ async def _tool_approval_prompt(tool_name: str, arguments: dict) -> bool:
 
     # Build a readable summary of what the tool wants to do
     arg_summary = ""
+    diff_output = ""
+
     if tool_name == "run_command":
         arg_summary = arguments.get("command", "")
-    elif tool_name in ("write_file", "edit_file", "read_file"):
+    elif tool_name == "edit_file":
         arg_summary = arguments.get("path", "")
+        old_text = arguments.get("old_text", "")
+        new_text = arguments.get("new_text", "")
+        if old_text or new_text:
+            diff_output = _generate_colored_diff(
+                old_text.splitlines(), new_text.splitlines(), arg_summary,
+            )
+    elif tool_name == "write_file":
+        arg_summary = arguments.get("path", "")
+        new_content = arguments.get("content", "")
+        resolved = Path(arg_summary) if arg_summary else None
+        if resolved and resolved.is_file():
+            try:
+                old_content = resolved.read_text(encoding="utf-8", errors="replace")
+                diff_output = _generate_colored_diff(
+                    old_content.splitlines(), new_content.splitlines(), arg_summary,
+                )
+            except Exception:
+                pass
+        elif new_content:
+            line_count = new_content.count("\n") + (1 if new_content else 0)
+            diff_output = f"\x1b[32m  Creating new file ({line_count} lines)\x1b[0m"
+    elif tool_name == "git_add":
+        arg_summary = arguments.get("paths", "")
+    elif tool_name == "git_commit":
+        arg_summary = arguments.get("message", "")[:80]
     elif tool_name == "create_project":
         arg_summary = f"{arguments.get('name', '')} at {arguments.get('path', '')}"
     else:
-        # Generic: show first argument value
         for v in arguments.values():
             arg_summary = str(v)[:80]
             break
@@ -60,6 +116,9 @@ async def _tool_approval_prompt(tool_name: str, arguments: dict) -> bool:
         f"\n\x1b[33m[Approval required]\x1b[0m "
         f"\x1b[1m{tool_name}\x1b[0m: {arg_summary}"
     )
+    if diff_output:
+        console.print(diff_output)
+
     try:
         choice = console.input(
             "[bold yellow](a)[/bold yellow]llow  "
@@ -346,6 +405,9 @@ async def chat_loop(
                             console.print("[yellow]Usage: /flow [turn_number][/yellow]")
                             continue
                     await _print_flow(agent, turn)
+                    continue
+                elif cmd[0] == "changes":
+                    _print_changes(agent)
                     continue
                 elif cmd[0] == "projects":
                     await _list_projects(agent)
@@ -1583,6 +1645,27 @@ async def _handle_workflow_command(agent: Agent, args: list[str]):
         )
 
 
+def _print_changes(agent):
+    """Print files modified during this session."""
+    changes = agent.file_changes
+    if not changes:
+        console.print("[dim]No files modified this session.[/dim]")
+        return
+
+    table = Table(title="Modified Files")
+    table.add_column("Turn", style="cyan", width=5)
+    table.add_column("Tool", style="yellow", width=12)
+    table.add_column("Path")
+
+    seen = set()
+    for change in changes:
+        key = (change["turn_number"], change["path"])
+        if key not in seen:
+            seen.add(key)
+            table.add_row(str(change["turn_number"]), change["tool"], change["path"])
+    console.print(table)
+
+
 def _print_help():
     """Print help for CLI commands."""
     console.print(Panel(
@@ -1594,6 +1677,7 @@ def _print_help():
         "[bold]/think[/bold]                 - Toggle LLM thinking mode on/off\n"
         "[bold]/reflect[/bold]               - Toggle self-reflection on/off\n"
         "[bold]/approve[/bold] [dim]all|reset[/dim]     - Manage tool approval (write/edit/run)\n"
+        "[bold]/changes[/bold]               - Show files modified this session\n"
         "[bold]/code <path> [msg][/bold]     - Send code to LLM for review\n"
         "[bold]/feedback <msg>[/bold]        - Save feedback as a lesson\n"
         "[bold]/offload <msg>[/bold]         - Run a task on remote PC in background\n"
