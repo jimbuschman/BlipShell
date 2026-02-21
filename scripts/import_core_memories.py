@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rich.console import Console
+from rich.markup import escape
 
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.models.memory import CoreMemory
@@ -80,10 +81,11 @@ async def main():
     console.print()
 
     for i, (cat, content) in enumerate(memories, 1):
-        console.print(f"  {i}. [{cat}] {content[:80]}{'...' if len(content) > 80 else ''}")
+        safe = content[:80].encode("ascii", "replace").decode()
+        console.print(f"  {i}. \\[{cat}] {escape(safe)}{'...' if len(content) > 80 else ''}")
 
     if args.dry_run:
-        console.print(f"\n[yellow]Dry run — nothing imported.[/yellow]")
+        console.print("\n[yellow]Dry run -- nothing imported.[/yellow]")
         return
 
     console.print()
@@ -106,7 +108,8 @@ async def main():
     skipped = 0
     for category, content in memories:
         if content.lower().strip() in existing_contents:
-            console.print(f"  [dim]SKIP (duplicate): {content[:60]}...[/dim]")
+            safe = content[:60].encode("ascii", "replace").decode()
+            console.print(f"  [dim]SKIP (duplicate): {escape(safe)}...[/dim]")
             skipped += 1
             continue
 
@@ -126,7 +129,8 @@ async def main():
         # Tag the core memory
         await sqlite.tag_core_memory(mem_id, [category])
 
-        console.print(f"  [green]OK[/green] #{mem_id} [{category}] {content[:60]}...")
+        safe = content[:60].encode("ascii", "replace").decode()
+        console.print(f"  [green]OK[/green] #{mem_id} \\[{category}] {escape(safe)}...")
         imported += 1
 
     await sqlite.close()
