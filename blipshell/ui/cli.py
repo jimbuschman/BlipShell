@@ -257,15 +257,16 @@ async def chat_loop(
             console.print()  # spacing
 
     finally:
-        console.print("\n[dim]Ending session...[/dim]")
-        try:
-            await asyncio.wait_for(agent.end_session(), timeout=30)
-        except asyncio.TimeoutError:
-            console.print("[yellow]Session cleanup timed out (30s). Data is safe, skipping summary/lessons.[/yellow]")
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            console.print("[yellow]Session cleanup interrupted. Data is safe.[/yellow]")
-        except Exception as e:
-            console.print(f"[yellow]Session cleanup error: {e}[/yellow]")
+        console.print()
+        with console.status("[dim]Ending session...[/dim]", spinner="dots") as status:
+            def _on_status(msg: str):
+                status.update(f"[dim]{msg}[/dim]")
+            try:
+                await agent.end_session(on_status=_on_status)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                console.print("[yellow]Session cleanup interrupted. Data is safe.[/yellow]")
+            except Exception as e:
+                console.print(f"[yellow]Session cleanup error: {e}[/yellow]")
         console.print("[dim]Session saved. Goodbye![/dim]")
 
 

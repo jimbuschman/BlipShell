@@ -903,13 +903,13 @@ class Agent:
                 on_token(f"[Reflection failed: {e}]\n")
             return original_response
 
-    async def end_session(self):
+    async def end_session(self, on_status=None):
         """End the current session and clean up."""
         if self._health_check_task:
             self._health_check_task.cancel()
             self._health_check_task = None
         if self.session_manager:
-            await self.session_manager.end_session()
+            await self.session_manager.end_session(on_status=on_status)
         if self.job_queue:
             await self.job_queue.stop()
 

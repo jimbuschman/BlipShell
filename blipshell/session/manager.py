@@ -4,6 +4,7 @@ Handles in-memory message tracking, text cleaning,
 dump-to-memory lifecycle, and session summary generation.
 """
 
+import asyncio
 import logging
 import re
 from datetime import datetime, timezone
@@ -156,26 +157,40 @@ class SessionManager:
         finally:
             self._currently_saving = False
 
-    async def end_session(self):
+    async def end_session(self, on_status=None):
         """End the current session: dump remaining messages, generate summary, extract lessons."""
         if not self.session_id:
             return
 
+        def _status(msg: str):
+            if on_status:
+                on_status(msg)
+            logger.info(msg)
+
         # Dump any remaining messages
-        logger.info("Saving messages...")
-        await self.dump_to_memory()
+        _status("Saving messages...")
+        try:
+            await asyncio.wait_for(self.dump_to_memory(), timeout=30)
+        except asyncio.TimeoutError:
+            logger.warning("dump_to_memory timed out after 30s, skipping")
+        except Exception as e:
+            logger.error("dump_to_memory failed: %s", e)
 
         # Generate session summary
-        logger.info("Generating session summary...")
+        _status("Generating session summary...")
         try:
-            await self._create_session_summary()
+            await asyncio.wait_for(self._create_session_summary(), timeout=30)
+        except asyncio.TimeoutError:
+            logger.warning("Session summary timed out after 30s, skipping")
         except Exception as e:
             logger.error("Session summary failed (skipping): %s", e)
 
         # Extract lessons from the conversation
-        logger.info("Extracting lessons...")
+        _status("Extracting lessons...")
         try:
-            await self._extract_lessons()
+            await asyncio.wait_for(self._extract_lessons(), timeout=30)
+        except asyncio.TimeoutError:
+            logger.warning("Lesson extraction timed out after 30s, skipping")
         except Exception as e:
             logger.error("Lesson extraction failed (skipping): %s", e)
 
