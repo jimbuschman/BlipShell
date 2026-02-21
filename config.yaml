@@ -2,23 +2,26 @@
 # This file is self-modifiable by the agent
 
 models:
-  reasoning: "qwen3:14b"               # local — best speed/quality for interactive chat
-  tool_calling: "glm-5:cloud"
-  coding: "qwen3-coder:480b-cloud"
-  summarization: "glm4:latest"          # local default — cloud endpoints tried first via priority
-  ranking: "qwen2.5:14b"               # local — best rank distribution
-  importance: "qwen3:14b"              # local — best importance distribution
-  ranking_importance: "qwen2.5:14b"    # combined scoring for batch import
-  embedding: "nomic-embed-text"  # snowflake-arctic-embed had better quality but too much GPU contention
-  # Local fallbacks when cloud endpoints are unavailable
-  reasoning_fallback: "gpt-oss:latest"
+  # --- Interactive (cloud via Ollama) ---
+  tool_calling: "glm-5:cloud"            # general chat + tool use
+  coding: "qwen3-coder:480b-cloud"       # /code command
+  # --- Background processing (local) ---
+  reasoning: "qwen3:14b"                 # entity extraction, tag discovery, lessons, contradiction
+  summarization: "glm4:latest"           # memory/session summaries (Groq/Gemini tried first via endpoint priority)
+  ranking: "qwen2.5:14b"                 # memory ranking 1-5
+  importance: "qwen3:14b"               # memory importance 0.0-1.0
+  ranking_importance: "qwen2.5:14b"      # combined rank+importance for batch import
+  # --- Embedding (local) ---
+  embedding: "nomic-embed-text"          # vector search — snowflake had better quality but too much GPU contention
+  # --- Fallbacks (local, used when cloud is down) ---
   tool_calling_fallback: "gpt-oss:latest"
   coding_fallback: "gpt-oss:latest"
-  summarization_fallback: "glm4:latest"     # validated local model
-  ranking_fallback: "qwen2.5:14b"           # same as primary (local safety net)
-  importance_fallback: "qwen3:14b"          # same as primary (local safety net)
+  reasoning_fallback: "gpt-oss:latest"
+  summarization_fallback: "glm4:latest"
+  ranking_fallback: "qwen2.5:14b"
+  importance_fallback: "qwen3:14b"
   ranking_importance_fallback: "qwen2.5:14b"
-  fallback_think: false  # Disable thinking for fallback models (faster chat)
+  fallback_think: false                  # disable thinking for fallback models (faster chat)
 
 endpoints:
   - name: "groq"

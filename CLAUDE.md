@@ -6,14 +6,21 @@ Multi-endpoint support: Ollama (local) + OpenAI-compatible cloud APIs (Groq, Gem
 Config-driven model routing per task type with per-endpoint model overrides.
 
 ## Current Model Assignments (config.yaml)
-- reasoning: qwen3:14b (local) — used for main chat
-- tool_calling: glm-5:cloud
-- coding: qwen3-coder:480b-cloud
-- summarization: glm4:latest (local)
-- ranking: qwen2.5:14b (local)
-- importance: qwen3:14b (local)
-- embedding: nomic-embed-text (local)
-- Fallbacks: gpt-oss:latest (local) for reasoning/tool_calling/coding; local models as safety net for summarization/ranking/importance
+**Interactive (cloud via Ollama):**
+- tool_calling: glm-5:cloud — general chat + tool use
+- coding: qwen3-coder:480b-cloud — /code command
+
+**Background processing (local):**
+- reasoning: qwen3:14b — entity extraction, tag discovery, lessons, contradiction detection
+- summarization: glm4:latest — memory/session summaries (Groq/Gemini tried first)
+- ranking: qwen2.5:14b — memory ranking 1-5
+- importance: qwen3:14b — memory importance 0.0-1.0
+- ranking_importance: qwen2.5:14b — combined scoring for batch import
+- embedding: nomic-embed-text — vector search
+
+**Fallbacks (local, when cloud is down):**
+- tool_calling/coding/reasoning: gpt-oss:latest
+- summarization/ranking/importance: same as primary (local safety net)
 
 ## Completed Work
 - Memory consolidation (feature 4)
@@ -116,6 +123,7 @@ Config-driven model routing per task type with per-endpoint model overrides.
 ## Feature Roadmap (Future)
 - **6. Upgrade embedding model** — Benchmark new embedding models, then full re-embed. Benchmark first with real queries before committing.
 - **7. LLM-powered tag discovery** — LLM reviews recent memories periodically and suggests new regex patterns for the tagger. Route to cloud endpoint, run as scheduled background task.
+- **8. Esc to cancel current LLM call** — Allow user to press Escape during streaming response to cancel the in-flight request and return to the prompt.
 
 ## Architecture Notes
 - Two-PC setup: Development on one PC, Ollama/benchmarks on another

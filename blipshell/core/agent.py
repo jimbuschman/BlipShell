@@ -637,6 +637,18 @@ class Agent:
                         )
                     else:
                         endpoint.record_failure()
+
+                # Try fallback model if we haven't already
+                if not using_fallback:
+                    fallback = self.router.get_fallback_model(TaskType.TOOL_CALLING)
+                    if fallback and fallback != model:
+                        logger.warning("Primary model '%s' failed, falling back to '%s'", model, fallback)
+                        model = fallback
+                        using_fallback = True
+                        if on_token:
+                            on_token(f"\n[Falling back to {fallback}]\n")
+                        continue  # Retry the iteration with fallback model
+
                 logger.error("Chat error: %s", e)
                 full_response = f"Error: {e}"
                 break
