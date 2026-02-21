@@ -853,6 +853,7 @@ async def _print_flow(agent: Agent, turn: int | None = None):
         table.add_column("Profile")
         table.add_column("Search", justify="right")
         table.add_column("Context", justify="right")
+        table.add_column("Model")
         table.add_column("Endpoint")
         table.add_column("Tools")
         table.add_column("Resp", justify="right")
@@ -875,6 +876,7 @@ async def _print_flow(agent: Agent, turn: int | None = None):
                 ctx.get("query_profile", "?"),
                 search_str,
                 ctx_str,
+                llm.get("model", "?"),
                 llm.get("endpoint", "?"),
                 tools_str,
                 str(llm.get("response_length", "?")),
