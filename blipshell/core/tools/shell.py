@@ -9,9 +9,11 @@ from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterT
 
 
 class ShellTool(Tool):
-    def __init__(self, timeout: int = 30, allowed_commands: list[str] | None = None):
+    def __init__(self, timeout: int = 30, allowed_commands: list[str] | None = None,
+                 cwd: str | None = None):
         self.timeout = timeout
         self.allowed_commands = allowed_commands
+        self.cwd = cwd
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -39,18 +41,12 @@ class ShellTool(Tool):
                 )
 
         try:
-            if sys.platform == "win32":
-                process = await asyncio.create_subprocess_shell(
-                    command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-            else:
-                process = await asyncio.create_subprocess_shell(
-                    command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
+            process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.cwd,
+            )
 
             try:
                 stdout, stderr = await asyncio.wait_for(

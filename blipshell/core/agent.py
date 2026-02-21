@@ -19,7 +19,9 @@ from blipshell.core.config import ConfigManager
 from blipshell.core.executor import TaskExecutor
 from blipshell.core.planner import ComplexityClassifier, TaskPlanner
 from blipshell.core.tools.base import ToolRegistry, detect_tool_groups
+from blipshell.core.tools.code_tools import GlobTool, GrepTool
 from blipshell.core.tools.filesystem import (
+    EditFileTool,
     ListDirectoryTool,
     ReadFileTool,
     WriteFileTool,
@@ -119,6 +121,10 @@ class Agent:
         self.reflect_enabled: bool = False  # /reflect toggle — second-pass self-critique
         self._turn_number: int = 0
         self._last_context_stats: Optional[dict] = None
+
+        # Project (BlipCode)
+        self.active_project: Optional[dict] = None
+        self._project_context: str = ""
 
     async def initialize(self, on_status=None):
         """Initialize all subsystems.
@@ -235,6 +241,7 @@ class Agent:
         self.tool_registry.register(WriteFileTool(
             blocked_paths=cfg.filesystem.blocked_paths,
         ), group="filesystem")
+        self.tool_registry.register(EditFileTool(), group="filesystem")
         self.tool_registry.register(ListDirectoryTool(), group="filesystem")
 
         # Shell group
@@ -279,6 +286,159 @@ class Agent:
             self.tool_registry.register(RunWorkflowTool(
                 self.workflow_executor, session_id,
             ), group="tasks")
+
+    async def activate_project(self, name: str) -> dict:
+        """Activate a project by name. Loads context and re-registers tools.
+
+        Returns the project dict from the DB.
+        Raises KeyError if project not found.
+        """
+        project = await self.sqlite.get_project(name)
+        if not project:
+            raise KeyError(f"Project '{name}' not found")
+
+        self.active_project = project
+        root = project.get("root_path")
+
+        # Re-register file tools with project root
+        self._register_tools_with_root(root)
+
+        # Register coding tools
+        self.tool_registry.register(GrepTool(root_path=root), group="coding")
+        self.tool_registry.register(GlobTool(root_path=root), group="coding")
+
+        # Touch last_active
+        await self.sqlite.touch_project(name)
+
+        # Build project context for system prompt injection
+        self._project_context = await self._scan_project_context(project)
+
+        logger.info("Activated project '%s' at %s", name, root)
+        return project
+
+    async def deactivate_project(self):
+        """Deactivate the current project, reset tools to defaults."""
+        if not self.active_project:
+            return
+
+        self.active_project = None
+        self._project_context = ""
+
+        # Re-register file tools without root
+        self._register_tools_with_root(None)
+
+        # Remove coding tools
+        self.tool_registry.unregister("grep_files")
+        self.tool_registry.unregister("glob_files")
+
+        logger.info("Deactivated project")
+
+    def _register_tools_with_root(self, root_path: str | None):
+        """Re-register file and shell tools with a root_path (or None to reset)."""
+        cfg = self.config.tools
+
+        # Unregister existing file/shell tools and re-register with root_path
+        for name in ("read_file", "write_file", "edit_file", "list_directory", "run_command"):
+            self.tool_registry.unregister(name)
+
+        self.tool_registry.register(ReadFileTool(
+            max_file_size=cfg.filesystem.max_file_size,
+            blocked_paths=cfg.filesystem.blocked_paths,
+            root_path=root_path,
+        ), group="filesystem")
+        self.tool_registry.register(WriteFileTool(
+            blocked_paths=cfg.filesystem.blocked_paths,
+            root_path=root_path,
+        ), group="filesystem")
+        self.tool_registry.register(EditFileTool(root_path=root_path), group="filesystem")
+        self.tool_registry.register(ListDirectoryTool(root_path=root_path), group="filesystem")
+        self.tool_registry.register(ShellTool(
+            timeout=cfg.shell.timeout,
+            allowed_commands=cfg.shell.allowed_commands,
+            cwd=root_path,
+        ), group="shell")
+
+    async def _scan_project_context(self, project: dict) -> str:
+        """Scan a project directory and build a context string for the LLM."""
+        import subprocess
+        from pathlib import Path
+
+        root = project.get("root_path")
+        if not root or not Path(root).is_dir():
+            return f"Project: {project['name']}\nRoot path not accessible."
+
+        root_path = Path(root)
+        parts = [
+            f"Project: {project['name']}",
+            f"Root: {root}",
+        ]
+        if project.get("description"):
+            parts.append(f"Description: {project['description']}")
+        if project.get("language"):
+            parts.append(f"Language: {project['language']}")
+        if project.get("git_url"):
+            parts.append(f"Git: {project['git_url']}")
+
+        # Git info
+        try:
+            branch = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=root, capture_output=True, text=True, timeout=5,
+            )
+            if branch.returncode == 0:
+                parts.append(f"Branch: {branch.stdout.strip()}")
+
+            log = subprocess.run(
+                ["git", "log", "--oneline", "-5"],
+                cwd=root, capture_output=True, text=True, timeout=5,
+            )
+            if log.returncode == 0 and log.stdout.strip():
+                parts.append(f"\nRecent commits:\n{log.stdout.strip()}")
+        except Exception:
+            pass
+
+        # File tree (top 2 levels, skip non-code dirs)
+        skip_dirs = {".git", "node_modules", "__pycache__", ".venv", "venv",
+                     ".tox", ".mypy_cache", ".pytest_cache", "dist", "build"}
+        tree_lines = []
+        for entry in sorted(root_path.iterdir()):
+            if entry.name.startswith(".") and entry.name in skip_dirs:
+                continue
+            if entry.name in skip_dirs:
+                continue
+            prefix = "[DIR] " if entry.is_dir() else "      "
+            tree_lines.append(f"  {prefix}{entry.name}")
+            if entry.is_dir():
+                try:
+                    for child in sorted(entry.iterdir())[:20]:
+                        if child.name in skip_dirs:
+                            continue
+                        cp = "[DIR] " if child.is_dir() else "      "
+                        tree_lines.append(f"    {cp}{child.name}")
+                except PermissionError:
+                    pass
+        if tree_lines:
+            parts.append(f"\nFile tree:\n" + "\n".join(tree_lines[:80]))
+
+        # Key files
+        key_files = ["README.md", "README.rst", "README.txt", "readme.md",
+                     "pyproject.toml", "setup.py", "setup.cfg",
+                     "package.json", "Cargo.toml", "go.mod",
+                     "requirements.txt", "Makefile", "CLAUDE.md"]
+        for fname in key_files:
+            fpath = root_path / fname
+            if fpath.is_file():
+                try:
+                    content = fpath.read_text(encoding="utf-8", errors="replace")
+                    lines = content.splitlines()[:60]
+                    truncated = "\n".join(lines)
+                    if len(content.splitlines()) > 60:
+                        truncated += "\n... (truncated)"
+                    parts.append(f"\n=== {fname} ===\n{truncated}")
+                except Exception:
+                    pass
+
+        return "\n".join(parts)
 
     async def start_session(
         self,
@@ -575,6 +735,8 @@ class Agent:
         # Always pass all tools — the model decides whether to use them
         tools = self.tool_registry.get_all_ollama_tools() or None
         max_iterations = self.config.agent.max_tool_iterations if tools else 0
+        if self.active_project and tools:
+            max_iterations = max(max_iterations, 15)
         logger.info("Passing %d tools to model", len(tools) if tools else 0)
         full_response = ""
         tool_call_names: list[str] = []
@@ -859,8 +1021,22 @@ class Agent:
                 memory_text += f"{label}:\n" + "\n".join(items) + "\n\n"
 
         # Build messages
+        system_prompt = self.config.agent.system_prompt
+        if self.active_project and self._project_context:
+            system_prompt += (
+                "\n\n--- PROJECT CONTEXT ---\n"
+                f"You are working on the project \"{self.active_project['name']}\".\n"
+                "Use grep_files to search for code patterns before making changes.\n"
+                "Use glob_files to discover relevant files.\n"
+                "Always read a file before editing it.\n"
+                "After making changes, run tests if a test framework is detected.\n"
+                "Use git via run_command for version control operations.\n"
+                "All relative file paths resolve against the project root.\n\n"
+                + self._project_context
+            )
+
         messages = [
-            {"role": "system", "content": self.config.agent.system_prompt},
+            {"role": "system", "content": system_prompt},
         ]
 
         if memory_text.strip():

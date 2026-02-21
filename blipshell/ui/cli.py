@@ -13,6 +13,7 @@ Usage:
 
 import asyncio
 import logging
+import os
 import sys
 
 import click
@@ -160,7 +161,10 @@ async def chat_loop(
             await _check_completed_tasks(agent)
 
             try:
-                user_input = console.input("[bold green]> [/bold green]").strip()
+                proj_prefix = ""
+                if agent.active_project:
+                    proj_prefix = f"[bold cyan]{agent.active_project['name']}[/bold cyan] "
+                user_input = console.input(f"{proj_prefix}[bold green]> [/bold green]").strip()
             except (EOFError, KeyboardInterrupt):
                 break
 
@@ -259,6 +263,12 @@ async def chat_loop(
                             console.print("[yellow]Usage: /flow [turn_number][/yellow]")
                             continue
                     await _print_flow(agent, turn)
+                    continue
+                elif cmd[0] == "projects":
+                    await _list_projects(agent)
+                    continue
+                elif cmd[0] == "project":
+                    await _handle_project_command(agent, cmd_args)
                     continue
                 elif cmd[0] in ("help", "commands"):
                     _print_help()
@@ -492,6 +502,230 @@ async def _save_feedback(agent: Agent, feedback: str):
         pass
 
     console.print(f"[green]Feedback saved as lesson #{lesson_id}.[/green]")
+
+
+async def _list_projects(agent: Agent):
+    """List all registered projects."""
+    if not agent.sqlite:
+        console.print("[yellow]Database not initialized.[/yellow]")
+        return
+
+    projects = await agent.sqlite.list_projects()
+    if not projects:
+        console.print("[dim]No projects. Create one with /project new <name> <path>[/dim]")
+        return
+
+    table = Table(title="Projects")
+    table.add_column("Name", style="cyan")
+    table.add_column("Path")
+    table.add_column("Language", style="dim")
+    table.add_column("Last Active")
+    table.add_column("", justify="center")
+
+    active_name = agent.active_project.get("name") if agent.active_project else None
+
+    for p in projects:
+        marker = "[green]>>>[/green]" if p["name"] == active_name else ""
+        last_active = (p.get("last_active") or "")[:19]
+        table.add_row(
+            p["name"],
+            p.get("root_path") or "-",
+            p.get("language") or "-",
+            last_active,
+            marker,
+        )
+
+    console.print(table)
+
+
+async def _handle_project_command(agent: Agent, args: list[str]):
+    """Handle /project subcommands."""
+    if not args:
+        if agent.active_project:
+            _print_project_info(agent)
+        else:
+            console.print(
+                "[dim]No active project. Use /project <name> to activate, "
+                "or /project new <name> <path> to create.[/dim]"
+            )
+        return
+
+    subcmd = args[0].lower()
+
+    if subcmd == "new":
+        if len(args) < 3:
+            console.print("[yellow]Usage: /project new <name> <path>[/yellow]")
+            return
+        await _create_project(agent, args[1], " ".join(args[2:]))
+
+    elif subcmd == "info":
+        if agent.active_project:
+            _print_project_info(agent)
+        else:
+            console.print("[dim]No active project.[/dim]")
+
+    elif subcmd == "off":
+        if agent.active_project:
+            name = agent.active_project["name"]
+            await agent.deactivate_project()
+            console.print(f"[dim]Deactivated project '{name}'.[/dim]")
+        else:
+            console.print("[dim]No active project to deactivate.[/dim]")
+
+    elif subcmd == "delete":
+        if len(args) < 2:
+            console.print("[yellow]Usage: /project delete <name>[/yellow]")
+            return
+        name = args[1]
+        project = await agent.sqlite.get_project(name)
+        if not project:
+            console.print(f"[yellow]Project '{name}' not found.[/yellow]")
+            return
+        if agent.active_project and agent.active_project["name"] == name:
+            await agent.deactivate_project()
+        await agent.sqlite.delete_project(name)
+        console.print(f"[green]Project '{name}' deleted (files on disk untouched).[/green]")
+
+    else:
+        # Treat as project name to activate
+        name = args[0]
+        try:
+            with console.status("[dim]Loading project...[/dim]", spinner="dots"):
+                project = await agent.activate_project(name)
+            root = project.get("root_path") or "no path"
+            lang = project.get("language") or ""
+            console.print(f"[green]Activated project '{name}'[/green] ({root})")
+            if lang:
+                console.print(f"[dim]Language: {lang}[/dim]")
+        except KeyError:
+            console.print(
+                f"[yellow]Project '{name}' not found. "
+                f"Use /projects to list or /project new to create.[/yellow]"
+            )
+
+
+async def _create_project(agent: Agent, name: str, path_str: str):
+    """Create a new project from an existing directory."""
+    import subprocess
+    from pathlib import Path
+
+    path = Path(path_str).resolve()
+    if not path.is_dir():
+        console.print(f"[yellow]Directory not found: {path_str}[/yellow]")
+        return
+
+    existing = await agent.sqlite.get_project(name)
+    if existing:
+        console.print(
+            f"[yellow]Project '{name}' already exists. "
+            f"Use /project delete {name} first.[/yellow]"
+        )
+        return
+
+    # Auto-detect language from file extensions
+    language = _detect_language(path)
+
+    # Auto-detect git URL
+    git_url = None
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=str(path), capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            git_url = result.stdout.strip()
+    except Exception:
+        pass
+
+    # Auto-detect description from README first line
+    description = ""
+    for readme_name in ("README.md", "README.txt", "README.rst", "README"):
+        readme = path / readme_name
+        if readme.is_file():
+            try:
+                for line in readme.read_text(encoding="utf-8").splitlines():
+                    stripped = line.strip().lstrip("#").strip()
+                    if stripped:
+                        description = stripped[:200]
+                        break
+            except Exception:
+                pass
+            break
+
+    await agent.sqlite.create_project(
+        name=name,
+        description=description,
+        root_path=str(path),
+        git_url=git_url,
+        language=language,
+    )
+
+    console.print(f"[green]Created project '{name}'[/green]")
+    console.print(f"  Path: {path}")
+    if language:
+        console.print(f"  Language: {language}")
+    if git_url:
+        console.print(f"  Git: {git_url}")
+    if description:
+        console.print(f"  Description: {description}")
+    console.print(f"\n[dim]Activate with: /project {name}[/dim]")
+
+
+def _detect_language(path) -> str:
+    """Detect the primary language of a project directory from file extensions."""
+    from pathlib import Path
+
+    ext_counts: dict[str, int] = {}
+    lang_map = {
+        ".py": "Python", ".js": "JavaScript", ".ts": "TypeScript",
+        ".jsx": "JavaScript", ".tsx": "TypeScript",
+        ".rs": "Rust", ".go": "Go", ".java": "Java",
+        ".cs": "C#", ".cpp": "C++", ".c": "C",
+        ".rb": "Ruby", ".php": "PHP", ".swift": "Swift",
+        ".kt": "Kotlin", ".scala": "Scala",
+    }
+
+    skip_dirs = {".git", "node_modules", "__pycache__", ".venv", "venv",
+                 "dist", "build", ".tox", ".eggs"}
+
+    for dirpath, dirnames, filenames in os.walk(path):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        for fname in filenames:
+            ext = Path(fname).suffix.lower()
+            if ext in lang_map:
+                lang = lang_map[ext]
+                ext_counts[lang] = ext_counts.get(lang, 0) + 1
+
+    if not ext_counts:
+        return ""
+
+    return max(ext_counts, key=ext_counts.get)
+
+
+def _print_project_info(agent: Agent):
+    """Print detailed information about the active project."""
+    proj = agent.active_project
+    if not proj:
+        console.print("[dim]No active project.[/dim]")
+        return
+
+    table = Table(title=f"Project: {proj['name']}")
+    table.add_column("Property", style="cyan")
+    table.add_column("Value")
+
+    table.add_row("Name", proj["name"])
+    table.add_row("Path", proj.get("root_path") or "-")
+    table.add_row("Language", proj.get("language") or "-")
+    table.add_row("Git URL", proj.get("git_url") or "-")
+    table.add_row("Description", proj.get("description") or "-")
+    table.add_row("Created", (proj.get("created_at") or "")[:19])
+    table.add_row("Last Active", (proj.get("last_active") or "")[:19])
+
+    console.print(table)
+
+    if agent._project_context:
+        lines = agent._project_context.splitlines()
+        console.print(f"\n[dim]Project context loaded: {len(lines)} lines[/dim]")
 
 
 async def _handle_code_command(agent: Agent, args_str: str):
@@ -1269,26 +1503,30 @@ async def _handle_workflow_command(agent: Agent, args: list[str]):
 def _print_help():
     """Print help for CLI commands."""
     console.print(Panel(
-        "[bold]/quit[/bold]              - Exit BlipShell\n"
-        "[bold]/status[/bold]            - Show agent status, endpoints, routing\n"
-        "[bold]/memory[/bold]            - Show memory pool usage\n"
-        "[bold]/save[/bold]              - Force save session to memory\n"
-        "[bold]/core[/bold]              - Show core memories and lessons\n"
-        "[bold]/think[/bold]              - Toggle LLM thinking mode on/off (faster when off)\n"
-        "[bold]/reflect[/bold]            - Toggle self-reflection (second-pass critique) on/off\n"
-        "[bold]/code <path> [msg][/bold]  - Send code to LLM for review (--model name to override)\n"
-        "[bold]/feedback <msg>[/bold]    - Save feedback as a lesson (e.g. 'be more concise')\n"
-        "[bold]/offload <msg>[/bold]     - Run a task on the remote PC in the background\n"
-        "[bold]/flow[/bold]              - Show conversation flow events (last 5 turns)\n"
-        "[bold]/flow <n>[/bold]          - Show detailed flow for turn N\n"
-        "[bold]/plan[/bold]              - Show current active plan\n"
-        "[bold]/plans[/bold]             - List all plans for this session\n"
-        "[bold]/tasks[/bold]             - Show background tasks\n"
-        "[bold]/task <id>[/bold]         - Show background task detail\n"
-        "[bold]/workflow list[/bold]     - List available workflows\n"
-        "[bold]/workflow show <n>[/bold] - Show workflow steps\n"
-        "[bold]/workflow run <n>[/bold]  - Run a workflow\n"
-        "[bold]/help[/bold]              - Show this help\n\n"
+        "[bold]/quit[/bold]                  - Exit BlipShell\n"
+        "[bold]/status[/bold]                - Show agent status, endpoints, routing\n"
+        "[bold]/memory[/bold]                - Show memory pool usage\n"
+        "[bold]/save[/bold]                  - Force save session to memory\n"
+        "[bold]/core[/bold]                  - Show core memories and lessons\n"
+        "[bold]/think[/bold]                 - Toggle LLM thinking mode on/off\n"
+        "[bold]/reflect[/bold]               - Toggle self-reflection on/off\n"
+        "[bold]/code <path> [msg][/bold]     - Send code to LLM for review\n"
+        "[bold]/feedback <msg>[/bold]        - Save feedback as a lesson\n"
+        "[bold]/offload <msg>[/bold]         - Run a task on remote PC in background\n"
+        "[bold]/flow[/bold] [dim][n][/dim]              - Show conversation flow events\n"
+        "[bold]/plan[/bold]                  - Show current active plan\n"
+        "[bold]/plans[/bold]                 - List all plans for this session\n"
+        "[bold]/tasks[/bold]                 - Show background tasks\n"
+        "[bold]/task <id>[/bold]             - Show background task detail\n"
+        "[bold]/workflow[/bold] [dim]list|show|run[/dim] - Workflow management\n\n"
+        "[bold cyan]Project Commands[/bold cyan]\n"
+        "[bold]/projects[/bold]              - List all projects\n"
+        "[bold]/project <name>[/bold]        - Activate a project\n"
+        "[bold]/project new <n> <path>[/bold] - Create project from directory\n"
+        "[bold]/project info[/bold]          - Show active project details\n"
+        "[bold]/project off[/bold]           - Deactivate current project\n"
+        "[bold]/project delete <name>[/bold] - Remove project from DB\n\n"
+        "[bold]/help[/bold]                  - Show this help\n\n"
         "[dim]Press [bold]Esc[/bold] during a response to cancel the LLM call[/dim]\n"
         "[dim]Prefix with !plan to force planning: !plan <message>[/dim]",
         title="Commands",

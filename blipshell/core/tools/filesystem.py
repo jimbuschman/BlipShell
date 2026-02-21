@@ -8,9 +8,11 @@ from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterT
 
 
 class ReadFileTool(Tool):
-    def __init__(self, max_file_size: int = 1048576, blocked_paths: list[str] | None = None):
+    def __init__(self, max_file_size: int = 1048576, blocked_paths: list[str] | None = None,
+                 root_path: str | None = None):
         self.max_file_size = max_file_size
         self.blocked_paths = blocked_paths or []
+        self.root_path = root_path
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -24,8 +26,14 @@ class ReadFileTool(Tool):
             ],
         )
 
+    def _resolve(self, path: str) -> Path:
+        p = Path(path)
+        if not p.is_absolute() and self.root_path:
+            return (Path(self.root_path) / p).resolve()
+        return p.resolve()
+
     async def execute(self, path: str, max_lines: int = 0, **kwargs) -> str:
-        resolved = Path(path).resolve()
+        resolved = self._resolve(path)
         if self._is_blocked(str(resolved)):
             return f"Error: Access to '{path}' is blocked."
         if not resolved.is_file():
@@ -44,8 +52,9 @@ class ReadFileTool(Tool):
 
 
 class WriteFileTool(Tool):
-    def __init__(self, blocked_paths: list[str] | None = None):
+    def __init__(self, blocked_paths: list[str] | None = None, root_path: str | None = None):
         self.blocked_paths = blocked_paths or []
+        self.root_path = root_path
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -59,8 +68,14 @@ class WriteFileTool(Tool):
             ],
         )
 
+    def _resolve(self, path: str) -> Path:
+        p = Path(path)
+        if not p.is_absolute() and self.root_path:
+            return (Path(self.root_path) / p).resolve()
+        return p.resolve()
+
     async def execute(self, path: str, content: str, **kwargs) -> str:
-        resolved = Path(path).resolve()
+        resolved = self._resolve(path)
         if any(blocked in str(resolved) for blocked in self.blocked_paths):
             return f"Error: Access to '{path}' is blocked."
 
@@ -70,6 +85,15 @@ class WriteFileTool(Tool):
 
 
 class EditFileTool(Tool):
+    def __init__(self, root_path: str | None = None):
+        self.root_path = root_path
+
+    def _resolve(self, path: str) -> Path:
+        p = Path(path)
+        if not p.is_absolute() and self.root_path:
+            return (Path(self.root_path) / p).resolve()
+        return p.resolve()
+
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="edit_file",
@@ -85,7 +109,7 @@ class EditFileTool(Tool):
         )
 
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs) -> str:
-        resolved = Path(path).resolve()
+        resolved = self._resolve(path)
         if not resolved.is_file():
             return f"Error: File '{path}' not found."
 
@@ -99,6 +123,15 @@ class EditFileTool(Tool):
 
 
 class ListDirectoryTool(Tool):
+    def __init__(self, root_path: str | None = None):
+        self.root_path = root_path
+
+    def _resolve(self, path: str) -> Path:
+        p = Path(path)
+        if not p.is_absolute() and self.root_path:
+            return (Path(self.root_path) / p).resolve()
+        return p.resolve()
+
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="list_directory",
@@ -110,7 +143,7 @@ class ListDirectoryTool(Tool):
         )
 
     async def execute(self, path: str = ".", **kwargs) -> str:
-        resolved = Path(path).resolve()
+        resolved = self._resolve(path)
         if not resolved.is_dir():
             return f"Error: '{path}' is not a directory."
 

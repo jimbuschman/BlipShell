@@ -32,6 +32,12 @@ TOOL_GROUP_PATTERNS: dict[str, re.Pattern] = {
         r"we\s+talked|you\s+said|i\s+told\s+you|do\s+you\s+know|save\s+this)",
         re.IGNORECASE,
     ),
+    "coding": re.compile(
+        r"\b(grep|glob|search\s+(for|files|code)|refactor|implement|function\s|class\s|"
+        r"import\s|variable|bug|fix\s|test|commit|branch|merge|diff|lint|"
+        r"type\s+error|add\s+a\s|remove\s+the|rename|move\s+the|update\s+the)",
+        re.IGNORECASE,
+    ),
 }
 
 

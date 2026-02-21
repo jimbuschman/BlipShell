@@ -114,6 +114,10 @@ CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     description TEXT,
+    root_path TEXT,
+    git_url TEXT,
+    language TEXT,
+    settings_json TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_active DATETIME DEFAULT CURRENT_TIMESTAMP,
     metadata_json TEXT
@@ -287,6 +291,10 @@ class SQLiteStore:
             "ALTER TABLE memories ADD COLUMN last_accessed DATETIME",
             "ALTER TABLE memories ADD COLUMN consolidated_at DATETIME",
             "ALTER TABLE memories ADD COLUMN entities_extracted_at DATETIME",
+            "ALTER TABLE projects ADD COLUMN root_path TEXT",
+            "ALTER TABLE projects ADD COLUMN git_url TEXT",
+            "ALTER TABLE projects ADD COLUMN language TEXT",
+            "ALTER TABLE projects ADD COLUMN settings_json TEXT",
         ):
             try:
                 await self._db.execute(col_sql)
@@ -956,14 +964,58 @@ class SQLiteStore:
 
     # --- Projects ---
 
-    async def create_project(self, name: str, description: str = "") -> int:
+    async def create_project(
+        self,
+        name: str,
+        description: str = "",
+        root_path: Optional[str] = None,
+        git_url: Optional[str] = None,
+        language: Optional[str] = None,
+    ) -> int:
         """Create a named project."""
+        ts = datetime.now(timezone.utc).isoformat()
         cursor = await self._db.execute(
-            "INSERT OR IGNORE INTO projects (name, description) VALUES (?, ?)",
-            (name, description),
+            """INSERT OR IGNORE INTO projects
+               (name, description, root_path, git_url, language, created_at, last_active)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (name, description, root_path, git_url, language, ts, ts),
         )
         await self._db.commit()
         return cursor.lastrowid
+
+    async def get_project(self, name: str) -> Optional[dict]:
+        """Get a project by name."""
+        cursor = await self._db.execute(
+            "SELECT * FROM projects WHERE name = ?", (name,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def update_project(self, name: str, **fields) -> None:
+        """Update project fields by name."""
+        allowed = {"description", "root_path", "git_url", "language", "settings_json", "metadata_json"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [name]
+        await self._db.execute(
+            f"UPDATE projects SET {set_clause} WHERE name = ?", values,
+        )
+        await self._db.commit()
+
+    async def touch_project(self, name: str) -> None:
+        """Update a project's last_active timestamp."""
+        ts = datetime.now(timezone.utc).isoformat()
+        await self._db.execute(
+            "UPDATE projects SET last_active = ? WHERE name = ?", (ts, name),
+        )
+        await self._db.commit()
+
+    async def delete_project(self, name: str) -> None:
+        """Delete a project by name (does not touch files on disk)."""
+        await self._db.execute("DELETE FROM projects WHERE name = ?", (name,))
+        await self._db.commit()
 
     async def list_projects(self) -> list[dict]:
         """List all projects."""
