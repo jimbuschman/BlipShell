@@ -267,6 +267,8 @@ async def chat_loop(
                 console.print("[yellow]Session cleanup interrupted. Data is safe.[/yellow]")
             except Exception as e:
                 console.print(f"[yellow]Session cleanup error: {e}[/yellow]")
+        # Always clean up background tasks even if end_session was interrupted
+        await agent.force_cleanup()
         console.print("[dim]Session saved. Goodbye![/dim]")
 
 

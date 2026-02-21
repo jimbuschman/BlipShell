@@ -913,6 +913,22 @@ class Agent:
         if self.job_queue:
             await self.job_queue.stop()
 
+    async def force_cleanup(self):
+        """Cancel all background tasks so the process can exit cleanly."""
+        if self._health_check_task:
+            self._health_check_task.cancel()
+            self._health_check_task = None
+        if self.job_queue:
+            try:
+                await self.job_queue.stop()
+            except Exception:
+                pass
+        if self.sqlite:
+            try:
+                await self.sqlite.close()
+            except Exception:
+                pass
+
     @property
     def last_endpoint_used(self) -> Optional[str]:
         """Name of the endpoint that handled the last chat request."""
