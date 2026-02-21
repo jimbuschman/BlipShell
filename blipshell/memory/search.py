@@ -72,6 +72,7 @@ class MemorySearch:
             self.decay_rate = config.decay_rate
             self.fts_weight = config.fts_weight
             self.entity_boost = config.entity_boost
+            self.project_boost = getattr(config, "project_boost", 0.15)
         else:
             self.min_rank = min_rank
             self.search_limit = search_limit
@@ -82,6 +83,7 @@ class MemorySearch:
             self.decay_rate = 0.001
             self.fts_weight = 0.3
             self.entity_boost = 0.15
+            self.project_boost = 0.15
         self.last_search_stats: dict | None = None
 
     async def search(
@@ -89,6 +91,7 @@ class MemorySearch:
         query: str,
         current_session_id: int | None = None,
         n_results: int | None = None,
+        active_project: str | None = None,
     ) -> list[SearchResult]:
         """Search memories by semantic similarity.
 
@@ -96,6 +99,7 @@ class MemorySearch:
             query: The search query
             current_session_id: Exclude memories from this session
             n_results: Max results to return (defaults to search_limit)
+            active_project: Boost memories from sessions tagged with this project
 
         Returns:
             Sorted list of SearchResult with boosted scores
@@ -110,6 +114,11 @@ class MemorySearch:
         if should_skip_memory(query, max_length=20) and not contains_signal_words(query):
             self.last_search_stats = {"chroma_hits": 0, "fts_hits": 0, "entity_hits": 0, "post_filter": 0, "final_returned": 0, "skipped": "noise_filter"}
             return []
+
+        # Pre-load project session IDs for boosting
+        project_session_ids: set[int] = set()
+        if active_project:
+            project_session_ids = await self.sqlite.get_session_ids_for_project(active_project)
 
         # Step 2: ChromaDB semantic search
         chroma_results = self.chroma.search_memories(
@@ -197,7 +206,12 @@ class MemorySearch:
             # RRF boost from hybrid search fusion
             rrf_boost = rrf_scores.get(memory_id, 0.0) * self.fts_weight
 
-            boosted_score = similarity + importance_boost + tag_boost + rrf_boost
+            # Project boost — memories from the active project's sessions score higher
+            project_boost = 0.0
+            if project_session_ids and memory.session_id in project_session_ids:
+                project_boost = self.project_boost
+
+            boosted_score = similarity + importance_boost + tag_boost + rrf_boost + project_boost
 
             results.append(SearchResult(
                 memory_id=memory_id,

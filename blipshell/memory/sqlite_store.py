@@ -337,6 +337,20 @@ class SQLiteStore:
         await self._db.execute(f"UPDATE sessions SET {set_clause} WHERE id = ?", values)
         await self._db.commit()
 
+    async def update_session_project(self, session_id: int, project: str) -> None:
+        """Update a session's project tag."""
+        await self._db.execute(
+            "UPDATE sessions SET project = ? WHERE id = ?", (project, session_id),
+        )
+        await self._db.commit()
+
+    async def get_session_ids_for_project(self, project: str) -> set[int]:
+        """Get all session IDs tagged with a project name."""
+        cursor = await self._db.execute(
+            "SELECT id FROM sessions WHERE project = ?", (project,),
+        )
+        return {row[0] for row in await cursor.fetchall()}
+
     async def get_session(self, session_id: int) -> Optional[Session]:
         """Get a session by ID."""
         cursor = await self._db.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))

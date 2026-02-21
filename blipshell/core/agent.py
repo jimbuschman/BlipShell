@@ -10,7 +10,9 @@ Extended with:
 """
 
 import asyncio
+import json
 import logging
+import time
 from datetime import datetime
 from typing import AsyncIterator, Callable, Optional
 
@@ -26,6 +28,7 @@ from blipshell.core.tools.filesystem import (
     ReadFileTool,
     WriteFileTool,
 )
+from blipshell.core.tools.project_tools import CreateProjectTool
 from blipshell.core.tools.memory_tools import (
     ListSessionsTool,
     PromoteToCoreMemoryTool,
@@ -267,6 +270,7 @@ class Agent:
             self.sqlite, self.processor, session_id,
         ), group="memory")
         self.tool_registry.register(ListSessionsTool(self.sqlite), group="memory")
+        self.tool_registry.register(CreateProjectTool(self.sqlite), group="general")
 
     def _register_task_tools(self):
         """Register background task and workflow tools (needs session_id)."""
@@ -297,6 +301,11 @@ class Agent:
         if not project:
             raise KeyError(f"Project '{name}' not found")
 
+        # Dump memory if switching from another project (preserve conversation)
+        if self.active_project and self.active_project["name"] != name:
+            if self.session_manager:
+                await self.session_manager.dump_to_memory()
+
         self.active_project = project
         root = project.get("root_path")
 
@@ -307,11 +316,31 @@ class Agent:
         self.tool_registry.register(GrepTool(root_path=root), group="coding")
         self.tool_registry.register(GlobTool(root_path=root), group="coding")
 
+        # Tag current session with this project
+        if self.session_manager and self.session_manager.session_id:
+            await self.sqlite.update_session_project(
+                self.session_manager.session_id, name,
+            )
+            self.session_manager.project = name
+
         # Touch last_active
         await self.sqlite.touch_project(name)
 
-        # Build project context for system prompt injection
-        self._project_context = await self._scan_project_context(project)
+        # Load project context — use cache if fresh (< 1 hour)
+        settings = json.loads(project.get("settings_json") or "{}")
+        cached = settings.get("project_context")
+        cached_at = settings.get("project_context_cached_at", 0)
+
+        if cached and (time.time() - cached_at) < 3600:
+            self._project_context = cached
+            logger.info("Using cached project context for '%s'", name)
+        else:
+            self._project_context = await self._scan_project_context(project)
+            settings["project_context"] = self._project_context
+            settings["project_context_cached_at"] = time.time()
+            await self.sqlite.update_project(
+                name, settings_json=json.dumps(settings),
+            )
 
         logger.info("Activated project '%s' at %s", name, root)
         return project
@@ -923,10 +952,12 @@ class Agent:
         # Search conversation memories
         memory_count = 0
         try:
+            active_proj = self.active_project["name"] if self.active_project else None
             results = await self.search.search(
                 query=query,
                 current_session_id=self.session_manager.session_id,
                 n_results=10,
+                active_project=active_proj,
             )
             memory_count = len(results)
             for r in results:

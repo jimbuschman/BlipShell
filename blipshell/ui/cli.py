@@ -142,11 +142,20 @@ async def chat_loop(
 
     sid = await agent.start_session(project=project, resume_session_id=resume_id)
 
+    # Auto-activate project if specified via --project flag
+    if project:
+        try:
+            with console.status("[dim]Loading project...[/dim]", spinner="dots"):
+                await agent.activate_project(project)
+        except KeyError:
+            console.print(f"[yellow]Project '{project}' not found in DB. Use /project new to create it.[/yellow]")
+
     # Header
+    proj_display = agent.active_project["name"] if agent.active_project else None
     console.print(Panel.fit(
         f"[bold cyan]BlipShell[/bold cyan] v0.1.0\n"
         f"Session #{sid}"
-        + (f" | Project: {project}" if project else "")
+        + (f" | Project: [bold]{proj_display}[/bold]" if proj_display else "")
         + f"\nType [bold]/help[/bold] for commands, [bold]/quit[/bold] to exit, [bold]Esc[/bold] to cancel"
         + f"\nThinking: [bold]{'ON' if agent.think_enabled else 'OFF'}[/bold]",
         border_style="cyan",

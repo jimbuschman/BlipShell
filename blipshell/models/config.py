@@ -93,6 +93,7 @@ class MemoryConfig(BaseModel):
     tag_discovery_sample_size: int = 20  # poorly-tagged memories to sample
     entity_extraction_batch_size: int = 50  # memories processed per startup run
     entity_boost: float = 0.15  # boost for memories found via entity graph
+    project_boost: float = 0.15  # boost for memories from active project sessions
 
 
 class SessionConfig(BaseModel):
