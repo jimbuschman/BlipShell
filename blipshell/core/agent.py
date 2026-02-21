@@ -1117,10 +1117,10 @@ class Agent:
                 logger.error("Auto-continue failed: %s", e)
                 full_response = f"[Hit tool limit after {len(tool_call_names)} calls]"
 
-        # Auto-nudge: if we're in project mode and the LLM stopped mid-task
-        # (asking permission or narrating intent without acting), nudge it.
-        if (self.active_project and full_response and tool_call_names
-                and self._should_auto_continue(full_response)):
+        # Auto-nudge: if the LLM stopped mid-task (asking permission or
+        # narrating intent without acting), nudge it to continue.
+        # Works even without tool calls (e.g., LLM asks "want me to start?" as first response).
+        if (full_response and self._should_auto_continue(full_response)):
             if on_token:
                 on_token("\n\x1b[2m[Auto-continuing...]\x1b[0m\n")
             messages.append({"role": "assistant", "content": full_response})
