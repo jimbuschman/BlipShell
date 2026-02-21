@@ -638,6 +638,22 @@ class Agent:
 
         return "", {}
 
+    @staticmethod
+    def _format_tool_arg_hint(tool_call: ToolCall) -> str:
+        """Format a short argument hint for tool call display."""
+        args = tool_call.arguments
+        if not args:
+            return ""
+        if "pattern" in args:
+            return f" {args['pattern'][:50]}"
+        if "path" in args:
+            return f" {args['path']}"
+        if "command" in args:
+            return f" {args['command'][:60]}"
+        if "query" in args:
+            return f" {args['query'][:50]}"
+        return ""
+
     async def chat(
         self,
         user_message: str,
@@ -681,7 +697,7 @@ class Agent:
         # Self-reflection: second LLM pass to catch errors/gaps
         if self.reflect_enabled and response and not response.startswith("Error:"):
             if on_token:
-                on_token("\n\n[Reflecting...]\n\n")
+                on_token("\n\n\x1b[2m[Reflecting...]\x1b[0m\n\n")
             response = await self._reflect_on_response(user_message, response, on_token)
 
         # Add assistant response to session
@@ -708,14 +724,17 @@ class Agent:
         if self._last_context_stats:
             await self._log_event("context_built", self._last_context_stats)
 
+        # Route to coding model when a project is active, otherwise tool_calling
+        task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
+
         # Get model and client (with fallback if cloud is down)
-        model = self.router.get_model(TaskType.TOOL_CALLING)
-        client = await self.router.get_client(TaskType.TOOL_CALLING)
+        model = self.router.get_model(task_type)
+        client = await self.router.get_client(task_type)
         using_fallback = False
 
         # Skip straight to fallback if primary model is known to be down
         if self.router.is_model_failed(model):
-            fallback = self.router.get_fallback_model(TaskType.TOOL_CALLING)
+            fallback = self.router.get_fallback_model(task_type)
             if fallback:
                 logger.info("Skipping failed model '%s', using fallback '%s'", model, fallback)
                 model = fallback
@@ -723,12 +742,12 @@ class Agent:
 
         if not client:
             # Try fallback model
-            fallback = self.router.get_fallback_model(TaskType.TOOL_CALLING)
+            fallback = self.router.get_fallback_model(task_type)
             if fallback:
                 logger.warning("Primary endpoint down, using fallback model '%s'", fallback)
                 model = fallback
                 using_fallback = True
-                client = await self.router.get_client(TaskType.TOOL_CALLING)
+                client = await self.router.get_client(task_type)
             if not client:
                 return "Error: No available LLM endpoint."
 
@@ -745,7 +764,7 @@ class Agent:
         for iteration in range(max_iterations + 1):
             endpoint = None
             try:
-                endpoint = await self.endpoint_manager.get_endpoint_for_role(TaskType.TOOL_CALLING)
+                endpoint = await self.endpoint_manager.get_endpoint_for_role(task_type)
                 if endpoint:
                     endpoint.start_request()
                     self._last_endpoint_used = endpoint.name
@@ -782,13 +801,18 @@ class Agent:
                         tool_call = ToolCall(name=name, arguments=arguments)
 
                         if on_token:
-                            on_token(f"\n[Tool: {tool_call.name}]\n")
+                            arg_hint = self._format_tool_arg_hint(tool_call)
+                            on_token(f"\n\x1b[36m\x1b[1m[Tool: {tool_call.name}{arg_hint}]\x1b[0m\n")
 
                         result = await self.tool_registry.execute_tool_call(tool_call)
                         messages.append(result.to_ollama_message())
 
                         if on_token:
-                            on_token(f"[Result: {result.result[:200]}]\n\n")
+                            preview = result.result[:120].replace("\n", " ")
+                            if result.success:
+                                on_token(f"\x1b[2m[{preview}]\x1b[0m\n\n")
+                            else:
+                                on_token(f"\x1b[31m[{preview}]\x1b[0m\n\n")
 
                     if endpoint:
                         endpoint.record_success(0)
@@ -814,13 +838,13 @@ class Agent:
 
                 # Try fallback model if we haven't already
                 if not using_fallback:
-                    fallback = self.router.get_fallback_model(TaskType.TOOL_CALLING)
+                    fallback = self.router.get_fallback_model(task_type)
                     if fallback and fallback != model:
                         logger.warning("Primary model '%s' failed, falling back to '%s'", model, fallback)
                         model = fallback
                         using_fallback = True
                         if on_token:
-                            on_token(f"\n[Falling back to {fallback}]\n")
+                            on_token(f"\n\x1b[33m[Falling back to {fallback}]\x1b[0m\n")
                         continue  # Retry the iteration with fallback model
 
                 logger.error("Chat error: %s", e)
@@ -948,8 +972,10 @@ class Agent:
         user_tokens = estimate_tokens(user_message)
 
         # Use endpoint-specific context window if available
+        # Route to coding endpoint's context window when a project is active
+        context_role = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
         context_limit = self.endpoint_manager.get_context_tokens_for_role(
-            TaskType.TOOL_CALLING,
+            context_role,
             default=self.config.memory.total_context_tokens,
         )
 
@@ -1032,6 +1058,11 @@ class Agent:
                 "After making changes, run tests if a test framework is detected.\n"
                 "Use git via run_command for version control operations.\n"
                 "All relative file paths resolve against the project root.\n\n"
+                "IMPORTANT tool usage rules:\n"
+                "- Do NOT re-read files you have already read in this conversation.\n"
+                "- Do NOT run the same grep or glob search twice.\n"
+                "- Produce your final answer within 10 tool calls — do not explore endlessly.\n"
+                "- This is Windows: use 'dir' not 'ls', 'type' not 'cat'. Do not use 'wc' or 'grep' shell commands — use the grep_files tool instead.\n\n"
                 + self._project_context
             )
 
