@@ -203,12 +203,6 @@ class Agent:
         # Register tools
         self._register_tools()
 
-        _status("Checking memories...")
-        await self._auto_prune_memories()
-
-        _status("Consolidating memories...")
-        await self._auto_consolidate_memories()
-
         # Load discovered tag patterns into tagger
         await self._load_discovered_tags()
 
