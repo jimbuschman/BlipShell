@@ -121,29 +121,45 @@ async def main():
     elapsed = time.perf_counter() - start
     console.print(f"  Embedded {embedded} memories ({errors} errors) in {elapsed:.1f}s")
 
-    # --- Core memories ---
+    # --- Core memories (batched) ---
     console.print("[bold]Rebuilding core memories...[/bold]")
     cursor = await sqlite._db.execute(
         "SELECT id, content FROM core_memories WHERE is_active = 1"
     )
     core_rows = await cursor.fetchall()
-    for row in core_rows:
+    core_errors = 0
+    for i in range(0, len(core_rows), args.batch_size):
+        batch = core_rows[i:i + args.batch_size]
         try:
-            chroma.add_core_memory(row["id"], row["content"])
+            coll = chroma._core_memories
+            coll.upsert(
+                ids=[str(r["id"]) for r in batch],
+                documents=[chroma._truncate(r["content"]) for r in batch],
+                metadatas=[{"source": "core_memory"} for _ in batch],
+            )
         except Exception as e:
-            console.print(f"[red]Core memory {row['id']} error: {e}[/red]")
-    console.print(f"  Embedded {len(core_rows)} core memories")
+            core_errors += len(batch)
+            console.print(f"[red]Core memory batch error: {e}[/red]")
+    console.print(f"  Embedded {len(core_rows)} core memories ({core_errors} errors)")
 
-    # --- Lessons ---
+    # --- Lessons (batched) ---
     console.print("[bold]Rebuilding lessons...[/bold]")
     cursor = await sqlite._db.execute("SELECT id, content FROM lessons")
     lesson_rows = await cursor.fetchall()
-    for row in lesson_rows:
+    lesson_errors = 0
+    for i in range(0, len(lesson_rows), args.batch_size):
+        batch = lesson_rows[i:i + args.batch_size]
         try:
-            chroma.add_lesson(row["id"], row["content"])
+            coll = chroma._lessons
+            coll.upsert(
+                ids=[str(r["id"]) for r in batch],
+                documents=[chroma._truncate(r["content"]) for r in batch],
+                metadatas=[{"source": "lesson"} for _ in batch],
+            )
         except Exception as e:
-            console.print(f"[red]Lesson {row['id']} error: {e}[/red]")
-    console.print(f"  Embedded {len(lesson_rows)} lessons")
+            lesson_errors += len(batch)
+            console.print(f"[red]Lesson batch error: {e}[/red]")
+    console.print(f"  Embedded {len(lesson_rows)} lessons ({lesson_errors} errors)")
 
     # Final counts
     console.print()
