@@ -77,7 +77,7 @@ class MemoryConfig(BaseModel):
     min_rank_threshold: int = 3
     importance_recency_bonus: float = 0.1
     importance_tag_bonus: float = 0.05
-    similarity_threshold: float = 0.5
+    similarity_threshold: float = 0.3  # lowered from 0.5 — nomic scores are lower but still relevant
     importance_boost_weight: float = 0.2
     tag_overlap_boost: float = 0.1
     search_overfetch_multiplier: int = 2

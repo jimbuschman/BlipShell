@@ -9,7 +9,7 @@ models:
   ranking: "qwen2.5:14b"               # local — best rank distribution
   importance: "qwen3:14b"              # local — best importance distribution
   ranking_importance: "qwen2.5:14b"    # combined scoring for batch import
-  embedding: "snowflake-arctic-embed:335m"  # benchmarked: 30% better similarity than nomic-embed-text
+  embedding: "nomic-embed-text"  # snowflake-arctic-embed had better quality but too much GPU contention
   # Local fallbacks when cloud endpoints are unavailable
   reasoning_fallback: "gpt-oss:latest"
   tool_calling_fallback: "gpt-oss:latest"

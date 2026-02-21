@@ -13,10 +13,9 @@ from chromadb.config import Settings
 
 logger = logging.getLogger(__name__)
 
-# snowflake-arctic-embed:335m has 512 token context (~2000 chars).
-# Truncate to 500 chars (~125 tokens) to stay safely under.
-# Benchmark showed this is plenty for good similarity matching.
-MAX_EMBED_CHARS = 500
+# nomic-embed-text has 8192 token context but Ollama may default lower.
+# 2000 chars (~500 tokens) is safe for any model and plenty for quality.
+MAX_EMBED_CHARS = 2000
 
 # Collection names
 MEMORIES_COLLECTION = "memories"
