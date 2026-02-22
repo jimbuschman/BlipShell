@@ -284,7 +284,12 @@ def execute_step(
         f"{context}\n"
         f"Current step ({step_number}/{total_steps}): {step_description}\n\n"
         "Focus ONLY on this step. Use tools if needed. "
-        "Provide a clear, concise result for this step."
+        "Provide a clear, concise result for this step.\n\n"
+        "RULES:\n"
+        "- Do NOT launch interactive or full-screen applications (TUI apps, curses, Textual .run(), etc.) via run_command. They will hang or destroy terminal output.\n"
+        "- Do NOT create markdown documentation files (.md) unless explicitly asked.\n"
+        "- Do NOT re-read files you have already read in previous steps.\n"
+        "- Run tests with pytest or simple non-interactive scripts only."
     )
 
 
