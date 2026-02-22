@@ -899,12 +899,17 @@ async def run_verification(sandbox_path: str, task: dict) -> tuple[int, int, lis
                 if not os.path.isfile(full_path):
                     reason = "test file not found"
                 else:
+                    sandbox_env = {
+                        **os.environ,
+                        "PYTHONDONTWRITEBYTECODE": "1",
+                        "PYTHONPATH": sandbox_path,
+                    }
                     proc = await asyncio.create_subprocess_exec(
                         sys.executable, "-m", "pytest", full_path, "-v", "--tb=short",
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                         cwd=sandbox_path,
-                        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                        env=sandbox_env,
                     )
                     stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
                     output = stdout.decode("utf-8", errors="replace")
@@ -919,12 +924,17 @@ async def run_verification(sandbox_path: str, task: dict) -> tuple[int, int, lis
 
             elif check_type == "functional_test":
                 # Run a Python snippet in the sandbox — passes if exit code 0
+                sandbox_env = {
+                    **os.environ,
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    "PYTHONPATH": sandbox_path,
+                }
                 proc = await asyncio.create_subprocess_exec(
                     sys.executable, "-c", target,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=sandbox_path,
-                    env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                    env=sandbox_env,
                 )
                 stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
                 if proc.returncode == 0:
