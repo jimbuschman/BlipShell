@@ -8,7 +8,7 @@ Config-driven model routing per task type with per-endpoint model overrides.
 ## Current Model Assignments (config.yaml)
 **Interactive (cloud via Ollama):**
 - tool_calling: glm-5:cloud — general chat + tool use
-- coding: qwen3-coder:480b-cloud — /code command
+- coding: glm-5:cloud — /code command (benchmark winner: 13/13 checks)
 
 **Background processing (local):**
 - reasoning: qwen3:14b — entity extraction, tag discovery, lessons, contradiction detection
