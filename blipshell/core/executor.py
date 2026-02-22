@@ -132,8 +132,16 @@ class TaskExecutor:
             summary = await self._generate_summary(plan.user_request, step_results)
         except Exception as e:
             logger.error("Summary generation failed: %s", e)
-            # Fallback: just return the last step result
+            summary = ""
+
+        # Fallback if summary is empty (LLM returned empty string)
+        if not summary or not summary.strip():
+            logger.warning("Summary generation returned empty, using last step result as fallback")
             summary = step_results[-1] if step_results else "Plan completed but summary generation failed."
+
+        # Stream summary to user
+        if on_token and summary:
+            on_token(summary)
 
         await self.sqlite.update_plan(
             plan.id,

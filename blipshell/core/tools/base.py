@@ -6,7 +6,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Awaitable, Optional
 
-from blipshell.models.tools import ToolCall, ToolDefinition, ToolParameter, ToolResult
+from blipshell.models.tools import ToolCall, ToolDefinition, ToolParameter, ToolParameterType, ToolResult
 
 # Type for the approval callback: (tool_name, arguments) -> approved?
 ApprovalCallback = Callable[[str, dict[str, Any]], Awaitable[bool]]
@@ -137,6 +137,34 @@ class ToolRegistry:
         """Get names of all registered tools."""
         return list(self._tools.keys())
 
+    @staticmethod
+    def _coerce_arguments(tool: Tool, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Coerce argument types based on the tool's parameter definitions.
+
+        LLMs sometimes send integers as strings (e.g., max_lines="600").
+        This converts them to the declared type before calling execute().
+        """
+        defn = tool.definition()
+        param_types = {p.name: p.type for p in defn.parameters}
+        coerced = {}
+        for key, value in arguments.items():
+            expected = param_types.get(key)
+            if expected and value is not None:
+                try:
+                    if expected == ToolParameterType.INTEGER and not isinstance(value, int):
+                        coerced[key] = int(value)
+                        continue
+                    if expected == ToolParameterType.NUMBER and not isinstance(value, (int, float)):
+                        coerced[key] = float(value)
+                        continue
+                    if expected == ToolParameterType.BOOLEAN and not isinstance(value, bool):
+                        coerced[key] = str(value).lower() in ("true", "1", "yes")
+                        continue
+                except (ValueError, TypeError):
+                    pass  # Keep original value if conversion fails
+            coerced[key] = value
+        return coerced
+
     async def execute_tool_call(self, tool_call: ToolCall) -> ToolResult:
         """Execute a tool call and return the result.
 
@@ -173,9 +201,12 @@ class ToolRegistry:
                     success=False,
                 )
 
+        # Coerce argument types — LLMs sometimes send ints as strings
+        coerced_args = self._coerce_arguments(tool, tool_call.arguments)
+
         start = time.monotonic()
         try:
-            result_str = await tool.execute(**tool_call.arguments)
+            result_str = await tool.execute(**coerced_args)
             elapsed = (time.monotonic() - start) * 1000
 
             return ToolResult(
