@@ -354,6 +354,12 @@ class Agent:
                 name, settings_json=json.dumps(settings),
             )
 
+        # Sync executor with project state so planner steps use correct model/context
+        if self.task_executor:
+            self.task_executor.active_project = self.active_project
+            self.task_executor.project_context = self._project_context
+            self.task_executor.files_read = self._files_read
+
         logger.info("Activated project '%s' at %s", name, root)
         return project
 
@@ -375,6 +381,11 @@ class Agent:
         self.tool_registry.unregister("git_diff")
         self.tool_registry.unregister("git_add")
         self.tool_registry.unregister("git_commit")
+
+        # Clear executor project state
+        if self.task_executor:
+            self.task_executor.active_project = None
+            self.task_executor.project_context = ""
 
         logger.info("Deactivated project")
 

@@ -131,18 +131,18 @@ tools:
   shell:
     timeout: 30
     allowed_commands:
-      - "ls"
+      # - "ls"          # Linux — use list_directory tool
       - "dir"
-      - "cat"
+      # - "cat"         # Linux — use read_file tool
       - "type"
       - "echo"
-      - "pwd"
+      # - "pwd"         # Linux — use cd or list_directory
       - "cd"
-      - "find"
-      - "grep"
-      - "head"
-      - "tail"
-      - "wc"
+      # - "find"        # Linux — use glob_files tool
+      # - "grep"        # Linux — use grep_files tool
+      # - "head"        # Linux — use read_file with max_lines
+      # - "tail"        # Linux — use read_file with max_lines
+      # - "wc"          # Linux — no Windows equivalent needed
       - "sort"
       - "python"
       - "pip"

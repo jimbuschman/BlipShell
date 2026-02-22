@@ -37,6 +37,10 @@ class TaskExecutor:
         self.config = config
         self.system_prompt = system_prompt
         self.max_tool_iterations = max_tool_iterations
+        # Project-mode overrides (set by Agent when project is active)
+        self.active_project: dict | None = None
+        self.project_context: str = ""
+        self.files_read: set[str] = set()  # shared with Agent to track across steps
 
     async def execute_plan(
         self,
@@ -162,19 +166,38 @@ class TaskExecutor:
             completed_summaries=completed_summaries,
         )
 
+        # Build system prompt with project context if available
+        sys_prompt = self.system_prompt
+        if self.active_project and self.project_context:
+            sys_prompt += "\n\n" + self.project_context
+
         messages = [
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": step_prompt},
+            {"role": "system", "content": sys_prompt},
         ]
 
-        # Get model and client
-        model = self.router.get_model(TaskType.TOOL_CALLING)
-        client = await self.router.get_client(TaskType.TOOL_CALLING)
+        # Inject files-read tracker so steps don't re-read across the plan
+        if self.files_read:
+            files_list = "\n".join(f"  - {f}" for f in sorted(self.files_read))
+            messages.append({"role": "system", "content": (
+                "FILES ALREADY READ IN THIS PLAN (do NOT re-read these):\n"
+                + files_list
+                + "\nUse what you already know. Do not list directories or read files again."
+            )})
+
+        messages.append({"role": "user", "content": step_prompt})
+
+        # Route to coding model when project is active
+        task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
+        model = self.router.get_model(task_type)
+        client = await self.router.get_client(task_type)
         if not client:
             raise RuntimeError("No available LLM endpoint")
 
         tools = self.tool_registry.get_all_ollama_tools() or None
         max_iterations = self.max_tool_iterations if tools else 0
+        # Bump iteration limit for project mode
+        if self.active_project and tools:
+            max_iterations = max(max_iterations, 30)
 
         # Tool-calling loop (same pattern as Agent.chat)
         full_response = ""
@@ -203,6 +226,12 @@ class TaskExecutor:
 
                     result = await self.tool_registry.execute_tool_call(tool_call)
                     messages.append(result.to_ollama_message())
+
+                    # Track files read across steps
+                    if result.success and name in ("read_file", "list_directory"):
+                        read_path = arguments.get("path", "")
+                        if read_path:
+                            self.files_read.add(read_path)
 
                     if on_token:
                         on_token(f"  [Result: {result.result[:150]}]\n")
