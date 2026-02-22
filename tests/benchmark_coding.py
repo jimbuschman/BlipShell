@@ -1,35 +1,41 @@
-"""Benchmark coding models on real plan-and-execute tasks.
+"""Benchmark coding models on real plan-and-execute tasks against the BlipShell codebase.
 
-Tests the full coding agent flow: plan generation → step execution → tool calling.
-Compares models on speed, quality, tool discipline, and code correctness.
+Copies the real BlipShell source to a temp directory, sets up project context
+(repo map, git tools, system prompt) matching what the agent uses in /project mode,
+and runs realistic coding tasks through TaskPlanner + TaskExecutor.execute_plan().
 
-Metrics tracked per task per model:
-  - Plan generation time + step count
-  - Per-step: execution time, tool calls, edit successes/failures
-  - Total time (plan + all steps + summary)
-  - Bad behaviors: .md files created, file re-reads, excessive tool calls
-  - Code correctness (pytest pass/fail on sandbox)
+Captures both raw transcripts (for manual side-by-side comparison) and structured
+metrics JSON (for Rich tables).
+
+Output files:
+    data/benchmark_coding_results.json              — structured metrics (incremental merge)
+    data/benchmark_coding_transcripts/              — raw output per model+task
+        qwen3-coder_480b-cloud__stats_command__2026-02-22T14-30-00.txt
 
 Usage:
     python tests/benchmark_coding.py                                              # all default models
-    python tests/benchmark_coding.py qwen3-coder:480b-cloud gpt-oss:120b-cloud   # specific models
+    python tests/benchmark_coding.py qwen3-coder:480b-cloud devstral-2:123b-cloud # specific models
     python tests/benchmark_coding.py --timeout 600                                # longer timeout
 """
 
 import asyncio
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from blipshell.core.repo_map import RepoMap
 from blipshell.core.tools.base import ToolRegistry
 from blipshell.core.tools.code_tools import GlobTool, GrepTool
 from blipshell.core.tools.filesystem import (
@@ -38,10 +44,17 @@ from blipshell.core.tools.filesystem import (
     ReadFileTool,
     WriteFileTool,
 )
+from blipshell.core.tools.git_tools import (
+    GitAddTool,
+    GitCommitTool,
+    GitDiffTool,
+    GitStatusTool,
+)
 from blipshell.core.tools.shell import ShellTool
 from blipshell.core.executor import TaskExecutor
 from blipshell.core.planner import TaskPlanner
 from blipshell.llm.endpoints import EndpointManager
+from blipshell.llm.model_settings import ModelSettings, ModelSettingsRegistry
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.models.config import EndpointConfig, LLMConfig, ModelsConfig, PlannerConfig
@@ -65,209 +78,271 @@ BENCHMARK_MODELS = [
 
 OLLAMA_URL = "http://localhost:11434"
 
+# Directories/files to exclude when copying the project
+COPY_EXCLUDES = {".git", "data", "__pycache__", "backups", ".vs", "NUL",
+                 ".pytest_cache", ".mypy_cache", "dist", "build", ".eggs",
+                 ".venv", "venv", ".tox", "node_modules"}
+
+# Model settings loaded from config.yaml (same as production)
+_MODEL_SETTINGS_CONFIG = {
+    "qwen3-coder": {
+        "max_tool_calls": 20,
+        "use_repo_map": True,
+        "extra_instructions": "Prefer editing existing files over creating new ones. Keep changes minimal.",
+    },
+    "devstral": {
+        "max_tool_calls": 25,
+        "use_repo_map": True,
+        "extra_instructions": "Prefer editing existing files over creating new ones.",
+    },
+    "gpt-oss": {
+        "max_tool_calls": 10,
+        "use_repo_map": True,
+        "think": False,
+        "extra_instructions": "Be direct. Skip exploration and go straight to implementation.",
+    },
+    "glm-5": {
+        "max_tool_calls": 15,
+        "use_repo_map": True,
+    },
+}
+
 console = Console()
 
+# Project root (real BlipShell source to copy from)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
 # ---------------------------------------------------------------------------
-# Sandbox file contents — pre-built Python files for tasks to operate on
+# Sandbox setup — full codebase copy
 # ---------------------------------------------------------------------------
 
-CALCULATOR_PY = '''\
-"""Simple calculator module."""
+def create_project_sandbox() -> str:
+    """Copy the real BlipShell source to a temp directory.
 
-
-def add(a: float, b: float) -> float:
-    """Add two numbers."""
-    return a + b
-
-
-def subtract(a: float, b: float) -> float:
-    """Subtract b from a."""
-    return a - b
-
-
-def multiply(a: float, b: float) -> float:
-    """Multiply two numbers."""
-    return a * b
-
-
-def divide(a: float, b: float) -> float:
-    """Divide a by b.
-
-    Raises:
-        ValueError: If b is zero.
+    Excludes .git/, data/, __pycache__/, backups/, .vs/, NUL.
+    Initializes a fresh git repo + initial commit so git tools work.
+    Returns the sandbox path.
     """
-    if b == 0:
-        raise ValueError("Cannot divide by zero")
-    return a // b  # BUG: should be a / b (true division, not floor division)
-'''
+    sandbox = tempfile.mkdtemp(prefix="blip_bench_")
 
-TEST_CALCULATOR_PY = '''\
-"""Existing tests for calculator — only covers add/subtract."""
+    def _ignore(directory: str, contents: list[str]) -> set[str]:
+        return {c for c in contents if c in COPY_EXCLUDES}
 
-from calculator import add, subtract
+    shutil.copytree(str(PROJECT_ROOT), sandbox, ignore=_ignore, dirs_exist_ok=True)
 
+    # Initialize git repo so git tools work
+    subprocess.run(
+        ["git", "init"], cwd=sandbox,
+        capture_output=True, timeout=10,
+    )
+    subprocess.run(
+        ["git", "add", "."], cwd=sandbox,
+        capture_output=True, timeout=30,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "initial benchmark snapshot"],
+        cwd=sandbox, capture_output=True, timeout=30,
+        env={**os.environ, "GIT_AUTHOR_NAME": "benchmark",
+             "GIT_AUTHOR_EMAIL": "bench@test", "GIT_COMMITTER_NAME": "benchmark",
+             "GIT_COMMITTER_EMAIL": "bench@test"},
+    )
 
-def test_add():
-    assert add(2, 3) == 5
-
-
-def test_add_negative():
-    assert add(-1, 1) == 0
-
-
-def test_subtract():
-    assert subtract(10, 3) == 7
-'''
-
-CONFIG_MODULE_PY = '''\
-"""Simple key-value configuration store."""
-
-
-class Config:
-    """In-memory configuration with dot-notation access."""
-
-    def __init__(self, data: dict | None = None):
-        self._data: dict = data or {}
-
-    def get(self, key: str) -> str | None:
-        """Get a config value by key, returns None if missing."""
-        return self._data.get(key)
-
-    def set(self, key: str, value: str) -> None:
-        """Set a config value."""
-        self._data[key] = value
-
-    def has(self, key: str) -> bool:
-        """Check if a key exists."""
-        return key in self._data
-
-    def all_keys(self) -> list[str]:
-        """Return all configuration keys."""
-        return list(self._data.keys())
-'''
-
-DATA_PROCESSOR_PY = '''\
-"""Data processing pipeline with duplicated validation logic."""
-
-import re
-from typing import Any
+    return sandbox
 
 
-def process_users(users: list[dict[str, Any]]) -> list[dict]:
-    """Process and validate user records."""
-    results = []
-    for user in users:
-        # Validate name
-        name = user.get("name", "")
-        if not name or not isinstance(name, str):
-            continue
-        name = name.strip()
-        if len(name) < 2 or len(name) > 100:
-            continue
-        if not re.match(r"^[a-zA-Z\\s\\-\\']+$", name):
-            continue
+def reset_sandbox(sandbox_path: str):
+    """Reset sandbox to initial commit state (faster than re-copying)."""
+    subprocess.run(
+        ["git", "checkout", "."], cwd=sandbox_path,
+        capture_output=True, timeout=10,
+    )
+    subprocess.run(
+        ["git", "clean", "-fd"], cwd=sandbox_path,
+        capture_output=True, timeout=10,
+    )
 
-        # Validate email
-        email = user.get("email", "")
-        if not email or not isinstance(email, str):
-            continue
-        email = email.strip().lower()
-        if not re.match(r"^[^@]+@[^@]+\\.[^@]+$", email):
-            continue
-
-        results.append({"name": name, "email": email})
-    return results
-
-
-def process_products(products: list[dict[str, Any]]) -> list[dict]:
-    """Process and validate product records."""
-    results = []
-    for product in products:
-        # Validate name (same logic as users!)
-        name = product.get("name", "")
-        if not name or not isinstance(name, str):
-            continue
-        name = name.strip()
-        if len(name) < 2 or len(name) > 100:
-            continue
-        if not re.match(r"^[a-zA-Z\\s\\-\\']+$", name):
-            continue
-
-        # Validate price
-        price = product.get("price", 0)
-        if not isinstance(price, (int, float)) or price < 0:
-            continue
-
-        results.append({"name": name, "price": round(price, 2)})
-    return results
-'''
 
 # ---------------------------------------------------------------------------
-# Coding tasks
+# Project context (standalone — ports Agent._scan_project_context)
+# ---------------------------------------------------------------------------
+
+def build_project_context(sandbox_path: str) -> str:
+    """Build project context string matching what Agent._scan_project_context() produces.
+
+    Includes: project metadata, git info, repo map, file tree, key files.
+    """
+    root = Path(sandbox_path)
+    parts = [
+        "Project: blipshell",
+        f"Root: {sandbox_path}",
+        "Language: Python",
+    ]
+
+    # Git info
+    try:
+        branch = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=sandbox_path, capture_output=True, text=True, timeout=5,
+        )
+        if branch.returncode == 0:
+            parts.append(f"Branch: {branch.stdout.strip()}")
+
+        log = subprocess.run(
+            ["git", "log", "--oneline", "-5"],
+            cwd=sandbox_path, capture_output=True, text=True, timeout=5,
+        )
+        if log.returncode == 0 and log.stdout.strip():
+            parts.append(f"\nRecent commits:\n{log.stdout.strip()}")
+    except Exception:
+        pass
+
+    # Code map (AST-based structure)
+    repo_map = RepoMap(sandbox_path)
+    code_map = repo_map.build(max_lines=120)
+    if code_map:
+        parts.append(f"\nCode structure (classes, functions):\n{code_map}")
+
+    # Compact file tree (top level)
+    skip_dirs = {".git", "node_modules", "__pycache__", ".venv", "venv",
+                 ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
+                 ".vs", ".idea", ".vscode", "backups"}
+    tree_lines = []
+    for entry in sorted(root.iterdir()):
+        if entry.name in skip_dirs:
+            continue
+        prefix = "[DIR] " if entry.is_dir() else "      "
+        tree_lines.append(f"  {prefix}{entry.name}")
+    if tree_lines:
+        parts.append("\nTop-level layout:\n" + "\n".join(tree_lines[:40]))
+
+    # Key files
+    key_files = ["pyproject.toml", "CLAUDE.md"]
+    for fname in key_files:
+        fpath = root / fname
+        if fpath.is_file():
+            try:
+                content = fpath.read_text(encoding="utf-8", errors="replace")
+                lines = content.splitlines()[:60]
+                truncated = "\n".join(lines)
+                if len(content.splitlines()) > 60:
+                    truncated += "\n... (truncated)"
+                parts.append(f"\n=== {fname} ===\n{truncated}")
+            except Exception:
+                pass
+
+    return "\n".join(parts)
+
+
+def build_executor_system_prompt(
+    sandbox_path: str,
+    project_context: str,
+    tool_limit: int = 15,
+    extra_instructions: str = "",
+) -> str:
+    """Build the system prompt matching what Agent injects in project mode.
+
+    Ports agent.py:1444-1477 — PROJECT CONTEXT header, execution mode,
+    tool discipline rules, platform info.
+    """
+    base = (
+        "You are BlipShell, a helpful local AI assistant with persistent memory.\n"
+        "You remember previous conversations and learn from interactions.\n"
+        "Be concise and helpful. Use your memory to provide personalized assistance.\n\n"
+        "IMPORTANT: You have tools available. You MUST use them when appropriate:\n"
+        "- Use read_file, write_file, edit_file, list_directory for file operations.\n"
+        "- Use run_command to execute shell commands.\n"
+        "- Use grep_files, glob_files for searching code.\n"
+        "- Use git_status, git_diff, git_add, git_commit for git operations.\n"
+    )
+
+    project_block = (
+        "\n\n--- PROJECT CONTEXT ---\n"
+        f'You are working on the project "blipshell".\n'
+        f"Project root: {sandbox_path}\n"
+        "All file tools (read_file, write_file, edit_file, list_directory) resolve "
+        "relative paths against this project root. Use relative paths like "
+        "'blipshell/ui/cli.py', NOT absolute paths.\n"
+        "The run_command tool also runs from the project root.\n\n"
+        "EXECUTION MODE: You are an autonomous coding agent.\n"
+        "- Execute tasks fully without asking for permission or confirmation.\n"
+        "- Make decisions yourself. Do NOT ask 'should I?', 'want me to?', 'which approach?'.\n"
+        "- Only ask the user if you genuinely cannot determine a critical requirement.\n"
+        "- When finished, summarize what you built in 2-3 sentences.\n\n"
+        "TOOL DISCIPLINE:\n"
+        "- Read a file ONCE, then use what you learned. Do NOT re-read files.\n"
+        "- List a directory ONCE. Do NOT re-list directories.\n"
+        "- Do NOT run the same grep or glob search twice.\n"
+        "- Always read a file before editing it.\n"
+        "- Use grep_files/glob_files tools, NOT shell grep/find/wc.\n"
+        "- NEVER launch interactive or full-screen apps via run_command (TUI, curses, Textual .run()). They destroy the terminal.\n"
+        "- NEVER create documentation files (.md, README) unless explicitly asked.\n"
+        f"- Target UNDER {tool_limit} tool calls per task. Read, write, test — do not explore endlessly.\n\n"
+        "PLATFORM: Windows.\n"
+        f"- Project root: {sandbox_path}\n"
+        "- Do NOT use Linux commands (ls, cat, grep, head, tail, find, wc) in shell.\n"
+        "- Use 'dir' not 'ls', 'type' not 'cat'. Or better: use the file/grep/glob tools.\n"
+        "- Do NOT use 'cd' in run_command — it already runs from the project root.\n\n"
+    )
+
+    if extra_instructions:
+        project_block += f"MODEL-SPECIFIC INSTRUCTIONS:\n{extra_instructions}\n\n"
+
+    project_block += project_context
+
+    return base + project_block
+
+
+# ---------------------------------------------------------------------------
+# Coding tasks — real BlipShell modifications
 # ---------------------------------------------------------------------------
 
 CODING_TASKS = [
     {
-        "name": "fix_bug_add_test",
-        "description": "Fix a division bug and add tests",
+        "name": "stats_command",
+        "description": "Add /stats CLI command showing memory statistics",
         "request": (
-            "Fix the divide function in calculator.py — it uses floor division (//) "
-            "instead of true division (/). Also add tests for multiply and divide "
-            "(including a test that divide raises ValueError for zero) to test_calculator.py."
+            "Add a /stats CLI command to BlipShell that shows memory statistics. "
+            "It should display: total memory count, average rank (rounded to 1 decimal), "
+            "top 5 most common tags with counts, and a breakdown of memory types "
+            "(fact, preference, skill, event, conversation) with counts. "
+            "Follow the existing command patterns in blipshell/ui/cli.py — "
+            "register the command the same way other slash commands are registered. "
+            "Get the data from SQLiteStore methods (check what's available)."
         ),
-        "files": {
-            "calculator.py": CALCULATOR_PY,
-            "test_calculator.py": TEST_CALCULATOR_PY,
-        },
-        "verify_command": "python -m pytest test_calculator.py -v",
         "verify_checks": [
-            # (check_type, target) — what to verify after task completes
-            ("file_contains", ("calculator.py", "a / b")),            # bug fixed
-            ("file_not_contains", ("calculator.py", "a // b")),       # old bug gone
-            ("file_contains", ("test_calculator.py", "test_divide")), # test added
-            ("file_contains", ("test_calculator.py", "test_multiply")), # test added
-            ("pytest_passes", "test_calculator.py"),
+            # Check that /stats command handler was added
+            ("grep_in_sandbox", ("blipshell/ui/cli.py", r"stats")),
+            # Check it queries memories somehow
+            ("grep_in_sandbox", ("blipshell/", r"(get_all_memories|count|SELECT.*FROM.*memories)")),
+            # No unwanted doc files
+            ("no_unwanted_files", None),
         ],
     },
     {
-        "name": "add_feature",
-        "description": "Add a method to an existing class",
+        "name": "dry_run_edit",
+        "description": "Add dry_run parameter to edit_file tool",
         "request": (
-            "Add a `get_or_default(key, default=None)` method to the Config class "
-            "in config_module.py that returns the value for key if it exists, otherwise "
-            "returns the default value. Also add a `delete(key)` method that removes "
-            "a key if it exists (no error if missing). Write tests for both new methods "
-            "in a new test_config.py file."
+            "Add a `dry_run` boolean parameter to the edit_file tool in "
+            "blipshell/core/tools/filesystem.py. When dry_run=True, the tool "
+            "should return a unified diff preview (using difflib.unified_diff) "
+            "showing what would change, WITHOUT actually modifying the file. "
+            "Update the tool's definition to include the new parameter. "
+            "Also write a small test in tests/test_dry_run_edit.py that creates "
+            "a temp file, calls edit_file with dry_run=True, and asserts the "
+            "file was NOT modified and the output contains diff markers (--- and +++). "
+            "Keep the test simple and self-contained."
         ),
-        "files": {
-            "config_module.py": CONFIG_MODULE_PY,
-        },
-        "verify_command": "python -m pytest test_config.py -v",
         "verify_checks": [
-            ("file_contains", ("config_module.py", "get_or_default")),
-            ("file_contains", ("config_module.py", "def delete")),
-            ("file_exists", "test_config.py"),
-            ("pytest_passes", "test_config.py"),
-        ],
-    },
-    {
-        "name": "refactor",
-        "description": "Extract duplicated validation logic",
-        "request": (
-            "Refactor data_processor.py — the name validation logic is duplicated "
-            "between process_users() and process_products(). Extract it into a "
-            "_validate_name(name) helper that returns the cleaned name or None if "
-            "invalid. Update both functions to use the helper. Write tests in "
-            "test_data_processor.py to verify the refactoring didn't break anything."
-        ),
-        "files": {
-            "data_processor.py": DATA_PROCESSOR_PY,
-        },
-        "verify_command": "python -m pytest test_data_processor.py -v",
-        "verify_checks": [
-            ("file_contains", ("data_processor.py", "_validate_name")),
-            ("file_exists", "test_data_processor.py"),
-            ("pytest_passes", "test_data_processor.py"),
+            # Check dry_run parameter was added to the tool
+            ("grep_in_sandbox", ("blipshell/core/tools/filesystem.py", r"dry_run")),
+            # Check difflib is used
+            ("grep_in_sandbox", ("blipshell/core/tools/filesystem.py", r"difflib")),
+            # Check test file exists and has assertions
+            ("file_exists", "tests/test_dry_run_edit.py"),
+            ("grep_in_sandbox", ("tests/test_dry_run_edit.py", r"assert")),
+            # No unwanted doc files
+            ("no_unwanted_files", None),
         ],
     },
 ]
@@ -315,13 +390,13 @@ class StepMetrics:
     def file_reads(self) -> int:
         return sum(1 for tc in self.tool_calls if tc.name in ("read_file", "list_directory"))
 
-    @property
-    def unique_files_read(self) -> set[str]:
-        return {
-            tc.arguments.get("path", "")
-            for tc in self.tool_calls
-            if tc.name == "read_file"
-        }
+
+@dataclass
+class TranscriptMetrics:
+    """Behavioral metrics parsed from the raw transcript."""
+    questions_asked: int = 0       # "should I" / "want me to" patterns
+    linux_cmds_on_windows: int = 0  # shell calls using ls/cat/grep
+    llm_word_count: int = 0        # total words in LLM responses (verbosity)
 
 
 @dataclass
@@ -329,20 +404,24 @@ class TaskMetrics:
     """Metrics for a complete coding task (plan + all steps)."""
     task_name: str
     model: str
-    plan_time: float = 0.0           # seconds for plan generation
-    plan_steps: int = 0              # number of steps in plan
-    plan_text: str = ""              # raw plan output
+    plan_time: float = 0.0
+    plan_steps: int = 0
+    plan_text: str = ""
     steps: list[StepMetrics] = field(default_factory=list)
-    summary_time: float = 0.0       # seconds for final summary
+    summary_time: float = 0.0
     summary_text: str = ""
-    total_time: float = 0.0         # end-to-end wall time
+    total_time: float = 0.0
     error: str = ""
 
     # Verification results
     checks_passed: int = 0
     checks_total: int = 0
-    pytest_passed: bool = False
-    pytest_output: str = ""
+
+    # Transcript behavioral metrics
+    transcript_metrics: TranscriptMetrics = field(default_factory=TranscriptMetrics)
+
+    # Transcript file path
+    transcript_path: str = ""
 
     @property
     def total_tool_calls(self) -> int:
@@ -391,8 +470,12 @@ class TaskMetrics:
             "unwanted_files": list(self.unwanted_files),
             "checks_passed": self.checks_passed,
             "checks_total": self.checks_total,
-            "pytest_passed": self.pytest_passed,
-            "pytest_output": self.pytest_output[:1000],
+            "transcript_metrics": {
+                "questions_asked": self.transcript_metrics.questions_asked,
+                "linux_cmds_on_windows": self.transcript_metrics.linux_cmds_on_windows,
+                "llm_word_count": self.transcript_metrics.llm_word_count,
+            },
+            "transcript_path": self.transcript_path,
             "error": self.error,
             "steps": [
                 {
@@ -411,6 +494,109 @@ class TaskMetrics:
                 for s in self.steps
             ],
         }
+
+
+# ---------------------------------------------------------------------------
+# Transcript capture
+# ---------------------------------------------------------------------------
+
+class TranscriptCapture:
+    """Accumulates streaming output as a raw transcript.
+
+    Acts as on_token callback for execute_plan(). Adds benchmark annotations
+    (model name, timing, verification results) and saves to disk.
+    """
+
+    def __init__(self, model: str, task_name: str, output_dir: Path):
+        self.model = model
+        self.task_name = task_name
+        self.output_dir = output_dir
+        self._lines: list[str] = []
+        self._current_step: int = 0
+
+    def on_token(self, token: str):
+        """Streaming token callback — accumulates raw output."""
+        self._lines.append(token)
+
+    def add_header(self, plan_text: str):
+        """Add benchmark header at the top of transcript."""
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        self._lines.insert(0, (
+            f"{'=' * 70}\n"
+            f"BENCHMARK TRANSCRIPT\n"
+            f"Model: {self.model}\n"
+            f"Task: {self.task_name}\n"
+            f"Timestamp: {ts}\n"
+            f"{'=' * 70}\n\n"
+            f"--- PLAN ---\n{plan_text}\n\n"
+            f"--- EXECUTION ---\n"
+        ))
+
+    def add_step_header(self, step_num: int, total: int, description: str):
+        """Mark step boundaries in the transcript."""
+        self._current_step = step_num
+        self._lines.append(
+            f"\n{'─' * 50}\n"
+            f"Step {step_num}/{total}: {description}\n"
+            f"{'─' * 50}\n"
+        )
+
+    def add_step_footer(self, step_num: int, total: int, result_summary: str):
+        """Mark step completion."""
+        self._lines.append(f"\n  ✓ Step {step_num}/{total} complete: {result_summary}\n")
+
+    def add_verification(self, checks_passed: int, checks_total: int):
+        """Add verification results at the end."""
+        self._lines.append(
+            f"\n{'=' * 70}\n"
+            f"VERIFICATION: {checks_passed}/{checks_total} checks passed\n"
+            f"{'=' * 70}\n"
+        )
+
+    def add_timing(self, plan_time: float, total_time: float):
+        """Add timing summary."""
+        self._lines.append(
+            f"\nTIMING: plan={plan_time:.1f}s, total={total_time:.1f}s\n"
+        )
+
+    def get_text(self) -> str:
+        """Return the full transcript as a string."""
+        return "".join(self._lines)
+
+    def save(self) -> str:
+        """Save transcript to disk. Returns the file path."""
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+        # Sanitize model name for filename
+        safe_model = self.model.replace(":", "_").replace("/", "_")
+        filename = f"{safe_model}__{self.task_name}__{ts}.txt"
+        filepath = self.output_dir / filename
+        filepath.write_text(self.get_text(), encoding="utf-8")
+        return str(filepath)
+
+    def parse_metrics(self) -> TranscriptMetrics:
+        """Parse behavioral metrics from the raw transcript."""
+        text = self.get_text()
+        metrics = TranscriptMetrics()
+
+        # Questions asked (bad in autonomous mode)
+        question_patterns = re.compile(
+            r"\b(should I|want me to|shall I|would you like|do you want)\b", re.IGNORECASE,
+        )
+        metrics.questions_asked = len(question_patterns.findall(text))
+
+        # Linux commands on Windows (platform violation)
+        linux_cmd_patterns = re.compile(
+            r"\[Tool: run_command\].*?\b(ls\b|cat\b|grep\b|head\b|tail\b|find\b|wc\b)",
+            re.IGNORECASE | re.DOTALL,
+        )
+        metrics.linux_cmds_on_windows = len(linux_cmd_patterns.findall(text))
+
+        # LLM word count (verbosity)
+        # Count words outside of tool call/result blocks
+        metrics.llm_word_count = len(text.split())
+
+        return metrics
 
 
 # ---------------------------------------------------------------------------
@@ -445,22 +631,14 @@ class InstrumentedToolRegistry(ToolRegistry):
 
 
 # ---------------------------------------------------------------------------
-# Sandbox setup
+# Tool registry creation (with git tools)
 # ---------------------------------------------------------------------------
 
-def create_sandbox(task: dict) -> str:
-    """Create a temp directory with the task's files. Returns the path."""
-    sandbox = tempfile.mkdtemp(prefix="blip_bench_")
-    for filename, content in task["files"].items():
-        filepath = os.path.join(sandbox, filename)
-        Path(filepath).write_text(content, encoding="utf-8")
-    return sandbox
-
-
 def create_tool_registry(sandbox_path: str) -> InstrumentedToolRegistry:
-    """Create a tool registry pointing at the sandbox directory."""
+    """Create a tool registry pointing at the sandbox, including git tools."""
     registry = InstrumentedToolRegistry()
 
+    # Filesystem tools
     registry.register(ReadFileTool(
         max_file_size=1048576,
         root_path=sandbox_path,
@@ -470,13 +648,23 @@ def create_tool_registry(sandbox_path: str) -> InstrumentedToolRegistry:
     ), group="filesystem")
     registry.register(EditFileTool(root_path=sandbox_path), group="filesystem")
     registry.register(ListDirectoryTool(root_path=sandbox_path), group="filesystem")
+
+    # Shell tool
     registry.register(ShellTool(
         timeout=30,
-        allowed_commands=["python", "pip", "pytest", "type", "dir", "echo"],
+        allowed_commands=["python", "pip", "pytest", "type", "dir", "echo", "git"],
         cwd=sandbox_path,
     ), group="shell")
+
+    # Code search tools
     registry.register(GrepTool(root_path=sandbox_path), group="coding")
     registry.register(GlobTool(root_path=sandbox_path), group="coding")
+
+    # Git tools (matching Agent.activate_project)
+    registry.register(GitStatusTool(root_path=sandbox_path), group="coding")
+    registry.register(GitDiffTool(root_path=sandbox_path), group="coding")
+    registry.register(GitAddTool(root_path=sandbox_path), group="coding")
+    registry.register(GitCommitTool(root_path=sandbox_path), group="coding")
 
     return registry
 
@@ -510,6 +698,13 @@ def make_router(model_name: str, timeout: float = 300.0) -> LLMRouter:
     return LLMRouter(models, endpoint_manager)
 
 
+def get_model_settings(model_name: str) -> ModelSettings:
+    """Get model settings for a benchmark model, matching production config."""
+    registry = ModelSettingsRegistry()
+    registry.load(_MODEL_SETTINGS_CONFIG)
+    return registry.get(model_name)
+
+
 async def create_sqlite(sandbox_path: str) -> SQLiteStore:
     """Create a temporary SQLiteStore for plan/step persistence."""
     db_path = os.path.join(sandbox_path, "_benchmark.db")
@@ -522,19 +717,49 @@ async def create_sqlite(sandbox_path: str) -> SQLiteStore:
 # Verification
 # ---------------------------------------------------------------------------
 
-async def run_verification(sandbox_path: str, task: dict) -> tuple[int, int, bool, str]:
+async def run_verification(sandbox_path: str, task: dict) -> tuple[int, int]:
     """Run verification checks on the sandbox after task completion.
 
-    Returns (checks_passed, checks_total, pytest_passed, pytest_output).
+    Returns (checks_passed, checks_total).
     """
     checks = task.get("verify_checks", [])
     passed = 0
     total = len(checks)
-    pytest_passed = False
-    pytest_output = ""
 
     for check_type, target in checks:
-        if check_type == "file_contains":
+        if check_type == "grep_in_sandbox":
+            # (path_prefix, regex_pattern) — search for pattern in .py files under path
+            path_prefix, pattern = target
+            search_path = os.path.join(sandbox_path, path_prefix)
+            try:
+                found = False
+                regex = re.compile(pattern)
+                walk_root = search_path if os.path.isdir(search_path) else os.path.dirname(search_path)
+                for dirpath, dirs, files in os.walk(walk_root):
+                    for fname in files:
+                        if not fname.endswith(".py"):
+                            continue
+                        fpath = os.path.join(dirpath, fname)
+                        try:
+                            content = Path(fpath).read_text(encoding="utf-8", errors="replace")
+                            if regex.search(content):
+                                found = True
+                                break
+                        except Exception:
+                            continue
+                    if found:
+                        break
+                if found:
+                    passed += 1
+            except Exception:
+                pass
+
+        elif check_type == "file_exists":
+            full_path = os.path.join(sandbox_path, target)
+            if os.path.isfile(full_path):
+                passed += 1
+
+        elif check_type == "file_contains":
             filepath, needle = target
             full_path = os.path.join(sandbox_path, filepath)
             if os.path.isfile(full_path):
@@ -542,83 +767,92 @@ async def run_verification(sandbox_path: str, task: dict) -> tuple[int, int, boo
                 if needle in content:
                     passed += 1
 
-        elif check_type == "file_not_contains":
-            filepath, needle = target
-            full_path = os.path.join(sandbox_path, filepath)
-            if os.path.isfile(full_path):
-                content = Path(full_path).read_text(encoding="utf-8", errors="replace")
-                if needle not in content:
+        elif check_type == "no_unwanted_files":
+            # Check git status for unwanted .md/.rst files
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "status", "--porcelain",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=sandbox_path,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+                output = stdout.decode("utf-8", errors="replace")
+                unwanted = []
+                for line in output.splitlines():
+                    if len(line) < 4:
+                        continue
+                    fpath = line[3:].strip()
+                    if fpath.lower().endswith((".md", ".rst")) and "test" not in fpath.lower():
+                        unwanted.append(fpath)
+                if not unwanted:
                     passed += 1
+            except Exception:
+                pass
 
-        elif check_type == "file_exists":
-            full_path = os.path.join(sandbox_path, target)
-            if os.path.isfile(full_path):
-                passed += 1
-
-        elif check_type == "pytest_passes":
-            test_file = os.path.join(sandbox_path, target)
-            if os.path.isfile(test_file):
-                try:
-                    proc = await asyncio.create_subprocess_exec(
-                        sys.executable, "-m", "pytest", test_file, "-v",
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        cwd=sandbox_path,
-                    )
-                    stdout, stderr = await asyncio.wait_for(
-                        proc.communicate(), timeout=30,
-                    )
-                    pytest_output = stdout.decode("utf-8", errors="replace")
-                    if stderr:
-                        pytest_output += "\n" + stderr.decode("utf-8", errors="replace")
-                    if proc.returncode == 0:
-                        passed += 1
-                        pytest_passed = True
-                except asyncio.TimeoutError:
-                    pytest_output = "pytest timed out after 30s"
-                except Exception as e:
-                    pytest_output = f"pytest error: {e}"
-
-    return passed, total, pytest_passed, pytest_output
+    return passed, total
 
 
 # ---------------------------------------------------------------------------
 # Run a single task for a single model
 # ---------------------------------------------------------------------------
 
-async def run_task(model_spec: str, task: dict, timeout: float = 300.0) -> TaskMetrics:
-    """Run a coding task with a given model and return metrics."""
+async def run_task(
+    model_spec: str,
+    task: dict,
+    sandbox_path: str,
+    project_context: str,
+    timeout: float = 300.0,
+) -> TaskMetrics:
+    """Run a coding task with a given model against the real codebase and return metrics.
+
+    Uses execute_plan() — the real public API — with transcript capture.
+    """
     metrics = TaskMetrics(task_name=task["name"], model=model_spec)
-    sandbox_path = create_sandbox(task)
+
+    # Set up transcript capture
+    transcript_dir = Path("data") / "benchmark_coding_transcripts"
+    transcript = TranscriptCapture(model_spec, task["name"], transcript_dir)
 
     try:
+        # Reset sandbox to clean state
+        reset_sandbox(sandbox_path)
+
         router = make_router(model_spec, timeout=timeout)
         sqlite = await create_sqlite(sandbox_path)
         tool_registry = create_tool_registry(sandbox_path)
+
+        # Get model-specific settings
+        ms = get_model_settings(model_spec)
+
+        # Build system prompt matching production project mode
+        system_prompt = build_executor_system_prompt(
+            sandbox_path=sandbox_path,
+            project_context=project_context,
+            tool_limit=ms.max_tool_calls,
+            extra_instructions=ms.extra_instructions,
+        )
 
         planner_config = PlannerConfig(
             enabled=True,
             auto_approve=True,
             max_steps=7,
-            max_retries_per_step=1,  # 1 retry max — don't waste time
+            max_retries_per_step=1,
         )
 
         planner = TaskPlanner(router, sqlite, planner_config)
-        # Simulate project mode so it routes to CODING task type
-        planner.active_project = {"name": "benchmark", "root_path": sandbox_path}
+        planner.active_project = {"name": "blipshell", "root_path": sandbox_path}
 
         executor = TaskExecutor(
             router=router,
             sqlite=sqlite,
             tool_registry=tool_registry,
             config=planner_config,
-            system_prompt=(
-                "You are a coding assistant. Execute the task step by step using the tools available. "
-                "Be concise and efficient."
-            ),
-            max_tool_iterations=15,  # reasonable cap per step
+            system_prompt=system_prompt,
+            max_tool_iterations=ms.max_tool_calls,
         )
-        executor.active_project = {"name": "benchmark", "root_path": sandbox_path}
+        executor.active_project = {"name": "blipshell", "root_path": sandbox_path}
+        executor.project_context = ""  # Already baked into system_prompt
 
         wall_start = time.perf_counter()
 
@@ -637,54 +871,58 @@ async def run_task(model_spec: str, task: dict, timeout: float = 300.0) -> TaskM
             metrics.total_time = time.perf_counter() - wall_start
             return metrics
 
-        # Phase 2: Step execution (with metrics capture per step)
-        for step in plan.steps:
+        # Add plan to transcript
+        transcript.add_header(metrics.plan_text)
+
+        # Phase 2: Execute plan via the real public API
+        # Use callbacks to capture per-step metrics
+        step_start_time = 0.0
+
+        def on_step_start(step_num: int, total: int, description: str):
+            nonlocal step_start_time
             tool_registry.reset_log()
-            step_start = time.perf_counter()
+            step_start_time = time.perf_counter()
+            transcript.add_step_header(step_num, total, description)
 
-            try:
-                result = await executor._execute_step(
-                    plan=plan,
-                    step_number=step.step_number,
-                    step_description=step.description,
-                    total_steps=len(plan.steps),
-                    completed_summaries=[
-                        f"{s.description}: done" for s in metrics.steps
-                    ],
-                )
-            except Exception as e:
-                result = f"ERROR: {e}"
-
-            step_time = time.perf_counter() - step_start
-
+        def on_step_complete(step_num: int, total: int, result_summary: str):
+            step_time = time.perf_counter() - step_start_time
             step_metrics = StepMetrics(
-                step_number=step.step_number,
-                description=step.description,
+                step_number=step_num,
+                description=result_summary[:200],
                 execution_time=step_time,
                 tool_calls=list(tool_registry.call_log),
-                output_preview=result[:500] if result else "",
+                output_preview=result_summary[:500],
             )
             metrics.steps.append(step_metrics)
+            transcript.add_step_footer(step_num, total, result_summary[:200])
 
-        # Phase 3: Summary generation
-        summary_start = time.perf_counter()
         try:
-            step_results = [s.output_preview for s in metrics.steps]
-            summary = await executor._generate_summary(task["request"], step_results)
+            summary = await executor.execute_plan(
+                plan,
+                on_step_start=on_step_start,
+                on_step_complete=on_step_complete,
+                on_token=transcript.on_token,
+            )
             metrics.summary_text = summary[:1000] if summary else ""
-        except Exception:
-            metrics.summary_text = ""
-        metrics.summary_time = time.perf_counter() - summary_start
+        except Exception as e:
+            metrics.error = f"Execution failed: {e}"
 
         metrics.total_time = time.perf_counter() - wall_start
 
-        # Phase 4: Verification
-        (
-            metrics.checks_passed,
-            metrics.checks_total,
-            metrics.pytest_passed,
-            metrics.pytest_output,
-        ) = await run_verification(sandbox_path, task)
+        # Phase 3: Verification
+        metrics.checks_passed, metrics.checks_total = await run_verification(
+            sandbox_path, task,
+        )
+
+        # Add verification + timing to transcript
+        transcript.add_verification(metrics.checks_passed, metrics.checks_total)
+        transcript.add_timing(metrics.plan_time, metrics.total_time)
+
+        # Parse transcript behavioral metrics
+        metrics.transcript_metrics = transcript.parse_metrics()
+
+        # Save transcript
+        metrics.transcript_path = transcript.save()
 
         # Close DB
         try:
@@ -694,12 +932,6 @@ async def run_task(model_spec: str, task: dict, timeout: float = 300.0) -> TaskM
 
     except Exception as e:
         metrics.error = str(e)
-    finally:
-        # Cleanup sandbox
-        try:
-            shutil.rmtree(sandbox_path, ignore_errors=True)
-        except Exception:
-            pass
 
     return metrics
 
@@ -716,8 +948,8 @@ def print_summary_table(all_results: dict[str, list[TaskMetrics]]):
         expand=True,
     )
     table.add_column("Model", style="cyan", width=26, no_wrap=True)
-    table.add_column("Task", width=18)
-    table.add_column("Plan", width=8, justify="center")
+    table.add_column("Task", width=16)
+    table.add_column("Plan", width=6, justify="center")
     table.add_column("Steps", width=6, justify="center")
     table.add_column("Tools", width=6, justify="center")
     table.add_column("Edit Fail", width=9, justify="center")
@@ -726,18 +958,13 @@ def print_summary_table(all_results: dict[str, list[TaskMetrics]]):
     table.add_column("Exec(s)", width=8, justify="right")
     table.add_column("Total(s)", width=8, justify="right")
     table.add_column("Checks", width=8, justify="center")
-    table.add_column("Pytest", width=7, justify="center")
+    table.add_column("?s Asked", width=8, justify="center")
 
     for model, task_results in all_results.items():
         for i, m in enumerate(task_results):
             model_col = model if i == 0 else ""
             exec_time = sum(s.execution_time for s in m.steps)
             checks_str = f"{m.checks_passed}/{m.checks_total}"
-            pytest_str = (
-                "[green]PASS[/green]" if m.pytest_passed
-                else "[red]FAIL[/red]" if m.checks_total > 0
-                else "[dim]N/A[/dim]"
-            )
             edit_fail_str = (
                 f"[red]{m.total_edit_failures}[/red]" if m.total_edit_failures > 0
                 else "[green]0[/green]"
@@ -745,6 +972,12 @@ def print_summary_table(all_results: dict[str, list[TaskMetrics]]):
             unwanted_str = ""
             if m.unwanted_files:
                 unwanted_str = f" [red]+{len(m.unwanted_files)}md[/red]"
+
+            questions_str = (
+                f"[red]{m.transcript_metrics.questions_asked}[/red]"
+                if m.transcript_metrics.questions_asked > 0
+                else "[green]0[/green]"
+            )
 
             table.add_row(
                 model_col,
@@ -758,7 +991,7 @@ def print_summary_table(all_results: dict[str, list[TaskMetrics]]):
                 f"{exec_time:.1f}",
                 f"{m.total_time:.1f}",
                 checks_str,
-                pytest_str,
+                questions_str,
             )
 
     console.print(table)
@@ -834,20 +1067,30 @@ def print_totals_table(all_results: dict[str, list[TaskMetrics]]):
     table.add_column("Avg Time", width=10, justify="right")
     table.add_column("Total Tools", width=10, justify="center")
     table.add_column("Edit Failures", width=12, justify="center")
-    table.add_column("Pytest Pass", width=10, justify="center")
     table.add_column("Checks", width=10, justify="center")
+    table.add_column("Questions", width=10, justify="center")
+    table.add_column("Linux Cmds", width=10, justify="center")
 
     for model, task_results in all_results.items():
         total_time = sum(m.total_time for m in task_results)
         avg_time = total_time / len(task_results) if task_results else 0
         total_tools = sum(m.total_tool_calls for m in task_results)
         total_edit_fail = sum(m.total_edit_failures for m in task_results)
-        pytest_pass = sum(1 for m in task_results if m.pytest_passed)
         checks_pass = sum(m.checks_passed for m in task_results)
         checks_total = sum(m.checks_total for m in task_results)
+        total_questions = sum(m.transcript_metrics.questions_asked for m in task_results)
+        total_linux = sum(m.transcript_metrics.linux_cmds_on_windows for m in task_results)
 
         edit_str = (
             f"[red]{total_edit_fail}[/red]" if total_edit_fail > 0
+            else "[green]0[/green]"
+        )
+        questions_str = (
+            f"[red]{total_questions}[/red]" if total_questions > 0
+            else "[green]0[/green]"
+        )
+        linux_str = (
+            f"[red]{total_linux}[/red]" if total_linux > 0
             else "[green]0[/green]"
         )
 
@@ -858,8 +1101,9 @@ def print_totals_table(all_results: dict[str, list[TaskMetrics]]):
             f"{avg_time:.1f}s",
             f"{total_tools}",
             edit_str,
-            f"{pytest_pass}/{len(task_results)}",
             f"{checks_pass}/{checks_total}",
+            questions_str,
+            linux_str,
         )
 
     console.print(table)
@@ -889,45 +1133,69 @@ async def run_benchmark(models: list[str], timeout: float = 300.0):
         except json.JSONDecodeError:
             pass
 
-    console.print(f"\n[bold]Coding Model Benchmark[/bold]")
+    console.print(f"\n[bold]Coding Model Benchmark (Real Codebase)[/bold]")
     console.print(f"Models: {', '.join(models)}")
     console.print(f"Tasks: {', '.join(t['name'] for t in CODING_TASKS)}")
     console.print(f"Timeout: {timeout}s per LLM call\n")
 
+    # Create a single sandbox for the entire benchmark run
+    console.print("[dim]Creating project sandbox (copying BlipShell source)...[/dim]")
+    sandbox_path = create_project_sandbox()
+    console.print(f"[dim]Sandbox: {sandbox_path}[/dim]")
+
+    # Build project context once (same for all models)
+    console.print("[dim]Building project context (repo map, file tree)...[/dim]")
+    project_context = build_project_context(sandbox_path)
+    console.print(f"[dim]Project context: {len(project_context)} chars[/dim]\n")
+
     all_results: dict[str, list[TaskMetrics]] = {}
 
-    for model_spec in models:
-        console.rule(f"[bold blue]Benchmarking: {model_spec}")
-        model_results: list[TaskMetrics] = []
+    try:
+        for model_spec in models:
+            console.rule(f"[bold blue]Benchmarking: {model_spec}")
+            model_results: list[TaskMetrics] = []
 
-        for task in CODING_TASKS:
-            console.print(f"\n  [dim]Task: {task['name']} — {task['description']}[/dim]")
-            console.print(f"  [dim]Request: {task['request'][:80]}...[/dim]")
+            for task in CODING_TASKS:
+                console.print(f"\n  [dim]Task: {task['name']} — {task['description']}[/dim]")
+                console.print(f"  [dim]Request: {task['request'][:80]}...[/dim]")
 
-            metrics = await run_task(model_spec, task, timeout=timeout)
-
-            if metrics.error:
-                console.print(f"  [red]ERROR: {metrics.error}[/red]")
-            else:
-                pytest_str = "[green]PASS[/green]" if metrics.pytest_passed else "[red]FAIL[/red]"
-                console.print(
-                    f"  [green]Done[/green] — "
-                    f"{metrics.plan_steps} steps, "
-                    f"{metrics.total_tool_calls} tool calls, "
-                    f"{metrics.total_edit_failures} edit failures, "
-                    f"checks {metrics.checks_passed}/{metrics.checks_total}, "
-                    f"pytest {pytest_str}, "
-                    f"time {metrics.total_time:.1f}s"
+                metrics = await run_task(
+                    model_spec, task, sandbox_path, project_context, timeout=timeout,
                 )
 
-            model_results.append(metrics)
+                if metrics.error:
+                    console.print(f"  [red]ERROR: {metrics.error}[/red]")
+                else:
+                    console.print(
+                        f"  [green]Done[/green] — "
+                        f"{metrics.plan_steps} steps, "
+                        f"{metrics.total_tool_calls} tool calls, "
+                        f"{metrics.total_edit_failures} edit failures, "
+                        f"checks {metrics.checks_passed}/{metrics.checks_total}, "
+                        f"time {metrics.total_time:.1f}s"
+                    )
+                    if metrics.transcript_path:
+                        console.print(f"  [dim]Transcript: {metrics.transcript_path}[/dim]")
 
-        all_results[model_spec] = model_results
-        all_raw[model_spec] = [m.to_dict() for m in model_results]
+                model_results.append(metrics)
 
-        console.print(f"\n  [green]Completed all tasks for {model_spec}[/green]")
+            all_results[model_spec] = model_results
+            all_raw[model_spec] = [m.to_dict() for m in model_results]
 
-    # Save results
+            # Save incrementally after each model
+            with open(output_path, "w") as f:
+                json.dump(all_raw, f, indent=2)
+
+            console.print(f"\n  [green]Completed all tasks for {model_spec}[/green]")
+
+    finally:
+        # Cleanup sandbox
+        try:
+            shutil.rmtree(sandbox_path, ignore_errors=True)
+        except Exception:
+            pass
+
+    # Final save
     with open(output_path, "w") as f:
         json.dump(all_raw, f, indent=2)
     console.print(f"\n[bold]Results saved to {output_path}[/bold]")
