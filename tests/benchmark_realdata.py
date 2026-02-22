@@ -343,7 +343,7 @@ async def benchmark_contradiction_realdata(
 
     # Pull active core memories to form test pairs
     rows = c.execute(
-        "SELECT id, content FROM core_memories WHERE active = 1 ORDER BY RANDOM() LIMIT 20"
+        "SELECT id, content FROM core_memories WHERE is_active = 1 ORDER BY RANDOM() LIMIT 20"
     ).fetchall()
     conn.close()
 
