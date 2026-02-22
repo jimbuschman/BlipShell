@@ -16,6 +16,7 @@ Usage:
     python tests/benchmark_coding.py                                              # all default models
     python tests/benchmark_coding.py qwen3-coder:480b-cloud devstral-2:123b-cloud # specific models
     python tests/benchmark_coding.py --timeout 600                                # longer timeout
+    python tests/benchmark_coding.py --dry-run-verify                             # test checks on unmodified code
 """
 
 import asyncio
@@ -311,12 +312,15 @@ CODING_TASKS = [
             "Get the data from SQLiteStore methods (check what's available)."
         ),
         "verify_checks": [
-            # Check that /stats command handler was added
-            ("grep_in_sandbox", ("blipshell/ui/cli.py", r"stats")),
-            # Check it queries memories somehow
-            ("grep_in_sandbox", ("blipshell/", r"(get_all_memories|count|SELECT.*FROM.*memories)")),
-            # No unwanted doc files
+            # Model actually added new code (not pre-existing matches)
+            ("diff_contains", ("blipshell/ui/cli.py", r"\+.*stats")),
+            ("diff_contains", ("blipshell/", r"\+.*(SELECT|count|memories)")),
+            # Modified files still parse
+            ("syntax_check", "blipshell/ui/cli.py"),
+            # No junk files
             ("no_unwanted_files", None),
+            # Actually creates new code (not just narrating)
+            ("files_changed", 1),
         ],
     },
     {
@@ -334,15 +338,23 @@ CODING_TASKS = [
             "Keep the test simple and self-contained."
         ),
         "verify_checks": [
-            # Check dry_run parameter was added to the tool
-            ("grep_in_sandbox", ("blipshell/core/tools/filesystem.py", r"dry_run")),
-            # Check difflib is used
-            ("grep_in_sandbox", ("blipshell/core/tools/filesystem.py", r"difflib")),
-            # Check test file exists and has assertions
+            # Model added dry_run to the tool (in the diff, not pre-existing)
+            ("diff_contains", ("blipshell/core/tools/filesystem.py", r"\+.*dry_run")),
+            # Model added unified_diff usage (not just the existing import)
+            ("diff_contains", ("blipshell/core/tools/filesystem.py", r"\+.*unified_diff")),
+            # Modified file still compiles
+            ("syntax_check", "blipshell/core/tools/filesystem.py"),
+            # Test file exists and has assertions
             ("file_exists", "tests/test_dry_run_edit.py"),
             ("grep_in_sandbox", ("tests/test_dry_run_edit.py", r"assert")),
-            # No unwanted doc files
-            ("no_unwanted_files", None),
+            # Test file compiles
+            ("syntax_check", "tests/test_dry_run_edit.py"),
+            # Run the model's test
+            ("pytest_in_sandbox", "tests/test_dry_run_edit.py"),
+            # Functional: dry_run param exists in tool definition
+            ("functional_test",
+             "from blipshell.core.tools.filesystem import EditFileTool; "
+             "t = EditFileTool(); assert 'dry_run' in [p.name for p in t.definition().parameters]"),
         ],
     },
 ]
@@ -416,6 +428,9 @@ class TaskMetrics:
     # Verification results
     checks_passed: int = 0
     checks_total: int = 0
+    check_details: list[tuple[str, bool, str]] = field(default_factory=list)
+    pytest_passed: bool = False
+    pytest_output: str = ""
 
     # Transcript behavioral metrics
     transcript_metrics: TranscriptMetrics = field(default_factory=TranscriptMetrics)
@@ -470,6 +485,12 @@ class TaskMetrics:
             "unwanted_files": list(self.unwanted_files),
             "checks_passed": self.checks_passed,
             "checks_total": self.checks_total,
+            "check_details": [
+                {"check": label, "passed": ok, "reason": reason}
+                for label, ok, reason in self.check_details
+            ],
+            "pytest_passed": self.pytest_passed,
+            "pytest_output": self.pytest_output,
             "transcript_metrics": {
                 "questions_asked": self.transcript_metrics.questions_asked,
                 "linux_cmds_on_windows": self.transcript_metrics.linux_cmds_on_windows,
@@ -717,21 +738,27 @@ async def create_sqlite(sandbox_path: str) -> SQLiteStore:
 # Verification
 # ---------------------------------------------------------------------------
 
-async def run_verification(sandbox_path: str, task: dict) -> tuple[int, int]:
+async def run_verification(sandbox_path: str, task: dict) -> tuple[int, int, list[tuple[str, bool, str]]]:
     """Run verification checks on the sandbox after task completion.
 
-    Returns (checks_passed, checks_total).
+    Returns (checks_passed, checks_total, check_details).
+    check_details is a list of (check_label, passed, reason) for logging.
     """
     checks = task.get("verify_checks", [])
     passed = 0
     total = len(checks)
+    details: list[tuple[str, bool, str]] = []
 
     for check_type, target in checks:
-        if check_type == "grep_in_sandbox":
-            # (path_prefix, regex_pattern) — search for pattern in .py files under path
-            path_prefix, pattern = target
-            search_path = os.path.join(sandbox_path, path_prefix)
-            try:
+        label = f"{check_type}({target})" if target else check_type
+        check_passed = False
+        reason = ""
+
+        try:
+            if check_type == "grep_in_sandbox":
+                # (path_prefix, regex_pattern) — search for pattern in .py files under path
+                path_prefix, pattern = target
+                search_path = os.path.join(sandbox_path, path_prefix)
                 found = False
                 regex = re.compile(pattern)
                 walk_root = search_path if os.path.isdir(search_path) else os.path.dirname(search_path)
@@ -749,27 +776,29 @@ async def run_verification(sandbox_path: str, task: dict) -> tuple[int, int]:
                             continue
                     if found:
                         break
-                if found:
-                    passed += 1
-            except Exception:
-                pass
+                check_passed = found
+                reason = "pattern found" if found else "pattern not found"
 
-        elif check_type == "file_exists":
-            full_path = os.path.join(sandbox_path, target)
-            if os.path.isfile(full_path):
-                passed += 1
+            elif check_type == "file_exists":
+                full_path = os.path.join(sandbox_path, target)
+                exists = os.path.isfile(full_path)
+                check_passed = exists
+                reason = "exists" if exists else "not found"
 
-        elif check_type == "file_contains":
-            filepath, needle = target
-            full_path = os.path.join(sandbox_path, filepath)
-            if os.path.isfile(full_path):
-                content = Path(full_path).read_text(encoding="utf-8", errors="replace")
-                if needle in content:
-                    passed += 1
+            elif check_type == "file_contains":
+                filepath, needle = target
+                full_path = os.path.join(sandbox_path, filepath)
+                if os.path.isfile(full_path):
+                    content = Path(full_path).read_text(encoding="utf-8", errors="replace")
+                    if needle in content:
+                        check_passed = True
+                        reason = "needle found"
+                    else:
+                        reason = "needle not in file"
+                else:
+                    reason = "file not found"
 
-        elif check_type == "no_unwanted_files":
-            # Check git status for unwanted .md/.rst files
-            try:
+            elif check_type == "no_unwanted_files":
                 proc = await asyncio.create_subprocess_exec(
                     "git", "status", "--porcelain",
                     stdout=asyncio.subprocess.PIPE,
@@ -785,12 +814,159 @@ async def run_verification(sandbox_path: str, task: dict) -> tuple[int, int]:
                     fpath = line[3:].strip()
                     if fpath.lower().endswith((".md", ".rst")) and "test" not in fpath.lower():
                         unwanted.append(fpath)
-                if not unwanted:
-                    passed += 1
-            except Exception:
-                pass
+                check_passed = not unwanted
+                reason = "clean" if not unwanted else f"unwanted: {unwanted}"
 
-    return passed, total
+            elif check_type == "diff_contains":
+                # (path_prefix, regex_pattern) — check that git diff output contains pattern
+                # This proves the model actually changed something (can't match pre-existing code)
+                diff_path, pattern = target
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "diff", "--", diff_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=sandbox_path,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+                diff_output = stdout.decode("utf-8", errors="replace")
+                # Also check untracked files (new files won't show in git diff)
+                if not diff_output.strip():
+                    proc2 = await asyncio.create_subprocess_exec(
+                        "git", "diff", "--cached", "--", diff_path,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=sandbox_path,
+                    )
+                    stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=10)
+                    diff_output = stdout2.decode("utf-8", errors="replace")
+                # For new untracked files, generate a pseudo-diff
+                if not diff_output.strip():
+                    full_path = os.path.join(sandbox_path, diff_path)
+                    if os.path.isfile(full_path):
+                        content = Path(full_path).read_text(encoding="utf-8", errors="replace")
+                        diff_output = "\n".join(f"+{line}" for line in content.splitlines())
+                    elif os.path.isdir(full_path):
+                        # Walk all .py files under this dir and check if they're new
+                        proc3 = await asyncio.create_subprocess_exec(
+                            "git", "status", "--porcelain", "--", diff_path,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                            cwd=sandbox_path,
+                        )
+                        stdout3, _ = await asyncio.wait_for(proc3.communicate(), timeout=10)
+                        status_output = stdout3.decode("utf-8", errors="replace")
+                        diff_lines = []
+                        for line in status_output.splitlines():
+                            if line.startswith("?") or line.startswith("A"):
+                                fpath = line[3:].strip()
+                                fp = os.path.join(sandbox_path, fpath)
+                                if os.path.isfile(fp):
+                                    try:
+                                        fc = Path(fp).read_text(encoding="utf-8", errors="replace")
+                                        diff_lines.extend(f"+{l}" for l in fc.splitlines())
+                                    except Exception:
+                                        pass
+                        diff_output = "\n".join(diff_lines)
+
+                regex = re.compile(pattern)
+                found = bool(regex.search(diff_output))
+                check_passed = found
+                reason = "pattern in diff" if found else f"pattern not in diff ({len(diff_output)} chars)"
+
+            elif check_type == "syntax_check":
+                # Run python -m py_compile on the file
+                full_path = os.path.join(sandbox_path, target)
+                if not os.path.isfile(full_path):
+                    reason = "file not found"
+                else:
+                    proc = await asyncio.create_subprocess_exec(
+                        sys.executable, "-m", "py_compile", full_path,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=sandbox_path,
+                    )
+                    _, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
+                    if proc.returncode == 0:
+                        check_passed = True
+                        reason = "compiles OK"
+                    else:
+                        reason = f"syntax error: {stderr.decode('utf-8', errors='replace')[:200]}"
+
+            elif check_type == "pytest_in_sandbox":
+                # Run pytest on a specific test file
+                full_path = os.path.join(sandbox_path, target)
+                if not os.path.isfile(full_path):
+                    reason = "test file not found"
+                else:
+                    proc = await asyncio.create_subprocess_exec(
+                        sys.executable, "-m", "pytest", full_path, "-v", "--tb=short",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=sandbox_path,
+                        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                    )
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+                    output = stdout.decode("utf-8", errors="replace")
+                    if proc.returncode == 0:
+                        check_passed = True
+                        reason = "tests passed"
+                    else:
+                        # Extract last few lines for failure summary
+                        lines = output.strip().splitlines()
+                        tail = "\n".join(lines[-5:]) if len(lines) > 5 else output
+                        reason = f"tests failed (rc={proc.returncode}): {tail[:200]}"
+
+            elif check_type == "functional_test":
+                # Run a Python snippet in the sandbox — passes if exit code 0
+                proc = await asyncio.create_subprocess_exec(
+                    sys.executable, "-c", target,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=sandbox_path,
+                    env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
+                if proc.returncode == 0:
+                    check_passed = True
+                    reason = "snippet passed"
+                else:
+                    err = stderr.decode("utf-8", errors="replace")
+                    reason = f"snippet failed (rc={proc.returncode}): {err[:200]}"
+
+            elif check_type == "files_changed":
+                # Check git diff --name-only has at least N files changed
+                min_files = target
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "diff", "--name-only",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=sandbox_path,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+                changed = [l for l in stdout.decode("utf-8", errors="replace").splitlines() if l.strip()]
+                # Also count untracked files
+                proc2 = await asyncio.create_subprocess_exec(
+                    "git", "status", "--porcelain",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=sandbox_path,
+                )
+                stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=10)
+                for line in stdout2.decode("utf-8", errors="replace").splitlines():
+                    if line.startswith("?"):
+                        changed.append(line[3:].strip())
+                n_changed = len(set(changed))
+                check_passed = n_changed >= min_files
+                reason = f"{n_changed} files changed (need >={min_files})"
+
+        except Exception as e:
+            reason = f"error: {e}"
+
+        if check_passed:
+            passed += 1
+        details.append((label, check_passed, reason))
+
+    return passed, total, details
 
 
 # ---------------------------------------------------------------------------
@@ -910,12 +1086,21 @@ async def run_task(
         metrics.total_time = time.perf_counter() - wall_start
 
         # Phase 3: Verification
-        metrics.checks_passed, metrics.checks_total = await run_verification(
-            sandbox_path, task,
+        metrics.checks_passed, metrics.checks_total, metrics.check_details = (
+            await run_verification(sandbox_path, task)
         )
 
-        # Add verification + timing to transcript
+        # Extract pytest results from check details
+        for label, ok, reason in metrics.check_details:
+            if label.startswith("pytest_in_sandbox"):
+                metrics.pytest_passed = ok
+                metrics.pytest_output = reason
+                break
+
+        # Add verification + timing to transcript (with per-check details)
         transcript.add_verification(metrics.checks_passed, metrics.checks_total)
+        for label, ok, reason in metrics.check_details:
+            transcript._lines.append(f"  {'PASS' if ok else 'FAIL'} {label}: {reason}\n")
         transcript.add_timing(metrics.plan_time, metrics.total_time)
 
         # Parse transcript behavioral metrics
@@ -958,6 +1143,7 @@ def print_summary_table(all_results: dict[str, list[TaskMetrics]]):
     table.add_column("Exec(s)", width=8, justify="right")
     table.add_column("Total(s)", width=8, justify="right")
     table.add_column("Checks", width=8, justify="center")
+    table.add_column("Pytest", width=7, justify="center")
     table.add_column("?s Asked", width=8, justify="center")
 
     for model, task_results in all_results.items():
@@ -979,6 +1165,12 @@ def print_summary_table(all_results: dict[str, list[TaskMetrics]]):
                 else "[green]0[/green]"
             )
 
+            # Pytest column: show pass/fail/n-a
+            if any(label.startswith("pytest_in_sandbox") for label, _, _ in m.check_details):
+                pytest_str = "[green]PASS[/green]" if m.pytest_passed else "[red]FAIL[/red]"
+            else:
+                pytest_str = "[dim]n/a[/dim]"
+
             table.add_row(
                 model_col,
                 m.task_name,
@@ -991,6 +1183,7 @@ def print_summary_table(all_results: dict[str, list[TaskMetrics]]):
                 f"{exec_time:.1f}",
                 f"{m.total_time:.1f}",
                 checks_str,
+                pytest_str,
                 questions_str,
             )
 
@@ -1174,6 +1367,10 @@ async def run_benchmark(models: list[str], timeout: float = 300.0):
                         f"checks {metrics.checks_passed}/{metrics.checks_total}, "
                         f"time {metrics.total_time:.1f}s"
                     )
+                    # Show per-check results
+                    for label, ok, reason in metrics.check_details:
+                        mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
+                        console.print(f"    {mark} {label}: {reason}")
                     if metrics.transcript_path:
                         console.print(f"  [dim]Transcript: {metrics.transcript_path}[/dim]")
 
@@ -1212,10 +1409,36 @@ async def run_benchmark(models: list[str], timeout: float = 300.0):
     print_step_detail_table(all_results)
 
 
+async def dry_run_verify():
+    """Create sandbox, skip LLM, run verification against unmodified code.
+
+    All diff-based checks should fail (0/N) since no code was changed.
+    Useful for validating that checks don't pass trivially on the baseline.
+    """
+    console.print("\n[bold]Dry-Run Verification (no LLM, unmodified sandbox)[/bold]")
+    console.print("Expected: diff-based checks should FAIL, syntax checks should PASS\n")
+
+    sandbox_path = create_project_sandbox()
+    console.print(f"[dim]Sandbox: {sandbox_path}[/dim]\n")
+
+    try:
+        for task in CODING_TASKS:
+            console.print(f"[bold]{task['name']}[/bold] — {task['description']}")
+            passed, total, details = await run_verification(sandbox_path, task)
+            for label, ok, reason in details:
+                mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
+                console.print(f"  {mark} {label}: {reason}")
+            color = "green" if passed == 0 else "red"
+            console.print(f"  [{color}]Result: {passed}/{total} passed[/{color}]\n")
+    finally:
+        shutil.rmtree(sandbox_path, ignore_errors=True)
+
+
 def main():
     """CLI entry point."""
     models = []
     timeout = 300.0
+    dry_run = False
 
     args = sys.argv[1:]
     i = 0
@@ -1223,9 +1446,16 @@ def main():
         if args[i] == "--timeout" and i + 1 < len(args):
             timeout = float(args[i + 1])
             i += 2
+        elif args[i] == "--dry-run-verify":
+            dry_run = True
+            i += 1
         else:
             models.append(args[i])
             i += 1
+
+    if dry_run:
+        asyncio.run(dry_run_verify())
+        return
 
     if not models:
         models = BENCHMARK_MODELS
