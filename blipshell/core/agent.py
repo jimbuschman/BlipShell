@@ -1135,8 +1135,9 @@ class Agent:
 
         # Auto-nudge: if the LLM stopped mid-task (asking permission or
         # narrating intent without acting), nudge it to continue.
-        # Works even without tool calls (e.g., LLM asks "want me to start?" as first response).
-        if (full_response and self._should_auto_continue(full_response)):
+        # Only fires if tool calls have already been made — otherwise the LLM
+        # is having a conversation and its questions are meant for the user.
+        if (full_response and tool_call_names and self._should_auto_continue(full_response)):
             if on_token:
                 on_token("\n\x1b[2m[Auto-continuing...]\x1b[0m\n")
             messages.append({"role": "assistant", "content": full_response})
