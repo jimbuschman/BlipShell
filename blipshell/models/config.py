@@ -243,3 +243,4 @@ class BlipShellConfig(BaseModel):
     web_ui: WebUIConfig = WebUIConfig()
     planner: PlannerConfig = PlannerConfig()
     worker: WorkerConfig = WorkerConfig()
+    model_settings: dict[str, dict] = Field(default_factory=dict)

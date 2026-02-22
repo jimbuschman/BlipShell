@@ -20,6 +20,7 @@ from blipshell.core.background import BackgroundTaskManager
 from blipshell.core.config import ConfigManager
 from blipshell.core.executor import TaskExecutor
 from blipshell.core.planner import ComplexityClassifier, TaskPlanner
+from blipshell.core.repo_map import RepoMap
 from blipshell.core.tools.base import ToolRegistry, detect_tool_groups
 from blipshell.core.tools.code_tools import GlobTool, GrepTool
 from blipshell.core.tools.git_tools import (
@@ -51,6 +52,7 @@ from blipshell.llm.client import LLMClient
 from blipshell.llm.endpoints import EndpointManager
 from blipshell.llm.exceptions import is_model_error
 from blipshell.llm.job_queue import LLMJobQueue
+from blipshell.llm.model_settings import ModelSettingsRegistry
 from blipshell.llm.prompts import reflect_on_response, summarize_session_chunk
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.chroma_store import ChromaStore
@@ -96,6 +98,7 @@ class Agent:
         self.endpoint_manager: Optional[EndpointManager] = None
         self.router: Optional[LLMRouter] = None
         self.job_queue: Optional[LLMJobQueue] = None
+        self.model_settings = ModelSettingsRegistry()
 
         # Memory
         self.memory_manager: Optional[MemoryManager] = None
@@ -134,6 +137,7 @@ class Agent:
         self._project_context: str = ""
         self._file_changes: list[dict] = []
         self._files_read: set[str] = set()  # tracks files/dirs already read this session
+        self._repo_map: Optional[RepoMap] = None
 
     async def initialize(self, on_status=None):
         """Initialize all subsystems.
@@ -217,6 +221,10 @@ class Agent:
 
         # Register tools
         self._register_tools()
+
+        # Load per-model behavioral settings
+        if self.config.model_settings:
+            self.model_settings.load(self.config.model_settings)
 
         # Load discovered tag patterns into tagger
         await self._load_discovered_tags()
@@ -328,6 +336,9 @@ class Agent:
         self.tool_registry.register(GitAddTool(root_path=root), group="coding")
         self.tool_registry.register(GitCommitTool(root_path=root), group="coding")
 
+        # Initialize repo map for code structure context
+        self._repo_map = RepoMap(root)
+
         # Tag current session with this project
         if self.session_manager and self.session_manager.session_id:
             await self.sqlite.update_session_project(
@@ -373,6 +384,7 @@ class Agent:
 
         self.active_project = None
         self._project_context = ""
+        self._repo_map = None
 
         # Re-register file tools without root
         self._register_tools_with_root(None)
@@ -458,28 +470,24 @@ class Agent:
         except Exception:
             pass
 
-        # File tree (top 2 levels, skip non-code dirs)
+        # Code map: AST-based structure of Python files (replaces file tree)
+        if self._repo_map:
+            code_map = self._repo_map.build(max_lines=120)
+            if code_map:
+                parts.append(f"\nCode structure (classes, functions):\n{code_map}")
+
+        # Compact file tree (top level only, for non-Python files/dirs)
         skip_dirs = {".git", "node_modules", "__pycache__", ".venv", "venv",
-                     ".tox", ".mypy_cache", ".pytest_cache", "dist", "build"}
+                     ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
+                     ".vs", ".idea", ".vscode", "backups"}
         tree_lines = []
         for entry in sorted(root_path.iterdir()):
-            if entry.name.startswith(".") and entry.name in skip_dirs:
-                continue
             if entry.name in skip_dirs:
                 continue
             prefix = "[DIR] " if entry.is_dir() else "      "
             tree_lines.append(f"  {prefix}{entry.name}")
-            if entry.is_dir():
-                try:
-                    for child in sorted(entry.iterdir())[:20]:
-                        if child.name in skip_dirs:
-                            continue
-                        cp = "[DIR] " if child.is_dir() else "      "
-                        tree_lines.append(f"    {cp}{child.name}")
-                except PermissionError:
-                    pass
         if tree_lines:
-            parts.append(f"\nFile tree:\n" + "\n".join(tree_lines[:80]))
+            parts.append(f"\nTop-level layout:\n" + "\n".join(tree_lines[:40]))
 
         # Key files
         key_files = ["README.md", "README.rst", "README.txt", "readme.md",
@@ -989,10 +997,12 @@ class Agent:
 
         # Always pass all tools — the model decides whether to use them
         tools = self.tool_registry.get_all_ollama_tools() or None
+        # Use per-model tool call limit if configured
+        ms = self.model_settings.get(model)
         max_iterations = self.config.agent.max_tool_iterations if tools else 0
         if self.active_project and tools:
-            max_iterations = max(max_iterations, 30)
-        logger.info("Passing %d tools to model", len(tools) if tools else 0)
+            max_iterations = max(max_iterations, ms.max_tool_calls)
+        logger.info("Passing %d tools to model (max_iterations=%d)", len(tools) if tools else 0, max_iterations)
         full_response = ""
         tool_call_names: list[str] = []
         endpoint_name = ""
@@ -1057,6 +1067,9 @@ class Agent:
                                 "tool": name,
                                 "turn_number": self._turn_number,
                             })
+                            # Invalidate repo map cache for edited files
+                            if self._repo_map and file_path.endswith(".py"):
+                                self._repo_map.invalidate(file_path)
                             await self._log_event("file_modified", {
                                 "path": file_path, "tool": name,
                             })
@@ -1375,8 +1388,16 @@ class Agent:
 
         # Build messages
         system_prompt = self.config.agent.system_prompt
+
+        # Get per-model settings for the active model
+        task_type_for_model = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
+        active_model = self.router.get_model(task_type_for_model)
+        ms = self.model_settings.get(active_model)
+
         if self.active_project and self._project_context:
             root_path = self.active_project.get("root_path", "")
+            tool_limit = ms.max_tool_calls
+
             system_prompt += (
                 "\n\n--- PROJECT CONTEXT ---\n"
                 f"You are working on the project \"{self.active_project['name']}\".\n"
@@ -1398,14 +1419,19 @@ class Agent:
                 "- Use grep_files/glob_files tools, NOT shell grep/find/wc.\n"
                 "- NEVER launch interactive or full-screen apps via run_command (TUI, curses, Textual .run()). They destroy the terminal.\n"
                 "- NEVER create documentation files (.md, README) unless explicitly asked.\n"
-                "- Target UNDER 15 tool calls per task. Read, write, test — do not explore endlessly.\n\n"
+                f"- Target UNDER {tool_limit} tool calls per task. Read, write, test — do not explore endlessly.\n\n"
                 "PLATFORM: Windows.\n"
                 f"- Project root: {root_path}\n"
                 "- Do NOT use Linux commands (ls, cat, grep, head, tail, find, wc) in shell.\n"
                 "- Use 'dir' not 'ls', 'type' not 'cat'. Or better: use the file/grep/glob tools.\n"
                 "- Do NOT use 'cd' in run_command — it already runs from the project root.\n\n"
-                + self._project_context
             )
+
+            # Add model-specific extra instructions
+            if ms.extra_instructions:
+                system_prompt += f"MODEL-SPECIFIC INSTRUCTIONS:\n{ms.extra_instructions}\n\n"
+
+            system_prompt += self._project_context
 
         messages = [
             {"role": "system", "content": system_prompt},

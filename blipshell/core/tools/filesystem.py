@@ -1,10 +1,14 @@
 """Filesystem tools: read, write, edit, list files."""
 
+import difflib
+import logging
 import os
 from pathlib import Path
 
 from blipshell.core.tools.base import Tool
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
+
+logger = logging.getLogger(__name__)
 
 
 class ReadFileTool(Tool):
@@ -85,6 +89,18 @@ class WriteFileTool(Tool):
 
 
 class EditFileTool(Tool):
+    """Edit a file by replacing a specific string.
+
+    Uses layered matching (inspired by Aider) when exact match fails:
+    1. Exact match
+    2. Whitespace-normalized match (trailing spaces, indentation)
+    3. Fuzzy match via SequenceMatcher (threshold 0.6)
+
+    This dramatically reduces "text not found" failures that waste tool calls.
+    """
+
+    FUZZY_THRESHOLD = 0.6
+
     def __init__(self, root_path: str | None = None):
         self.root_path = root_path
 
@@ -114,12 +130,212 @@ class EditFileTool(Tool):
             return f"Error: File '{path}' not found."
 
         content = resolved.read_text(encoding="utf-8")
-        if old_text not in content:
-            return f"Error: Text to replace not found in '{path}'."
 
-        new_content = content.replace(old_text, new_text, 1)
-        resolved.write_text(new_content, encoding="utf-8")
-        return f"Successfully edited {path}"
+        # Layer 1: Exact match
+        if old_text in content:
+            new_content = content.replace(old_text, new_text, 1)
+            resolved.write_text(new_content, encoding="utf-8")
+            return f"Successfully edited {path}"
+
+        # Layer 2: Whitespace-normalized match
+        ws_result = self._try_whitespace_match(content, old_text, new_text)
+        if ws_result is not None:
+            resolved.write_text(ws_result, encoding="utf-8")
+            logger.info("edit_file used whitespace-normalized match for %s", path)
+            return f"Successfully edited {path} (whitespace-normalized match)"
+
+        # Layer 3: Fuzzy match
+        fuzzy_result, ratio = self._try_fuzzy_match(content, old_text, new_text)
+        if fuzzy_result is not None:
+            resolved.write_text(fuzzy_result, encoding="utf-8")
+            logger.info("edit_file used fuzzy match (%.0f%%) for %s", ratio * 100, path)
+            return f"Successfully edited {path} (fuzzy match, {ratio:.0%} similarity)"
+
+        # All layers failed — provide helpful error with closest match
+        hint = self._find_closest_match_hint(content, old_text)
+        error_msg = f"Error: Text to replace not found in '{path}'."
+        if hint:
+            error_msg += f"\n\nClosest match found (lines {hint['start_line']}-{hint['end_line']}):\n{hint['text']}"
+        return error_msg
+
+    @staticmethod
+    def _normalize_whitespace(text: str) -> str:
+        """Strip trailing whitespace per line and normalize to single newlines."""
+        return "\n".join(line.rstrip() for line in text.splitlines())
+
+    def _try_whitespace_match(
+        self, content: str, old_text: str, new_text: str,
+    ) -> str | None:
+        """Try matching after normalizing whitespace on both sides.
+
+        Also tries adjusting indentation: if old_text's indentation doesn't
+        match but the content is otherwise identical, adapts to the file's
+        indentation.
+        """
+        norm_content = self._normalize_whitespace(content)
+        norm_old = self._normalize_whitespace(old_text)
+
+        if norm_old in norm_content:
+            # Find the actual text in the original content that corresponds
+            # to this normalized match, then replace it
+            return self._replace_normalized(content, old_text, new_text)
+
+        # Try indentation-adjusted match: strip all leading whitespace,
+        # find the match, then apply new_text with the file's indentation
+        dedented_old = "\n".join(line.lstrip() for line in old_text.splitlines())
+        content_lines = content.splitlines()
+
+        match_start = self._find_dedented_match(content_lines, dedented_old)
+        if match_start is not None:
+            old_line_count = len(old_text.splitlines())
+            matched_lines = content_lines[match_start:match_start + old_line_count]
+
+            # Detect the file's indentation for this block
+            file_indent = ""
+            for line in matched_lines:
+                stripped = line.lstrip()
+                if stripped:
+                    file_indent = line[:len(line) - len(stripped)]
+                    break
+
+            # Apply new_text with detected indentation
+            new_lines = new_text.splitlines()
+            # Detect old_text's indentation to compute relative indentation
+            old_indent = ""
+            for line in old_text.splitlines():
+                stripped = line.lstrip()
+                if stripped:
+                    old_indent = line[:len(line) - len(stripped)]
+                    break
+
+            adjusted_new_lines = []
+            for line in new_lines:
+                stripped = line.lstrip()
+                if not stripped:
+                    adjusted_new_lines.append("")
+                    continue
+                # Compute relative indent from old_text base
+                current_indent = line[:len(line) - len(stripped)]
+                if current_indent.startswith(old_indent):
+                    relative = current_indent[len(old_indent):]
+                else:
+                    relative = ""
+                adjusted_new_lines.append(file_indent + relative + stripped)
+
+            original_text = "\n".join(matched_lines)
+            adjusted_new = "\n".join(adjusted_new_lines)
+            return content.replace(original_text, adjusted_new, 1)
+
+        return None
+
+    @staticmethod
+    def _replace_normalized(content: str, old_text: str, new_text: str) -> str:
+        """Replace old_text in content using whitespace-normalized matching.
+
+        Finds the region in content that matches old_text after whitespace
+        normalization, then replaces that exact region with new_text.
+        """
+        content_lines = content.splitlines()
+        old_lines = old_text.splitlines()
+        norm_old_lines = [line.rstrip() for line in old_lines]
+
+        for i in range(len(content_lines) - len(old_lines) + 1):
+            candidate = content_lines[i:i + len(old_lines)]
+            if [line.rstrip() for line in candidate] == norm_old_lines:
+                # Found the match — replace these lines
+                before = content_lines[:i]
+                after = content_lines[i + len(old_lines):]
+                result_lines = before + new_text.splitlines() + after
+                return "\n".join(result_lines)
+
+        # Shouldn't reach here if _normalize_whitespace matched, but fallback
+        return content
+
+    @staticmethod
+    def _find_dedented_match(content_lines: list[str], dedented_old: str) -> int | None:
+        """Find where dedented old_text matches in content (ignoring indentation)."""
+        dedented_old_lines = dedented_old.splitlines()
+        old_count = len(dedented_old_lines)
+
+        for i in range(len(content_lines) - old_count + 1):
+            candidate = [line.lstrip() for line in content_lines[i:i + old_count]]
+            if candidate == dedented_old_lines:
+                return i
+
+        return None
+
+    def _try_fuzzy_match(
+        self, content: str, old_text: str, new_text: str,
+    ) -> tuple[str | None, float]:
+        """Try fuzzy matching using SequenceMatcher.
+
+        Slides a window over the content looking for the best match.
+        Returns (new_content, similarity_ratio) or (None, 0.0).
+        """
+        content_lines = content.splitlines()
+        old_lines = old_text.splitlines()
+        old_count = len(old_lines)
+
+        if old_count == 0 or old_count > len(content_lines):
+            return None, 0.0
+
+        best_ratio = 0.0
+        best_start = -1
+        old_joined = "\n".join(old_lines)
+
+        # Slide a window of old_count lines across the file
+        for i in range(len(content_lines) - old_count + 1):
+            candidate = "\n".join(content_lines[i:i + old_count])
+            ratio = difflib.SequenceMatcher(None, old_joined, candidate).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_start = i
+
+        if best_ratio >= self.FUZZY_THRESHOLD and best_start >= 0:
+            matched_text = "\n".join(content_lines[best_start:best_start + old_count])
+            new_content = content.replace(matched_text, new_text, 1)
+            return new_content, best_ratio
+
+        return None, best_ratio
+
+    @staticmethod
+    def _find_closest_match_hint(content: str, old_text: str) -> dict | None:
+        """Find the closest matching region in the file for error reporting.
+
+        Returns a dict with start_line, end_line, and text snippet,
+        or None if no reasonable match found.
+        """
+        content_lines = content.splitlines()
+        old_lines = old_text.splitlines()
+        old_count = len(old_lines)
+
+        if old_count == 0 or old_count > len(content_lines):
+            return None
+
+        best_ratio = 0.0
+        best_start = -1
+        old_joined = "\n".join(old_lines)
+
+        for i in range(len(content_lines) - old_count + 1):
+            candidate = "\n".join(content_lines[i:i + old_count])
+            ratio = difflib.SequenceMatcher(None, old_joined, candidate).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_start = i
+
+        # Only show hint if there's at least some similarity (> 0.3)
+        if best_ratio > 0.3 and best_start >= 0:
+            matched_lines = content_lines[best_start:best_start + old_count]
+            # Truncate hint to 10 lines max
+            if len(matched_lines) > 10:
+                matched_lines = matched_lines[:10] + ["... (truncated)"]
+            return {
+                "start_line": best_start + 1,
+                "end_line": best_start + old_count,
+                "text": "\n".join(matched_lines),
+            }
+
+        return None
 
 
 class ListDirectoryTool(Tool):

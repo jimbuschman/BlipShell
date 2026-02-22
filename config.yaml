@@ -200,3 +200,27 @@ worker:
     - "research"
     - "analysis"
   poll_interval: 10                  # Seconds between worker polls
+
+# Per-model behavioral settings (Aider-inspired)
+# Configures how the agent interacts with each model.
+# Model name matching is flexible: exact, base name, or prefix.
+model_settings:
+  qwen3-coder:
+    max_tool_calls: 20
+    use_repo_map: true
+    extra_instructions: "Prefer editing existing files over creating new ones. Keep changes minimal."
+  devstral:
+    max_tool_calls: 25
+    use_repo_map: true
+    extra_instructions: "Prefer editing existing files over creating new ones."
+  gpt-oss:
+    max_tool_calls: 10
+    use_repo_map: true
+    think: false
+    extra_instructions: "Be direct. Skip exploration and go straight to implementation."
+  glm-5:
+    max_tool_calls: 15
+    use_repo_map: true
+  glm4:
+    max_tool_calls: 5
+    use_repo_map: false
