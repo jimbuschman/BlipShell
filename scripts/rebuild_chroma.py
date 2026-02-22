@@ -29,6 +29,10 @@ async def main():
     parser.add_argument("--batch-size", type=int, default=200)
     args = parser.parse_args()
 
+    # Pre-operation backup (ChromaDB rebuild is destructive)
+    from scripts.backup_db import backup_before_destructive
+    backup_before_destructive("rebuild_chroma", db_path=args.db, chroma_path=args.chroma)
+
     # Import after parsing so --help is fast
     from blipshell.memory.chroma_store import ChromaStore
     from blipshell.memory.sqlite_store import SQLiteStore

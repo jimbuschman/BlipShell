@@ -73,25 +73,29 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - [ ] **NEEDS TESTING**: `python tests/benchmark_realdata.py --models qwen3:14b --sample 10`
 - [ ] Use results to tweak prompts or choose different models where needed
 
-### 5. Embedding Model Upgrade
-- Benchmark newer embedding models for quality AND speed on local hardware
-- Test with real queries against real memories (not synthetic data)
-- Verify the system can handle re-embedding the full corpus
-- Only commit to upgrade if benchmark shows clear improvement
+### 5. Embedding Model Upgrade — BENCHMARK SCRIPT EXISTS, NEEDS RUNNING
+- [x] `scripts/benchmark_embeds.py` — tests nomic, mxbai-embed-large, snowflake-arctic-embed:335m, bge-m3
+- [ ] **RUN ON OLLAMA PC**: `python scripts/benchmark_embeds.py --db data/blipshell.db --sample 500`
+- [ ] Analyze results: if a model beats nomic-embed-text on quality AND speed, swap in config
+- [ ] If swapping: run `scripts/rebuild_chroma.py` to re-embed full corpus
 
-### 6. Automated Audit / Health Check
-- Script that checks DB health: entity quality, orphans, score distribution, missing summaries
-- Check for LLM artifacts (reuse cleanup_entities patterns)
-- Check endpoint health and model availability
-- Output a summary report with severity levels
-- Can run on-demand or as a quick startup check
+### 6. Automated Audit / Health Check — COMPLETE
+- [x] `scripts/audit_db.py` — 8 check categories: SQLite integrity, memory pipeline, entity quality, ChromaDB sync, sessions, tags, FTS5, storage
+- [x] Endpoint health check — pings each configured endpoint, verifies model availability on Ollama
+- [x] `run_audit()` function for programmatic use (used by `/health` CLI command)
+- [x] `/health` CLI command — runs audit inline with Rich-formatted output
+- [x] `/health quick` — skips slow ChromaDB sync check
+- [x] CLI flags: `--skip-chroma`, `--skip-endpoints`, `--config`
 
-### 7. Auto DB Backups
-- Timestamped backup before destructive operations
-- Periodic scheduled backups with rotation (keep last N)
-- Could hook into startup flow
+### 7. Auto DB Backups — COMPLETE
+- [x] `scripts/backup_db.py` — SQLite online backup API + ChromaDB directory copy
+- [x] `--keep N` rotation — deletes oldest backups beyond N
+- [x] `backup_before_destructive(name)` — pre-operation backup helper, one-liner import
+- [x] Pre-op backups in: `cleanup_entities.py`, `rebuild_chroma.py`, `reprocess_scores_and_lessons.py`
+- [x] Auto-backup on startup if >24h since last backup (agent.py)
+- [x] Auto-rotation keeps last 5 backups
 
-### 8. Prompt & Model Refinement (based on test results)
+### 8. Prompt & Model Refinement — BLOCKED on items 1-4 test results
 - Tweak prompts where tests show quality issues
 - Swap models for specific task types if better options found
 - Re-run extraction/scoring if prompts change significantly

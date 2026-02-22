@@ -248,6 +248,10 @@ def clean_entity_type(raw_type: str) -> str:
 
 
 async def run(dry_run: bool, db_path: str | None = None):
+    if not dry_run:
+        from scripts.backup_db import backup_before_destructive
+        backup_before_destructive("cleanup_entities")
+
     if db_path:
         # Direct DB access (for testing on a copy)
         db = await aiosqlite.connect(db_path)

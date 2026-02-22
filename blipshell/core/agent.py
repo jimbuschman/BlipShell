@@ -232,6 +232,10 @@ class Agent:
         _status("Checking endpoints...")
         await self.endpoint_manager.startup_health_check()
 
+        # Auto-backup if >24h since last backup
+        _status("Checking backups...")
+        await self._maybe_auto_backup()
+
         _status("Running tag discovery...")
         await self._auto_tag_discovery()
 
@@ -248,6 +252,42 @@ class Agent:
 
         self._initialized = True
         logger.info("Agent initialized")
+
+    async def _maybe_auto_backup(self):
+        """Auto-backup if more than 24 hours since last backup.
+
+        Runs synchronously in a thread to avoid blocking the event loop.
+        Logs warnings on failure but never blocks startup.
+        """
+        try:
+            from scripts.backup_db import get_last_backup_time, run_backup, rotate_backups
+
+            last = get_last_backup_time()
+            if last is not None:
+                hours_ago = (datetime.now() - last).total_seconds() / 3600
+                if hours_ago < 24:
+                    logger.debug("Last backup %.1fh ago — skipping auto-backup", hours_ago)
+                    return
+
+            logger.info("Auto-backup: no recent backup found, creating one...")
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: run_backup(
+                    db_path=self.config.database.path,
+                    chroma_path=self.config.database.chroma_path,
+                    quiet=True,
+                ),
+            )
+            if result:
+                logger.info("Auto-backup created: %s", result)
+                # Rotate, keeping last 5
+                await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: rotate_backups(keep=5),
+                )
+            else:
+                logger.warning("Auto-backup failed")
+        except Exception as e:
+            logger.warning("Auto-backup error (non-fatal): %s", e)
 
     def _register_tools(self):
         """Register all tools with their group for selective inclusion."""

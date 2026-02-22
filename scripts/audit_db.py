@@ -21,6 +21,8 @@ import json
 import re
 import sqlite3
 import sys
+import urllib.request
+import urllib.error
 from pathlib import Path
 
 from rich.console import Console
@@ -523,23 +525,143 @@ def check_db_size(db_path: str, chroma_path: str, result: AuditResult):
         result.add("Storage", "chroma_size", "info", f"ChromaDB: {size_mb:.1f} MB")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="BlipShell database health check")
-    parser.add_argument("--db", default="data/blipshell.db", help="SQLite DB path")
-    parser.add_argument("--chroma", default="data/chroma", help="ChromaDB directory")
-    parser.add_argument("--json", action="store_true", help="Output as JSON")
-    args = parser.parse_args()
+def check_endpoint_health(result: AuditResult, config_path: str | None = None):
+    """Check endpoint reachability and model availability.
 
-    db_path = args.db
-    chroma_path = args.chroma
+    Loads config.yaml to discover endpoints, then pings each one.
+    For Ollama endpoints, verifies configured models are available.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from blipshell.core.config import ConfigManager
+        config_mgr = ConfigManager(config_path)
+        config = config_mgr.load()
+    except Exception as e:
+        result.add("Endpoints", "config_load", "warn", f"Cannot load config: {e}")
+        return
 
-    if not Path(db_path).exists():
-        console.print(f"[red]Database not found: {db_path}[/red]")
-        sys.exit(1)
+    endpoints = config.endpoints
+    models_config = config.models
 
+    if not endpoints:
+        result.add("Endpoints", "count", "info", "No endpoints configured")
+        return
+
+    result.add("Endpoints", "count", "info",
+               f"{len(endpoints)} endpoint(s) configured")
+
+    for ep_cfg in endpoints:
+        name = ep_cfg.name
+        url = ep_cfg.url.rstrip("/")
+        provider = ep_cfg.provider
+        enabled = ep_cfg.enabled
+
+        if not enabled:
+            result.add("Endpoints", f"{name}_status", "info",
+                       f"{name} ({url}): disabled in config")
+            continue
+
+        # Ping the endpoint
+        try:
+            if provider == "ollama":
+                # Ollama: GET /api/tags returns list of models
+                req = urllib.request.Request(f"{url}/api/tags", method="GET")
+                req.add_header("Accept", "application/json")
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read())
+                    available_models = {
+                        m.get("name", "").split(":")[0]
+                        for m in data.get("models", [])
+                    }
+                    # Also keep full names (with tags)
+                    available_full = {m.get("name", "") for m in data.get("models", [])}
+
+                result.add("Endpoints", f"{name}_status", "ok",
+                           f"{name} ({url}): up, {len(available_full)} models")
+
+                # Check that configured models are available
+                # Collect models this endpoint should serve
+                expected_models = set()
+                for role in ep_cfg.roles:
+                    if ep_cfg.models and role in ep_cfg.models:
+                        expected_models.add(ep_cfg.models[role])
+                    else:
+                        # Fall back to global model config
+                        model_name = getattr(models_config, role, None)
+                        if model_name:
+                            expected_models.add(model_name)
+
+                missing = []
+                for model in sorted(expected_models):
+                    base = model.split(":")[0]
+                    if model not in available_full and base not in available_models:
+                        missing.append(model)
+
+                if missing:
+                    result.add("Endpoints", f"{name}_models", "warn",
+                               f"{name}: missing models: {', '.join(missing)}")
+                elif expected_models:
+                    result.add("Endpoints", f"{name}_models", "ok",
+                               f"{name}: all {len(expected_models)} expected model(s) found")
+
+            elif provider == "openai":
+                # OpenAI-compatible: just check that the base URL responds
+                # Try /v1/models or just a GET to the base URL
+                try:
+                    req = urllib.request.Request(f"{url}/v1/models", method="GET")
+                    api_key = ep_cfg.api_key
+                    if api_key:
+                        # Resolve ${ENV_VAR} syntax
+                        from blipshell.models.config import resolve_env_vars
+                        api_key = resolve_env_vars(api_key)
+                        req.add_header("Authorization", f"Bearer {api_key}")
+                    with urllib.request.urlopen(req, timeout=5):
+                        pass
+                    result.add("Endpoints", f"{name}_status", "ok",
+                               f"{name} ({url}): up (openai-compatible)")
+                except urllib.error.HTTPError as e:
+                    if e.code in (401, 403):
+                        result.add("Endpoints", f"{name}_status", "ok",
+                                   f"{name} ({url}): reachable (auth may need check)")
+                    else:
+                        result.add("Endpoints", f"{name}_status", "warn",
+                                   f"{name} ({url}): HTTP {e.code}")
+            else:
+                result.add("Endpoints", f"{name}_status", "info",
+                           f"{name}: unknown provider '{provider}'")
+
+        except urllib.error.URLError as e:
+            result.add("Endpoints", f"{name}_status", "error",
+                       f"{name} ({url}): unreachable — {e.reason}")
+        except Exception as e:
+            result.add("Endpoints", f"{name}_status", "error",
+                       f"{name} ({url}): check failed — {e}")
+
+
+def run_audit(
+    db_path: str = "data/blipshell.db",
+    chroma_path: str = "data/chroma",
+    config_path: str | None = None,
+    skip_chroma: bool = False,
+    skip_endpoints: bool = False,
+) -> AuditResult:
+    """Run the full audit programmatically and return the result.
+
+    Args:
+        db_path: Path to SQLite database.
+        chroma_path: Path to ChromaDB directory.
+        config_path: Path to config.yaml (for endpoint checks).
+        skip_chroma: Skip the slow ChromaDB sync check.
+        skip_endpoints: Skip endpoint health checks.
+
+    Returns:
+        AuditResult with all findings.
+    """
     result = AuditResult()
 
-    console.print("[bold]BlipShell Database Audit[/bold]\n")
+    if not Path(db_path).exists():
+        result.add("SQLite", "exists", "error", f"Database not found: {db_path}")
+        return result
 
     check_db_size(db_path, chroma_path, result)
     check_sqlite_integrity(db_path, result)
@@ -548,7 +670,39 @@ def main():
     check_sessions(db_path, result)
     check_tags(db_path, result)
     check_fts_sync(db_path, result)
-    check_chroma_sync(db_path, chroma_path, result)
+
+    if not skip_chroma:
+        check_chroma_sync(db_path, chroma_path, result)
+
+    if not skip_endpoints:
+        check_endpoint_health(result, config_path)
+
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description="BlipShell database health check")
+    parser.add_argument("--db", default="data/blipshell.db", help="SQLite DB path")
+    parser.add_argument("--chroma", default="data/chroma", help="ChromaDB directory")
+    parser.add_argument("--config", default=None, help="Path to config.yaml")
+    parser.add_argument("--json", action="store_true", help="Output as JSON")
+    parser.add_argument("--skip-chroma", action="store_true", help="Skip ChromaDB sync check")
+    parser.add_argument("--skip-endpoints", action="store_true", help="Skip endpoint health checks")
+    args = parser.parse_args()
+
+    if not Path(args.db).exists():
+        console.print(f"[red]Database not found: {args.db}[/red]")
+        sys.exit(1)
+
+    console.print("[bold]BlipShell Database Audit[/bold]\n")
+
+    result = run_audit(
+        db_path=args.db,
+        chroma_path=args.chroma,
+        config_path=args.config,
+        skip_chroma=args.skip_chroma,
+        skip_endpoints=args.skip_endpoints,
+    )
 
     if args.json:
         print(result.to_json())

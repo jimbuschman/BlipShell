@@ -257,6 +257,10 @@ async def main():
     parser.add_argument("--reset", action="store_true", help="Reset progress and start from scratch")
     args = parser.parse_args()
 
+    if not args.dry_run:
+        from scripts.backup_db import backup_before_destructive
+        backup_before_destructive("reprocess_scores")
+
     do_scores = not args.lessons_only
     do_lessons = not args.scores_only
 

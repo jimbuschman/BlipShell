@@ -396,6 +396,10 @@ async def chat_loop(
                         offload_msg = user_input[len("/offload "):]
                         await _submit_offload(agent, offload_msg)
                     continue
+                elif cmd[0] == "health":
+                    quick = len(cmd) > 1 and cmd[1] == "quick"
+                    await _print_health(agent, config, quick=quick)
+                    continue
                 elif cmd[0] == "flow":
                     turn = None
                     if len(cmd) > 1:
@@ -1278,6 +1282,49 @@ def _print_memory_usage(agent: Agent):
     console.print(table)
 
 
+async def _print_health(agent: Agent, config, quick: bool = False):
+    """Run database audit and display results inline."""
+    from scripts.audit_db import run_audit, severity_color
+
+    with console.status("[dim]Running health checks...[/dim]", spinner="dots"):
+        result = run_audit(
+            db_path=config.database.path,
+            chroma_path=config.database.chroma_path,
+            skip_chroma=quick,
+            skip_endpoints=False,
+        )
+
+    # Display as compact table
+    table = Table(title="Health Check", show_lines=False, expand=False)
+    table.add_column("Category", style="bold", no_wrap=True)
+    table.add_column("Check")
+    table.add_column("Status")
+    table.add_column("Message")
+
+    for f in result.findings:
+        sev = f["severity"]
+        table.add_row(
+            f["category"],
+            f["check"],
+            f"[{severity_color(sev)}]{sev.upper()}[/{severity_color(sev)}]",
+            f["message"],
+        )
+
+    console.print(table)
+
+    # Summary line
+    counts = {}
+    for f in result.findings:
+        counts[f["severity"]] = counts.get(f["severity"], 0) + 1
+    parts = []
+    for sev in ["error", "warn", "info", "ok"]:
+        if sev in counts:
+            parts.append(f"[{severity_color(sev)}]{counts[sev]} {sev}[/{severity_color(sev)}]")
+    console.print(f"\n{', '.join(parts)}")
+    if quick:
+        console.print("[dim](quick mode — ChromaDB sync skipped, use /health for full)[/dim]")
+
+
 async def _print_flow(agent: Agent, turn: int | None = None):
     """Print conversation flow events for observability."""
     if not agent.sqlite or not agent.session_manager:
@@ -1681,6 +1728,7 @@ def _print_help():
         "[bold]/code <path> [msg][/bold]     - Send code to LLM for review\n"
         "[bold]/feedback <msg>[/bold]        - Save feedback as a lesson\n"
         "[bold]/offload <msg>[/bold]         - Run a task on remote PC in background\n"
+        "[bold]/health[/bold] [dim][quick][/dim]          - Database + endpoint health check\n"
         "[bold]/flow[/bold] [dim][n][/dim]              - Show conversation flow events\n"
         "[bold]/plan[/bold]                  - Show current active plan\n"
         "[bold]/plans[/bold]                 - List all plans for this session\n"
