@@ -70,6 +70,7 @@ class MemorySearch:
             self.search_overfetch_multiplier = config.search_overfetch_multiplier
             self.tag_overlap_boost = config.tag_overlap_boost
             self.decay_rate = config.decay_rate
+            self.decay_rates = config.decay_rates
             self.fts_weight = config.fts_weight
             self.entity_boost = config.entity_boost
             self.project_boost = getattr(config, "project_boost", 0.15)
@@ -81,6 +82,7 @@ class MemorySearch:
             self.search_overfetch_multiplier = 2
             self.tag_overlap_boost = 0.1
             self.decay_rate = 0.001
+            self.decay_rates = None
             self.fts_weight = 0.3
             self.entity_boost = 0.15
             self.project_boost = 0.15
@@ -187,11 +189,13 @@ class MemorySearch:
                 filtered_by_rank += 1
                 continue
 
-            # Temporal decay — recent memories score higher, old unused ones fade
+            # Temporal decay — per-type rates so facts persist longer than events
             now = datetime.now(timezone.utc)
             mem_ts = memory.timestamp if memory.timestamp.tzinfo else memory.timestamp.replace(tzinfo=timezone.utc)
             hours_age = (now - mem_ts).total_seconds() / 3600
-            recency_factor = exp(-self.decay_rate * hours_age)
+            mem_type = memory.memory_type.value if memory.memory_type else "conversation"
+            decay = self.decay_rates.get(mem_type) if self.decay_rates else self.decay_rate
+            recency_factor = exp(-decay * hours_age)
             # Consolidation — frequently accessed memories resist decay
             consolidation = 1.0 + 0.1 * tanh(memory.access_count / 5)
             importance_boost = memory.importance * self.importance_boost_weight * recency_factor * consolidation

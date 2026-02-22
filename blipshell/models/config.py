@@ -67,6 +67,37 @@ class MemoryPoolsConfig(BaseModel):
     buffer: PoolConfig = PoolConfig(percentage=0.10, priority=1)
 
 
+class DecayRatesConfig(BaseModel):
+    """Per-memory-type temporal decay rates.
+
+    Decay formula: score *= exp(-decay_rate * hours_age)
+    Lower rate = slower decay = longer half-life.
+    """
+    fact: float = 0.0002       # ~50% after 144 days
+    preference: float = 0.0003  # ~50% after 96 days
+    skill: float = 0.0001      # ~50% after 289 days
+    event: float = 0.002       # ~50% after 14 days
+    conversation: float = 0.001  # ~50% after 29 days (current default)
+
+    def get(self, memory_type: str) -> float:
+        """Get decay rate for a memory type, falling back to conversation rate."""
+        return getattr(self, memory_type, self.conversation)
+
+
+class DedupConfig(BaseModel):
+    """Memory deduplication configuration."""
+    enabled: bool = True
+    similarity_threshold: float = 0.7  # min cosine similarity to consider as duplicate candidate
+
+
+class EntityResolutionConfig(BaseModel):
+    """Entity resolution configuration."""
+    enabled: bool = True  # backfill runs automatically on first startup
+    embedding_auto_merge_threshold: float = 0.85  # auto-merge above this
+    llm_arbitration_threshold: float = 0.70  # ask LLM between this and auto_merge
+    max_candidates: int = 5  # max similar entities to check
+
+
 class MemoryConfig(BaseModel):
     """Memory system configuration."""
     pools: MemoryPoolsConfig = MemoryPoolsConfig()
@@ -81,7 +112,8 @@ class MemoryConfig(BaseModel):
     importance_boost_weight: float = 0.2
     tag_overlap_boost: float = 0.1
     search_overfetch_multiplier: int = 2
-    decay_rate: float = 0.001  # temporal decay rate (~50% after 29 days)
+    decay_rate: float = 0.001  # temporal decay rate (~50% after 29 days) — global fallback
+    decay_rates: DecayRatesConfig = DecayRatesConfig()
     fts_weight: float = 0.3  # weight for FTS5 RRF boost in hybrid search
     auto_prune_days: int = 0  # 0 = disabled; was 90 but archived 1083 imported memories
     prune_max_importance: float = 0.3
@@ -94,6 +126,8 @@ class MemoryConfig(BaseModel):
     entity_extraction_batch_size: int = 50  # memories processed per startup run
     entity_boost: float = 0.15  # boost for memories found via entity graph
     project_boost: float = 0.15  # boost for memories from active project sessions
+    dedup: DedupConfig = DedupConfig()
+    entity_resolution: EntityResolutionConfig = EntityResolutionConfig()
 
 
 class SessionConfig(BaseModel):

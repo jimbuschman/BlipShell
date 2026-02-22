@@ -21,6 +21,7 @@ MAX_EMBED_CHARS = 2000
 MEMORIES_COLLECTION = "memories"
 CORE_MEMORIES_COLLECTION = "core_memories"
 LESSONS_COLLECTION = "lessons"
+ENTITIES_COLLECTION = "entities"
 
 
 class ChromaStore:
@@ -35,6 +36,7 @@ class ChromaStore:
         self._memories: Optional[chromadb.Collection] = None
         self._core_memories: Optional[chromadb.Collection] = None
         self._lessons: Optional[chromadb.Collection] = None
+        self._entities: Optional[chromadb.Collection] = None
         self._closed = False
 
     def initialize(self):
@@ -70,11 +72,18 @@ class ChromaStore:
             metadata={"hnsw:space": "cosine"},
         )
 
+        self._entities = self._client.get_or_create_collection(
+            name=ENTITIES_COLLECTION,
+            embedding_function=embedding_fn,
+            metadata={"hnsw:space": "cosine"},
+        )
+
         logger.info(
-            "ChromaDB initialized: memories=%d, core=%d, lessons=%d",
+            "ChromaDB initialized: memories=%d, core=%d, lessons=%d, entities=%d",
             self._memories.count(),
             self._core_memories.count(),
             self._lessons.count(),
+            self._entities.count(),
         )
 
     def close(self):
@@ -87,6 +96,7 @@ class ChromaStore:
         self._memories = None
         self._core_memories = None
         self._lessons = None
+        self._entities = None
         if self._client is not None:
             try:
                 # PersistentClient doesn't expose close(), but clearing
@@ -240,10 +250,68 @@ class ChromaStore:
         """Remove a lesson from ChromaDB."""
         self._lessons.delete(ids=[str(lesson_id)])
 
+    # --- Entity Embeddings (Feature 5: Entity Resolution) ---
+
+    def upsert_entity(self, entity_id: int, name: str, entity_type: str = "concept"):
+        """Add or update an entity embedding in ChromaDB."""
+        self._require_collections()
+        self._entities.upsert(
+            ids=[str(entity_id)],
+            documents=[name],
+            metadatas=[{"entity_type": entity_type}],
+        )
+
+    def upsert_entities_batch(
+        self, entity_ids: list[int], names: list[str],
+        entity_types: list[str] | None = None,
+    ):
+        """Batch upsert entity embeddings."""
+        self._require_collections()
+        if not entity_ids:
+            return
+        if entity_types is None:
+            entity_types = ["concept"] * len(entity_ids)
+        self._entities.upsert(
+            ids=[str(eid) for eid in entity_ids],
+            documents=names,
+            metadatas=[{"entity_type": et} for et in entity_types],
+        )
+
+    def search_similar_entities(
+        self, name: str, n_results: int = 5,
+    ) -> list[dict]:
+        """Search for similar entity names by embedding similarity.
+
+        Returns list of {id, name, similarity, entity_type} dicts.
+        """
+        self._require_collections()
+        try:
+            results = self._entities.query(
+                query_texts=[name], n_results=n_results,
+            )
+        except Exception as e:
+            logger.error("Entity similarity search failed: %s", e)
+            return []
+
+        if not results or not results["ids"] or not results["ids"][0]:
+            return []
+
+        formatted = []
+        for i, doc_id in enumerate(results["ids"][0]):
+            similarity = 1.0 - (results["distances"][0][i] if results.get("distances") else 0.0)
+            formatted.append({
+                "id": int(doc_id),
+                "name": results["documents"][0][i] if results.get("documents") else "",
+                "similarity": similarity,
+                "entity_type": (results["metadatas"][0][i] or {}).get("entity_type", "concept"),
+            })
+        return formatted
+
     def get_counts(self) -> dict[str, int]:
         """Get document counts for all collections."""
         return {
             "memories": self._memories.count(),
             "core_memories": self._core_memories.count(),
             "lessons": self._lessons.count(),
+            "entities": self._entities.count() if self._entities else 0,
         }

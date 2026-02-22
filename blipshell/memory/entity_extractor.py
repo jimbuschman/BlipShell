@@ -3,34 +3,90 @@
 Batch-processes unextracted memories on startup (like consolidation).
 For each memory, calls the LLM to extract (subject, predicate, object) triples,
 then stores entities, relationships, and mentions in SQLite.
+
+Extended with:
+- Bi-temporal edge tracking (Feature 4): contradicting predicates expire old edges
+- Entity resolution (Feature 5): 3-stage dedup before creating new entities
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
-from blipshell.llm.prompts import extract_entities
+from blipshell.llm.prompts import extract_entities, resolve_entity_duplicate
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.sqlite_store import SQLiteStore
 
+if TYPE_CHECKING:
+    from blipshell.memory.chroma_store import ChromaStore
+
 logger = logging.getLogger(__name__)
+
+# Predicate contradiction map — when a new predicate is created for the same
+# subject-object pair, expire any active relationships with contradicting predicates.
+# Key: new predicate, Value: list of predicates it contradicts.
+CONTRADICTING_PREDICATES: dict[str, list[str]] = {
+    "works_at": ["left", "quit", "fired_from", "resigned_from"],
+    "left": ["works_at", "employed_at", "hired_by"],
+    "quit": ["works_at", "employed_at", "hired_by"],
+    "fired_from": ["works_at", "employed_at", "hired_by"],
+    "resigned_from": ["works_at", "employed_at", "hired_by"],
+    "employed_at": ["left", "quit", "fired_from", "resigned_from"],
+    "hired_by": ["left", "quit", "fired_from", "resigned_from"],
+    "uses": ["stopped_using", "dropped", "replaced"],
+    "stopped_using": ["uses", "adopted", "switched_to"],
+    "dropped": ["uses", "adopted", "switched_to"],
+    "replaced": ["uses"],
+    "adopted": ["stopped_using", "dropped"],
+    "switched_to": ["uses", "stopped_using"],
+    "prefers": ["dislikes", "avoids", "stopped_using"],
+    "dislikes": ["prefers", "likes", "loves"],
+    "likes": ["dislikes", "avoids"],
+    "loves": ["dislikes", "hates", "avoids"],
+    "hates": ["likes", "loves", "prefers"],
+    "avoids": ["prefers", "likes", "uses"],
+    "lives_in": ["moved_from", "left"],
+    "moved_from": ["lives_in"],
+    "moved_to": ["lives_in"],
+}
 
 
 class EntityExtractor:
-    """Extracts entity relationship triples from memory summaries."""
+    """Extracts entity relationship triples from memory summaries.
+
+    Extended with:
+    - 3-stage entity resolution (Feature 5): exact → embedding → LLM
+    - Bi-temporal edges (Feature 4): contradicting predicates expire old edges
+    """
 
     def __init__(
         self,
         sqlite: SQLiteStore,
         router: LLMRouter,
+        chroma: ChromaStore | None = None,
         batch_size: int = 50,
         task_type: str = TaskType.REASONING,
         model_override: str | None = None,
+        entity_resolution_enabled: bool = False,
+        entity_auto_merge_threshold: float = 0.85,
+        entity_llm_threshold: float = 0.70,
+        entity_max_candidates: int = 5,
     ):
         self.sqlite = sqlite
         self.router = router
+        self.chroma = chroma
         self.batch_size = batch_size
         self.task_type = task_type
         self.model_override = model_override
+        # Entity resolution config
+        self._resolution_enabled = entity_resolution_enabled
+        self._auto_merge_threshold = entity_auto_merge_threshold
+        self._llm_threshold = entity_llm_threshold
+        self._max_candidates = entity_max_candidates
+        # LRU cache for resolved entities within a batch (cleared per batch)
+        self._resolution_cache: dict[str, int] = {}
 
     async def extract_batch(self, concurrency: int = 1) -> dict:
         """Process a batch of unextracted memories. Returns stats dict.
@@ -46,6 +102,9 @@ class EntityExtractor:
         )
         if not memory_ids:
             return stats
+
+        # Clear resolution cache for this batch
+        self._resolution_cache = {}
 
         if concurrency <= 1:
             for memory_id in memory_ids:
@@ -101,11 +160,27 @@ class EntityExtractor:
             triples = self._parse_triples(response)
             for subj, pred, obj, s_type, o_type in triples:
                 try:
-                    subj_id = await self.sqlite.get_or_create_entity(subj, s_type)
-                    obj_id = await self.sqlite.get_or_create_entity(obj, o_type)
-                    await self.sqlite.create_entity_relationship(
+                    subj_id = await self._resolve_entity(subj, s_type)
+                    obj_id = await self._resolve_entity(obj, o_type)
+                    # Use temporal relationship creation
+                    rel_id = await self.sqlite.create_entity_relationship_temporal(
                         subj_id, pred, obj_id, memory_id,
                     )
+                    # Expire contradicting old relationships
+                    if rel_id:
+                        try:
+                            expired = await self.sqlite.expire_contradicting_relationships(
+                                subj_id, obj_id,
+                                CONTRADICTING_PREDICATES,
+                                pred, rel_id,
+                            )
+                            if expired:
+                                logger.info(
+                                    "Expired %d contradicting relationships for %s %s %s",
+                                    expired, subj, pred, obj,
+                                )
+                        except Exception as e:
+                            logger.warning("Failed to expire contradictions: %s", e)
                     await self.sqlite.create_entity_mention(subj_id, memory_id)
                     await self.sqlite.create_entity_mention(obj_id, memory_id)
                     result["triples"] += 1
@@ -128,6 +203,98 @@ class EntityExtractor:
                 pass
 
         return result
+
+    async def _resolve_entity(self, name: str, entity_type: str = "concept") -> int:
+        """3-stage entity resolution: exact match → embedding similarity → LLM.
+
+        Stage 1: Exact match (existing UNIQUE constraint in SQLite)
+        Stage 2: Embedding similarity (auto-merge above threshold)
+        Stage 3: LLM arbitration (ambiguous range)
+
+        Falls back to get_or_create_entity() if resolution is disabled.
+        """
+        name = name.strip().lower()
+
+        # Check batch-level cache first
+        if name in self._resolution_cache:
+            return self._resolution_cache[name]
+
+        # Stage 1: Exact match (always runs)
+        existing_id = await self.sqlite.get_entity_id_by_name(name)
+        if existing_id is not None:
+            self._resolution_cache[name] = existing_id
+            return existing_id
+
+        # If resolution is disabled or no ChromaDB, create new entity
+        if not self._resolution_enabled or not self.chroma:
+            entity_id = await self.sqlite.get_or_create_entity(name, entity_type)
+            # Upsert into entity embeddings if ChromaDB available
+            if self.chroma:
+                try:
+                    self.chroma.upsert_entity(entity_id, name, entity_type)
+                except Exception as e:
+                    logger.warning("Failed to upsert entity embedding: %s", e)
+            self._resolution_cache[name] = entity_id
+            return entity_id
+
+        # Stage 2: Embedding similarity search
+        try:
+            candidates = self.chroma.search_similar_entities(
+                name, n_results=self._max_candidates,
+            )
+        except Exception as e:
+            logger.warning("Entity similarity search failed: %s", e)
+            candidates = []
+
+        for candidate in candidates:
+            if candidate["similarity"] >= self._auto_merge_threshold:
+                # Auto-merge: high confidence match
+                canonical_id = candidate["id"]
+                await self.sqlite.record_entity_alias(
+                    name, canonical_id, merge_method="embedding_auto",
+                )
+                self._resolution_cache[name] = canonical_id
+                logger.info(
+                    "Entity auto-merged: '%s' → '%s' (sim=%.3f)",
+                    name, candidate["name"], candidate["similarity"],
+                )
+                return canonical_id
+
+            if candidate["similarity"] >= self._llm_threshold:
+                # Stage 3: LLM arbitration for ambiguous range
+                is_same = await self._llm_resolve(name, candidate["name"])
+                if is_same:
+                    canonical_id = candidate["id"]
+                    await self.sqlite.record_entity_alias(
+                        name, canonical_id, merge_method="llm_resolved",
+                    )
+                    self._resolution_cache[name] = canonical_id
+                    logger.info(
+                        "Entity LLM-merged: '%s' → '%s' (sim=%.3f)",
+                        name, candidate["name"], candidate["similarity"],
+                    )
+                    return canonical_id
+
+        # No match — create new entity
+        entity_id = await self.sqlite.get_or_create_entity(name, entity_type)
+        try:
+            self.chroma.upsert_entity(entity_id, name, entity_type)
+        except Exception as e:
+            logger.warning("Failed to upsert entity embedding: %s", e)
+        self._resolution_cache[name] = entity_id
+        return entity_id
+
+    async def _llm_resolve(self, new_name: str, existing_name: str) -> bool:
+        """Ask LLM if two entity names refer to the same entity. Returns True/False."""
+        try:
+            system, prompt = resolve_entity_duplicate(new_name, existing_name)
+            response = await self.router.generate(
+                self.task_type, prompt, system=system, think=False,
+            )
+            return response.strip().upper().startswith("YES")
+        except Exception as e:
+            logger.warning("LLM entity resolution failed: %s", e)
+            return False
 
     def _parse_triples(self, response: str) -> list[tuple[str, str, str, str, str]]:
         """Parse 'subject | predicate | object | subject_type | object_type' lines.

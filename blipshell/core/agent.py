@@ -238,6 +238,9 @@ class Agent:
         _status("Extracting entities...")
         await self._auto_extract_entities()
 
+        _status("Backfilling entity embeddings...")
+        await self._backfill_entity_embeddings()
+
         # Start periodic health check (re-detects endpoints that come/go)
         self._health_check_task = self.endpoint_manager.start_health_loop(
             interval=60, on_check=self.router.clear_failed_models,
@@ -641,9 +644,15 @@ class Agent:
     async def _auto_extract_entities(self):
         """Extract entity relationship triples from unprocessed memories on startup."""
         try:
+            er_config = self.config.memory.entity_resolution
             extractor = EntityExtractor(
                 self.sqlite, self.router,
+                chroma=self.chroma,
                 batch_size=self.config.memory.entity_extraction_batch_size,
+                entity_resolution_enabled=er_config.enabled,
+                entity_auto_merge_threshold=er_config.embedding_auto_merge_threshold,
+                entity_llm_threshold=er_config.llm_arbitration_threshold,
+                entity_max_candidates=er_config.max_candidates,
             )
             stats = await extractor.extract_batch()
             if stats["triples"] > 0:
@@ -657,6 +666,40 @@ class Agent:
                 )
         except Exception as e:
             logger.error("Entity extraction failed: %s", e)
+
+    async def _backfill_entity_embeddings(self):
+        """One-time backfill: embed all existing entities into ChromaDB for resolution.
+
+        Tracks completion via app_metadata so it only runs once.
+        """
+        try:
+            marker = await self.sqlite.get_metadata("entity_embeddings_backfilled")
+            if marker:
+                return  # already done
+
+            # Load all entities from SQLite
+            cursor = await self.sqlite._db.execute(
+                "SELECT id, name, entity_type FROM entities"
+            )
+            rows = await cursor.fetchall()
+            if not rows:
+                await self.sqlite.set_metadata("entity_embeddings_backfilled", "1")
+                return
+
+            # Batch upsert into ChromaDB (chunks of 500 to avoid OOM)
+            batch_size = 500
+            total = len(rows)
+            for i in range(0, total, batch_size):
+                chunk = rows[i:i + batch_size]
+                ids = [r["id"] for r in chunk]
+                names = [r["name"] for r in chunk]
+                types = [r["entity_type"] for r in chunk]
+                self.chroma.upsert_entities_batch(ids, names, types)
+
+            await self.sqlite.set_metadata("entity_embeddings_backfilled", "1")
+            logger.info("Backfilled %d entity embeddings into ChromaDB", total)
+        except Exception as e:
+            logger.error("Entity embedding backfill failed: %s", e)
 
     async def _load_recent_sessions(self):
         """Load recent session summaries into RecentHistory pool."""

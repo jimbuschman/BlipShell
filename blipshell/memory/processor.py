@@ -4,23 +4,30 @@ Port of MemoryDB.CreateMemoryAsync pipeline:
 noise check -> LLM summarize -> SQLite insert -> ChromaDB embed -> tag -> LLM rank+importance
 """
 
+from __future__ import annotations
+
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from blipshell.llm.prompts import (
+    decide_memory_action,
     detect_contradiction,
     extract_lesson,
     rank_and_importance,
+    rank_importance_and_classify,
     summarize_memory,
 )
 from blipshell.llm.router import LLMRouter, TaskType
-from blipshell.memory.chroma_store import ChromaStore
 from blipshell.memory.noise import should_skip_memory
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.memory.tagger import tag_message
 from blipshell.models.config import MemoryConfig
 from blipshell.models.memory import CoreMemory, Lesson, Memory, MemoryType
+
+if TYPE_CHECKING:
+    from blipshell.memory.chroma_store import ChromaStore
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +53,9 @@ class MemoryProcessor:
         self._tag_bonus = config.importance_tag_bonus if config else 0.05
         self._contradiction_threshold = config.contradiction_similarity_threshold if config else 0.7
         self._max_tags = max_tags
+        # Dedup config
+        self._dedup_enabled = config.dedup.enabled if config else True
+        self._dedup_similarity_threshold = config.dedup.similarity_threshold if config else 0.7
 
     async def process_message(
         self,
@@ -100,6 +110,22 @@ class MemoryProcessor:
         except Exception as e:
             logger.error("ChromaDB embed failed: %s", e)
 
+        # Step 4b: Dedup check — find similar memories, ask LLM what to do
+        if self._dedup_enabled:
+            try:
+                action = await self._decide_and_apply_action(memory_id, summary)
+                if action == "NONE":
+                    # Redundant — archive and skip further processing
+                    await self.sqlite.update_memory(memory_id, is_archived=True)
+                    try:
+                        self.chroma.delete_memory(memory_id)
+                    except Exception:
+                        pass
+                    logger.info("Dedup: archived redundant memory %d", memory_id)
+                    return None
+            except Exception as e:
+                logger.error("Dedup check failed (continuing): %s", e)
+
         # Step 5: Tag
         try:
             tags = tag_message(text, max_tags=self._max_tags)
@@ -108,15 +134,15 @@ class MemoryProcessor:
             logger.error("Tagging failed: %s", e)
             tags = []
 
-        # Step 6+7: Combined rank (1-5) + importance (0.0-1.0) in one LLM call
+        # Step 6+7: Combined rank (1-5) + importance (0.0-1.0) + type in one LLM call
         try:
-            ri_system, ri_prompt = rank_and_importance(text)
+            ri_system, ri_prompt = rank_importance_and_classify(text)
             ri_text = await self.router.generate(
                 TaskType.RANKING_IMPORTANCE,
                 ri_prompt,
                 system=ri_system,
             )
-            rank, importance = self._parse_rank_and_importance(ri_text)
+            rank, importance, memory_type = self._parse_rank_importance_type(ri_text)
 
             # Apply bonuses
             importance += self._recency_bonus
@@ -124,9 +150,12 @@ class MemoryProcessor:
                 importance += self._tag_bonus
             importance = min(importance, 1.0)
 
-            await self.sqlite.update_memory(memory_id, rank=rank, importance=importance)
+            await self.sqlite.update_memory(
+                memory_id, rank=rank, importance=importance,
+                memory_type=memory_type,
+            )
         except Exception as e:
-            logger.error("Rank+importance failed: %s", e)
+            logger.error("Rank+importance+classify failed: %s", e)
 
         return memory_id
 
@@ -240,6 +269,94 @@ class MemoryProcessor:
 
         return deactivated
 
+    # --- Memory Dedup (Feature 3) ---
+
+    async def _find_similar_memories(
+        self, summary: str, exclude_id: int, n_results: int = 3,
+    ) -> list[dict]:
+        """Find existing memories similar to a new summary via ChromaDB.
+
+        Returns list of {id, document, similarity} dicts above threshold.
+        """
+        results = self.chroma.search_memories(summary, n_results=n_results + 1)
+        similar = []
+        for r in results:
+            if r["id"] == exclude_id:
+                continue
+            if r["similarity"] < self._dedup_similarity_threshold:
+                continue
+            similar.append(r)
+        return similar[:n_results]
+
+    async def _decide_and_apply_action(
+        self, new_memory_id: int, summary: str,
+    ) -> str:
+        """Find similar memories and ask LLM to decide: ADD/UPDATE/DELETE/NONE.
+
+        Returns the action taken.
+        """
+        similar = await self._find_similar_memories(summary, exclude_id=new_memory_id)
+        if not similar:
+            return "ADD"
+
+        existing_summaries = [s["document"] for s in similar]
+        system, prompt = decide_memory_action(summary, existing_summaries)
+        response = await self.router.generate(
+            TaskType.REASONING, prompt, system=system, think=False,
+        )
+
+        action, target_idx = self._parse_memory_action(response)
+
+        if action == "NONE":
+            return "NONE"
+
+        if action == "UPDATE" and target_idx is not None and target_idx < len(similar):
+            old_id = similar[target_idx]["id"]
+            # Transfer tags from old → new, archive old
+            await self.sqlite.transfer_memory_tags(old_id, new_memory_id)
+            await self.sqlite.update_memory(old_id, is_archived=True)
+            try:
+                self.chroma.delete_memory(old_id)
+            except Exception:
+                pass
+            logger.info("Dedup: UPDATE — archived old memory %d in favor of %d", old_id, new_memory_id)
+            return "UPDATE"
+
+        if action == "DELETE" and target_idx is not None and target_idx < len(similar):
+            old_id = similar[target_idx]["id"]
+            await self.sqlite.update_memory(old_id, is_archived=True)
+            try:
+                self.chroma.delete_memory(old_id)
+            except Exception:
+                pass
+            logger.info("Dedup: DELETE — archived contradicted memory %d", old_id)
+            return "DELETE"
+
+        return "ADD"
+
+    @staticmethod
+    def _parse_memory_action(text: str) -> tuple[str, int | None]:
+        """Parse LLM dedup action response.
+
+        Returns (action, target_index) where target_index is 0-based.
+        Examples: "ADD" → ("ADD", None), "UPDATE 1" → ("UPDATE", 0), "DELETE 2" → ("DELETE", 1)
+        """
+        text = text.strip().upper()
+        # Look for action word
+        for action in ("NONE", "UPDATE", "DELETE", "ADD"):
+            if action in text:
+                # Try to extract a number for UPDATE/DELETE
+                if action in ("UPDATE", "DELETE"):
+                    numbers = re.findall(r"\d+", text)
+                    if numbers:
+                        idx = int(numbers[0]) - 1  # 1-based to 0-based
+                        return action, max(idx, 0)
+                    return action, 0  # default to first if no number
+                return action, None
+        return "ADD", None  # default to ADD if unparseable
+
+    _VALID_MEMORY_TYPES = {"fact", "event", "preference", "skill", "conversation"}
+
     @staticmethod
     def _parse_rank_and_importance(text: str) -> tuple[int, float]:
         """Parse combined 'rank importance' from LLM response (e.g. '4 0.7')."""
@@ -254,6 +371,37 @@ class MemoryProcessor:
             imp = float(numbers[1])
             importance = min(max(imp, 0.0), 1.0)
         return rank, importance
+
+    @staticmethod
+    def _parse_rank_importance_type(text: str) -> tuple[int, float, str]:
+        """Parse combined 'rank importance type' from LLM response (e.g. '4 0.7 fact').
+
+        Falls back to 'conversation' if type is missing or unrecognized.
+        """
+        text = text.strip()
+        numbers = re.findall(r"(\d+\.?\d*)", text)
+        rank = 3
+        importance = 0.3
+        memory_type = "conversation"
+
+        if len(numbers) >= 1:
+            r = int(float(numbers[0]))
+            if 1 <= r <= 5:
+                rank = r
+        if len(numbers) >= 2:
+            imp = float(numbers[1])
+            importance = min(max(imp, 0.0), 1.0)
+
+        # Extract memory type — look for a known type word in the response
+        words = text.lower().split()
+        for word in words:
+            # Strip any punctuation from the word
+            cleaned = re.sub(r"[^a-z]", "", word)
+            if cleaned in MemoryProcessor._VALID_MEMORY_TYPES:
+                memory_type = cleaned
+                break
+
+        return rank, importance, memory_type
 
     @staticmethod
     def _parse_rank(text: str) -> int:

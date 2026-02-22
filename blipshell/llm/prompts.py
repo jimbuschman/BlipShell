@@ -178,6 +178,94 @@ def rank_and_importance(text: str) -> tuple[str, str]:
     return system, user
 
 
+def rank_importance_and_classify(text: str) -> tuple[str, str]:
+    """Combined prompt for ranking (1-5), importance (0.0-1.0), and memory type classification.
+
+    Returns (system_prompt, user_prompt). Piggybacks classification on the existing
+    rank+importance call — zero extra LLM calls.
+    Memory types: fact, event, preference, skill, conversation (fallback).
+    """
+    system = (
+        "You rate messages on two scales and classify the memory type.\n\n"
+        "RANK (1-5) — how valuable is this to remember?\n"
+        "1 = Noise: greetings, filler, \"ok\", \"thanks\", short acknowledgments\n"
+        "2 = Minor: vague or context-dependent messages, simple yes/no, "
+        "\"still not working\", \"can you fix it?\"\n"
+        "3 = Useful: contains a clear topic or question with enough context "
+        "to be standalone\n"
+        "4 = Important: meaningful insight, decision, preference, technical "
+        "detail, or personal fact\n"
+        "5 = Critical: core identity fact, major life decision, architectural "
+        "choice, or turning point\n\n"
+        "IMPORTANCE (0.0-1.0) — how important to remember long-term?\n"
+        "0.1 = Throwaway: greetings, filler, system noise\n"
+        "0.3 = Low: casual chat, minor details, context-dependent fragments\n"
+        "0.5 = Medium: useful context, specific technical question\n"
+        "0.7 = High: user preference, project decision, recurring theme, "
+        "personal detail\n"
+        "0.9 = Critical: core identity fact, major decision, key personal info\n\n"
+        "TYPE — classify the memory:\n"
+        "fact = Stable truths: personal info, project details, technical specs\n"
+        "event = Time-bound happenings: meetings, bugs found, deployments, conversations\n"
+        "preference = User likes/dislikes, style choices, workflow preferences\n"
+        "skill = How-to knowledge, techniques, patterns, solutions\n"
+        "conversation = General chat that doesn't fit other types\n\n"
+        "IMPORTANT: Use the FULL scale. Most conversations contain a mix of "
+        "filler (1-2) and substance (3-5). Short context-dependent messages "
+        "without standalone meaning should be 1-2, not 3.\n\n"
+        "Examples:\n"
+        "\"ok sounds good\" → 1 0.1 conversation\n"
+        "\"can you fix that?\" → 2 0.2 conversation\n"
+        "\"My cat's name is Luna\" → 5 0.9 fact\n"
+        "\"I prefer dark mode in all editors\" → 4 0.7 preference\n"
+        "\"We deployed v2.0 to production yesterday\" → 4 0.7 event\n"
+        "\"Here's how to add a heatsink when the chip is blocked\" → 4 0.7 skill\n"
+        "\"I decided to switch from MongoDB to PostgreSQL\" → 5 0.9 fact\n"
+        "\"I'm thinking about quitting my job\" → 5 0.9 event\n\n"
+        "Respond with ONLY three values separated by spaces: rank importance type\n"
+        "Example: 4 0.7 fact"
+    )
+    user = f"Rate this message:\n\n{text}"
+    return system, user
+
+
+def decide_memory_action(
+    new_memory: str, existing_memories: list[str],
+) -> tuple[str, str]:
+    """Prompt for deciding what to do with a new memory given similar existing ones.
+
+    Returns (system_prompt, user_prompt).
+    Actions: ADD (unique), UPDATE (refines existing), DELETE (contradicts), NONE (redundant).
+    """
+    system = (
+        "You decide what to do with a new memory given similar existing memories.\n\n"
+        "Actions:\n"
+        "ADD — The new memory contains UNIQUE information not in any existing memory.\n"
+        "UPDATE — The new memory REFINES or adds detail to an existing memory. "
+        "Return UPDATE and the number of the existing memory to update (e.g. UPDATE 1).\n"
+        "DELETE — The new memory CONTRADICTS an existing memory (the existing is now stale). "
+        "Return DELETE and the number of the existing memory to remove (e.g. DELETE 2).\n"
+        "NONE — The new memory is REDUNDANT — it says the same thing as an existing memory. Skip it.\n\n"
+        "Rules:\n"
+        "- If the new memory adds ANY new information, choose ADD, not NONE.\n"
+        "- Only choose NONE if the new memory is truly saying the exact same thing.\n"
+        "- UPDATE means the new memory is a better/more detailed version of an existing one.\n"
+        "- DELETE means the existing memory is factually wrong or outdated.\n\n"
+        "Respond with ONLY the action (and number if UPDATE or DELETE).\n"
+        "Examples: ADD, NONE, UPDATE 1, DELETE 2"
+    )
+
+    existing_lines = "\n".join(
+        f"  {i+1}. {mem}" for i, mem in enumerate(existing_memories)
+    )
+    user = (
+        f"New memory:\n  {new_memory}\n\n"
+        f"Existing similar memories:\n{existing_lines}\n\n"
+        "What action should be taken?"
+    )
+    return system, user
+
+
 def extract_lesson(text: str) -> tuple[str, str]:
     """Prompt for extracting actionable lessons from a conversation.
 
@@ -373,6 +461,35 @@ def discover_tag_patterns(
         f"Existing tags (DO NOT re-suggest these):\n{existing_str}\n\n"
         f"Memory summaries to analyze:\n{summaries_str}\n\n"
         "Suggest new tag patterns:"
+    )
+    return system, user
+
+
+def resolve_entity_duplicate(
+    new_entity: str, existing_entity: str,
+) -> tuple[str, str]:
+    """Prompt for deciding if two entity names refer to the same real-world entity.
+
+    Returns (system_prompt, user_prompt). Used for ambiguous embedding similarity
+    matches (0.70-0.85 range) in the 3-stage entity resolution pipeline.
+    """
+    system = (
+        "You determine whether two entity names refer to the SAME real-world thing.\n\n"
+        "Same entity (YES):\n"
+        "- Abbreviations: 'postgres' and 'postgresql' → YES\n"
+        "- Spelling variants: 'javascript' and 'js' → YES\n"
+        "- Common aliases: 'react' and 'reactjs' → YES\n"
+        "- Name variations: 'jim' and 'james' → YES (if context suggests same person)\n\n"
+        "Different entities (NO):\n"
+        "- Different things: 'python' (language) and 'python' (snake) → NO\n"
+        "- Related but distinct: 'react' and 'react native' → NO\n"
+        "- Different versions: 'gpt-3' and 'gpt-4' → NO\n\n"
+        "Respond with ONLY: YES or NO"
+    )
+    user = (
+        f"Entity A: {new_entity}\n"
+        f"Entity B: {existing_entity}\n\n"
+        "Are these the same entity?"
     )
     return system, user
 

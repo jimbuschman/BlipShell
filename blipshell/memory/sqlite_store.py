@@ -295,11 +295,40 @@ class SQLiteStore:
             "ALTER TABLE projects ADD COLUMN git_url TEXT",
             "ALTER TABLE projects ADD COLUMN language TEXT",
             "ALTER TABLE projects ADD COLUMN settings_json TEXT",
+            # Bi-temporal edge tracking (Feature 4)
+            "ALTER TABLE entity_relationships ADD COLUMN valid_from DATETIME",
+            "ALTER TABLE entity_relationships ADD COLUMN expired_at DATETIME",
+            "ALTER TABLE entity_relationships ADD COLUMN expired_by INTEGER",
         ):
             try:
                 await self._db.execute(col_sql)
             except Exception:
                 pass  # column already exists
+        # Entity aliases table (Feature 5: Entity Resolution)
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS entity_aliases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                alias_name TEXT NOT NULL,
+                canonical_entity_id INTEGER NOT NULL,
+                merge_method TEXT DEFAULT 'exact',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (canonical_entity_id) REFERENCES entities(id),
+                UNIQUE(alias_name)
+            )
+        """)
+        await self._db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entity_aliases_canonical "
+            "ON entity_aliases(canonical_entity_id)"
+        )
+        await self._db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entity_relationships_valid "
+            "ON entity_relationships(expired_at)"
+        )
+        # Backfill valid_from from created_at for existing relationships
+        await self._db.execute(
+            "UPDATE entity_relationships SET valid_from = created_at "
+            "WHERE valid_from IS NULL"
+        )
         # Backfill FTS5 index with existing summaries
         await self._db.execute(
             """INSERT OR IGNORE INTO memories_fts(rowid, summary)
@@ -493,7 +522,7 @@ class SQLiteStore:
 
     async def update_memory(self, memory_id: int, **kwargs):
         """Update memory fields."""
-        allowed = {"summary", "rank", "importance", "is_archived", "metadata_json"}
+        allowed = {"summary", "rank", "importance", "is_archived", "metadata_json", "memory_type"}
         fields = {k: v for k, v in kwargs.items() if k in allowed}
         if not fields:
             return
@@ -1431,16 +1460,19 @@ class SQLiteStore:
         return [r["id"] for r in rows]
 
     async def get_connected_entity_ids(self, entity_ids: list[int]) -> list[int]:
-        """Get entity IDs connected to the given entities via relationships."""
+        """Get entity IDs connected to the given entities via active relationships.
+
+        Only returns connections through non-expired relationships.
+        """
         if not entity_ids:
             return []
         placeholders = ",".join("?" * len(entity_ids))
         cursor = await self._db.execute(
             f"""SELECT DISTINCT object_id AS eid FROM entity_relationships
-                WHERE subject_id IN ({placeholders})
+                WHERE subject_id IN ({placeholders}) AND expired_at IS NULL
                 UNION
                 SELECT DISTINCT subject_id AS eid FROM entity_relationships
-                WHERE object_id IN ({placeholders})""",
+                WHERE object_id IN ({placeholders}) AND expired_at IS NULL""",
             entity_ids + entity_ids,
         )
         rows = await cursor.fetchall()
@@ -1466,6 +1498,166 @@ class SQLiteStore:
         cursor = await self._db.execute("SELECT DISTINCT name FROM entities")
         rows = await cursor.fetchall()
         return [r["name"] for r in rows]
+
+    # --- Bi-temporal Edge Tracking (Feature 4) ---
+
+    async def create_entity_relationship_temporal(
+        self, subject_id: int, predicate: str, object_id: int,
+        memory_id: int | None, valid_from: str | None = None,
+    ) -> int | None:
+        """Create a temporal relationship triple. Returns ID or None if duplicate.
+
+        Automatically sets valid_from to now if not provided.
+        """
+        predicate = predicate.strip().lower()
+        if not valid_from:
+            valid_from = datetime.now(timezone.utc).isoformat()
+        try:
+            cursor = await self._db.execute(
+                """INSERT OR IGNORE INTO entity_relationships
+                   (subject_id, predicate, object_id, source_memory_id, valid_from)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (subject_id, predicate, object_id, memory_id, valid_from),
+            )
+            await self._db.commit()
+            return cursor.lastrowid if cursor.lastrowid else None
+        except Exception as e:
+            logger.warning("Failed to create temporal relationship: %s", e)
+            return None
+
+    async def expire_contradicting_relationships(
+        self, subject_id: int, object_id: int,
+        contradicting_predicates: dict[str, list[str]],
+        new_predicate: str, new_relationship_id: int,
+    ) -> int:
+        """Expire old relationships that contradict the new one.
+
+        Args:
+            subject_id: The subject entity ID
+            object_id: The object entity ID
+            contradicting_predicates: Dict mapping predicate to list of contradicting predicates
+            new_predicate: The predicate of the new relationship
+            new_relationship_id: The ID of the new relationship (for expired_by)
+
+        Returns:
+            Count of expired relationships.
+        """
+        contradicts = contradicting_predicates.get(new_predicate, [])
+        if not contradicts:
+            return 0
+
+        placeholders = ",".join("?" * len(contradicts))
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = await self._db.execute(
+            f"""UPDATE entity_relationships
+                SET expired_at = ?, expired_by = ?
+                WHERE subject_id = ? AND object_id = ?
+                AND predicate IN ({placeholders})
+                AND expired_at IS NULL
+                AND id != ?""",
+            [now, new_relationship_id, subject_id, object_id]
+            + contradicts + [new_relationship_id],
+        )
+        await self._db.commit()
+        return cursor.rowcount
+
+    async def get_active_relationships_for_entity(
+        self, entity_id: int,
+    ) -> list[dict]:
+        """Get all active (non-expired) relationships for an entity."""
+        cursor = await self._db.execute(
+            """SELECT er.*, e1.name as subject_name, e2.name as object_name
+               FROM entity_relationships er
+               JOIN entities e1 ON er.subject_id = e1.id
+               JOIN entities e2 ON er.object_id = e2.id
+               WHERE (er.subject_id = ? OR er.object_id = ?)
+               AND er.expired_at IS NULL
+               ORDER BY er.created_at DESC""",
+            (entity_id, entity_id),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_expired_relationships_for_entity(
+        self, entity_id: int,
+    ) -> list[dict]:
+        """Get all expired relationships for an entity."""
+        cursor = await self._db.execute(
+            """SELECT er.*, e1.name as subject_name, e2.name as object_name
+               FROM entity_relationships er
+               JOIN entities e1 ON er.subject_id = e1.id
+               JOIN entities e2 ON er.object_id = e2.id
+               WHERE (er.subject_id = ? OR er.object_id = ?)
+               AND er.expired_at IS NOT NULL
+               ORDER BY er.expired_at DESC""",
+            (entity_id, entity_id),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    # --- Entity Resolution (Feature 5) ---
+
+    async def get_entity_id_by_name(self, name: str) -> int | None:
+        """Get entity ID by exact name match (case-insensitive)."""
+        cursor = await self._db.execute(
+            "SELECT id FROM entities WHERE name = ?", (name.strip().lower(),),
+        )
+        row = await cursor.fetchone()
+        return row["id"] if row else None
+
+    async def record_entity_alias(
+        self, alias_name: str, canonical_entity_id: int,
+        merge_method: str = "exact",
+    ) -> None:
+        """Record an entity alias for audit trail."""
+        try:
+            await self._db.execute(
+                """INSERT OR IGNORE INTO entity_aliases
+                   (alias_name, canonical_entity_id, merge_method)
+                   VALUES (?, ?, ?)""",
+                (alias_name.strip().lower(), canonical_entity_id, merge_method),
+            )
+            await self._db.commit()
+        except Exception as e:
+            logger.warning("Failed to record entity alias: %s", e)
+
+    async def merge_entity(
+        self, old_entity_id: int, canonical_entity_id: int,
+    ) -> None:
+        """Merge an entity into another: reassign all mentions and relationships.
+
+        Does NOT delete the old entity (it becomes an alias).
+        """
+        # Reassign entity mentions
+        await self._db.execute(
+            """UPDATE OR IGNORE entity_mentions
+               SET entity_id = ? WHERE entity_id = ?""",
+            (canonical_entity_id, old_entity_id),
+        )
+        # Delete any duplicate mentions that couldn't be updated
+        await self._db.execute(
+            "DELETE FROM entity_mentions WHERE entity_id = ?",
+            (old_entity_id,),
+        )
+        # Reassign relationships (subject side)
+        await self._db.execute(
+            """UPDATE OR IGNORE entity_relationships
+               SET subject_id = ? WHERE subject_id = ?""",
+            (canonical_entity_id, old_entity_id),
+        )
+        # Reassign relationships (object side)
+        await self._db.execute(
+            """UPDATE OR IGNORE entity_relationships
+               SET object_id = ? WHERE object_id = ?""",
+            (canonical_entity_id, old_entity_id),
+        )
+        # Clean up any orphaned relationships from the old entity
+        await self._db.execute(
+            """DELETE FROM entity_relationships
+               WHERE subject_id = ? OR object_id = ?""",
+            (old_entity_id, old_entity_id),
+        )
+        await self._db.commit()
 
     async def get_metadata(self, key: str) -> Optional[str]:
         """Get an app metadata value by key."""

@@ -13,6 +13,10 @@ class MemoryType(str, Enum):
     CORE = "core"
     LESSON = "lesson"
     SESSION_SUMMARY = "session_summary"
+    FACT = "fact"
+    EVENT = "event"
+    PREFERENCE = "preference"
+    SKILL = "skill"
 
 
 class Tag(BaseModel):
