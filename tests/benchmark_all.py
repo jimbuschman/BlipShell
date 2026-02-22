@@ -16,9 +16,14 @@ Usage:
 import argparse
 import asyncio
 import json
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Ensure project root is on sys.path so "from tests.*" imports work
+# when this script is run directly (python tests/benchmark_all.py).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rich.console import Console
 

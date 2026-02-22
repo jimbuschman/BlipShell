@@ -16,6 +16,9 @@ import sys
 import time
 from pathlib import Path
 
+# Ensure project root is on sys.path when run directly
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
