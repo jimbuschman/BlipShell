@@ -276,9 +276,9 @@ class TestTagOverlapBoost:
             router=canned_router,
             config=memory_config,
         )
-        # Query contains "docker" which should overlap with the tagged memory
+        # Query contains "python" which the tagger recognizes and should overlap
         results = await search.search(
-            query="how did I set up docker containers for the project",
+            query="how did I set up the python deployment pipeline",
             current_session_id=session_id + 1,
             n_results=10,
         )
@@ -297,12 +297,13 @@ class TestLessonSearchEnrichment:
 
     async def test_create_and_retrieve_lesson(self, sqlite_store):
         """Lessons stored in SQLite can be retrieved."""
+        from blipshell.models.memory import Lesson
         session_id = await sqlite_store.create_session("Test")
-        lesson_id = await sqlite_store.create_lesson(
+        lesson_id = await sqlite_store.create_lesson(Lesson(
             content="User prefers direct troubleshooting steps over lengthy explanations.",
             summary="Prefer direct troubleshooting over lengthy explanations",
             source_session_id=session_id,
-        )
+        ))
         assert lesson_id is not None
 
         lessons = await sqlite_store.get_all_lessons()
@@ -313,12 +314,13 @@ class TestLessonSearchEnrichment:
 
     async def test_lesson_tagging(self, sqlite_store):
         """Lessons can be tagged and tags retrieved."""
+        from blipshell.models.memory import Lesson
         session_id = await sqlite_store.create_session("Test")
-        lesson_id = await sqlite_store.create_lesson(
+        lesson_id = await sqlite_store.create_lesson(Lesson(
             content="When discussing hardware projects, always clarify which specific board.",
             summary="Clarify hardware board when discussing projects",
             source_session_id=session_id,
-        )
+        ))
         await sqlite_store.tag_lesson(lesson_id, ["hardware", "communication"])
 
         # Verify tags exist (no direct get_lesson_tags, but we can check the junction table)
@@ -413,8 +415,8 @@ class TestFullConversationFlow:
         assert memory.rank >= 1
         assert memory.importance > 0.0
 
-        # Verify FTS search finds it
-        fts_results = await sqlite_store.search_fts("kubernetes", limit=10)
+        # Verify FTS search finds it (canned summary contains "Python performance tuning")
+        fts_results = await sqlite_store.search_fts("python performance", limit=10)
         fts_ids = [r["id"] for r in fts_results]
         assert mem_id in fts_ids
 
