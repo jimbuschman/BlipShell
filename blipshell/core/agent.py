@@ -354,7 +354,10 @@ class Agent:
                 name, settings_json=json.dumps(settings),
             )
 
-        # Sync executor with project state so planner steps use correct model/context
+        # Sync planner + executor with project state so plan generation
+        # and step execution use the correct model/context
+        if self.task_planner:
+            self.task_planner.active_project = self.active_project
         if self.task_executor:
             self.task_executor.active_project = self.active_project
             self.task_executor.project_context = self._project_context
@@ -382,7 +385,9 @@ class Agent:
         self.tool_registry.unregister("git_add")
         self.tool_registry.unregister("git_commit")
 
-        # Clear executor project state
+        # Clear planner + executor project state
+        if self.task_planner:
+            self.task_planner.active_project = None
         if self.task_executor:
             self.task_executor.active_project = None
             self.task_executor.project_context = ""

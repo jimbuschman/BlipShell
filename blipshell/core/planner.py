@@ -112,6 +112,7 @@ class TaskPlanner:
         self.router = router
         self.sqlite = sqlite
         self.config = config
+        self.active_project: dict | None = None  # set by Agent when project is active
 
     async def create_plan(
         self,
@@ -119,10 +120,11 @@ class TaskPlanner:
         session_id: Optional[int] = None,
     ) -> TaskPlan:
         """Generate a plan for the user request and persist it."""
-        # Generate plan via LLM
+        # Generate plan via LLM — use coding model when project is active
+        task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
         prompt = generate_plan(user_request)
         raw_response = await self.router.generate(
-            TaskType.TOOL_CALLING, prompt, system=UTILITY_SYSTEM_PROMPT,
+            task_type, prompt, system=UTILITY_SYSTEM_PROMPT,
         )
 
         # Parse steps

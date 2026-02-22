@@ -251,9 +251,10 @@ class TaskExecutor:
         Uses the reasoning model (not summarization) since the summary
         needs to synthesize tool results — not just compress text.
         """
+        task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
         prompt = summarize_plan_results(user_request, step_results)
         return await self.router.generate(
-            TaskType.TOOL_CALLING, prompt, system=UTILITY_SYSTEM_PROMPT,
+            task_type, prompt, system=UTILITY_SYSTEM_PROMPT,
         )
 
     @staticmethod
