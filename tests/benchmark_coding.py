@@ -761,21 +761,26 @@ async def run_verification(sandbox_path: str, task: dict) -> tuple[int, int, lis
                 search_path = os.path.join(sandbox_path, path_prefix)
                 found = False
                 regex = re.compile(pattern)
-                walk_root = search_path if os.path.isdir(search_path) else os.path.dirname(search_path)
-                for dirpath, dirs, files in os.walk(walk_root):
-                    for fname in files:
-                        if not fname.endswith(".py"):
-                            continue
-                        fpath = os.path.join(dirpath, fname)
-                        try:
-                            content = Path(fpath).read_text(encoding="utf-8", errors="replace")
-                            if regex.search(content):
-                                found = True
-                                break
-                        except Exception:
-                            continue
-                    if found:
-                        break
+                # If path points to a specific file, only search that file (don't fall back to parent dir)
+                if os.path.isfile(search_path):
+                    content = Path(search_path).read_text(encoding="utf-8", errors="replace")
+                    found = bool(regex.search(content))
+                elif os.path.isdir(search_path):
+                    for dirpath, dirs, files in os.walk(search_path):
+                        for fname in files:
+                            if not fname.endswith(".py"):
+                                continue
+                            fpath = os.path.join(dirpath, fname)
+                            try:
+                                content = Path(fpath).read_text(encoding="utf-8", errors="replace")
+                                if regex.search(content):
+                                    found = True
+                                    break
+                            except Exception:
+                                continue
+                        if found:
+                            break
+                # else: path doesn't exist → found stays False
                 check_passed = found
                 reason = "pattern found" if found else "pattern not found"
 
@@ -839,34 +844,30 @@ async def run_verification(sandbox_path: str, task: dict) -> tuple[int, int, lis
                     )
                     stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=10)
                     diff_output = stdout2.decode("utf-8", errors="replace")
-                # For new untracked files, generate a pseudo-diff
+                # For new untracked files, generate a pseudo-diff.
+                # ONLY for files that git status shows as untracked (??) or newly added (A).
+                # Do NOT generate pseudo-diff for committed files with no changes.
                 if not diff_output.strip():
-                    full_path = os.path.join(sandbox_path, diff_path)
-                    if os.path.isfile(full_path):
-                        content = Path(full_path).read_text(encoding="utf-8", errors="replace")
-                        diff_output = "\n".join(f"+{line}" for line in content.splitlines())
-                    elif os.path.isdir(full_path):
-                        # Walk all .py files under this dir and check if they're new
-                        proc3 = await asyncio.create_subprocess_exec(
-                            "git", "status", "--porcelain", "--", diff_path,
-                            stdout=asyncio.subprocess.PIPE,
-                            stderr=asyncio.subprocess.PIPE,
-                            cwd=sandbox_path,
-                        )
-                        stdout3, _ = await asyncio.wait_for(proc3.communicate(), timeout=10)
-                        status_output = stdout3.decode("utf-8", errors="replace")
-                        diff_lines = []
-                        for line in status_output.splitlines():
-                            if line.startswith("?") or line.startswith("A"):
-                                fpath = line[3:].strip()
-                                fp = os.path.join(sandbox_path, fpath)
-                                if os.path.isfile(fp):
-                                    try:
-                                        fc = Path(fp).read_text(encoding="utf-8", errors="replace")
-                                        diff_lines.extend(f"+{l}" for l in fc.splitlines())
-                                    except Exception:
-                                        pass
-                        diff_output = "\n".join(diff_lines)
+                    proc3 = await asyncio.create_subprocess_exec(
+                        "git", "status", "--porcelain", "--", diff_path,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=sandbox_path,
+                    )
+                    stdout3, _ = await asyncio.wait_for(proc3.communicate(), timeout=10)
+                    status_output = stdout3.decode("utf-8", errors="replace")
+                    diff_lines = []
+                    for line in status_output.splitlines():
+                        if line.startswith("?") or line.startswith("A"):
+                            fpath = line[3:].strip()
+                            fp = os.path.join(sandbox_path, fpath)
+                            if os.path.isfile(fp):
+                                try:
+                                    fc = Path(fp).read_text(encoding="utf-8", errors="replace")
+                                    diff_lines.extend(f"+{l}" for l in fc.splitlines())
+                                except Exception:
+                                    pass
+                    diff_output = "\n".join(diff_lines)
 
                 regex = re.compile(pattern)
                 found = bool(regex.search(diff_output))
