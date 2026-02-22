@@ -236,16 +236,24 @@ def classify_task_type(text: str) -> str:
     )
 
 
-def generate_plan(user_request: str) -> str:
+def generate_plan(user_request: str, conversation_context: str = "") -> str:
     """Prompt for generating a numbered execution plan from a user request."""
+    context_section = ""
+    if conversation_context:
+        context_section = (
+            "Recent conversation (for context on what the user is referring to):\n"
+            f"{conversation_context}\n\n"
+        )
     return (
         "You are a task planner. Break the following user request into "
         "a clear, numbered list of 3-7 concrete steps.\n\n"
+        f"{context_section}"
         "Rules:\n"
-        "- Each step must be a single, actionable task\n"
+        "- Each step must be a SPECIFIC, actionable coding task (not vague like 'review' or 'plan')\n"
         "- Steps should be sequential — later steps can depend on earlier ones\n"
         "- If a step would use a tool, mention which tool in parentheses\n"
         "- Keep step descriptions concise (one sentence each)\n"
+        "- Do NOT include meta-steps like 'review code' or 'create plan' — go straight to implementation\n"
         "- Do NOT include greetings, explanations, or commentary\n"
         "- Respond with ONLY the numbered list\n\n"
         "Format:\n"

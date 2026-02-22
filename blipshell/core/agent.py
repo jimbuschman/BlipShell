@@ -1192,9 +1192,18 @@ class Agent:
         if on_token:
             on_token("[Planning...]\n")
 
+        # Build conversation context so the planner knows what the user
+        # is referring to (e.g., "build the TUI we discussed")
+        recent_messages = self.session_manager.get_messages()[-10:]
+        conversation_context = "\n".join(
+            f"{msg.role.value}: {msg.content[:300]}"
+            for msg in recent_messages if msg.content
+        )
+
         try:
             plan = await self.task_planner.create_plan(
                 user_message, session_id=session_id,
+                conversation_context=conversation_context,
             )
         except Exception as e:
             logger.error("Plan generation failed: %s", e)

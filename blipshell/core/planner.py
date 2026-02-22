@@ -118,11 +118,12 @@ class TaskPlanner:
         self,
         user_request: str,
         session_id: Optional[int] = None,
+        conversation_context: str = "",
     ) -> TaskPlan:
         """Generate a plan for the user request and persist it."""
         # Generate plan via LLM — use coding model when project is active
         task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
-        prompt = generate_plan(user_request)
+        prompt = generate_plan(user_request, conversation_context=conversation_context)
         raw_response = await self.router.generate(
             task_type, prompt, system=UTILITY_SYSTEM_PROMPT,
         )
