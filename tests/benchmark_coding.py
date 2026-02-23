@@ -357,6 +357,52 @@ CODING_TASKS = [
              "t = EditFileTool(); assert 'dry_run' in [p.name for p in t.definition().parameters]"),
         ],
     },
+    {
+        "name": "new_module_with_test",
+        "description": "Create a new utility module and a test that imports it",
+        "request": (
+            "Create a new module blipshell/core/rate_tracker.py that tracks API call "
+            "rates. It should contain:\n"
+            "1. A class RateTracker with:\n"
+            "   - __init__(self, window_seconds: int = 60) — time window for rate calc\n"
+            "   - record_call(self) — records a call at current time\n"
+            "   - get_rate(self) -> int — returns number of calls within the window\n"
+            "   - is_limited(self, max_calls: int) -> bool — True if rate >= max_calls\n"
+            "   - reset(self) — clears all recorded calls\n"
+            "2. Use time.monotonic() for timestamps (not datetime).\n"
+            "3. Store calls in a list and prune expired entries in get_rate().\n\n"
+            "Then create tests/test_rate_tracker.py that tests:\n"
+            "- Recording calls increments the rate\n"
+            "- is_limited returns True when at/over limit\n"
+            "- reset clears the rate to 0\n"
+            "The test must import RateTracker from the correct module path "
+            "(blipshell.core.rate_tracker). Keep both files simple and focused."
+        ),
+        "verify_checks": [
+            # Module exists and compiles
+            ("file_exists", "blipshell/core/rate_tracker.py"),
+            ("syntax_check", "blipshell/core/rate_tracker.py"),
+            # Has the RateTracker class
+            ("grep_in_sandbox", ("blipshell/core/rate_tracker.py", r"class RateTracker")),
+            # Has the required methods
+            ("grep_in_sandbox", ("blipshell/core/rate_tracker.py", r"def record_call")),
+            ("grep_in_sandbox", ("blipshell/core/rate_tracker.py", r"def get_rate")),
+            ("grep_in_sandbox", ("blipshell/core/rate_tracker.py", r"def is_limited")),
+            # Test file exists, compiles, and imports correctly
+            ("file_exists", "tests/test_rate_tracker.py"),
+            ("syntax_check", "tests/test_rate_tracker.py"),
+            ("grep_in_sandbox", ("tests/test_rate_tracker.py", r"from blipshell\.core\.rate_tracker import")),
+            # Test actually passes
+            ("pytest_in_sandbox", "tests/test_rate_tracker.py"),
+            # Functional: class is importable and works
+            ("functional_test",
+             "from blipshell.core.rate_tracker import RateTracker; "
+             "rt = RateTracker(); rt.record_call(); "
+             "assert rt.get_rate() == 1; "
+             "assert not rt.is_limited(5); "
+             "rt.reset(); assert rt.get_rate() == 0"),
+        ],
+    },
 ]
 
 
@@ -564,7 +610,7 @@ class TranscriptCapture:
 
     def add_step_footer(self, step_num: int, total: int, result_summary: str):
         """Mark step completion."""
-        self._lines.append(f"\n  ✓ Step {step_num}/{total} complete: {result_summary}\n")
+        self._lines.append(f"\n  [OK] Step {step_num}/{total} complete: {result_summary}\n")
 
     def add_verification(self, checks_passed: int, checks_total: int):
         """Add verification results at the end."""
@@ -1380,7 +1426,7 @@ async def run_benchmark(models: list[str], timeout: float = 300.0):
                     )
                     # Show per-check results
                     for label, ok, reason in metrics.check_details:
-                        mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
+                        mark = "[green]PASS[/green]" if ok else "[red]FAIL[/red]"
                         console.print(f"    {mark} {label}: {reason}")
                     if metrics.transcript_path:
                         console.print(f"  [dim]Transcript: {metrics.transcript_path}[/dim]")
@@ -1437,7 +1483,7 @@ async def dry_run_verify():
             console.print(f"[bold]{task['name']}[/bold] — {task['description']}")
             passed, total, details = await run_verification(sandbox_path, task)
             for label, ok, reason in details:
-                mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
+                mark = "[green]PASS[/green]" if ok else "[red]FAIL[/red]"
                 console.print(f"  {mark} {label}: {reason}")
             color = "green" if passed == 0 else "red"
             console.print(f"  [{color}]Result: {passed}/{total} passed[/{color}]\n")
