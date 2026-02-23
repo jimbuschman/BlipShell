@@ -740,7 +740,11 @@ def create_tool_registry(sandbox_path: str) -> InstrumentedToolRegistry:
 # ---------------------------------------------------------------------------
 
 def make_router(model_name: str, timeout: float = 300.0) -> LLMRouter:
-    """Create an LLMRouter that routes CODING and TOOL_CALLING to the given model."""
+    """Create an LLMRouter that routes CODING and TOOL_CALLING to the given model.
+
+    If model_name contains '/' (e.g. 'google/gemini-2.5-flash'), routes through
+    OpenRouter (requires OPENROUTER_API_KEY env var). Otherwise uses local Ollama.
+    """
     models = ModelsConfig(
         reasoning=model_name,
         tool_calling=model_name,
@@ -750,15 +754,38 @@ def make_router(model_name: str, timeout: float = 300.0) -> LLMRouter:
         importance=model_name,
         embedding=model_name,
     )
-    endpoint_cfg = EndpointConfig(
-        name="benchmark",
-        url=OLLAMA_URL,
-        roles=["reasoning", "tool_calling", "coding", "summarization",
-               "ranking", "importance", "embedding"],
-        priority=1,
-        max_concurrent=1,
-        context_tokens=131072,
-    )
+
+    if "/" in model_name:
+        # OpenRouter — OpenAI-compatible API
+        api_key = os.environ.get("OPENROUTER_API_KEY", "")
+        if not api_key:
+            raise RuntimeError(
+                "OPENROUTER_API_KEY env var required for OpenRouter models. "
+                "Get one at https://openrouter.ai/keys"
+            )
+        endpoint_cfg = EndpointConfig(
+            name="openrouter",
+            url="https://openrouter.ai/api/v1",
+            provider="openai",
+            api_key=api_key,
+            roles=["reasoning", "tool_calling", "coding", "summarization",
+                   "ranking", "importance", "embedding"],
+            priority=1,
+            max_concurrent=1,
+            context_tokens=131072,
+        )
+    else:
+        # Local Ollama
+        endpoint_cfg = EndpointConfig(
+            name="benchmark",
+            url=OLLAMA_URL,
+            roles=["reasoning", "tool_calling", "coding", "summarization",
+                   "ranking", "importance", "embedding"],
+            priority=1,
+            max_concurrent=1,
+            context_tokens=131072,
+        )
+
     llm_config = LLMConfig(timeout=timeout)
     endpoint_manager = EndpointManager([endpoint_cfg], llm_config)
     return LLMRouter(models, endpoint_manager)
