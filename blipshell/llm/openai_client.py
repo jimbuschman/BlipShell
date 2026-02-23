@@ -253,21 +253,18 @@ class OpenAICompatClient:
             }
         }
 
-        # Convert tool calls if present (OpenAI returns arguments as JSON string)
+        # Preserve tool calls in OpenAI wire format so they can be sent back
+        # in conversation history without format errors. Arguments stay as
+        # JSON strings (parsed to dicts only in _extract_tool_call_info).
         if msg.tool_calls:
             tool_calls = []
             for tc in msg.tool_calls:
-                args = tc.function.arguments
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except (json.JSONDecodeError, TypeError):
-                        args = {}
                 tool_calls.append({
                     "id": tc.id or "",
+                    "type": "function",
                     "function": {
                         "name": tc.function.name,
-                        "arguments": args,
+                        "arguments": tc.function.arguments,  # keep as JSON string
                     }
                 })
             result["message"]["tool_calls"] = tool_calls
