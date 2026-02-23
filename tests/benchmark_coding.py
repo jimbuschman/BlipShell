@@ -1,8 +1,8 @@
-"""Benchmark coding models on real plan-and-execute tasks against the BlipShell codebase.
+"""Benchmark coding models on real coding tasks against the BlipShell codebase.
 
 Copies the real BlipShell source to a temp directory, sets up project context
 (repo map, git tools, system prompt) matching what the agent uses in /project mode,
-and runs realistic coding tasks through TaskPlanner + TaskExecutor.execute_plan().
+and runs realistic coding tasks through TaskExecutor.execute_dynamic().
 
 Captures both raw transcripts (for manual side-by-side comparison) and structured
 metrics JSON (for Rich tables).
@@ -53,7 +53,6 @@ from blipshell.core.tools.git_tools import (
 )
 from blipshell.core.tools.shell import ShellTool
 from blipshell.core.executor import TaskExecutor
-from blipshell.core.planner import TaskPlanner
 from blipshell.llm.endpoints import EndpointManager
 from blipshell.llm.model_settings import ModelSettings, ModelSettingsRegistry
 from blipshell.llm.router import LLMRouter, TaskType
@@ -1039,7 +1038,7 @@ async def run_task(
 ) -> TaskMetrics:
     """Run a coding task with a given model against the real codebase and return metrics.
 
-    Uses execute_plan() — the real public API — with transcript capture.
+    Uses execute_dynamic() — iterative dynamic execution — with transcript capture.
     """
     metrics = TaskMetrics(task_name=task["name"], model=model_spec)
 
@@ -1069,12 +1068,9 @@ async def run_task(
         planner_config = PlannerConfig(
             enabled=True,
             auto_approve=True,
-            max_steps=7,
+            max_steps=5,
             max_retries_per_step=1,
         )
-
-        planner = TaskPlanner(router, sqlite, planner_config)
-        planner.active_project = {"name": "blipshell", "root_path": sandbox_path}
 
         executor = TaskExecutor(
             router=router,
@@ -1089,35 +1085,20 @@ async def run_task(
 
         wall_start = time.perf_counter()
 
-        # Phase 1: Plan generation
-        plan_start = time.perf_counter()
-        try:
-            plan = await planner.create_plan(task["request"])
-            metrics.plan_time = time.perf_counter() - plan_start
-            metrics.plan_steps = len(plan.steps)
-            metrics.plan_text = "\n".join(
-                f"  {s.step_number}. {s.description}" for s in plan.steps
-            )
-        except Exception as e:
-            metrics.plan_time = time.perf_counter() - plan_start
-            metrics.error = f"Plan generation failed: {e}"
-            metrics.total_time = time.perf_counter() - wall_start
-            return metrics
+        # Add transcript header (dynamic mode — no pre-generated plan)
+        transcript.add_header("[Dynamic execution — no pre-generated plan]")
 
-        # Add plan to transcript
-        transcript.add_header(metrics.plan_text)
-
-        # Phase 2: Execute plan via the real public API
-        # Use callbacks to capture per-step metrics
+        # Set up per-iteration metrics capture
         step_start_time = 0.0
+        max_iters = planner_config.max_steps
 
-        def on_step_start(step_num: int, total: int, description: str):
+        def on_step_start(step_num: int):
             nonlocal step_start_time
             tool_registry.reset_log()
             step_start_time = time.perf_counter()
-            transcript.add_step_header(step_num, total, description)
+            transcript.add_step_header(step_num, max_iters, f"Iteration {step_num}")
 
-        def on_step_complete(step_num: int, total: int, result_summary: str):
+        def on_step_complete(step_num: int, result_summary: str):
             step_time = time.perf_counter() - step_start_time
             step_metrics = StepMetrics(
                 step_number=step_num,
@@ -1127,22 +1108,24 @@ async def run_task(
                 output_preview=result_summary[:500],
             )
             metrics.steps.append(step_metrics)
-            transcript.add_step_footer(step_num, total, result_summary[:200])
+            transcript.add_step_footer(step_num, max_iters, result_summary[:200])
 
         try:
-            summary = await executor.execute_plan(
-                plan,
+            summary = await executor.execute_dynamic(
+                task["request"],
                 on_step_start=on_step_start,
                 on_step_complete=on_step_complete,
                 on_token=transcript.on_token,
+                max_steps=max_iters,
             )
             metrics.summary_text = summary[:1000] if summary else ""
         except Exception as e:
             metrics.error = f"Execution failed: {e}"
 
         metrics.total_time = time.perf_counter() - wall_start
+        metrics.plan_steps = len(metrics.steps)  # iterations completed
 
-        # Phase 3: Verification
+        # Verification
         metrics.checks_passed, metrics.checks_total, metrics.check_details = (
             await run_verification(sandbox_path, task)
         )
@@ -1158,7 +1141,7 @@ async def run_task(
         transcript.add_verification(metrics.checks_passed, metrics.checks_total)
         for label, ok, reason in metrics.check_details:
             transcript._lines.append(f"  {'PASS' if ok else 'FAIL'} {label}: {reason}\n")
-        transcript.add_timing(metrics.plan_time, metrics.total_time)
+        transcript.add_timing(0.0, metrics.total_time)
 
         # Parse transcript behavioral metrics
         metrics.transcript_metrics = transcript.parse_metrics()
@@ -1191,13 +1174,10 @@ def print_summary_table(all_results: dict[str, list[TaskMetrics]]):
     )
     table.add_column("Model", style="cyan", width=26, no_wrap=True)
     table.add_column("Task", width=16)
-    table.add_column("Plan", width=6, justify="center")
-    table.add_column("Steps", width=6, justify="center")
+    table.add_column("Iters", width=6, justify="center")
     table.add_column("Tools", width=6, justify="center")
     table.add_column("Edit Fail", width=9, justify="center")
     table.add_column("Reads", width=6, justify="center")
-    table.add_column("Plan(s)", width=8, justify="right")
-    table.add_column("Exec(s)", width=8, justify="right")
     table.add_column("Total(s)", width=8, justify="right")
     table.add_column("Checks", width=8, justify="center")
     table.add_column("Pytest", width=7, justify="center")
@@ -1206,7 +1186,6 @@ def print_summary_table(all_results: dict[str, list[TaskMetrics]]):
     for model, task_results in all_results.items():
         for i, m in enumerate(task_results):
             model_col = model if i == 0 else ""
-            exec_time = sum(s.execution_time for s in m.steps)
             checks_str = f"{m.checks_passed}/{m.checks_total}"
             edit_fail_str = (
                 f"[red]{m.total_edit_failures}[/red]" if m.total_edit_failures > 0
@@ -1231,13 +1210,10 @@ def print_summary_table(all_results: dict[str, list[TaskMetrics]]):
             table.add_row(
                 model_col,
                 m.task_name,
-                f"{m.plan_steps}",
                 f"{len(m.steps)}",
                 f"{m.total_tool_calls}{unwanted_str}",
                 edit_fail_str,
                 f"{m.total_file_reads}",
-                f"{m.plan_time:.1f}",
-                f"{exec_time:.1f}",
                 f"{m.total_time:.1f}",
                 checks_str,
                 pytest_str,
@@ -1462,7 +1438,6 @@ async def run_benchmark(models: list[str], timeout: float = 300.0):
     console.print()
     print_totals_table(all_results)
     console.print()
-    print_plan_table(all_results)
     print_step_detail_table(all_results)
 
 

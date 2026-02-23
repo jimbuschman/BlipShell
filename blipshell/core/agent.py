@@ -1325,60 +1325,31 @@ class Agent:
         user_message: str,
         on_token: Optional[Callable[[str], None]] = None,
     ) -> str:
-        """Planned chat path — decompose into steps and execute sequentially."""
-        session_id = self.session_manager.session_id
+        """Planned chat path — dynamic iterative execution (no pre-generated plan).
 
-        # Generate plan
+        The LLM decides what to do next after each action, stopping when done.
+        This is how Claude Code, Cursor, and modern coding agents work.
+        """
         if on_token:
-            on_token("[Planning...]\n")
+            on_token("[Executing task...]\n\n")
 
-        # Build conversation context so the planner knows what the user
-        # is referring to (e.g., "build the TUI we discussed")
-        recent_messages = self.session_manager.get_messages()[-10:]
-        conversation_context = "\n".join(
-            f"{msg.role.value}: {msg.content[:300]}"
-            for msg in recent_messages if msg.content
-        )
+        def on_step_complete(step_num, result_summary):
+            if on_token:
+                on_token(f"\n[Iteration {step_num} complete]\n")
 
         try:
-            plan = await self.task_planner.create_plan(
-                user_message, session_id=session_id,
-                conversation_context=conversation_context,
-            )
-        except Exception as e:
-            logger.error("Plan generation failed: %s", e)
-            # Fallback to simple chat
-            if on_token:
-                on_token("[Plan generation failed, falling back to direct chat]\n")
-            return await self._chat_simple(user_message, on_token=on_token)
-
-        # Show plan to user
-        if on_token:
-            on_token(f"\n[Plan ({len(plan.steps)} steps):]\n")
-            for step in plan.steps:
-                tool_hint = f" ({step.tool_hint})" if step.tool_hint else ""
-                on_token(f"  {step.step_number}. {step.description}{tool_hint}\n")
-            on_token("\n[Executing...]\n\n")
-
-        # Execute plan
-        def on_step_start(step_num, total, description):
-            if on_token:
-                on_token(f"\n--- Step {step_num}/{total}: {description} ---\n")
-
-        def on_step_complete(step_num, total, result_summary):
-            if on_token:
-                on_token(f"\n[Step {step_num}/{total} complete]\n")
-
-        try:
-            result = await self.task_executor.execute_plan(
-                plan,
-                on_step_start=on_step_start,
+            result = await self.task_executor.execute_dynamic(
+                user_message,
                 on_step_complete=on_step_complete,
                 on_token=on_token,
+                max_steps=self.config.planner.max_steps,
             )
         except Exception as e:
-            logger.error("Plan execution failed: %s", e)
-            result = f"Plan execution failed: {e}"
+            logger.error("Dynamic execution failed: %s", e)
+            # Fallback to simple chat
+            if on_token:
+                on_token("[Execution failed, falling back to direct chat]\n")
+            return await self._chat_simple(user_message, on_token=on_token)
 
         return result
 
