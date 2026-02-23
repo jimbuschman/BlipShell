@@ -40,6 +40,7 @@ from blipshell.core.tools.memory_tools import (
     SaveCoreMemoryTool,
     SearchMemoriesTool,
 )
+from blipshell.core.tools.interaction_tools import AskUserTool
 from blipshell.core.tools.shell import ShellTool
 from blipshell.core.tools.task_tools import (
     CheckBackgroundTaskTool,
@@ -133,6 +134,9 @@ class Agent:
         self.reflect_enabled: bool = False  # /reflect toggle — second-pass self-critique
         self._turn_number: int = 0
         self._last_context_stats: Optional[dict] = None
+
+        # Interactive callbacks (wired by CLI)
+        self._ask_user_callback: Optional[Callable] = None
 
         # Project (BlipCode)
         self.active_project: Optional[dict] = None
@@ -351,6 +355,10 @@ class Agent:
                 self.workflow_executor, session_id,
             ), group="tasks")
 
+    def set_ask_user_callback(self, callback):
+        """Set the callback for ask_user tool (wired by CLI)."""
+        self._ask_user_callback = callback
+
     async def activate_project(self, name: str) -> dict:
         """Activate a project by name. Loads context and re-registers tools.
 
@@ -381,6 +389,11 @@ class Agent:
         self.tool_registry.register(GitDiffTool(root_path=root), group="coding")
         self.tool_registry.register(GitAddTool(root_path=root), group="coding")
         self.tool_registry.register(GitCommitTool(root_path=root), group="coding")
+
+        # Register ask_user tool for interactive clarification during execution
+        self.tool_registry.register(
+            AskUserTool(callback=self._ask_user_callback), group="general",
+        )
 
         # Initialize repo map for code structure context
         self._repo_map = RepoMap(root)
@@ -446,6 +459,7 @@ class Agent:
         self.tool_registry.unregister("git_diff")
         self.tool_registry.unregister("git_add")
         self.tool_registry.unregister("git_commit")
+        self.tool_registry.unregister("ask_user")
 
         # Clear planner + executor project state
         if self.task_planner:
@@ -1351,7 +1365,37 @@ class Agent:
 
         The LLM decides what to do next after each action, stopping when done.
         This is how Claude Code, Cursor, and modern coding agents work.
+
+        Memory integration:
+        - Searches relevant memories before execution (context IN)
+        - Passes recent chat history so design discussions carry over
+        - Feeds the coding result through the memory pipeline (context OUT)
         """
+        if on_token:
+            on_token("[Preparing context...]\n")
+
+        # Search relevant memories for this task
+        memory_context = ""
+        try:
+            results = await self.search.search(
+                query=user_message,
+                current_session_id=self.session_manager.session_id,
+                n_results=10,
+                active_project=self.active_project["name"] if self.active_project else None,
+            )
+            if results:
+                memory_context = "Relevant memories from past sessions:\n"
+                for r in results:
+                    memory_context += f"- {r.summary}\n"
+        except Exception as e:
+            logger.error("Memory search for executor failed: %s", e)
+
+        # Get recent chat history (design discussion context)
+        chat_history = []
+        for msg in self.session_manager.get_messages()[-10:]:
+            if msg.role in (MessageRole.USER, MessageRole.ASSISTANT):
+                chat_history.append(msg.to_ollama_message())
+
         if on_token:
             on_token("[Executing task...]\n\n")
 
@@ -1364,6 +1408,8 @@ class Agent:
                 user_message,
                 on_step_complete=on_step_complete,
                 on_token=on_token,
+                memory_context=memory_context,
+                chat_history=chat_history,
             )
         except Exception as e:
             logger.error("Dynamic execution failed: %s", e)
@@ -1371,6 +1417,16 @@ class Agent:
             if on_token:
                 on_token("[Execution failed, falling back to direct chat]\n")
             return await self._chat_simple(user_message, on_token=on_token)
+
+        # Feed the coding result through memory pipeline
+        try:
+            await self.session_manager.processor.process_message(
+                text=result,
+                role="assistant",
+                session_id=self.session_manager.session_id,
+            )
+        except Exception as e:
+            logger.error("Failed to process coding result into memory: %s", e)
 
         return result
 
@@ -1524,11 +1580,12 @@ class Agent:
                 "relative paths against this project root. Use relative paths like "
                 "'blipshell/ui/cli.py', NOT absolute paths.\n"
                 "The run_command tool also runs from the project root.\n\n"
-                "EXECUTION MODE: You are an autonomous coding agent.\n"
-                "- Execute tasks fully without asking for permission or confirmation.\n"
-                "- Make decisions yourself. Do NOT ask 'should I?', 'want me to?', 'which approach?'.\n"
-                "- Only ask the user if you genuinely cannot determine a critical requirement.\n"
-                "- When finished, summarize what you built in 2-3 sentences.\n\n"
+                "INTERACTION MODE:\n"
+                "- When the user is discussing, asking questions, or exploring ideas — just have a conversation.\n"
+                "- When the user asks you to make changes, create files, or implement something — use your tools.\n"
+                "- For non-trivial changes, briefly describe your approach before starting.\n"
+                "- Ask clarifying questions if requirements are ambiguous — don't guess.\n"
+                "- You have tools available but do NOT use them unless the user is requesting action.\n\n"
                 "TOOL DISCIPLINE:\n"
                 "- Read a file ONCE, then use what you learned. Do NOT re-read files.\n"
                 "- List a directory ONCE. Do NOT re-list directories.\n"

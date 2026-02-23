@@ -187,6 +187,8 @@ class TaskExecutor:
         on_step_complete: Optional[Callable[[int, str], None]] = None,
         on_token: Optional[Callable[[str], None]] = None,
         max_tool_calls: int = 0,
+        memory_context: str = "",
+        chat_history: list[dict] | None = None,
     ) -> str:
         """Execute a task dynamically — single continuous conversation.
 
@@ -196,6 +198,8 @@ class TaskExecutor:
 
         Args:
             max_tool_calls: Tool call budget. 0 = use self.max_tool_iterations.
+            memory_context: Relevant memories from past sessions (injected as system message).
+            chat_history: Recent chat messages for design discussion context.
         """
         # Switch to coding rules if project is active
         if self.active_project:
@@ -235,8 +239,18 @@ class TaskExecutor:
         task_prompt = dynamic_execution_prompt(user_request)
         messages = [
             {"role": "system", "content": sys_prompt},
-            {"role": "user", "content": task_prompt},
         ]
+
+        # Inject memory context so executor has relevant past knowledge
+        if memory_context:
+            messages.append({"role": "system", "content": memory_context})
+
+        # Inject recent chat history so executor has design discussion context
+        if chat_history:
+            messages.extend(chat_history)
+
+        # The actual task instruction
+        messages.append({"role": "user", "content": task_prompt})
 
         if on_step_start:
             on_step_start(1)
@@ -335,6 +349,26 @@ class TaskExecutor:
             break
         else:
             final_response = "Task reached maximum tool call budget."
+
+        # Save transcript for reference
+        if self.active_project:
+            try:
+                import json
+                from datetime import datetime
+                from pathlib import Path
+                transcript_dir = Path("data/project_transcripts")
+                transcript_dir.mkdir(parents=True, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+                project_name = self.active_project.get("name", "unknown")
+                filename = f"{project_name}__{timestamp}.json"
+                transcript_path = transcript_dir / filename
+                transcript_path.write_text(
+                    json.dumps(messages, indent=2, default=str),
+                    encoding="utf-8",
+                )
+                logger.info("Saved coding transcript to %s", transcript_path)
+            except Exception as e:
+                logger.error("Failed to save transcript: %s", e)
 
         # Detach cache
         if read_tool is not None:

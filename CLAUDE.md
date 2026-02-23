@@ -125,9 +125,52 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - Both free tiers useless for batch import, fine for interactive background tasks
 
 ## Feature Roadmap (Future)
-- **6. Upgrade embedding model** — Benchmark new embedding models, then full re-embed. Benchmark first with real queries before committing.
-- **7. LLM-powered tag discovery** — LLM reviews recent memories periodically and suggests new regex patterns for the tagger. Route to cloud endpoint, run as scheduled background task.
-- **8. Esc to cancel current LLM call** — Allow user to press Escape during streaming response to cancel the in-flight request and return to the prompt.
+
+### 9. Project Mode Memory Integration — CODE WRITTEN, NEEDS TESTING
+- [x] Memory IN: Search relevant memories before execution (`_chat_planned` → `search.search()`)
+- [x] Memory IN: Pass last 10 chat messages as context so design discussions carry over
+- [x] Memory IN: Inject both into executor via `memory_context` / `chat_history` params
+- [x] Memory OUT: TASK_COMPLETE prompt updated to include design decisions, files changed
+- [x] Memory OUT: Explicit `process_message()` call after execution (bypasses 5-message dump threshold)
+- [x] Transcript saving: Full messages list saved to `data/project_transcripts/{project}__{timestamp}.json`
+- [ ] **NEEDS TESTING**: Verify memories appear in executor context
+- [ ] **NEEDS TESTING**: Verify coding results get processed into memory pipeline
+- [ ] **NEEDS TESTING**: Verify transcripts save correctly
+- [ ] Future: Executor checkpointing for resume on interrupt
+- [ ] Future: Context compression for long conversations
+
+### 10. Project Mode Conversational Prompt — COMPLETE
+- [x] Replaced EXECUTION MODE prompt with conversational-by-default INTERACTION MODE
+- [x] LLM discusses and clarifies before acting, only uses tools when user requests action
+- [x] Tools always available but prompt controls when to use them
+
+### 11. Interactive Executor — CODE WRITTEN, NEEDS TESTING
+- [x] `ask_user` tool: `blipshell/core/tools/interaction_tools.py` — LLM can ask clarifying questions mid-execution
+- [x] CLI callback: `_ask_user_input()` in cli.py — prompts user with Rich formatting
+- [x] Registered in `activate_project()`, unregistered in `deactivate_project()`
+- [x] Benchmark-safe: returns "Make your best judgment" when no callback is set
+- [x] Removed "Do NOT ask questions" from executor prompt
+- [x] Prompt guides LLM to use ask_user for unclear requirements and after 2 failed attempts
+- [ ] **NEEDS TESTING**: Verify ask_user tool prompts user and returns answer to LLM
+- [ ] **NEEDS TESTING**: Verify benchmark still passes without interactive callback
+- [ ] Future: Approval gates for destructive operations
+- [ ] Future: Mid-task steering and graceful interruption
+
+### 12. Executor Prompt Refinement — COMPLETE
+- [x] Plan-before-acting: "Before making changes, briefly state your plan"
+- [x] Anti-over-engineering: "Make the minimum changes needed — don't refactor, add features, or 'improve' code beyond what was asked"
+- [x] Smarter error recovery: "If something isn't working after 2 attempts, use ask_user"
+- [x] Richer TASK_COMPLETE format: files modified, design decisions, things to test
+- [ ] Parallel tool calls — future (OpenAI API supports this, free speedup)
+
+### 14. Upgrade embedding model
+Benchmark new embedding models, then full re-embed. Benchmark first with real queries before committing.
+
+### 15. LLM-powered tag discovery
+LLM reviews recent memories periodically and suggests new regex patterns for the tagger. Route to cloud endpoint, run as scheduled background task.
+
+### 16. Esc to cancel current LLM call
+Allow user to press Escape during streaming response to cancel the in-flight request and return to the prompt.
 
 ## Architecture Notes
 - Two-PC setup: Development on one PC, Ollama/benchmarks on another

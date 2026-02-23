@@ -139,6 +139,16 @@ async def _tool_approval_prompt(tool_name: str, arguments: dict) -> bool:
         return False
 
 
+async def _ask_user_input(question: str) -> str:
+    """Prompt the user with a question from the LLM during execution."""
+    console.print(f"\n[bold yellow][LLM Question][/bold yellow] {question}")
+    try:
+        answer = console.input("[bold yellow]> [/bold yellow]").strip()
+        return answer if answer else "No answer provided."
+    except (EOFError, KeyboardInterrupt):
+        return "User cancelled. Proceed with your best judgment."
+
+
 async def _poll_for_escape():
     """Poll for Esc keypress. Returns when Esc is detected.
 
@@ -255,6 +265,9 @@ async def chat_loop(
             callback=_tool_approval_prompt,
             tools_requiring_approval=set(config.agent.tools_requiring_approval),
         )
+
+    # Wire ask_user callback so the LLM can ask questions during execution
+    agent.set_ask_user_callback(_ask_user_input)
 
     sid = await agent.start_session(project=project, resume_session_id=resume_id)
 
