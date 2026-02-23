@@ -7,6 +7,7 @@ prompt with accumulated context and runs the existing tool-calling loop.
 import logging
 from typing import Callable, Optional
 
+from blipshell.core.tool_rules import ToolRuleEngine, create_coding_rules, create_default_rules
 from blipshell.core.tools.base import ToolRegistry
 from blipshell.llm.client import LLMClient
 from blipshell.llm.prompts import execute_step, summarize_plan_results, UTILITY_SYSTEM_PROMPT
@@ -41,6 +42,11 @@ class TaskExecutor:
         self.active_project: dict | None = None
         self.project_context: str = ""
         self.files_read: set[str] = set()  # shared with Agent to track across steps
+        self._file_cache: dict[str, str] = {}  # path → content, for cross-step re-reads
+        self._tool_rules: ToolRuleEngine = create_default_rules()
+        # Per-step tracking for rich context summaries
+        self._step_files_created: list[str] = []
+        self._step_files_edited: list[str] = []
 
     async def execute_plan(
         self,
@@ -66,9 +72,23 @@ class TaskExecutor:
         step_results: list[str] = []
         total_steps = len(plan.steps)
 
+        # Switch to coding rules if project is active
+        if self.active_project:
+            self._tool_rules = create_coding_rules()
+
+        # Clear file cache at plan start and wire it into ReadFileTool
+        self._file_cache.clear()
+        read_tool = self.tool_registry.get_tool("read_file")
+        if read_tool is not None:
+            read_tool.file_cache = self._file_cache
+
         for step in plan.steps:
             if on_step_start:
                 on_step_start(step.step_number, total_steps, step.description)
+
+            # Reset per-step file tracking
+            self._step_files_created.clear()
+            self._step_files_edited.clear()
 
             # Execute the step with retries
             success = False
@@ -91,9 +111,11 @@ class TaskExecutor:
                         retry_count=attempt,
                     )
 
-                    completed_summaries.append(
-                        f"{step.description}: {result[:200]}"
+                    # Build rich context summary for later steps
+                    summary = self._build_step_summary(
+                        step.description, result,
                     )
+                    completed_summaries.append(summary)
                     step_results.append(result)
                     success = True
 
@@ -122,6 +144,9 @@ class TaskExecutor:
                         remaining.id, status=StepStatus.SKIPPED,
                     )
                 await self.sqlite.update_plan(plan.id, status=PlanStatus.FAILED)
+                # Detach cache from ReadFileTool on failure exit
+                if read_tool is not None:
+                    read_tool.file_cache = None
                 return f"Plan failed at step {step.step_number}: {step.description}"
 
         # All steps completed — generate summary
@@ -148,6 +173,10 @@ class TaskExecutor:
             status=PlanStatus.COMPLETED,
             result_summary=summary,
         )
+
+        # Detach cache from ReadFileTool on success exit
+        if read_tool is not None:
+            read_tool.file_cache = None
 
         return summary
 
@@ -183,15 +212,6 @@ class TaskExecutor:
             {"role": "system", "content": sys_prompt},
         ]
 
-        # Inject files-read tracker so steps don't re-read across the plan
-        if self.files_read:
-            files_list = "\n".join(f"  - {f}" for f in sorted(self.files_read))
-            messages.append({"role": "system", "content": (
-                "FILES ALREADY READ IN THIS PLAN (do NOT re-read these):\n"
-                + files_list
-                + "\nUse what you already know. Do not list directories or read files again."
-            )})
-
         messages.append({"role": "user", "content": step_prompt})
 
         # Route to coding model when project is active
@@ -207,13 +227,21 @@ class TaskExecutor:
         if self.active_project and tools:
             max_iterations = max(max_iterations, 30)
 
-        # Tool-calling loop (same pattern as Agent.chat)
+        # Tool-calling loop with tool rules and file caching
         full_response = ""
+        tool_call_names: list[str] = []
         for iteration in range(max_iterations + 1):
+            # Apply tool rules to filter available tools
+            iter_tools = None
+            if tools and iteration < max_iterations:
+                iter_tools = self._tool_rules.filter_tools(tools, tool_call_names)
+                if not iter_tools:
+                    iter_tools = None
+
             response = await client.chat(
                 messages=messages,
                 model=model,
-                tools=tools if iteration < max_iterations else None,
+                tools=iter_tools,
             )
 
             content, tool_calls = self._extract_response(response)
@@ -227,19 +255,43 @@ class TaskExecutor:
 
                 for tc in tool_calls:
                     name, arguments = self._extract_tool_call_info(tc)
+                    tool_call_names.append(name)
                     tool_call = ToolCall(name=name, arguments=arguments)
 
                     if on_token:
                         on_token(f"\n  [Tool: {tool_call.name}]\n")
 
                     result = await self.tool_registry.execute_tool_call(tool_call)
-                    messages.append(result.to_ollama_message())
 
-                    # Track files read across steps
-                    if result.success and name in ("read_file", "list_directory"):
+                    # Cache file contents on successful read (for cross-step re-reads)
+                    if result.success and name == "read_file":
                         read_path = arguments.get("path", "")
                         if read_path:
                             self.files_read.add(read_path)
+                            self._file_cache[read_path] = result.result
+
+                    # Track file operations for rich step summaries
+                    if result.success and name == "write_file":
+                        file_path = arguments.get("path", "")
+                        if file_path:
+                            self._step_files_created.append(file_path)
+                            # Cache the written content too
+                            written = arguments.get("content", "")
+                            if written:
+                                self._file_cache[file_path] = written
+                    if result.success and name == "edit_file":
+                        file_path = arguments.get("path", "")
+                        if file_path:
+                            self._step_files_edited.append(file_path)
+                            # Invalidate cache — file changed, next read gets fresh
+                            self._file_cache.pop(file_path, None)
+
+                    if result.success and name == "list_directory":
+                        read_path = arguments.get("path", "")
+                        if read_path:
+                            self.files_read.add(read_path)
+
+                    messages.append(result.to_ollama_message())
 
                     if on_token:
                         on_token(f"  [Result: {result.result[:150]}]\n")
@@ -250,6 +302,58 @@ class TaskExecutor:
                 break
 
         return full_response
+
+    def _build_step_summary(self, description: str, result: str) -> str:
+        """Build a rich context summary of a completed step for later steps.
+
+        Instead of just 200 chars of the LLM response, includes:
+        - What the step did (description)
+        - Files created with their key content (class names, imports)
+        - Files edited
+        - Truncated LLM response for additional context
+        """
+        parts = [f"Step: {description}"]
+
+        if self._step_files_created:
+            parts.append("Files created:")
+            for path in self._step_files_created:
+                cached = self._file_cache.get(path, "")
+                if cached:
+                    # Extract key structural info: imports, class/function names
+                    key_lines = self._extract_key_lines(cached)
+                    parts.append(f"  - {path}")
+                    if key_lines:
+                        parts.append(f"    Key structure: {key_lines}")
+                else:
+                    parts.append(f"  - {path}")
+
+        if self._step_files_edited:
+            parts.append("Files edited: " + ", ".join(self._step_files_edited))
+
+        # Include LLM's summary but more generous than 200 chars
+        if result:
+            parts.append(f"Result: {result[:500]}")
+
+        return "\n".join(parts)
+
+    @staticmethod
+    def _extract_key_lines(content: str) -> str:
+        """Extract key structural info from file content for step summaries.
+
+        Pulls out imports, class definitions, and function signatures — enough
+        for later steps to use correct names without re-reading the file.
+        """
+        key = []
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith(("import ", "from ")):
+                key.append(stripped)
+            elif stripped.startswith(("class ", "def ", "async def ")):
+                key.append(stripped.rstrip(":"))
+        # Cap to prevent bloating context
+        if len(key) > 20:
+            key = key[:20] + [f"... ({len(key) - 20} more)"]
+        return "; ".join(key) if key else ""
 
     async def _generate_summary(
         self, user_request: str, step_results: list[str],

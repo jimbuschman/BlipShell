@@ -13,11 +13,13 @@ logger = logging.getLogger(__name__)
 
 class ReadFileTool(Tool):
     def __init__(self, max_file_size: int = 1048576, blocked_paths: list[str] | None = None,
-                 root_path: str | None = None, files_read: set[str] | None = None):
+                 root_path: str | None = None, files_read: set[str] | None = None,
+                 file_cache: dict[str, str] | None = None):
         self.max_file_size = max_file_size
         self.blocked_paths = blocked_paths or []
         self.root_path = root_path
         self.files_read = files_read  # shared set from agent — checked to prevent re-reads
+        self.file_cache = file_cache  # optional cache — if set, re-reads return cached content
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -40,11 +42,22 @@ class ReadFileTool(Tool):
     async def execute(self, path: str, max_lines: int = 0, **kwargs) -> str:
         resolved = self._resolve(path)
 
-        # Enforce file re-read prevention: if already read this session, reject
+        # Re-read handling: behavior depends on whether a cache is available.
+        # With cache (executor/planned path): return cached content (fast, no disk IO)
+        # Without cache (simple chat path): block re-reads entirely
         if self.files_read is not None:
             resolved_str = str(resolved)
-            # Check both the resolved path and the original path (relative)
             if resolved_str in self.files_read or path in self.files_read:
+                # Check cache first — return cached content if available
+                if self.file_cache is not None:
+                    cached = self.file_cache.get(path) or self.file_cache.get(resolved_str)
+                    if cached:
+                        logger.debug("Returning cached content for %s", path)
+                        if max_lines > 0:
+                            lines = cached.splitlines()[:max_lines]
+                            return "\n".join(lines)
+                        return cached
+                # No cache — block the re-read
                 return (
                     f"ALREADY READ: '{path}' was already read this session. "
                     "Use the content from earlier — do not re-read files."
@@ -61,6 +74,12 @@ class ReadFileTool(Tool):
         if max_lines > 0:
             lines = content.splitlines()[:max_lines]
             content = "\n".join(lines)
+
+        # Populate cache if available (executor path)
+        if self.file_cache is not None:
+            self.file_cache[path] = content
+            self.file_cache[str(resolved)] = content
+
         return content
 
     def _is_blocked(self, path: str) -> bool:
