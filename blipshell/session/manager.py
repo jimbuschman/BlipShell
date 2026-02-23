@@ -36,11 +36,12 @@ class SessionManager:
     - Session resume
     """
 
-    # Per-message timeout for dump_to_memory (each message requires 2-3 LLM calls)
-    PER_MESSAGE_TIMEOUT = 15  # seconds
+    # Per-message timeout for dump_to_memory (each message requires 2-3 LLM calls
+    # plus potential model swaps between summarization/ranking models)
+    PER_MESSAGE_TIMEOUT = 30  # seconds
     # Max total time for session-end operations
     SUMMARY_TIMEOUT = 60  # seconds (summary can be slow for long sessions)
-    LESSON_TIMEOUT = 30  # seconds
+    LESSON_TIMEOUT = 60  # seconds (reasoning model can be slow)
 
     def __init__(
         self,

@@ -212,11 +212,13 @@ class Agent:
             config=self.config.planner,
             system_prompt=self.config.agent.system_prompt,
             max_tool_iterations=self.config.agent.max_tool_iterations,
+            processor=self.processor,
         )
 
         # Background task manager (Phase 2)
         self.background_manager = BackgroundTaskManager(
             self.router, self.sqlite, self.config.worker,
+            processor=self.processor,
         )
 
         # Workflow system (Phase 4)

@@ -14,6 +14,11 @@ from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.models.config import WorkerConfig
 from blipshell.models.task import BackgroundTask, BackgroundTaskStatus
 
+# Avoid circular import — processor is optional
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from blipshell.memory.processor import MemoryProcessor
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,10 +30,12 @@ class BackgroundTaskManager:
         router: LLMRouter,
         sqlite: SQLiteStore,
         worker_config: WorkerConfig,
+        processor: Optional["MemoryProcessor"] = None,
     ):
         self.router = router
         self.sqlite = sqlite
         self.worker_config = worker_config
+        self.processor = processor
         self._running_tasks: dict[int, asyncio.Task] = {}
         self._completed_ids: list[int] = []  # task IDs that finished since last check
         self._on_complete: Optional[Callable[[int, str, str], None]] = None
@@ -147,6 +154,17 @@ class BackgroundTaskManager:
             )
             self._completed_ids.append(task_id)
             logger.info("Background task #%d completed", task_id)
+
+            # Feed result through memory pipeline so it's searchable
+            if self.processor and result:
+                try:
+                    await self.processor.process_message(
+                        text=result,
+                        role="assistant",
+                        session_id=task.session_id or 0,
+                    )
+                except Exception as mem_err:
+                    logger.error("Background task #%d memory save failed: %s", task_id, mem_err)
 
         except asyncio.CancelledError:
             await self.sqlite.update_background_task(

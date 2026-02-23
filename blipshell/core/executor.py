@@ -17,6 +17,10 @@ from blipshell.models.config import PlannerConfig
 from blipshell.models.task import PlanStatus, StepStatus, TaskPlan
 from blipshell.models.tools import ToolCall
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from blipshell.memory.processor import MemoryProcessor
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,6 +35,7 @@ class TaskExecutor:
         config: PlannerConfig,
         system_prompt: str = "",
         max_tool_iterations: int = 5,
+        processor: Optional["MemoryProcessor"] = None,
     ):
         self.router = router
         self.sqlite = sqlite
@@ -38,6 +43,7 @@ class TaskExecutor:
         self.config = config
         self.system_prompt = system_prompt
         self.max_tool_iterations = max_tool_iterations
+        self.processor = processor
         # Project-mode overrides (set by Agent when project is active)
         self.active_project: dict | None = None
         self.project_context: str = ""
@@ -173,6 +179,17 @@ class TaskExecutor:
             status=PlanStatus.COMPLETED,
             result_summary=summary,
         )
+
+        # Feed plan result through memory pipeline
+        if self.processor and summary:
+            try:
+                await self.processor.process_message(
+                    text=summary,
+                    role="assistant",
+                    session_id=plan.session_id or 0,
+                )
+            except Exception as e:
+                logger.error("Plan result memory save failed: %s", e)
 
         # Detach cache from ReadFileTool on success exit
         if read_tool is not None:
