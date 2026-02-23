@@ -195,7 +195,10 @@ class MemoryProcessor:
 
         return mem_id
 
-    async def process_lesson(self, conversation_text: str, session_id: int) -> int:
+    async def process_lesson(
+        self, conversation_text: str, session_id: int,
+        project: str | None = None,
+    ) -> int:
         """Extract and store a lesson from a conversation."""
         # Generate lesson text via reasoning model (needs understanding, not just summarization)
         try:
@@ -212,12 +215,14 @@ class MemoryProcessor:
         lesson = Lesson(
             content=lesson_text,
             source_session_id=session_id,
+            project=project,
         )
         lesson_id = await self.sqlite.create_lesson(lesson)
 
-        # Embed
+        # Embed (include project in metadata for filtered/boosted search)
         try:
-            self.chroma.add_lesson(lesson_id, lesson_text)
+            meta = {"project": project} if project else None
+            self.chroma.add_lesson(lesson_id, lesson_text, metadata=meta)
         except Exception as e:
             logger.error("Lesson embed failed: %s", e)
 

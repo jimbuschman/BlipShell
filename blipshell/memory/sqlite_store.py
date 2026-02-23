@@ -246,6 +246,19 @@ CREATE TABLE IF NOT EXISTS turn_events (
 CREATE INDEX IF NOT EXISTS idx_turn_events_session ON turn_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_turn_events_session_turn ON turn_events(session_id, turn_number);
 
+CREATE TABLE IF NOT EXISTS session_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    is_processed BOOLEAN DEFAULT 0,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_messages_unprocessed
+    ON session_messages(is_processed) WHERE is_processed = 0;
+
 -- FTS5 full-text search on memory summaries
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     summary, content=memories, content_rowid=id
@@ -295,6 +308,8 @@ class SQLiteStore:
             "ALTER TABLE projects ADD COLUMN git_url TEXT",
             "ALTER TABLE projects ADD COLUMN language TEXT",
             "ALTER TABLE projects ADD COLUMN settings_json TEXT",
+            # Project-scoped lessons
+            "ALTER TABLE lessons ADD COLUMN project TEXT",
             # Bi-temporal edge tracking (Feature 4)
             "ALTER TABLE entity_relationships ADD COLUMN valid_from DATETIME",
             "ALTER TABLE entity_relationships ADD COLUMN expired_at DATETIME",
@@ -437,6 +452,54 @@ class SQLiteStore:
         if row:
             return row[0], row[1] or 0
         return None, 0
+
+    async def save_session_message(
+        self, session_id: int, role: str, content: str,
+        timestamp: str | None = None,
+    ) -> int:
+        """Persist a session message. Returns the row ID."""
+        cursor = await self._db.execute(
+            """INSERT INTO session_messages (session_id, role, content, timestamp)
+               VALUES (?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))""",
+            (session_id, role, content, timestamp),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def mark_message_processed(self, message_id: int):
+        """Mark a session message as successfully processed into memory."""
+        await self._db.execute(
+            "UPDATE session_messages SET is_processed = 1 WHERE id = ?",
+            (message_id,),
+        )
+        await self._db.commit()
+
+    async def get_unprocessed_messages(
+        self, limit: int = 100,
+    ) -> list[dict]:
+        """Get session messages that failed to process (for startup sweep).
+
+        Returns dicts with id, session_id, role, content, timestamp.
+        Only returns user/assistant messages (not system/tool).
+        """
+        cursor = await self._db.execute(
+            """SELECT id, session_id, role, content, timestamp
+               FROM session_messages
+               WHERE is_processed = 0 AND role IN ('user', 'assistant')
+               ORDER BY id ASC LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": r["id"],
+                "session_id": r["session_id"],
+                "role": r["role"],
+                "content": r["content"],
+                "timestamp": r["timestamp"],
+            }
+            for r in rows
+        ]
 
     async def delete_session_cascade(
         self, session_id: int, memory_ids: list[int] | None = None,
@@ -721,8 +784,8 @@ class SQLiteStore:
         """Insert a lesson and return its ID."""
         cursor = await self._db.execute(
             """INSERT INTO lessons (content, summary, timestamp, rank, importance,
-               source_session_id, added_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               source_session_id, added_by, project)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 lesson.content,
                 lesson.summary,
@@ -731,6 +794,7 @@ class SQLiteStore:
                 lesson.importance,
                 lesson.source_session_id,
                 "system",
+                lesson.project,
             ),
         )
         await self._db.commit()
@@ -749,6 +813,7 @@ class SQLiteStore:
                 rank=r["rank"],
                 importance=r["importance"],
                 source_session_id=r["source_session_id"],
+                project=r["project"] if "project" in r.keys() else None,
             )
             for r in rows
         ]
@@ -965,6 +1030,7 @@ class SQLiteStore:
             rank=row["rank"],
             importance=row["importance"],
             source_session_id=row["source_session_id"],
+            project=row["project"] if "project" in row.keys() else None,
         )
 
     async def delete_lesson(self, lesson_id: int):

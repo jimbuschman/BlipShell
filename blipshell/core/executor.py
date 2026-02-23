@@ -24,6 +24,155 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def build_executor_narrative(messages: list[dict]) -> str:
+    """Build a clean, memory-friendly narrative from raw executor messages.
+
+    Extracts the valuable content from an executor transcript:
+    - User's original request
+    - Assistant's reasoning and planning text
+    - Compressed tool call summaries (action + file path)
+    - Final TASK_COMPLETE summary
+
+    Drops the noise:
+    - System prompts
+    - Raw tool results (file contents, directory listings, etc.)
+    - Empty messages
+
+    Returns a concise narrative suitable for the memory pipeline.
+    """
+    import re
+
+    parts: list[str] = []
+    files_read: list[str] = []
+    files_written: list[str] = []
+    files_edited: list[str] = []
+    commands_run: list[str] = []
+    searches: list[str] = []
+
+    for msg in messages:
+        role = msg.get("role", "")
+        content = msg.get("content", "") or ""
+        tool_calls = msg.get("tool_calls")
+
+        # Skip system messages and tool results entirely
+        if role == "system":
+            continue
+        if role == "tool":
+            continue
+
+        # User messages — keep the original request (skip nudges)
+        if role == "user":
+            if content.startswith("Continue.") or content.startswith("Task:"):
+                # Keep the task prompt but strip the RULES/APPROACH boilerplate
+                task_match = re.match(r"Task:\s*(.+?)(?:\n\nAPPROACH:|$)", content, re.DOTALL)
+                if task_match:
+                    parts.append(f"Task: {task_match.group(1).strip()}")
+                continue
+            # Regular user message (from chat history injection)
+            parts.append(f"User: {content}")
+            continue
+
+        # Assistant messages
+        if role == "assistant":
+            # Extract reasoning text (the valuable part)
+            if content and content.strip():
+                # Strip TASK_COMPLETE prefix if present
+                text = content.replace("TASK_COMPLETE", "").strip()
+                if text:
+                    parts.append(text)
+
+            # Summarize tool calls as action log
+            if tool_calls:
+                for tc in tool_calls:
+                    _summarize_tool_call(
+                        tc, files_read, files_written, files_edited,
+                        commands_run, searches,
+                    )
+
+    # Build the final narrative
+    narrative_parts = []
+
+    # Add the reasoning/planning text
+    if parts:
+        narrative_parts.append("\n".join(parts))
+
+    # Add compact action summary
+    actions = []
+    if files_read:
+        # Deduplicate
+        unique = list(dict.fromkeys(files_read))
+        actions.append(f"Read: {', '.join(unique)}")
+    if files_written:
+        actions.append(f"Created: {', '.join(files_written)}")
+    if files_edited:
+        unique = list(dict.fromkeys(files_edited))
+        actions.append(f"Edited: {', '.join(unique)}")
+    if searches:
+        actions.append(f"Searched: {', '.join(searches[:5])}")
+    if commands_run:
+        actions.append(f"Ran: {', '.join(commands_run[:5])}")
+
+    if actions:
+        narrative_parts.append("\nActions:\n" + "\n".join(f"- {a}" for a in actions))
+
+    return "\n\n".join(narrative_parts)
+
+
+def _summarize_tool_call(
+    tc,
+    files_read: list[str],
+    files_written: list[str],
+    files_edited: list[str],
+    commands_run: list[str],
+    searches: list[str],
+):
+    """Extract action summary from a single tool call."""
+    # Tool calls can be dicts or stringified objects depending on API
+    if isinstance(tc, dict):
+        func = tc.get("function", {})
+        if isinstance(func, dict):
+            name = func.get("name", "")
+            args = func.get("arguments", {})
+        else:
+            # Stringified — try to parse
+            name = str(func)
+            args = {}
+    elif isinstance(tc, str):
+        # Ollama format: "function=Function(name='read_file', arguments={...})"
+        import re
+        name_match = re.search(r"name='(\w+)'", tc)
+        name = name_match.group(1) if name_match else ""
+        path_match = re.search(r"'path':\s*'([^']+)'", tc)
+        args = {"path": path_match.group(1)} if path_match else {}
+        cmd_match = re.search(r"'command':\s*'([^']+)'", tc)
+        if cmd_match:
+            args["command"] = cmd_match.group(1)
+        pattern_match = re.search(r"'pattern':\s*'([^']+)'", tc)
+        if pattern_match:
+            args["pattern"] = pattern_match.group(1)
+    else:
+        return
+
+    path = args.get("path", "")
+
+    if name == "read_file" and path:
+        files_read.append(path)
+    elif name == "write_file" and path:
+        files_written.append(path)
+    elif name == "edit_file" and path:
+        files_edited.append(path)
+    elif name == "list_directory" and path:
+        files_read.append(f"{path}/")
+    elif name == "run_command":
+        cmd = args.get("command", "")[:60]
+        if cmd:
+            commands_run.append(cmd)
+    elif name in ("grep_files", "glob_files"):
+        pattern = args.get("pattern", "")
+        if pattern:
+            searches.append(pattern)
+
+
 class TaskExecutor:
     """Executes a TaskPlan step-by-step, reusing the agent's tool-calling loop."""
 
@@ -53,6 +202,8 @@ class TaskExecutor:
         # Per-step tracking for rich context summaries
         self._step_files_created: list[str] = []
         self._step_files_edited: list[str] = []
+        # Last execute_dynamic messages — available for narrative building after execution
+        self.last_messages: list[dict] = []
 
     async def execute_plan(
         self,
@@ -366,6 +517,9 @@ class TaskExecutor:
             break
         else:
             final_response = "Task reached maximum tool call budget."
+
+        # Store messages for narrative building
+        self.last_messages = messages
 
         # Save transcript for reference
         if self.active_project:

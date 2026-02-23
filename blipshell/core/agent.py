@@ -18,7 +18,7 @@ from typing import AsyncIterator, Callable, Optional
 
 from blipshell.core.background import BackgroundTaskManager
 from blipshell.core.config import ConfigManager
-from blipshell.core.executor import TaskExecutor
+from blipshell.core.executor import TaskExecutor, build_executor_narrative
 from blipshell.core.planner import ComplexityClassifier, TaskPlanner
 from blipshell.core.repo_map import RepoMap
 from blipshell.core.tool_rules import ToolRuleEngine, create_coding_rules, create_default_rules
@@ -258,6 +258,10 @@ class Agent:
             interval=60, on_check=self.router.clear_failed_models,
         )
 
+        # Process any messages that failed during previous session close
+        _status("Checking for unprocessed messages...")
+        await self._sweep_unprocessed_messages()
+
         self._initialized = True
         logger.info("Agent initialized")
 
@@ -296,6 +300,36 @@ class Agent:
                 logger.warning("Auto-backup failed")
         except Exception as e:
             logger.warning("Auto-backup error (non-fatal): %s", e)
+
+    async def _sweep_unprocessed_messages(self):
+        """Reprocess messages that failed during previous session close.
+
+        Scans session_messages for is_processed=False rows and runs them
+        through the memory pipeline. Non-fatal — logs and skips on error.
+        """
+        try:
+            unprocessed = await self.sqlite.get_unprocessed_messages(limit=50)
+            if not unprocessed:
+                return
+
+            logger.info("Found %d unprocessed messages, reprocessing...", len(unprocessed))
+            processed = 0
+            for msg in unprocessed:
+                try:
+                    await self.processor.process_message(
+                        text=msg["content"],
+                        role=msg["role"],
+                        session_id=msg["session_id"],
+                    )
+                    await self.sqlite.mark_message_processed(msg["id"])
+                    processed += 1
+                except Exception as e:
+                    logger.warning(
+                        "Sweep: message %d failed: %s", msg["id"], e,
+                    )
+            logger.info("Sweep complete: %d/%d processed", processed, len(unprocessed))
+        except Exception as e:
+            logger.warning("Startup sweep error (non-fatal): %s", e)
 
     def _register_tools(self):
         """Register all tools with their group for selective inclusion."""
@@ -1420,15 +1454,17 @@ class Agent:
                 on_token("[Execution failed, falling back to direct chat]\n")
             return await self._chat_simple(user_message, on_token=on_token)
 
-        # Feed the coding result through memory pipeline
+        # Build a clean narrative from the executor transcript and feed through memory
         try:
-            await self.session_manager.processor.process_message(
-                text=result,
-                role="assistant",
-                session_id=self.session_manager.session_id,
-            )
+            narrative = build_executor_narrative(self.task_executor.last_messages)
+            if narrative and narrative.strip():
+                await self.session_manager.processor.process_message(
+                    text=narrative,
+                    role="assistant",
+                    session_id=self.session_manager.session_id,
+                )
         except Exception as e:
-            logger.error("Failed to process coding result into memory: %s", e)
+            logger.error("Failed to process coding narrative into memory: %s", e)
 
         return result
 
@@ -1457,7 +1493,10 @@ class Agent:
         # Search lessons semantically (closes the lessons loop)
         lesson_count = 0
         try:
-            lesson_results = await self.search.search_lessons(query, n_results=5)
+            active_proj = self.active_project["name"] if self.active_project else None
+            lesson_results = await self.search.search_lessons(
+                query, n_results=5, active_project=active_proj,
+            )
             for lr in lesson_results:
                 similarity = lr.get("similarity", 0.0)
                 if similarity < 0.4:

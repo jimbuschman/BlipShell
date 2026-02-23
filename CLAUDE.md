@@ -131,10 +131,12 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - [x] Memory IN: Pass last 10 chat messages as context so design discussions carry over
 - [x] Memory IN: Inject both into executor via `memory_context` / `chat_history` params
 - [x] Memory OUT: TASK_COMPLETE prompt updated to include design decisions, files changed
-- [x] Memory OUT: Explicit `process_message()` call after execution (bypasses 5-message dump threshold)
+- [x] Memory OUT: Executor narrative builder cleans 170K transcript → ~3K useful narrative
+- [x] Memory OUT: Narrative fed through `process_message()` (bypasses 5-message dump threshold)
 - [x] Transcript saving: Full messages list saved to `data/project_transcripts/{project}__{timestamp}.json`
+- [x] All execution paths feed memory: background tasks, plan results, workflows, dynamic execution
 - [ ] **NEEDS TESTING**: Verify memories appear in executor context
-- [ ] **NEEDS TESTING**: Verify coding results get processed into memory pipeline
+- [ ] **NEEDS TESTING**: Verify coding narrative gets processed into memory pipeline
 - [ ] **NEEDS TESTING**: Verify transcripts save correctly
 - [ ] Future: Executor checkpointing for resume on interrupt
 - [ ] Future: Context compression for long conversations
@@ -162,6 +164,18 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - [x] Smarter error recovery: "If something isn't working after 2 attempts, use ask_user"
 - [x] Richer TASK_COMPLETE format: files modified, design decisions, things to test
 - [ ] Parallel tool calls — future (OpenAI API supports this, free speedup)
+
+### 13. Message Persistence & Recovery — CODE WRITTEN, NEEDS TESTING
+- [x] `session_messages` table: raw messages persisted immediately on `add_message()`
+- [x] `is_processed` flag: set to True when message successfully goes through memory pipeline
+- [x] Startup sweep: `_sweep_unprocessed_messages()` reprocesses failed messages on next launch
+- [x] Executor narrative builder: `build_executor_narrative()` — extracts reasoning/actions from transcripts, drops tool result noise (99.7% reduction)
+- [x] Project-scoped lessons: `project` column on lessons table, ChromaDB metadata, boost in `search_lessons()`
+- [x] Session-close timeouts: 30s per message, 60s for lessons (model swap overhead)
+- [ ] **NEEDS TESTING**: Verify messages persist and survive session close
+- [ ] **NEEDS TESTING**: Verify startup sweep catches and reprocesses timed-out messages
+- [ ] **NEEDS TESTING**: Verify project lessons get boosted in search
+- [ ] Future: Scheduled overnight maintenance job (reprocess, health check, cleanup)
 
 ### 14. Upgrade embedding model
 Benchmark new embedding models, then full re-embed. Benchmark first with real queries before committing.

@@ -347,6 +347,19 @@ class MemorySearch:
         """Search core memories by semantic similarity."""
         return self.chroma.search_core_memories(query, n_results)
 
-    async def search_lessons(self, query: str, n_results: int = 10) -> list[dict]:
-        """Search lessons by semantic similarity."""
-        return self.chroma.search_lessons(query, n_results)
+    async def search_lessons(
+        self, query: str, n_results: int = 10,
+        active_project: str | None = None,
+    ) -> list[dict]:
+        """Search lessons by semantic similarity with optional project boost.
+
+        Lessons from the active project get a similarity boost, but lessons
+        from other projects still appear (they may be universally relevant).
+        """
+        results = self.chroma.search_lessons(query, n_results)
+        if active_project and results:
+            for r in results:
+                meta = r.get("metadata", {})
+                if meta.get("project") == active_project:
+                    r["similarity"] = r.get("similarity", 0.0) + self.project_boost
+        return results

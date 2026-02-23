@@ -61,6 +61,7 @@ class SessionManager:
         self.project: Optional[str] = None
         self._messages: list[SessionMessage] = []
         self._dumped_indices: set[int] = set()
+        self._message_db_ids: dict[int, int] = {}  # message index → session_messages row ID
         self._currently_saving = False
 
     async def start_session(
@@ -92,20 +93,33 @@ class SessionManager:
         )
         self._messages.clear()
         self._dumped_indices.clear()
+        self._message_db_ids.clear()
         logger.info("Started new session %d (project=%s)", self.session_id, project)
         return self.session_id
 
     def add_message(self, role: MessageRole, content: str, tool_calls: list[dict] | None = None):
-        """Add a message to the current session."""
+        """Add a message to the current session.
+
+        Persists to session_messages table immediately so messages survive
+        crashes and timeouts. The is_processed flag is set later when the
+        message is successfully run through the memory pipeline.
+        """
         cleaned = self._clean_text(content)
+        now = datetime.now(timezone.utc)
         msg = SessionMessage(
             role=role,
             content=cleaned,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=now,
             token_count=estimate_tokens(cleaned),
             tool_calls=tool_calls,
         )
         self._messages.append(msg)
+
+        # Persist to SQLite immediately (fire-and-forget via background task)
+        if self.session_id and role in (MessageRole.USER, MessageRole.ASSISTANT):
+            asyncio.ensure_future(self._persist_message(
+                self.session_id, role.value, cleaned, now.isoformat(),
+            ))
 
         # Add to memory manager ActiveSession pool
         self.memory_manager.add_memory("ActiveSession", PoolItem(
@@ -114,6 +128,18 @@ class SessionManager:
             priority_score=1.0 if role == MessageRole.USER else 0.8,
             session_id=self.session_id or 0,
         ))
+
+    async def _persist_message(self, session_id: int, role: str, content: str, timestamp: str):
+        """Persist a message to session_messages table."""
+        try:
+            msg_id = await self.sqlite.save_session_message(
+                session_id, role, content, timestamp,
+            )
+            # Store the DB row ID so we can mark it processed later
+            idx = len(self._messages) - 1
+            self._message_db_ids[idx] = msg_id
+        except Exception as e:
+            logger.error("Failed to persist session message: %s", e)
 
     def get_messages(self) -> list[SessionMessage]:
         """Get all messages in the current session."""
@@ -163,6 +189,13 @@ class SessionManager:
                         )
                         self._dumped_indices.add(idx)
                         dumped_count += 1
+                        # Mark as processed in session_messages table
+                        db_id = self._message_db_ids.get(idx)
+                        if db_id:
+                            try:
+                                await self.sqlite.mark_message_processed(db_id)
+                            except Exception:
+                                pass  # non-critical
                     except asyncio.TimeoutError:
                         logger.warning(
                             "dump_to_memory: message %d timed out after %ds, skipping",
@@ -257,7 +290,9 @@ class SessionManager:
         conversation_text = "\n".join(conversation_lines)
 
         try:
-            await self.processor.process_lesson(conversation_text, self.session_id)
+            await self.processor.process_lesson(
+                conversation_text, self.session_id, project=self.project,
+            )
             logger.info("Lessons extracted for session %d", self.session_id)
         except Exception as e:
             logger.error("Lesson extraction failed for session %d: %s", self.session_id, e)

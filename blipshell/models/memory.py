@@ -67,6 +67,7 @@ class Lesson(BaseModel):
     importance: float = 0.5
     tags: list[str] = Field(default_factory=list)
     source_session_id: Optional[int] = None
+    project: Optional[str] = None  # project context for scoped lesson search
     file_id: Optional[int] = None
 
 
