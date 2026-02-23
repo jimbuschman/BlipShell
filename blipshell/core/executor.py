@@ -216,10 +216,16 @@ class TaskExecutor:
 
         # Route to coding model when project is active
         task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
-        model = self.router.get_model(task_type)
-        client = await self.router.get_client(task_type)
-        if not client:
+        endpoint = await self.router._endpoint_manager.get_endpoint_for_role(task_type)
+        if not endpoint:
             raise RuntimeError("No available LLM endpoint")
+        model = endpoint.models.get(task_type) or self.router.get_model(task_type)
+        client = endpoint.client
+
+        # Pass context window size to Ollama (critical — without this, default is ~2K-4K)
+        chat_kwargs: dict = {}
+        if endpoint.context_tokens:
+            chat_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
 
         tools = self.tool_registry.get_all_ollama_tools() or None
         max_iterations = self.max_tool_iterations if tools else 0
@@ -242,6 +248,7 @@ class TaskExecutor:
                 messages=messages,
                 model=model,
                 tools=iter_tools,
+                **chat_kwargs,
             )
 
             content, tool_calls = self._extract_response(response)
