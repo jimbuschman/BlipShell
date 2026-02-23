@@ -501,17 +501,27 @@ class TaskExecutor:
                 final_response = parts[1].strip() if len(parts) > 1 else content
                 break
 
-            # Model gave text without TASK_COMPLETE — might be thinking aloud.
-            # Append and nudge it to continue.
+            # Model gave text without TASK_COMPLETE.
+            # If the response is substantive (>200 chars) and the model has already
+            # made tool calls, treat it as an implicit completion — don't nudge.
+            # Short responses (<200 chars) might be thinking aloud; nudge those.
             if content:
-                messages.append({"role": "assistant", "content": content})
-                messages.append({
-                    "role": "user",
-                    "content": "Continue. Use tools to make progress on the task.",
-                })
-                if on_token:
-                    on_token(f"  [LLM text, no TASK_COMPLETE — nudging to continue]\n")
-                continue
+                if len(content) > 200 and tool_call_count > 0:
+                    # Substantive response after tool use — treat as done
+                    final_response = content
+                    if on_token:
+                        on_token(f"  [Substantive response — treating as complete]\n")
+                    break
+                else:
+                    # Short text, probably thinking aloud — nudge to continue
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({
+                        "role": "user",
+                        "content": "Continue. Use tools to make progress on the task.",
+                    })
+                    if on_token:
+                        on_token(f"  [LLM text, no TASK_COMPLETE — nudging to continue]\n")
+                    continue
 
             # Empty response — model is stuck
             break

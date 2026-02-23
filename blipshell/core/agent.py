@@ -1168,22 +1168,22 @@ class Agent:
             if not client:
                 return "Error: No available LLM endpoint."
 
-        # Tool gating: when a project is active, pass all tools (coding mode).
-        # Otherwise, detect which tool groups the message needs and only pass those.
+        # Tool gating: detect which tool groups the message needs and only pass those.
         # Pure conversation (no groups detected) → no tools → faster response.
+        # In project mode, if tools are needed, pass all tools (coding mode).
         ms = self.model_settings.get(model)
-        if self.active_project:
-            tools = self.tool_registry.get_all_ollama_tools() or None
-        else:
-            needed_groups = detect_tool_groups(user_message)
-            if needed_groups:
-                # Always include memory tools when any group is detected
+        needed_groups = detect_tool_groups(user_message)
+        if needed_groups:
+            if self.active_project:
+                # Project mode: pass all tools when any action is detected
+                tools = self.tool_registry.get_all_ollama_tools() or None
+            else:
                 needed_groups.add("memory")
                 needed_groups.add("general")
                 needed_groups.add("tasks")
                 tools = self.tool_registry.get_tools_for_groups(needed_groups) or None
-            else:
-                tools = None
+        else:
+            tools = None
         # Use per-model tool call limit if configured
         max_iterations = self.config.agent.max_tool_iterations if tools else 0
         if self.active_project and tools:
