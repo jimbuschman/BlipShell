@@ -5,6 +5,7 @@ Same interface as LLMClient (duck-typed) so the router can use either.
 """
 
 import asyncio
+import json
 import logging
 from collections import OrderedDict
 from typing import Any, AsyncIterator, Optional
@@ -252,17 +253,23 @@ class OpenAICompatClient:
             }
         }
 
-        # Convert tool calls if present
+        # Convert tool calls if present (OpenAI returns arguments as JSON string)
         if msg.tool_calls:
-            result["message"]["tool_calls"] = [
-                {
+            tool_calls = []
+            for tc in msg.tool_calls:
+                args = tc.function.arguments
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except (json.JSONDecodeError, TypeError):
+                        args = {}
+                tool_calls.append({
                     "function": {
                         "name": tc.function.name,
-                        "arguments": tc.function.arguments,
+                        "arguments": args,
                     }
-                }
-                for tc in msg.tool_calls
-            ]
+                })
+            result["message"]["tool_calls"] = tool_calls
 
         return result
 

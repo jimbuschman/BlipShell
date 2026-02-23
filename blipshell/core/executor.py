@@ -560,15 +560,32 @@ class TaskExecutor:
 
     @staticmethod
     def _extract_tool_call_info(tc) -> tuple[str, dict]:
-        """Extract name and arguments from a tool call."""
+        """Extract name and arguments from a tool call.
+
+        Handles both Ollama (args as dict) and OpenAI-compatible APIs
+        (args as JSON string).
+        """
         fn = getattr(tc, "function", None)
         if fn is not None:
             name = getattr(fn, "name", "") or ""
             args = getattr(fn, "arguments", {}) or {}
+            if isinstance(args, str):
+                import json
+                try:
+                    args = json.loads(args)
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
             return name, args
 
         if isinstance(tc, dict):
             fn = tc.get("function", {})
-            return fn.get("name", ""), fn.get("arguments", {})
+            args = fn.get("arguments", {})
+            if isinstance(args, str):
+                import json
+                try:
+                    args = json.loads(args)
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+            return fn.get("name", ""), args
 
         return "", {}
