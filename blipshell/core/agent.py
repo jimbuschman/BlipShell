@@ -1342,7 +1342,6 @@ class Agent:
                 user_message,
                 on_step_complete=on_step_complete,
                 on_token=on_token,
-                max_steps=self.config.planner.max_steps,
             )
         except Exception as e:
             logger.error("Dynamic execution failed: %s", e)

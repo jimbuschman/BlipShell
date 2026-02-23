@@ -109,7 +109,11 @@ class WriteFileTool(Tool):
             return (Path(self.root_path) / p).resolve()
         return p.resolve()
 
-    async def execute(self, path: str, content: str, **kwargs) -> str:
+    async def execute(self, path: str = "", content: str = "", **kwargs) -> str:
+        if not path:
+            return "Error: 'path' argument is required."
+        if not content:
+            return "Error: 'content' argument is required — provide the file content to write."
         resolved = self._resolve(path)
         if any(blocked in str(resolved) for blocked in self.blocked_paths):
             return f"Error: Access to '{path}' is blocked."
@@ -155,7 +159,11 @@ class EditFileTool(Tool):
             ],
         )
 
-    async def execute(self, path: str, old_text: str, new_text: str, **kwargs) -> str:
+    async def execute(self, path: str = "", old_text: str = "", new_text: str = "", **kwargs) -> str:
+        if not path:
+            return "Error: 'path' argument is required."
+        if not old_text:
+            return "Error: 'old_text' argument is required — specify the text to find and replace."
         resolved = self._resolve(path)
         if not resolved.is_file():
             return f"Error: File '{path}' not found."

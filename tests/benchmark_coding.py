@@ -1085,21 +1085,15 @@ async def run_task(
 
         wall_start = time.perf_counter()
 
-        # Add transcript header (dynamic mode — no pre-generated plan)
-        transcript.add_header("[Dynamic execution — no pre-generated plan]")
+        # Add transcript header
+        transcript.add_header("[Dynamic execution — single continuous conversation]")
 
-        # Set up per-iteration metrics capture
-        step_start_time = 0.0
-        max_iters = planner_config.max_steps
-
-        def on_step_start(step_num: int):
-            nonlocal step_start_time
-            tool_registry.reset_log()
-            step_start_time = time.perf_counter()
-            transcript.add_step_header(step_num, max_iters, f"Iteration {step_num}")
+        # Capture metrics as one step (the entire task)
+        tool_registry.reset_log()
+        task_start_time = time.perf_counter()
 
         def on_step_complete(step_num: int, result_summary: str):
-            step_time = time.perf_counter() - step_start_time
+            step_time = time.perf_counter() - task_start_time
             step_metrics = StepMetrics(
                 step_number=step_num,
                 description=result_summary[:200],
@@ -1108,15 +1102,12 @@ async def run_task(
                 output_preview=result_summary[:500],
             )
             metrics.steps.append(step_metrics)
-            transcript.add_step_footer(step_num, max_iters, result_summary[:200])
 
         try:
             summary = await executor.execute_dynamic(
                 task["request"],
-                on_step_start=on_step_start,
                 on_step_complete=on_step_complete,
                 on_token=transcript.on_token,
-                max_steps=max_iters,
             )
             metrics.summary_text = summary[:1000] if summary else ""
         except Exception as e:

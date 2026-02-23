@@ -186,15 +186,16 @@ class TaskExecutor:
         on_step_start: Optional[Callable[[int], None]] = None,
         on_step_complete: Optional[Callable[[int, str], None]] = None,
         on_token: Optional[Callable[[str], None]] = None,
-        max_steps: int = 10,
+        max_tool_calls: int = 0,
     ) -> str:
-        """Execute a task dynamically — no pre-generated plan.
+        """Execute a task dynamically — single continuous conversation.
 
-        Instead of plan-then-execute, runs an iterative loop where the LLM
-        decides what to do next based on accumulated results. Stops when
-        the LLM signals TASK_COMPLETE or max_steps is reached.
+        One long tool-calling loop where the LLM sees the full conversation
+        history (all tool calls and results). Stops when the LLM signals
+        TASK_COMPLETE or hits the tool call budget.
 
-        This is how Claude Code, Cursor, and modern coding agents work.
+        Args:
+            max_tool_calls: Tool call budget. 0 = use self.max_tool_iterations.
         """
         # Switch to coding rules if project is active
         if self.active_project:
@@ -224,132 +225,127 @@ class TaskExecutor:
             chat_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
 
         tools = self.tool_registry.get_all_ollama_tools() or None
-        max_tool_iters = self.max_tool_iterations
-        if self.active_project and tools:
-            max_tool_iters = max(max_tool_iters, 30)
 
-        completed_work: list[str] = []
-        final_summary = ""
+        # Tool call budget — bump for project mode
+        budget = max_tool_calls or self.max_tool_iterations
+        if self.active_project:
+            budget = max(budget, 50)
 
-        for step_num in range(1, max_steps + 1):
-            if on_step_start:
-                on_step_start(step_num)
+        # Build initial messages — one continuous conversation
+        task_prompt = dynamic_execution_prompt(user_request)
+        messages = [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": task_prompt},
+        ]
 
-            # Reset per-step tracking
-            self._step_files_created.clear()
-            self._step_files_edited.clear()
+        if on_step_start:
+            on_step_start(1)
 
-            # Build the dynamic prompt with accumulated context
-            step_prompt = dynamic_execution_prompt(user_request, completed_work)
+        tool_call_count = 0
+        tool_call_names: list[str] = []
+        final_response = ""
 
-            messages = [
-                {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": step_prompt},
-            ]
+        # Single continuous loop — LLM keeps full conversation history
+        max_rounds = budget + 10  # generous round limit (text-only responses don't cost tools)
+        for _round in range(max_rounds):
+            # Stop offering tools once budget is exhausted
+            iter_tools = None
+            if tools and tool_call_count < budget:
+                iter_tools = self._tool_rules.filter_tools(tools, tool_call_names)
+                if not iter_tools:
+                    iter_tools = None
 
-            if on_token:
-                on_token(f"\n--- Iteration {step_num} ---\n")
-
-            # Inner tool-calling loop (same as _execute_step)
-            step_response = ""
-            tool_call_names: list[str] = []
-            for iteration in range(max_tool_iters + 1):
-                iter_tools = None
-                if tools and iteration < max_tool_iters:
-                    iter_tools = self._tool_rules.filter_tools(tools, tool_call_names)
-                    if not iter_tools:
-                        iter_tools = None
-
-                response = await client.chat(
-                    messages=messages,
-                    model=model,
-                    tools=iter_tools,
-                    **chat_kwargs,
-                )
-
-                content, tool_calls = self._extract_response(response)
-
-                if tool_calls and iteration < max_tool_iters:
-                    messages.append({
-                        "role": "assistant",
-                        "content": content,
-                        "tool_calls": tool_calls,
-                    })
-
-                    for tc in tool_calls:
-                        name, arguments = self._extract_tool_call_info(tc)
-                        tool_call_names.append(name)
-                        tool_call = ToolCall(name=name, arguments=arguments)
-
-                        if on_token:
-                            on_token(f"  [Tool: {tool_call.name}]\n")
-
-                        result = await self.tool_registry.execute_tool_call(tool_call)
-
-                        # Cache tracking (same as static path)
-                        if result.success and name == "read_file":
-                            read_path = arguments.get("path", "")
-                            if read_path:
-                                self.files_read.add(read_path)
-                                self._file_cache[read_path] = result.result
-                        if result.success and name == "write_file":
-                            file_path = arguments.get("path", "")
-                            if file_path:
-                                self._step_files_created.append(file_path)
-                                written = arguments.get("content", "")
-                                if written:
-                                    self._file_cache[file_path] = written
-                        if result.success and name == "edit_file":
-                            file_path = arguments.get("path", "")
-                            if file_path:
-                                self._step_files_edited.append(file_path)
-                                self._file_cache.pop(file_path, None)
-                        if result.success and name == "list_directory":
-                            read_path = arguments.get("path", "")
-                            if read_path:
-                                self.files_read.add(read_path)
-
-                        messages.append(result.to_ollama_message())
-
-                        if on_token:
-                            on_token(f"  [Result: {result.result[:150]}]\n")
-
-                    continue
-                else:
-                    step_response = content
-                    break
-
-            # Build summary of what this iteration did
-            summary = self._build_step_summary(
-                f"Iteration {step_num}", step_response,
+            response = await client.chat(
+                messages=messages,
+                model=model,
+                tools=iter_tools,
+                **chat_kwargs,
             )
-            completed_work.append(summary)
 
-            if on_step_complete:
-                on_step_complete(step_num, step_response[:200])
+            content, tool_calls = self._extract_response(response)
 
-            if on_token and step_response:
-                on_token(f"\n{step_response[:300]}\n")
+            if tool_calls and tool_call_count < budget:
+                messages.append({
+                    "role": "assistant",
+                    "content": content,
+                    "tool_calls": tool_calls,
+                })
 
-            # Check if LLM signaled completion
-            if "TASK_COMPLETE" in step_response:
-                # Extract the summary after TASK_COMPLETE
-                parts = step_response.split("TASK_COMPLETE", 1)
-                final_summary = parts[1].strip() if len(parts) > 1 else step_response
+                for tc in tool_calls:
+                    name, arguments = self._extract_tool_call_info(tc)
+                    tool_call_names.append(name)
+                    tool_call_count += 1
+                    tool_call = ToolCall(name=name, arguments=arguments)
+
+                    if on_token:
+                        on_token(f"  [Tool: {tool_call.name}]\n")
+
+                    result = await self.tool_registry.execute_tool_call(tool_call)
+
+                    # Cache tracking
+                    if result.success and name == "read_file":
+                        read_path = arguments.get("path", "")
+                        if read_path:
+                            self.files_read.add(read_path)
+                            self._file_cache[read_path] = result.result
+                    if result.success and name == "write_file":
+                        file_path = arguments.get("path", "")
+                        if file_path:
+                            self._step_files_created.append(file_path)
+                            written = arguments.get("content", "")
+                            if written:
+                                self._file_cache[file_path] = written
+                    if result.success and name == "edit_file":
+                        file_path = arguments.get("path", "")
+                        if file_path:
+                            self._step_files_edited.append(file_path)
+                            self._file_cache.pop(file_path, None)
+                    if result.success and name == "list_directory":
+                        read_path = arguments.get("path", "")
+                        if read_path:
+                            self.files_read.add(read_path)
+
+                    messages.append(result.to_ollama_message())
+
+                    if on_token:
+                        on_token(f"  [Result: {result.result[:150]}]\n")
+
+                continue
+
+            # Text-only response — check for completion signal
+            if "TASK_COMPLETE" in (content or ""):
+                parts = content.split("TASK_COMPLETE", 1)
+                final_response = parts[1].strip() if len(parts) > 1 else content
                 break
+
+            # Model gave text without TASK_COMPLETE — might be thinking aloud.
+            # Append and nudge it to continue.
+            if content:
+                messages.append({"role": "assistant", "content": content})
+                messages.append({
+                    "role": "user",
+                    "content": "Continue. Use tools to make progress on the task.",
+                })
+                if on_token:
+                    on_token(f"  [LLM text, no TASK_COMPLETE — nudging to continue]\n")
+                continue
+
+            # Empty response — model is stuck
+            break
         else:
-            # Hit max_steps — use last response as summary
-            final_summary = step_response if step_response else "Task reached maximum iterations."
+            final_response = "Task reached maximum tool call budget."
 
         # Detach cache
         if read_tool is not None:
             read_tool.file_cache = None
 
-        # If no clean summary, generate one
-        if not final_summary or not final_summary.strip():
-            final_summary = completed_work[-1] if completed_work else "Task completed."
+        if on_step_complete:
+            on_step_complete(1, (final_response or "")[:200])
 
-        return final_summary
+        if not final_response or not final_response.strip():
+            final_response = "Task completed."
+
+        return final_response
 
     async def _execute_step(
         self,

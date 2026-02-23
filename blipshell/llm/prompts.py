@@ -387,30 +387,22 @@ def execute_step(
     )
 
 
-def dynamic_execution_prompt(user_request: str, completed_work: list[str]) -> str:
-    """Prompt for dynamic (iterative) execution — no pre-generated plan.
+def dynamic_execution_prompt(user_request: str) -> str:
+    """Prompt for dynamic execution — single continuous conversation.
 
-    The LLM decides what to do next based on what's already been done.
-    Used instead of generate_plan + execute_step for coding tasks.
+    The LLM has full conversation history (tool calls + results), so no
+    need to pass summaries. It just works until done.
     """
-    context = ""
-    if completed_work:
-        context = "\n\nWork completed so far:\n"
-        for i, summary in enumerate(completed_work, 1):
-            context += f"  {i}. {summary}\n"
-
     return (
-        f"Task: {user_request}\n"
-        f"{context}\n"
-        "Execute the next concrete action toward completing this task using tools.\n\n"
+        f"Task: {user_request}\n\n"
+        "Complete this task using the tools available to you.\n\n"
         "RULES:\n"
-        "1. Do ONE focused action, then summarize what you did in 1-2 sentences.\n"
-        "2. Do NOT re-read files you already read — use what you know from completed work above.\n"
-        "3. Do NOT ask questions — make decisions and proceed.\n"
-        "4. NEVER launch interactive/full-screen apps via run_command.\n"
-        "5. NEVER create documentation files (.md, README) unless asked.\n"
-        "6. If an edit fails, re-read the file ONCE, then retry.\n"
-        "7. When the task is FULLY COMPLETE, respond with TASK_COMPLETE on its own line "
+        "1. Do NOT re-read files you already read — the content is in our conversation.\n"
+        "2. Do NOT ask questions — make decisions and proceed.\n"
+        "3. NEVER launch interactive/full-screen apps via run_command.\n"
+        "4. NEVER create documentation files (.md, README) unless asked.\n"
+        "5. If an edit fails, re-read the file ONCE, then retry.\n"
+        "6. When the task is FULLY COMPLETE, respond with TASK_COMPLETE on its own line "
         "followed by a 2-3 sentence summary of everything you did."
     )
 
