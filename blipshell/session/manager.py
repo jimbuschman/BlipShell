@@ -36,6 +36,12 @@ class SessionManager:
     - Session resume
     """
 
+    # Per-message timeout for dump_to_memory (each message requires 2-3 LLM calls)
+    PER_MESSAGE_TIMEOUT = 15  # seconds
+    # Max total time for session-end operations
+    SUMMARY_TIMEOUT = 60  # seconds (summary can be slow for long sessions)
+    LESSON_TIMEOUT = 30  # seconds
+
     def __init__(
         self,
         sqlite: SQLiteStore,
@@ -127,11 +133,16 @@ class SessionManager:
         """Dump undumped messages to persistent memory.
 
         Port of MemoryDB.DumpConversationToMemory().
+        Uses per-message timeouts so a single slow LLM call doesn't block
+        the entire batch. Messages that timeout are skipped (not marked as
+        dumped) so they can be retried next time.
         """
         if self._currently_saving or not self.session_id:
             return
 
         self._currently_saving = True
+        dumped_count = 0
+        skipped_count = 0
         try:
             undumped = [
                 (i, msg) for i, msg in enumerate(self._messages)
@@ -140,12 +151,31 @@ class SessionManager:
 
             for idx, msg in undumped:
                 if msg.role in (MessageRole.USER, MessageRole.ASSISTANT):
-                    await self.processor.process_message(
-                        text=msg.content,
-                        role=msg.role.value,
-                        session_id=self.session_id,
-                    )
-                    self._dumped_indices.add(idx)
+                    try:
+                        await asyncio.wait_for(
+                            self.processor.process_message(
+                                text=msg.content,
+                                role=msg.role.value,
+                                session_id=self.session_id,
+                            ),
+                            timeout=self.PER_MESSAGE_TIMEOUT,
+                        )
+                        self._dumped_indices.add(idx)
+                        dumped_count += 1
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            "dump_to_memory: message %d timed out after %ds, skipping",
+                            idx, self.PER_MESSAGE_TIMEOUT,
+                        )
+                        skipped_count += 1
+                    except Exception as e:
+                        logger.error("dump_to_memory: message %d failed: %s", idx, e)
+                        skipped_count += 1
+
+            if dumped_count > 0 or skipped_count > 0:
+                logger.info(
+                    "dump_to_memory: %d saved, %d skipped", dumped_count, skipped_count,
+                )
 
             await self.sqlite.update_session(
                 self.session_id,
@@ -158,7 +188,13 @@ class SessionManager:
             self._currently_saving = False
 
     async def end_session(self, on_status=None):
-        """End the current session: dump remaining messages, generate summary, extract lessons."""
+        """End the current session: dump remaining messages, generate summary, extract lessons.
+
+        Each phase has its own timeout. dump_to_memory uses per-message timeouts
+        internally, so even if individual messages are slow, the rest still get
+        processed. Summary and lesson extraction get generous timeouts since they
+        only run once.
+        """
         if not self.session_id:
             return
 
@@ -167,30 +203,38 @@ class SessionManager:
                 on_status(msg)
             logger.info(msg)
 
-        # Dump any remaining messages
-        _status("Saving messages...")
+        undumped_count = len(self._messages) - len(self._dumped_indices)
+
+        # Dump any remaining messages (per-message timeouts handled internally)
+        _status(f"Saving {undumped_count} messages...")
         try:
-            await asyncio.wait_for(self.dump_to_memory(), timeout=30)
+            # Overall cap = per-message timeout × undumped count + buffer
+            total_dump_timeout = max(self.PER_MESSAGE_TIMEOUT * undumped_count + 10, 30)
+            await asyncio.wait_for(self.dump_to_memory(), timeout=total_dump_timeout)
         except asyncio.TimeoutError:
-            logger.warning("dump_to_memory timed out after 30s, skipping")
+            logger.warning("dump_to_memory total timeout after %ds", total_dump_timeout)
         except Exception as e:
             logger.error("dump_to_memory failed: %s", e)
 
         # Generate session summary
         _status("Generating session summary...")
         try:
-            await asyncio.wait_for(self._create_session_summary(), timeout=30)
+            await asyncio.wait_for(
+                self._create_session_summary(), timeout=self.SUMMARY_TIMEOUT,
+            )
         except asyncio.TimeoutError:
-            logger.warning("Session summary timed out after 30s, skipping")
+            logger.warning("Session summary timed out after %ds, skipping", self.SUMMARY_TIMEOUT)
         except Exception as e:
             logger.error("Session summary failed (skipping): %s", e)
 
         # Extract lessons from the conversation
         _status("Extracting lessons...")
         try:
-            await asyncio.wait_for(self._extract_lessons(), timeout=30)
+            await asyncio.wait_for(
+                self._extract_lessons(), timeout=self.LESSON_TIMEOUT,
+            )
         except asyncio.TimeoutError:
-            logger.warning("Lesson extraction timed out after 30s, skipping")
+            logger.warning("Lesson extraction timed out after %ds, skipping", self.LESSON_TIMEOUT)
         except Exception as e:
             logger.error("Lesson extraction failed (skipping): %s", e)
 

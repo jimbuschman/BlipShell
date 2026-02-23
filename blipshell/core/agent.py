@@ -21,6 +21,7 @@ from blipshell.core.config import ConfigManager
 from blipshell.core.executor import TaskExecutor
 from blipshell.core.planner import ComplexityClassifier, TaskPlanner
 from blipshell.core.repo_map import RepoMap
+from blipshell.core.tool_rules import ToolRuleEngine, create_coding_rules, create_default_rules
 from blipshell.core.tools.base import ToolRegistry, detect_tool_groups
 from blipshell.core.tools.code_tools import GlobTool, GrepTool
 from blipshell.core.tools.git_tools import (
@@ -110,6 +111,7 @@ class Agent:
 
         # Tools
         self.tool_registry = ToolRegistry()
+        self._tool_rules: ToolRuleEngine = create_default_rules()
 
         # Task planning + execution (Phase 1)
         self.complexity_classifier: Optional[ComplexityClassifier] = None
@@ -297,6 +299,7 @@ class Agent:
         self.tool_registry.register(ReadFileTool(
             max_file_size=cfg.filesystem.max_file_size,
             blocked_paths=cfg.filesystem.blocked_paths,
+            files_read=self._files_read,
         ), group="filesystem")
         self.tool_registry.register(WriteFileTool(
             blocked_paths=cfg.filesystem.blocked_paths,
@@ -382,6 +385,9 @@ class Agent:
         # Initialize repo map for code structure context
         self._repo_map = RepoMap(root)
 
+        # Switch to coding-mode tool rules (more permissive)
+        self._tool_rules = create_coding_rules()
+
         # Tag current session with this project
         if self.session_manager and self.session_manager.session_id:
             await self.sqlite.update_session_project(
@@ -428,6 +434,7 @@ class Agent:
         self.active_project = None
         self._project_context = ""
         self._repo_map = None
+        self._tool_rules = create_default_rules()
 
         # Re-register file tools without root
         self._register_tools_with_root(None)
@@ -461,6 +468,7 @@ class Agent:
             max_file_size=cfg.filesystem.max_file_size,
             blocked_paths=cfg.filesystem.blocked_paths,
             root_path=root_path,
+            files_read=self._files_read,
         ), group="filesystem")
         self.tool_registry.register(WriteFileTool(
             blocked_paths=cfg.filesystem.blocked_paths,
@@ -822,36 +830,40 @@ class Agent:
            where the LLM narrates its next action but doesn't actually do it.
 
         Returns True if the LLM should be nudged to continue.
+
+        NOTE: Only called when tool_call_names is non-empty (model already
+        used tools this turn), so these patterns indicate mid-task pausing,
+        not normal conversational questions.
         """
         text_lower = text.lower().strip()
 
-        # Pattern 1: asking permission (question in the tail)
+        # Pattern 1: asking permission (question in last 200 chars)
+        # Tightened: only match explicit "should I do X" patterns, not
+        # generic questions like "what do you think?" or "let me know"
         if "?" in text_lower[-200:]:
+            tail_200 = text_lower[-200:]
             permission_patterns = [
-                "should i ", "want me to", "shall i ",
-                "would you like me to", "which direction",
-                "which approach", "which option", "ready to ",
-                "go ahead", "start coding", "start building",
-                "start implementing", "proceed with",
-                "do you want", "prefer option", "what do you think",
-                "let me know", "what happens",
+                "should i proceed", "should i continue",
+                "should i go ahead", "should i start",
+                "want me to proceed", "want me to continue",
+                "shall i proceed", "shall i continue",
+                "would you like me to proceed", "would you like me to continue",
+                "ready to proceed", "ready to continue",
             ]
-            if any(p in text_lower for p in permission_patterns):
+            if any(p in tail_200 for p in permission_patterns):
                 return True
 
         # Pattern 2: continuation intent — the LLM says it's going to do
-        # something but stopped without actually doing it
-        # Check the last ~300 chars for these patterns
+        # something but stopped without actually calling a tool.
+        # Tightened: only match "let me [verb]" and "next i'll [verb]"
+        # patterns, not generic "i need to" or "need to add" which can
+        # appear in normal explanations.
         tail = text_lower[-300:]
         continuation_patterns = [
             "now let me ", "let me also ", "let me check",
             "let me fix", "let me update", "let me verify",
             "let me read", "let me look", "next i'll",
-            "next step", "next i need", "i still need to",
-            "i need to ", "i'm going to", "i'll also ",
-            "remaining:", "what remains", "todo:",
-            "need to fix", "need to wire", "need to hook",
-            "need to add", "need to update",
+            "next i need to", "i'll also ",
         ]
         if any(p in tail for p in continuation_patterns):
             return True
@@ -915,9 +927,16 @@ class Agent:
                 if endpoint:
                     endpoint.start_request()
 
+                # Apply tool rules in continue loop too
+                cont_tools = None
+                if tools and iteration < max(remaining_iterations, 5) - 1:
+                    cont_tools = self._tool_rules.filter_tools(tools, tool_call_names)
+                    if not cont_tools:
+                        cont_tools = None
+
                 response = await client.chat(
                     messages=messages, model=model,
-                    tools=tools if iteration < max(remaining_iterations, 5) - 1 else None,
+                    tools=cont_tools,
                     **chat_kwargs,
                 )
 
@@ -1078,14 +1097,30 @@ class Agent:
             if not client:
                 return "Error: No available LLM endpoint."
 
-        # Always pass all tools — the model decides whether to use them
-        tools = self.tool_registry.get_all_ollama_tools() or None
-        # Use per-model tool call limit if configured
+        # Tool gating: when a project is active, pass all tools (coding mode).
+        # Otherwise, detect which tool groups the message needs and only pass those.
+        # Pure conversation (no groups detected) → no tools → faster response.
         ms = self.model_settings.get(model)
+        if self.active_project:
+            tools = self.tool_registry.get_all_ollama_tools() or None
+        else:
+            needed_groups = detect_tool_groups(user_message)
+            if needed_groups:
+                # Always include memory tools when any group is detected
+                needed_groups.add("memory")
+                needed_groups.add("general")
+                needed_groups.add("tasks")
+                tools = self.tool_registry.get_tools_for_groups(needed_groups) or None
+            else:
+                tools = None
+        # Use per-model tool call limit if configured
         max_iterations = self.config.agent.max_tool_iterations if tools else 0
         if self.active_project and tools:
             max_iterations = max(max_iterations, ms.max_tool_calls)
-        logger.info("Passing %d tools to model (max_iterations=%d)", len(tools) if tools else 0, max_iterations)
+        logger.info("Passing %d tools to model (groups=%s, max_iterations=%d)",
+                     len(tools) if tools else 0,
+                     "all" if self.active_project else (needed_groups if tools else "none"),
+                     max_iterations)
         full_response = ""
         tool_call_names: list[str] = []
         endpoint_name = ""
@@ -1109,16 +1144,24 @@ class Agent:
                 if not self.think_enabled:
                     chat_kwargs["think"] = False
 
+                # Apply tool rules to filter available tools based on call history
+                iter_tools = None
+                if tools and iteration < max_iterations:
+                    iter_tools = self._tool_rules.filter_tools(tools, tool_call_names)
+                    if not iter_tools:
+                        iter_tools = None  # all tools filtered out → force text response
+
                 response = await client.chat(
                     messages=messages,
                     model=model,
-                    tools=tools if iteration < max_iterations else None,
+                    tools=iter_tools,
                     **chat_kwargs,
                 )
 
                 content, tool_calls = self._extract_response(response)
-                logger.info("LLM response: tool_calls=%s, content_len=%d",
-                           bool(tool_calls), len(content))
+                logger.info("LLM response: tool_calls=%s, content_len=%d, tools_offered=%d",
+                           bool(tool_calls), len(content),
+                           len(iter_tools) if iter_tools else 0)
 
                 if tool_calls and iteration < max_iterations:
                     # Process tool calls

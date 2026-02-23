@@ -13,10 +13,11 @@ logger = logging.getLogger(__name__)
 
 class ReadFileTool(Tool):
     def __init__(self, max_file_size: int = 1048576, blocked_paths: list[str] | None = None,
-                 root_path: str | None = None):
+                 root_path: str | None = None, files_read: set[str] | None = None):
         self.max_file_size = max_file_size
         self.blocked_paths = blocked_paths or []
         self.root_path = root_path
+        self.files_read = files_read  # shared set from agent — checked to prevent re-reads
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -38,6 +39,17 @@ class ReadFileTool(Tool):
 
     async def execute(self, path: str, max_lines: int = 0, **kwargs) -> str:
         resolved = self._resolve(path)
+
+        # Enforce file re-read prevention: if already read this session, reject
+        if self.files_read is not None:
+            resolved_str = str(resolved)
+            # Check both the resolved path and the original path (relative)
+            if resolved_str in self.files_read or path in self.files_read:
+                return (
+                    f"ALREADY READ: '{path}' was already read this session. "
+                    "Use the content from earlier — do not re-read files."
+                )
+
         if self._is_blocked(str(resolved)):
             return f"Error: Access to '{path}' is blocked."
         if not resolved.is_file():

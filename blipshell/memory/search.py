@@ -4,6 +4,7 @@ Pipeline: noise filter → rephrase query → ChromaDB search → filter by rank
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from math import exp, tanh
@@ -289,10 +290,10 @@ class MemorySearch:
         """Find memory IDs connected to entities mentioned in the query.
 
         1. Load all known entity names (fast — typically hundreds, not millions)
-        2. Find entity names that appear in the query (substring match)
+        2. Find entity names that appear in the query (word-boundary match, min 3 chars)
         3. Get their entity IDs
-        4. Get connected entity IDs via relationships
-        5. Get memory IDs mentioning any of these entities
+        4. Get connected entity IDs via relationships (capped)
+        5. Get memory IDs mentioning any of these entities (capped)
 
         Returns:
             (memory_ids, matched_entity_names, connected_entity_count)
@@ -301,23 +302,45 @@ class MemorySearch:
         if not entity_names:
             return [], [], 0
 
-        # Find entity names present in the query (case-insensitive substring)
+        # Find entity names present in the query using word-boundary matching.
+        # Skip short names (< 3 chars) to prevent "i", "a", "go" matching everything.
+        # Use \b word boundaries to prevent "time" matching "sometimes".
         query_lower = query.lower()
-        matched_names = [name for name in entity_names if name in query_lower]
+        matched_names = []
+        for name in entity_names:
+            if len(name) < 3:
+                continue
+            # Word-boundary match: entity name must appear as a whole word/phrase
+            pattern = r'\b' + re.escape(name) + r'\b'
+            if re.search(pattern, query_lower):
+                matched_names.append(name)
         if not matched_names:
             return [], [], 0
+
+        # Cap matched entities to prevent fan-out from overly generic names
+        MAX_MATCHED_ENTITIES = 10
+        if len(matched_names) > MAX_MATCHED_ENTITIES:
+            # Prefer longer (more specific) entity names
+            matched_names.sort(key=len, reverse=True)
+            matched_names = matched_names[:MAX_MATCHED_ENTITIES]
 
         # Get entity IDs for matched names
         entity_ids = await self.sqlite.get_entity_ids_by_names(matched_names)
         if not entity_ids:
             return [], matched_names, 0
 
-        # Get connected entities via relationships
+        # Get connected entities via relationships (cap expansion)
+        MAX_CONNECTED = 20
         connected_ids = await self.sqlite.get_connected_entity_ids(entity_ids)
+        if len(connected_ids) > MAX_CONNECTED:
+            connected_ids = connected_ids[:MAX_CONNECTED]
         all_entity_ids = entity_ids + connected_ids
 
-        # Get memory IDs mentioning any of these entities
+        # Get memory IDs mentioning any of these entities (cap results)
+        MAX_ENTITY_MEMORIES = 50
         memory_ids = await self.sqlite.get_memory_ids_for_entities(all_entity_ids)
+        if len(memory_ids) > MAX_ENTITY_MEMORIES:
+            memory_ids = memory_ids[:MAX_ENTITY_MEMORIES]
         return memory_ids, matched_names, len(connected_ids)
 
     async def search_core_memories(self, query: str, n_results: int = 10) -> list[dict]:
