@@ -106,6 +106,7 @@ blipshell/
 │   ├── config.py            # ConfigManager (YAML loading)
 │   ├── repo_map.py          # AST-based code structure mapping
 │   ├── router.py            # Internal message routing
+│   ├── tool_rules.py        # Letta-style tool calling constraints
 │   ├── workflows.py         # YAML workflow templates
 │   └── tools/               # Tool implementations (10 files)
 ├── llm/                     # LLM routing & clients
@@ -315,8 +316,9 @@ Query
          └────────┬─────────┘
                   ▼
          ┌──────────────────┐
-         │ 7. Entity Expand  │──── find entities in query → follow relationships
-         │                   │     → find memories mentioning connected entities
+         │ 7. Entity Expand  │──── word-boundary match entities in query (min 3 chars)
+         │                   │     → follow relationships (capped: 10 matched, 20 connected)
+         │                   │     → find memories (capped: 50 IDs)
          │                   │     +0.15 boost for entity-connected memories
          └────────┬─────────┘
                   ▼
@@ -401,9 +403,11 @@ python | used_for | performance tuning | technology | concept
 **Entity Aliases**: When entities are merged, the old name is recorded in `entity_aliases`
 with the merge method (exact, embedding_auto, llm_resolved) for audit.
 
-**Search Integration**: The search pipeline finds entities mentioned in the query,
-follows their relationships to connected entities, and boosts memories that mention
-those connected entities (+0.15).
+**Search Integration**: The search pipeline finds entities mentioned in the query
+using word-boundary matching (minimum 3 characters to prevent "i", "a", "go" from
+matching). Results are capped at every stage to prevent fan-out: max 10 matched
+entities (preferring longer/more specific names), max 20 connected entities via
+relationships, and max 50 memory IDs returned. Connected memories get a +0.15 boost.
 
 ### 3.6 Consolidation & Deduplication
 
@@ -612,12 +616,16 @@ Defined in `core/agent.py` (1673 lines). The Agent class is the central orchestr
 The default path for most interactions:
 
 1. Build messages array with memory context (core memories, lessons, recall, history)
-2. Call LLM with all registered tools
-3. If LLM returns tool calls → execute tools → feed results back → loop
-4. Stream tokens via `on_token` callback
-5. Auto-continue: if LLM asks "should I proceed?" or narrates intent without acting,
-   auto-nudge with "Yes, go ahead. Execute fully."
-6. On endpoint error: fall back to secondary model
+2. **Tool gating**: Detect which tool groups the message needs via regex patterns
+   (`detect_tool_groups()`). Pure conversation → no tools passed → faster response.
+   Project mode → all tools always available.
+3. **Tool rules**: Apply structural constraints (max calls, cooldowns, terminal rules)
+   to filter available tools on each iteration of the tool loop
+4. If LLM returns tool calls → execute tools → feed results back → loop
+5. Stream tokens via `on_token` callback
+6. Auto-continue: if LLM explicitly asks "should I proceed/continue?" while mid-task
+   (tool calls already made), auto-nudge with "Yes, go ahead."
+7. On endpoint error: fall back to secondary model
 
 Max tool iterations configurable per-model (default 5, up to 25 for some models).
 
@@ -664,9 +672,30 @@ Defined in `core/tools/base.py` and individual tool files (10 files).
 | coding | grep_files, glob_files, git_status, git_diff, git_add, git_commit | grep, find files, git, code |
 | tasks | start_background_task, check_task, list_tasks, run_workflow | background, task, workflow |
 
-**Tool Detection**: Regex patterns match keywords in user messages to determine which
-tool groups are relevant. All tools are always passed to the model (model decides
-whether to use them), but per-model tool call limits are enforced.
+**Tool Gating** (`detect_tool_groups()` in `tools/base.py`):
+Regex patterns match keywords in user messages to determine which tool groups are
+relevant. When no project is active:
+- Detected groups → only those tools (plus memory/general/tasks) are passed
+- No groups detected → pure conversation, no tools passed (faster, no unwanted calls)
+- Project mode → all tools always available
+
+**Tool Rules Engine** (`core/tool_rules.py`, inspired by Letta/MemGPT):
+Structural constraints that filter available tools dynamically during the tool loop:
+
+| Rule Type | Purpose | Example |
+|-----------|---------|---------|
+| `MaxCallsRule` | Cap per-tool calls per turn | `list_directory` max 3 |
+| `CooldownRule` | Prevent immediate re-calls | `grep_files` cooldown 1 |
+| `SequenceRule` | Constrain valid next-tools | After `read_file`, only `edit_file`/`write_file` |
+| `TerminalRule` | Stop after specific tool | `git_commit` ends the turn |
+
+Two rule sets: `create_default_rules()` for conversation mode, `create_coding_rules()`
+for project mode (more permissive caps). Rules switch automatically on project
+activation/deactivation.
+
+**File Re-read Prevention**: `ReadFileTool` holds a reference to the agent's
+`_files_read` set. If a file was already read this session, the tool returns
+`"ALREADY READ: ..."` instead of re-reading — enforced at execution time, not advisory.
 
 **Approval Gates**: Dangerous tools (write_file, edit_file, git_commit, run_command)
 require user approval. Options: allow once, allow for session, deny. File edits show
@@ -684,7 +713,8 @@ When a project is activated (`/project open <name>`):
 3. Re-register file tools with `root_path` restriction
 4. Register coding tools (grep, glob) scoped to project
 5. Register git tools (status, diff, add, commit)
-6. Initialize RepoMap for AST-based code structure
+6. Switch to coding-mode tool rules (`create_coding_rules()`)
+7. Initialize RepoMap for AST-based code structure
 7. Build project context (cached for 1 hour):
    - Basic metadata (name, root, language, git URL)
    - Git info (branch, last 5 commits)
@@ -693,7 +723,26 @@ When a project is activated (`/project open <name>`):
    - Key files: README.md, pyproject.toml, CLAUDE.md (first 60 lines)
 8. Inject project context into system prompt
 
-### 5.5 Background Tasks and Workflows
+### 5.5 Session Lifecycle
+
+Defined in `session/manager.py`. Handles message tracking, text cleaning, and
+memory persistence.
+
+**During Session**: Messages are added to the in-memory list and the ActiveSession
+pool. Every 5 messages, `dump_to_memory()` fires as a background task to persist
+undumped messages through the full processing pipeline.
+
+**Session End** (`end_session()`): Three phases, each with independent timeouts:
+
+| Phase | Timeout | What It Does |
+|-------|---------|--------------|
+| Dump messages | 15s per message | Process each undumped message through the full pipeline (summarize + rank + embed). Per-message timeouts so a single slow LLM call doesn't block the batch. Failed messages are skipped, not marked as dumped. |
+| Session summary | 60s | Chunk messages → summarize chunks → meta-summarize → generate title |
+| Lesson extraction | 30s | LLM extracts behavioral insights from the full conversation (5+ messages only) |
+
+**Text Cleaning**: Strips whitespace, normalizes line endings, collapses double spaces.
+
+### 5.6 Background Tasks and Workflows
 
 **Background Task Manager** (`core/background.py`):
 - `submit_task(title, task_type, prompt, target_endpoint)` → task_id
@@ -1249,11 +1298,11 @@ first. Auto-backup on startup with 24h cooldown. Good defensive practice.
 
 ### 11.2 Potential Issues
 
-**agent.py Size**: At 1673 lines, `agent.py` is the largest file and handles many
+**agent.py Size**: At ~1750 lines, `agent.py` is the largest file and handles many
 responsibilities: chat loop, message building, tool execution, project activation,
-auto-continue, file tracking, and session management. It could benefit from extracting
-some of these into focused modules (e.g., a `MessageBuilder` class, a `ProjectManager`
-class).
+auto-continue, file tracking, and session management. Some responsibilities have been
+extracted (tool rules into `tool_rules.py`), but further extraction of `MessageBuilder`
+and `ProjectManager` classes would improve maintainability.
 
 **cli.py Size**: Similarly large at 2300+ lines. The slash command handling could be
 extracted into a command registry pattern.
@@ -1275,18 +1324,43 @@ config or the database.
 This works but doesn't track which migrations have been applied. A version counter in
 `app_metadata` would make this more robust.
 
-**Similarity Threshold Discrepancy**: Config sets `similarity_threshold: 0.5` but
-the CLAUDE.md mentions it was "lowered from 0.5 to 0.3 for nomic scores." Verify the
-actual runtime value.
+### 11.3 Recently Fixed Issues
 
-### 11.3 Dead Code / Stale Files
+**Entity Search Explosion** (fixed): The entity graph expansion used substring matching
+against 31K+ entity names, causing queries like "time" to match every entity containing
+"time" as a substring (15,757 hits). Fixed with word-boundary matching (`\b` regex),
+minimum 3-character entity names, and caps at every stage (10 matched → 20 connected →
+50 memory IDs).
+
+**Tools Always Passed** (fixed): All registered tools were passed to the model on every
+turn, causing the model to use tools on conversational messages. Fixed with
+`detect_tool_groups()` — pure conversation gets no tools, tool groups are detected by
+regex keyword matching. Project mode still passes all tools.
+
+**File Re-read Advisory Only** (fixed): The `_files_read` tracking set was maintained
+correctly, but only injected as an advisory system message. Models ignored it. Fixed by
+passing the set into `ReadFileTool` and rejecting re-reads at execution time with an
+`"ALREADY READ"` error message.
+
+**Session End Batch Timeout** (fixed): A single 30-second timeout wrapped the entire
+`dump_to_memory()` batch. With 2-3 LLM calls per message, sessions with many undumped
+messages would timeout and lose data. Fixed with per-message 15-second timeouts — each
+message gets its own timeout, failed messages are skipped but not marked as dumped.
+
+**Auto-Continue Too Broad** (fixed): The `_should_auto_continue()` patterns matched
+generic phrases like "what do you think", "let me know", "i need to" — triggering
+unwanted auto-continuation on normal conversation. Tightened to only match explicit
+"should I proceed/continue?" permission-asking and clear "let me [verb]" continuation
+intent.
+
+### 11.4 Dead Code / Stale Files
 
 - `NUL` file in repo root (Windows artifact, should be gitignored)
 - `old-pc` endpoint defined but disabled — could be removed if the second PC is no longer used
 - `blipshell/export.py` and `blipshell/reprocess.py` — verify if these are still used or
   superseded by scripts
 
-### 11.4 Improvement Opportunities (Prioritized)
+### 11.5 Improvement Opportunities (Prioritized)
 
 1. **Re-enable consolidation with safety guards**: Add a similarity floor (e.g., 0.90
    instead of 0.85), require both memories to be in the same session or same topic,
@@ -1318,4 +1392,5 @@ actual runtime value.
 ---
 
 *Last updated: 2026-02-22*
+*Updated with tool rules engine, tool gating, entity search fix, session timeouts, file re-read enforcement*
 *Generated from codebase review of BlipShell v0.1.0*
