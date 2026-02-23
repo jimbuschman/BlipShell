@@ -272,15 +272,16 @@ class TaskExecutor:
                 })
 
                 for tc in tool_calls:
-                    name, arguments = self._extract_tool_call_info(tc)
+                    name, arguments, tc_id = self._extract_tool_call_info(tc)
                     tool_call_names.append(name)
                     tool_call_count += 1
-                    tool_call = ToolCall(name=name, arguments=arguments)
+                    tool_call = ToolCall(id=tc_id, name=name, arguments=arguments)
 
                     if on_token:
                         on_token(f"  [Tool: {tool_call.name}]\n")
 
                     result = await self.tool_registry.execute_tool_call(tool_call)
+                    result.tool_call_id = tc_id
 
                     # Cache tracking
                     if result.success and name == "read_file":
@@ -428,14 +429,15 @@ class TaskExecutor:
                 })
 
                 for tc in tool_calls:
-                    name, arguments = self._extract_tool_call_info(tc)
+                    name, arguments, tc_id = self._extract_tool_call_info(tc)
                     tool_call_names.append(name)
-                    tool_call = ToolCall(name=name, arguments=arguments)
+                    tool_call = ToolCall(id=tc_id, name=name, arguments=arguments)
 
                     if on_token:
                         on_token(f"\n  [Tool: {tool_call.name}]\n")
 
                     result = await self.tool_registry.execute_tool_call(tool_call)
+                    result.tool_call_id = tc_id
 
                     # Cache file contents on successful read (for cross-step re-reads)
                     if result.success and name == "read_file":
@@ -559,33 +561,35 @@ class TaskExecutor:
         return "", None
 
     @staticmethod
-    def _extract_tool_call_info(tc) -> tuple[str, dict]:
-        """Extract name and arguments from a tool call.
+    def _extract_tool_call_info(tc) -> tuple[str, dict, str]:
+        """Extract name, arguments, and id from a tool call.
 
         Handles both Ollama (args as dict) and OpenAI-compatible APIs
-        (args as JSON string).
+        (args as JSON string). Returns (name, arguments, tool_call_id).
         """
         fn = getattr(tc, "function", None)
         if fn is not None:
             name = getattr(fn, "name", "") or ""
             args = getattr(fn, "arguments", {}) or {}
+            tc_id = getattr(tc, "id", "") or ""
             if isinstance(args, str):
                 import json
                 try:
                     args = json.loads(args)
                 except (json.JSONDecodeError, TypeError):
                     args = {}
-            return name, args
+            return name, args, tc_id
 
         if isinstance(tc, dict):
             fn = tc.get("function", {})
             args = fn.get("arguments", {})
+            tc_id = tc.get("id", "")
             if isinstance(args, str):
                 import json
                 try:
                     args = json.loads(args)
                 except (json.JSONDecodeError, TypeError):
                     args = {}
-            return fn.get("name", ""), args
+            return fn.get("name", ""), args, tc_id
 
-        return "", {}
+        return "", {}, ""

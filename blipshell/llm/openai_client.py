@@ -264,6 +264,7 @@ class OpenAICompatClient:
                     except (json.JSONDecodeError, TypeError):
                         args = {}
                 tool_calls.append({
+                    "id": tc.id or "",
                     "function": {
                         "name": tc.function.name,
                         "arguments": args,

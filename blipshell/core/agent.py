@@ -784,21 +784,40 @@ class Agent:
         return "", None
 
     @staticmethod
-    def _extract_tool_call_info(tc) -> tuple[str, dict]:
-        """Extract name and arguments from a tool call object or dict."""
+    def _extract_tool_call_info(tc) -> tuple[str, dict, str]:
+        """Extract name, arguments, and id from a tool call object or dict.
+
+        Returns (name, arguments, tool_call_id). Handles both Ollama (args
+        as dict) and OpenAI-compatible APIs (args as JSON string).
+        """
         # Object access (ollama 0.4+)
         fn = getattr(tc, "function", None)
         if fn is not None:
             name = getattr(fn, "name", "") or ""
             args = getattr(fn, "arguments", {}) or {}
-            return name, args
+            tc_id = getattr(tc, "id", "") or ""
+            if isinstance(args, str):
+                import json
+                try:
+                    args = json.loads(args)
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+            return name, args, tc_id
 
         # Dict access
         if isinstance(tc, dict):
             fn = tc.get("function", {})
-            return fn.get("name", ""), fn.get("arguments", {})
+            args = fn.get("arguments", {})
+            tc_id = tc.get("id", "")
+            if isinstance(args, str):
+                import json
+                try:
+                    args = json.loads(args)
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+            return fn.get("name", ""), args, tc_id
 
-        return "", {}
+        return "", {}, ""
 
     @staticmethod
     def _format_tool_arg_hint(tool_call: ToolCall) -> str:
@@ -890,15 +909,16 @@ class Agent:
                         "tool_calls": initial_tool_calls})
 
         for tc in initial_tool_calls:
-            name, arguments = self._extract_tool_call_info(tc)
+            name, arguments, tc_id = self._extract_tool_call_info(tc)
             tool_call_names.append(name)
-            tool_call = ToolCall(name=name, arguments=arguments)
+            tool_call = ToolCall(id=tc_id, name=name, arguments=arguments)
 
             if on_token:
                 arg_hint = self._format_tool_arg_hint(tool_call)
                 on_token(f"\n\x1b[36m\x1b[1m[Tool: {tool_call.name}{arg_hint}]\x1b[0m\n")
 
             result = await self.tool_registry.execute_tool_call(tool_call)
+            result.tool_call_id = tc_id
             messages.append(result.to_ollama_message())
 
             if result.success and name in ("read_file", "list_directory"):
@@ -946,15 +966,16 @@ class Agent:
                     messages.append({"role": "assistant", "content": content,
                                     "tool_calls": new_tc})
                     for tc in new_tc:
-                        name, arguments = self._extract_tool_call_info(tc)
+                        name, arguments, tc_id = self._extract_tool_call_info(tc)
                         tool_call_names.append(name)
-                        tool_call = ToolCall(name=name, arguments=arguments)
+                        tool_call = ToolCall(id=tc_id, name=name, arguments=arguments)
 
                         if on_token:
                             arg_hint = self._format_tool_arg_hint(tool_call)
                             on_token(f"\n\x1b[36m\x1b[1m[Tool: {tool_call.name}{arg_hint}]\x1b[0m\n")
 
                         result = await self.tool_registry.execute_tool_call(tool_call)
+                        result.tool_call_id = tc_id
                         messages.append(result.to_ollama_message())
 
                         if result.success and name in ("read_file", "list_directory"):
@@ -1168,15 +1189,16 @@ class Agent:
                     messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
 
                     for tc in tool_calls:
-                        name, arguments = self._extract_tool_call_info(tc)
+                        name, arguments, tc_id = self._extract_tool_call_info(tc)
                         tool_call_names.append(name)
-                        tool_call = ToolCall(name=name, arguments=arguments)
+                        tool_call = ToolCall(id=tc_id, name=name, arguments=arguments)
 
                         if on_token:
                             arg_hint = self._format_tool_arg_hint(tool_call)
                             on_token(f"\n\x1b[36m\x1b[1m[Tool: {tool_call.name}{arg_hint}]\x1b[0m\n")
 
                         result = await self.tool_registry.execute_tool_call(tool_call)
+                        result.tool_call_id = tc_id
                         messages.append(result.to_ollama_message())
 
                         # Track files/dirs already read (prevents re-reading across turns)

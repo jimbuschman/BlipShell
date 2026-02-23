@@ -80,8 +80,15 @@ class ToolResult(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_ollama_message(self) -> dict:
-        """Convert to Ollama tool response message format."""
-        return {
+        """Convert to tool response message format.
+
+        Includes tool_call_id when present (required by OpenAI-compatible APIs,
+        ignored by Ollama).
+        """
+        msg: dict = {
             "role": "tool",
             "content": self.result,
         }
+        if self.tool_call_id:
+            msg["tool_call_id"] = self.tool_call_id
+        return msg
