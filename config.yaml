@@ -48,12 +48,19 @@ endpoints:
     enabled: true
     models:
       summarization: "gemini-2.5-flash"
-  - name: "local"
+  - name: "local-cloud"
     url: "http://localhost:11434"
-    roles: ["reasoning", "tool_calling", "coding", "embedding", "summarization", "ranking", "importance", "ranking_importance"]
+    roles: ["tool_calling", "coding"]
     priority: 1
     max_concurrent: 5
-    context_tokens: 131072  # 128K — cloud models route through local Ollama
+    context_tokens: 196608  # 192K — glm-5:cloud supports 198K
+    enabled: true
+  - name: "local"
+    url: "http://localhost:11434"
+    roles: ["reasoning", "embedding", "summarization", "ranking", "importance", "ranking_importance"]
+    priority: 1
+    max_concurrent: 5
+    context_tokens: 32768   # 32K — local models (qwen3:14b, glm4, qwen2.5:14b) don't need more
     enabled: true
   - name: "old-pc"
     url: "http://192.168.0.225:11434"
