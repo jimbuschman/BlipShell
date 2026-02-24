@@ -680,7 +680,6 @@ class TaskExecutor:
         # Save transcript for reference
         if self.active_project:
             try:
-                import json
                 from datetime import datetime
                 from pathlib import Path
                 transcript_dir = Path("data/project_transcripts")
