@@ -510,10 +510,10 @@ async def chat_loop(
                 console.print(Markdown(response))
             else:
                 console.print()  # newline after streaming
-                # If this was a planned execution (force_plan / !plan), the
-                # streamed content is tool call progress, not the final result.
-                # Always show the result so the user sees the summary.
-                if response and response.strip():
+                # For planned execution (!plan), streamed content is tool call
+                # progress — show the final result separately so the user sees it.
+                # For simple chat, the response was already streamed via on_token.
+                if force_plan and response and response.strip():
                     console.print(Panel(
                         Markdown(response),
                         title="Result",
