@@ -48,10 +48,19 @@ class ShellTool(Tool):
         if self.allowed_commands:
             base_cmd = self._extract_base_command(command)
             if base_cmd not in self.allowed_commands:
-                return (
-                    f"Error: Command '{base_cmd}' is not in the allowed list. "
-                    f"Allowed: {', '.join(self.allowed_commands)}"
-                )
+                # Guide model to the right tool instead of another shell command
+                alt = {
+                    "ls": "Use list_directory tool instead.",
+                    "cat": "Use read_file tool instead.",
+                    "head": "Use read_file with max_lines parameter instead.",
+                    "tail": "Use read_file with start_line parameter instead.",
+                    "grep": "Use grep_files tool instead.",
+                    "find": "Use glob_files tool instead.",
+                    "wc": "Use read_file to check file contents.",
+                    "findstr": "Use grep_files tool instead.",
+                }
+                hint = alt.get(base_cmd, f"Allowed: {', '.join(self.allowed_commands)}")
+                return f"Error: '{base_cmd}' is not allowed. {hint}"
 
         try:
             process = await asyncio.create_subprocess_shell(
