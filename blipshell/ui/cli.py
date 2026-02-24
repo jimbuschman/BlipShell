@@ -510,6 +510,17 @@ async def chat_loop(
                 console.print(Markdown(response))
             else:
                 console.print()  # newline after streaming
+                # If the final response differs from what was streamed
+                # (e.g., task_complete summary after tool call progress),
+                # display it so the user sees the result.
+                streamed = "".join(response_parts).strip()
+                if response and response.strip() and response.strip() != streamed:
+                    console.print()
+                    console.print(Panel(
+                        Markdown(response),
+                        title="Result",
+                        border_style="green",
+                    ))
 
             # Show which endpoint handled the request
             ep = agent.last_endpoint_used
