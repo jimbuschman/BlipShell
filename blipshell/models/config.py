@@ -211,7 +211,7 @@ class LLMConfig(BaseModel):
     """LLM call configuration."""
     max_retries: int = 2
     retry_base_delay: float = 1.0
-    timeout: float = 300.0  # per-call timeout in seconds
+    timeout: float = 120.0  # per-call timeout in seconds
 
 
 class AuthConfig(BaseModel):

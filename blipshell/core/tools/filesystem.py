@@ -23,7 +23,7 @@ class ReadFileTool(Tool):
         self.file_cache = file_cache  # optional cache — if set, re-reads return cached content
 
     # Default line limit for large files — prevents context window flooding
-    DEFAULT_MAX_LINES = 2000
+    DEFAULT_MAX_LINES = 1000
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -40,7 +40,7 @@ class ReadFileTool(Tool):
                               description="Line number to start reading from (1-based, default: 1)",
                               required=False),
                 ToolParameter(name="max_lines", type=ToolParameterType.INTEGER,
-                              description="Maximum number of lines to return (default: 2000)",
+                              description="Maximum number of lines to return (default: 1000)",
                               required=False),
             ],
         )
