@@ -88,7 +88,8 @@ memory:
       percentage: 0.10
       priority: 1
 
-  total_context_tokens: 65536  # match endpoint context_tokens
+  # total_context_tokens is now derived from the endpoint's context_tokens automatically.
+  # Only set this if you need to override the endpoint value for memory pool sizing.
   system_prompt_reserve: 2048
   overflow_batch_size: 4
   recall_search_limit: 20

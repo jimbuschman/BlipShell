@@ -180,8 +180,11 @@ class Agent:
         self.job_queue = LLMJobQueue()
         self.job_queue.start()
 
-        # Memory manager
-        self.memory_manager = MemoryManager(self.config.memory)
+        # Memory manager — use endpoint context_tokens for pool sizing
+        endpoint_ctx = self.endpoint_manager.get_context_tokens_for_role(
+            "tool_calling", default=65536,
+        )
+        self.memory_manager = MemoryManager(self.config.memory, context_tokens=endpoint_ctx)
         self.memory_manager.set_summarize_callback(self._summarize_overflow)
 
         # Processor
@@ -1523,7 +1526,7 @@ class Agent:
         context_role = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
         context_limit = self.endpoint_manager.get_context_tokens_for_role(
             context_role,
-            default=self.config.memory.total_context_tokens,
+            default=65536,
         )
 
         available = (

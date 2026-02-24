@@ -511,6 +511,7 @@ class TaskExecutor:
         final_response = ""
         wind_down_injected = False
         self._force_complete_injected = False
+        last_tool_call: tuple[str, str] = ("", "")  # (name, args_key) for dedup
 
         # Single continuous loop — LLM keeps full conversation history
         max_rounds = budget + 10  # generous round limit (text-only responses don't cost tools)
@@ -596,8 +597,27 @@ class TaskExecutor:
                     if on_token:
                         on_token(f"  [Tool: {tool_call.name}]\n")
 
-                    result = await self.tool_registry.execute_tool_call(tool_call)
+                    # Same-args dedup: if identical tool+args as last call, redirect
+                    args_key = json.dumps(arguments, sort_keys=True)
+                    current_call = (name, args_key)
+                    if current_call == last_tool_call and name != "task_complete":
+                        from blipshell.models.tools import ToolResult
+                        result = ToolResult(
+                            tool_call_id=tc_id,
+                            name=name,
+                            result=(
+                                f"You just called {name} with the same arguments. "
+                                "If the task is done, call task_complete. "
+                                "If not, try a different approach."
+                            ),
+                            success=False,
+                        )
+                        if on_token:
+                            on_token(f"  [Duplicate call blocked]\n")
+                    else:
+                        result = await self.tool_registry.execute_tool_call(tool_call)
                     result.tool_call_id = tc_id
+                    last_tool_call = current_call
 
                     # Check for task_complete tool — this is the primary completion signal
                     if name == "task_complete":

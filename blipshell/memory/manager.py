@@ -100,9 +100,11 @@ class MemoryManager:
 
     OVERHEAD_TOKENS = 1000
 
-    def __init__(self, config: MemoryConfig):
+    def __init__(self, config: MemoryConfig, context_tokens: int = 0):
         self.config = config
-        self.global_budget = config.total_context_tokens - config.system_prompt_reserve
+        # Use explicit context_tokens if provided, otherwise fall back to config
+        effective_tokens = context_tokens or config.total_context_tokens
+        self.global_budget = effective_tokens - config.system_prompt_reserve
         self._pools: dict[str, Pool] = {}
         self._pool_configs: dict[str, dict] = {}
         self._summarize_callback = None
