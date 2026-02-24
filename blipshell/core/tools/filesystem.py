@@ -97,6 +97,10 @@ class ReadFileTool(Tool):
         total = len(all_lines)
         limit = max_lines if max_lines > 0 else self.DEFAULT_MAX_LINES
 
+        # Empty file
+        if total == 0:
+            return "(empty file)"
+
         # Clamp start_line to valid range (1-based)
         start = max(0, min(start_line - 1, total - 1))  # 0-based, clamped
 
