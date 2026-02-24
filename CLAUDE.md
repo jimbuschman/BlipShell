@@ -177,7 +177,7 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - [ ] **NEEDS TESTING**: Verify project lessons get boosted in search
 - [ ] Future: Scheduled overnight maintenance job (reprocess, health check, cleanup)
 
-### 14. Executor Architecture Overhaul — IN PROGRESS
+### 14. Executor Architecture Overhaul — COMPLETE
 Research into Claude Code, Cline, SWE-agent, OpenHands, Aider, Codex CLI, and Cursor revealed
 BlipShell's project mode executor has several anti-patterns that no successful coding agent uses.
 Test transcript from 2026-02-24 confirmed: 37 tool calls, no TASK_COMPLETE emitted, 18 wasted
@@ -186,58 +186,72 @@ calls navigating cli.py, model hallucinated XML tool calls when tools weren't pa
 **7 Core Fixes (priority order):**
 
 #### 14a. `task_complete` tool (replaces TASK_COMPLETE magic string)
-- Every successful agent uses either a completion tool (Cline's `attempt_completion`, OpenHands' `AgentFinishAction`) or natural "no tool calls = done" (Claude Code, Codex CLI)
-- Magic string in freeform text is an anti-pattern — models are trained to call tools, not emit protocol tokens
-- Create `task_complete` tool with params: `summary`, `files_modified`, `decisions_made`
-- Executor loop checks for this tool call instead of scanning text for "TASK_COMPLETE"
-- Keep implicit completion (>200 chars text, no tool calls) as fallback
+- [x] Every successful agent uses either a completion tool (Cline's `attempt_completion`, OpenHands' `AgentFinishAction`) or natural "no tool calls = done" (Claude Code, Codex CLI)
+- [x] Magic string in freeform text is an anti-pattern — models are trained to call tools, not emit protocol tokens
+- [x] Create `task_complete` tool with params: `summary`, `files_modified`, `decisions_made`
+- [x] Executor loop checks for this tool call instead of scanning text for "TASK_COMPLETE"
+- [x] Keep implicit completion (>200 chars text, no tool calls) as fallback
 - Files: `executor.py` (loop logic), new tool in `tools/`, `prompts.py` (remove TASK_COMPLETE instruction)
 
 #### 14b. Remove tool gating (always pass all tools)
-- No successful agent does keyword-based tool filtering (Claude Code, Codex, Cline, OpenHands, SWE-agent all pass all tools always)
-- `detect_tool_groups()` in `tools/base.py` causes: "review" stripped of tools, model hallucinates XML
-- Remove `detect_tool_groups()` — always pass all tools in project mode
-- For non-project chat: keep tools available, let model decide (passing tools doesn't force their use)
-- This also fixes Problem 5 (XML hallucination) — model only does that when tools aren't available via API
+- [x] No successful agent does keyword-based tool filtering (Claude Code, Codex, Cline, OpenHands, SWE-agent all pass all tools always)
+- [x] `detect_tool_groups()` in `tools/base.py` causes: "review" stripped of tools, model hallucinates XML
+- [x] Remove `detect_tool_groups()` — always pass all tools in project mode
+- [x] For non-project chat: keep tools available, let model decide (passing tools doesn't force their use)
+- [x] This also fixes Problem 5 (XML hallucination) — model only does that when tools aren't available via API
 - Files: `agent.py` (_chat_simple tool gating logic), `tools/base.py` (delete detect_tool_groups)
 
 #### 14c. Prompt restructuring
-- Move behavioral rules from user message to system prompt (all successful agents do this)
-- User message = just the task, system prompt = who you are + all rules + tool descriptions
-- Fewer rules (3-5 critical ones, not 15+) — weaker models can't track many constraints
-- Add concrete examples (few-shot) of good tool sequences
-- Tool descriptions should include usage guidance ("only read files you haven't already read")
+- [x] Move behavioral rules from user message to system prompt (all successful agents do this)
+- [x] User message = just the task, system prompt = who you are + all rules + tool descriptions
+- [x] Fewer rules (3-5 critical ones, not 15+) — weaker models can't track many constraints
+- [x] Add concrete examples (few-shot) of good tool sequences
+- [x] Tool descriptions should include usage guidance ("only read files you haven't already read")
 - Files: `prompts.py` (dynamic_execution_prompt), `executor.py` (system prompt assembly)
 
 #### 14d. Bound and paginate tool outputs
-- `read_file`: add `start_line`/`max_lines` params, default 200 lines, show "File has N lines, use start_line for more"
-- `grep_files`: cap results at 50 hits (SWE-agent's approach)
-- `list_directory`: cap at reasonable depth
-- File cache should tell model "already read" instead of re-reading
+- [x] `read_file`: add `start_line`/`max_lines` params, default 200 lines, show "File has N lines, use start_line for more"
+- [x] `grep_files`: cap results at 50 hits (SWE-agent's approach)
+- [x] `list_directory`: cap at reasonable depth
+- [x] File cache should tell model "already read" instead of re-reading
 - Files: `tools/filesystem_tools.py`, `tools/coding_tools.py`
 
 #### 14e. Budget wind-down mechanism
-- Inject system message at 80% budget: "Running low on tool calls. Wrap up and use task_complete."
-- SWE-agent research: successful instances finish in ~12 steps, failures grind to ~21
+- [x] Inject system message at 80% budget: "Running low on tool calls. Wrap up and use task_complete."
+- [x] SWE-agent research: successful instances finish in ~12 steps, failures grind to ~21
 - Files: `executor.py` (execute_dynamic loop)
 
 #### 14f. Actionable error messages
-- Per Anthropic: "Error messages are prompts" — they guide the agent's next action
-- Instead of "text not found": "text not found in file.py (350 lines). Try read_file to see current contents."
-- Instead of "not a directory": "grep_files expects a directory path, not a file. Use grep_files on the parent directory or read_file for a specific file."
+- [x] Per Anthropic: "Error messages are prompts" — they guide the agent's next action
+- [x] Instead of "text not found": "text not found in file.py (350 lines). Try read_file to see current contents."
+- [x] Instead of "not a directory": "grep_files expects a directory path, not a file. Use grep_files on the parent directory or read_file for a specific file."
 - Files: all tool execute() methods
 
 #### 14g. Explicit `ask_user` guidance in prompt
-- Not enough to just have the tool available — model needs concrete examples of when to use it
-- Add to prompt: "Use ask_user when: requirements are ambiguous, something fails twice, choosing between approaches, destructive operations"
+- [x] Not enough to just have the tool available — model needs concrete examples of when to use it
+- [x] Add to prompt: "Use ask_user when: requirements are ambiguous, something fails twice, choosing between approaches, destructive operations"
 - Files: `prompts.py`
 
 **Bonus fix (implement alongside):**
 #### 14h. Edit linting
-- SWE-agent: linting every edit improved success rate by 3% absolute
-- After `edit_file` applies, run `ast.parse()` / `py_compile` on Python files
-- If syntax error, reject edit and return actionable error with line number
+- [x] SWE-agent: linting every edit improved success rate by 3% absolute
+- [x] After `edit_file` applies, run `ast.parse()` / `py_compile` on Python files
+- [x] If syntax error, reject edit and return actionable error with line number
 - Files: `tools/filesystem_tools.py` (edit_file execute method)
+
+**Additional bugs found and fixed during implementation:**
+- [x] Pagination cache corruption: executor cached paginated output, re-paginated on re-read — fixed
+- [x] Disconnected file tracking: executor's `files_read` not wired to `ReadFileTool` (found by glm-5 code review) — fixed
+- [x] TerminalRule for `task_complete` added to executor loop termination logic
+- [x] Legacy `TASK_COMPLETE` string check removed from executor
+- [x] CLI display fix: `task_complete` summary now shown in green panel
+
+**Test results:**
+- 34 tool calls, zero wasted re-reads, `task_complete` called, budget wind-down respected
+
+**Remaining items:**
+- [ ] Windows shell compatibility — model tries Unix commands (`head`, etc.) that don't exist on Windows
+- [ ] Speed optimization — `num_ctx` tuning, model alternatives for faster execution
 
 **Future considerations (after core fixes tested):**
 - Architect/Editor split (Aider) — separate problem-solving from edit formatting, useful for weaker models
