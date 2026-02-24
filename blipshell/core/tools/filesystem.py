@@ -98,25 +98,37 @@ class ReadFileTool(Tool):
         limit = max_lines if max_lines > 0 else self.DEFAULT_MAX_LINES
 
         # Clamp start_line to valid range (1-based)
-        start = max(1, start_line) - 1  # convert to 0-based
+        start = max(0, min(start_line - 1, total - 1))  # 0-based, clamped
+
+        # If start_line is past the end, say so
+        if start_line > total:
+            return (
+                f"File has {total} lines. start_line={start_line} is past the end. "
+                f"Use start_line=1 to read from the beginning, or "
+                f"start_line={max(1, total - limit + 1)} to read the last section."
+            )
 
         window = all_lines[start:start + limit]
+        end_line = start + len(window)
 
-        # Add line numbers for easier reference
+        # For small files that fit in one page, return plain content (no pagination noise)
+        if total <= limit and start == 0:
+            return content
+
+        # Add line numbers for easier navigation
         numbered = []
         for i, line in enumerate(window, start=start + 1):
             numbered.append(f"{i:>5}: {line}")
         result = "\n".join(numbered)
 
-        # If we truncated, tell the model how to see more
-        end_line = start + len(window)
-        if total > limit and end_line < total:
+        # Tell the model what they're seeing and how to see more
+        if end_line < total:
             result += (
-                f"\n\n[Showing lines {start + 1}-{end_line} of {total} total. "
-                f"Use start_line={end_line + 1} to read more.]"
+                f"\n\n[Showing lines {start + 1}-{end_line} of {total}. "
+                f"Use start_line={end_line + 1} to continue reading.]"
             )
-        elif start > 0:
-            result = f"[Showing lines {start + 1}-{end_line} of {total} total.]\n" + result
+        else:
+            result = f"[Lines {start + 1}-{end_line} of {total}]\n" + result
 
         return result
 

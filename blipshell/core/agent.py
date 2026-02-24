@@ -1174,11 +1174,14 @@ class Agent:
         # Research shows every successful coding agent (Claude Code, Cline, Codex,
         # SWE-agent) passes all tools always. Keyword-based gating causes failures
         # when the model needs tools but keywords don't match (e.g. "review").
+        #
+        # IMPORTANT: _chat_simple is for conversational messages, NOT the executor.
+        # Keep max_iterations low (the config default, typically 5) so the model
+        # can use a couple of tools if needed but can't go on a 30-call rampage.
+        # The executor (execute_dynamic) has its own higher budget (50).
         ms = self.model_settings.get(model)
         tools = self.tool_registry.get_all_ollama_tools() or None
         max_iterations = self.config.agent.max_tool_iterations if tools else 0
-        if self.active_project and tools:
-            max_iterations = max(max_iterations, ms.max_tool_calls)
         logger.info("Passing %d tools to model (max_iterations=%d)",
                      len(tools) if tools else 0, max_iterations)
         full_response = ""

@@ -490,12 +490,13 @@ class TaskExecutor:
                         if on_token:
                             on_token(f"  [Task complete signal received]\n")
 
-                    # Cache tracking
+                    # Cache tracking — NOTE: do NOT cache result.result for read_file
+                    # because it contains paginated output (line numbers, footer text).
+                    # The ReadFileTool caches raw content internally via file_cache.
                     if result.success and name == "read_file":
                         read_path = arguments.get("path", "")
                         if read_path:
                             self.files_read.add(read_path)
-                            self._file_cache[read_path] = result.result
                     if result.success and name == "write_file":
                         file_path = arguments.get("path", "")
                         if file_path:
@@ -670,12 +671,11 @@ class TaskExecutor:
                     result = await self.tool_registry.execute_tool_call(tool_call)
                     result.tool_call_id = tc_id
 
-                    # Cache file contents on successful read (for cross-step re-reads)
+                    # Track file reads — raw content is cached by ReadFileTool itself
                     if result.success and name == "read_file":
                         read_path = arguments.get("path", "")
                         if read_path:
                             self.files_read.add(read_path)
-                            self._file_cache[read_path] = result.result
 
                     # Track file operations for rich step summaries
                     if result.success and name == "write_file":
