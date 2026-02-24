@@ -33,7 +33,11 @@ def _estimate_messages_tokens(messages: list[dict]) -> int:
         total += len(content) // 4
         # Tool calls in assistant messages add tokens too
         if "tool_calls" in msg:
-            total += len(json.dumps(msg["tool_calls"])) // 4
+            try:
+                total += len(json.dumps(msg["tool_calls"], default=str)) // 4
+            except (TypeError, ValueError):
+                # Fallback: estimate from string representation
+                total += len(str(msg["tool_calls"])) // 4
     return total
 
 
@@ -598,7 +602,7 @@ class TaskExecutor:
                         on_token(f"  [Tool: {tool_call.name}]\n")
 
                     # Same-args dedup: if identical tool+args as last call, redirect
-                    args_key = json.dumps(arguments, sort_keys=True)
+                    args_key = json.dumps(arguments, sort_keys=True, default=str)
                     current_call = (name, args_key)
                     if current_call == last_tool_call and name != "task_complete":
                         from blipshell.models.tools import ToolResult

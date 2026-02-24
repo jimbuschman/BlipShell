@@ -20,7 +20,10 @@ class ShellTool(Tool):
         os_name = platform.system()  # "Windows", "Linux", "Darwin"
         os_hint = ""
         if os_name == "Windows":
-            os_hint = " This is a Windows system — use Windows commands (dir, type, findstr), not Unix (ls, cat, grep)."
+            os_hint = (
+                " This is Windows. Do NOT use Unix commands (ls, cat, grep, head, wc). "
+                "Use the dedicated tools instead: list_directory, read_file, grep_files, glob_files."
+            )
         elif os_name == "Darwin":
             os_hint = " This is macOS — use Unix commands."
         else:

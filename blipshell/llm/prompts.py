@@ -397,7 +397,10 @@ def executor_system_prompt() -> str:
     os_name = platform.system()
     os_note = ""
     if os_name == "Windows":
-        os_note = "\n\nNote: This is a Windows system. Use Windows-compatible commands (dir, type, findstr) — not Unix commands (ls, cat, grep)."
+        os_note = (
+            "\n\nNote: This is Windows. Do NOT use Unix commands (ls, cat, grep, head, wc) in run_command. "
+            "Use the dedicated tools instead: list_directory, read_file, grep_files, glob_files."
+        )
 
     return (
         "You are a coding assistant. You complete tasks by using tools to read, "
