@@ -1,5 +1,6 @@
 """Filesystem tools: read, write, edit, list files."""
 
+import ast
 import difflib
 import logging
 import os
@@ -21,15 +22,26 @@ class ReadFileTool(Tool):
         self.files_read = files_read  # shared set from agent — checked to prevent re-reads
         self.file_cache = file_cache  # optional cache — if set, re-reads return cached content
 
+    # Default line limit for large files — prevents context window flooding
+    DEFAULT_MAX_LINES = 300
+
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="read_file",
-            description="Read the contents of a file at the given path.",
+            description=(
+                "Read the contents of a file. For large files, returns a window of lines "
+                "with a note about total file size. Use start_line to read specific sections. "
+                "Do not re-read files already in the conversation."
+            ),
             parameters=[
                 ToolParameter(name="path", type=ToolParameterType.STRING,
                               description="Absolute or relative file path to read"),
+                ToolParameter(name="start_line", type=ToolParameterType.INTEGER,
+                              description="Line number to start reading from (1-based, default: 1)",
+                              required=False),
                 ToolParameter(name="max_lines", type=ToolParameterType.INTEGER,
-                              description="Maximum number of lines to return", required=False),
+                              description="Maximum number of lines to return (default: 300)",
+                              required=False),
             ],
         )
 
@@ -39,7 +51,7 @@ class ReadFileTool(Tool):
             return (Path(self.root_path) / p).resolve()
         return p.resolve()
 
-    async def execute(self, path: str, max_lines: int = 0, **kwargs) -> str:
+    async def execute(self, path: str, start_line: int = 1, max_lines: int = 0, **kwargs) -> str:
         resolved = self._resolve(path)
 
         # Re-read handling: behavior depends on whether a cache is available.
@@ -53,34 +65,60 @@ class ReadFileTool(Tool):
                     cached = self.file_cache.get(path) or self.file_cache.get(resolved_str)
                     if cached:
                         logger.debug("Returning cached content for %s", path)
-                        if max_lines > 0:
-                            lines = cached.splitlines()[:max_lines]
-                            return "\n".join(lines)
-                        return cached
+                        return self._paginate(cached, start_line, max_lines)
                 # No cache — block the re-read
                 return (
                     f"ALREADY READ: '{path}' was already read this session. "
-                    "Use the content from earlier — do not re-read files."
+                    "The content is in our conversation above. Do not re-read."
                 )
 
         if self._is_blocked(str(resolved)):
             return f"Error: Access to '{path}' is blocked."
         if not resolved.is_file():
-            return f"Error: File '{path}' not found."
+            return (
+                f"Error: File '{path}' not found. "
+                "Use list_directory to see what files exist, or glob_files to search."
+            )
         if resolved.stat().st_size > self.max_file_size:
             return f"Error: File '{path}' exceeds max size ({self.max_file_size} bytes)."
 
         content = resolved.read_text(encoding="utf-8", errors="replace")
-        if max_lines > 0:
-            lines = content.splitlines()[:max_lines]
-            content = "\n".join(lines)
 
-        # Populate cache if available (executor path)
+        # Populate cache with full content (executor path)
         if self.file_cache is not None:
             self.file_cache[path] = content
             self.file_cache[str(resolved)] = content
 
-        return content
+        return self._paginate(content, start_line, max_lines)
+
+    def _paginate(self, content: str, start_line: int = 1, max_lines: int = 0) -> str:
+        """Return a window of lines with line numbers and a size note for large files."""
+        all_lines = content.splitlines()
+        total = len(all_lines)
+        limit = max_lines if max_lines > 0 else self.DEFAULT_MAX_LINES
+
+        # Clamp start_line to valid range (1-based)
+        start = max(1, start_line) - 1  # convert to 0-based
+
+        window = all_lines[start:start + limit]
+
+        # Add line numbers for easier reference
+        numbered = []
+        for i, line in enumerate(window, start=start + 1):
+            numbered.append(f"{i:>5}: {line}")
+        result = "\n".join(numbered)
+
+        # If we truncated, tell the model how to see more
+        end_line = start + len(window)
+        if total > limit and end_line < total:
+            result += (
+                f"\n\n[Showing lines {start + 1}-{end_line} of {total} total. "
+                f"Use start_line={end_line + 1} to read more.]"
+            )
+        elif start > 0:
+            result = f"[Showing lines {start + 1}-{end_line} of {total} total.]\n" + result
+
+        return result
 
     def _is_blocked(self, path: str) -> bool:
         return any(blocked in path for blocked in self.blocked_paths)
@@ -148,12 +186,17 @@ class EditFileTool(Tool):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="edit_file",
-            description="Replace a specific string in a file with new content.",
+            description=(
+                "Replace a specific string in a file with new content. "
+                "The old_text must match exactly (whitespace and indentation matter). "
+                "Read the file first to get the exact text. If the edit fails, "
+                "re-read the file once and retry with the correct text."
+            ),
             parameters=[
                 ToolParameter(name="path", type=ToolParameterType.STRING,
                               description="File path to edit"),
                 ToolParameter(name="old_text", type=ToolParameterType.STRING,
-                              description="Text to find and replace"),
+                              description="Exact text to find and replace (copy from the file)"),
                 ToolParameter(name="new_text", type=ToolParameterType.STRING,
                               description="Replacement text"),
             ],
@@ -166,19 +209,33 @@ class EditFileTool(Tool):
             return "Error: 'old_text' argument is required — specify the text to find and replace."
         resolved = self._resolve(path)
         if not resolved.is_file():
-            return f"Error: File '{path}' not found."
+            if resolved.is_dir():
+                return (
+                    f"Error: '{path}' is a directory, not a file. "
+                    "Use list_directory to see files in it."
+                )
+            return (
+                f"Error: File '{path}' not found. "
+                "Check the path with list_directory or glob_files."
+            )
 
         content = resolved.read_text(encoding="utf-8")
 
         # Layer 1: Exact match
         if old_text in content:
             new_content = content.replace(old_text, new_text, 1)
+            lint_err = self._lint_python(resolved, new_content)
+            if lint_err:
+                return lint_err
             resolved.write_text(new_content, encoding="utf-8")
             return f"Successfully edited {path}"
 
         # Layer 2: Whitespace-normalized match
         ws_result = self._try_whitespace_match(content, old_text, new_text)
         if ws_result is not None:
+            lint_err = self._lint_python(resolved, ws_result)
+            if lint_err:
+                return lint_err
             resolved.write_text(ws_result, encoding="utf-8")
             logger.info("edit_file used whitespace-normalized match for %s", path)
             return f"Successfully edited {path} (whitespace-normalized match)"
@@ -186,16 +243,44 @@ class EditFileTool(Tool):
         # Layer 3: Fuzzy match
         fuzzy_result, ratio = self._try_fuzzy_match(content, old_text, new_text)
         if fuzzy_result is not None:
+            lint_err = self._lint_python(resolved, fuzzy_result)
+            if lint_err:
+                return lint_err
             resolved.write_text(fuzzy_result, encoding="utf-8")
             logger.info("edit_file used fuzzy match (%.0f%%) for %s", ratio * 100, path)
             return f"Successfully edited {path} (fuzzy match, {ratio:.0%} similarity)"
 
         # All layers failed — provide helpful error with closest match
+        total_lines = len(content.splitlines())
         hint = self._find_closest_match_hint(content, old_text)
-        error_msg = f"Error: Text to replace not found in '{path}'."
+        error_msg = (
+            f"Error: Text to replace not found in '{path}' ({total_lines} lines). "
+            "The old_text must match the file exactly. "
+            "Re-read the file with read_file to get the correct text."
+        )
         if hint:
-            error_msg += f"\n\nClosest match found (lines {hint['start_line']}-{hint['end_line']}):\n{hint['text']}"
+            error_msg += f"\n\nClosest match (lines {hint['start_line']}-{hint['end_line']}):\n{hint['text']}"
         return error_msg
+
+    @staticmethod
+    def _lint_python(file_path: Path, content: str) -> str | None:
+        """Check if the edited content has valid Python syntax.
+
+        Returns an error message if syntax is broken, None if OK.
+        Only checks .py files — other file types are passed through.
+        Based on SWE-agent research: linting every edit improved success by 3%.
+        """
+        if file_path.suffix != ".py":
+            return None
+        try:
+            ast.parse(content, filename=str(file_path))
+            return None
+        except SyntaxError as e:
+            return (
+                f"Error: Edit would create a syntax error in {file_path.name} "
+                f"at line {e.lineno}: {e.msg}. "
+                "The file was NOT modified. Fix the new_text and retry."
+            )
 
     @staticmethod
     def _normalize_whitespace(text: str) -> str:
@@ -400,7 +485,9 @@ class ListDirectoryTool(Tool):
     async def execute(self, path: str = ".", **kwargs) -> str:
         resolved = self._resolve(path)
         if not resolved.is_dir():
-            return f"Error: '{path}' is not a directory."
+            if resolved.is_file():
+                return f"Error: '{path}' is a file, not a directory. Use read_file to read it."
+            return f"Error: '{path}' does not exist. Try list_directory on the parent path."
 
         entries = []
         try:

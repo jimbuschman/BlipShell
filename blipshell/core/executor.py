@@ -10,7 +10,7 @@ from typing import Callable, Optional
 from blipshell.core.tool_rules import ToolRuleEngine, create_coding_rules, create_default_rules
 from blipshell.core.tools.base import ToolRegistry
 from blipshell.llm.client import LLMClient
-from blipshell.llm.prompts import dynamic_execution_prompt, execute_step, summarize_plan_results, UTILITY_SYSTEM_PROMPT
+from blipshell.llm.prompts import dynamic_execution_prompt, executor_system_prompt, execute_step, summarize_plan_results, UTILITY_SYSTEM_PROMPT
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.models.config import PlannerConfig
@@ -76,7 +76,7 @@ def build_executor_narrative(messages: list[dict]) -> str:
         if role == "assistant":
             # Extract reasoning text (the valuable part)
             if content and content.strip():
-                # Strip TASK_COMPLETE prefix if present
+                # Strip legacy TASK_COMPLETE prefix if present
                 text = content.replace("TASK_COMPLETE", "").strip()
                 if text:
                     parts.append(text)
@@ -379,8 +379,9 @@ class TaskExecutor:
         if read_tool is not None:
             read_tool.file_cache = self._file_cache
 
-        # Build system prompt
-        sys_prompt = self.system_prompt
+        # Build system prompt — use executor-specific prompt with rules,
+        # not the generic agent system prompt (which is for chat)
+        sys_prompt = executor_system_prompt()
         if self.active_project and self.project_context:
             sys_prompt += "\n\n" + self.project_context
 
@@ -426,10 +427,26 @@ class TaskExecutor:
         tool_call_count = 0
         tool_call_names: list[str] = []
         final_response = ""
+        wind_down_injected = False
 
         # Single continuous loop — LLM keeps full conversation history
         max_rounds = budget + 10  # generous round limit (text-only responses don't cost tools)
         for _round in range(max_rounds):
+            # Budget wind-down: inject guidance when ~80% of budget used
+            if (not wind_down_injected
+                    and tool_call_count >= int(budget * 0.8)
+                    and tool_call_count > 0):
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "You are running low on tool calls. Wrap up your current work "
+                        "and call the task_complete tool with a summary of what you accomplished."
+                    ),
+                })
+                wind_down_injected = True
+                if on_token:
+                    on_token("  [Budget warning injected]\n")
+
             # Stop offering tools once budget is exhausted
             iter_tools = None
             if tools and tool_call_count < budget:
@@ -447,6 +464,8 @@ class TaskExecutor:
             content, tool_calls = self._extract_response(response)
 
             if tool_calls and tool_call_count < budget:
+                # Check if task_complete is among the tool calls
+                task_complete_result = None
                 messages.append({
                     "role": "assistant",
                     "content": content,
@@ -464,6 +483,12 @@ class TaskExecutor:
 
                     result = await self.tool_registry.execute_tool_call(tool_call)
                     result.tool_call_id = tc_id
+
+                    # Check for task_complete tool — this is the primary completion signal
+                    if name == "task_complete":
+                        task_complete_result = result.result
+                        if on_token:
+                            on_token(f"  [Task complete signal received]\n")
 
                     # Cache tracking
                     if result.success and name == "read_file":
@@ -493,35 +518,26 @@ class TaskExecutor:
                     if on_token:
                         on_token(f"  [Result: {result.result[:150]}]\n")
 
+                # If task_complete was called, we're done
+                if task_complete_result is not None:
+                    final_response = task_complete_result
+                    break
+
                 continue
 
-            # Text-only response — check for completion signal
+            # Text-only response (no tool calls) — model is done naturally
+            # This is the Claude Code / Codex CLI pattern: no tool calls = done.
+            if content:
+                final_response = content
+                if on_token:
+                    on_token(f"  [No tool calls — treating as complete]\n")
+                break
+
+            # Legacy fallback: check for TASK_COMPLETE in text (remove once tool is proven)
             if "TASK_COMPLETE" in (content or ""):
                 parts = content.split("TASK_COMPLETE", 1)
                 final_response = parts[1].strip() if len(parts) > 1 else content
                 break
-
-            # Model gave text without TASK_COMPLETE.
-            # If the response is substantive (>200 chars) and the model has already
-            # made tool calls, treat it as an implicit completion — don't nudge.
-            # Short responses (<200 chars) might be thinking aloud; nudge those.
-            if content:
-                if len(content) > 200 and tool_call_count > 0:
-                    # Substantive response after tool use — treat as done
-                    final_response = content
-                    if on_token:
-                        on_token(f"  [Substantive response — treating as complete]\n")
-                    break
-                else:
-                    # Short text, probably thinking aloud — nudge to continue
-                    messages.append({"role": "assistant", "content": content})
-                    messages.append({
-                        "role": "user",
-                        "content": "Continue. Use tools to make progress on the task.",
-                    })
-                    if on_token:
-                        on_token(f"  [LLM text, no TASK_COMPLETE — nudging to continue]\n")
-                    continue
 
             # Empty response — model is stuck
             break

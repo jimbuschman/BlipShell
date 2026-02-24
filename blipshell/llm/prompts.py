@@ -387,35 +387,37 @@ def execute_step(
     )
 
 
-def dynamic_execution_prompt(user_request: str) -> str:
-    """Prompt for dynamic execution — single continuous conversation.
+def executor_system_prompt() -> str:
+    """System prompt for the coding executor.
 
-    The LLM has full conversation history (tool calls + results), so no
-    need to pass summaries. It just works until done.
+    Behavioral rules go in the system prompt (not the user message).
+    Kept to 5 critical rules — weaker models can't track 15+ constraints.
     """
     return (
-        f"Task: {user_request}\n\n"
-        "Complete this task using the tools available to you.\n\n"
-        "APPROACH:\n"
+        "You are a coding assistant. You complete tasks by using tools to read, "
+        "edit, and create files. You have access to the full project codebase.\n\n"
+        "Rules:\n"
         "1. Before making changes, briefly state your plan (1-3 sentences).\n"
-        "2. If the requirements are unclear, use the ask_user tool to clarify.\n"
-        "3. Make the minimum changes needed — don't refactor, add features, or "
-        "'improve' code beyond what was asked.\n"
-        "4. Read only the files you need. Don't explore the entire codebase.\n\n"
-        "RULES:\n"
-        "1. Do NOT re-read files you already read — the content is in our conversation.\n"
-        "2. NEVER launch interactive/full-screen apps via run_command.\n"
-        "3. NEVER create documentation files (.md, README) unless asked.\n"
-        "4. If an edit fails, re-read the file ONCE, then retry with corrected text.\n"
-        "5. If something isn't working after 2 attempts, use ask_user to check with the user.\n\n"
-        "COMPLETION:\n"
-        "When the task is FULLY COMPLETE, respond with TASK_COMPLETE on its own line "
-        "followed by a summary including:\n"
-        "- What you did (2-3 sentences)\n"
-        "- Files created or modified\n"
-        "- Key design decisions made\n"
-        "- Anything the user should know or test"
+        "2. Make the minimum changes needed — don't refactor or add features beyond what was asked.\n"
+        "3. If requirements are unclear, use ask_user to clarify. Also use ask_user if "
+        "something fails after 2 attempts.\n"
+        "4. Do not re-read files already in the conversation. Do not launch interactive apps.\n"
+        "5. When finished, call the task_complete tool with a summary of what you did, "
+        "files modified, and anything the user should test.\n\n"
+        "Example workflow:\n"
+        "1. read_file to understand existing code\n"
+        "2. edit_file or write_file to make changes\n"
+        "3. task_complete with summary"
     )
+
+
+def dynamic_execution_prompt(user_request: str) -> str:
+    """User message for dynamic execution — just the task, no rules.
+
+    All behavioral rules are in executor_system_prompt() (system message).
+    The user message should be clean and focused on what to do.
+    """
+    return f"Task: {user_request}"
 
 
 def reflect_on_response(user_message: str, response: str) -> str:

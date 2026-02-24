@@ -31,15 +31,16 @@ class GrepTool(Tool):
         return ToolDefinition(
             name="grep_files",
             description=(
-                "Search for a regex pattern across files in a directory tree. "
-                "Returns matching lines in 'file:line_number: content' format. "
-                "Skips binary files and common non-code directories (.git, node_modules, etc.)."
+                "Search for a regex pattern across files in a directory. "
+                "Returns matching lines as 'file:line_number: content'. "
+                "The path must be a directory, not a file. To search within a single file, "
+                "use read_file instead. Results are capped at max_results (default 50)."
             ),
             parameters=[
                 ToolParameter(name="pattern", type=ToolParameterType.STRING,
                               description="Regex pattern to search for"),
                 ToolParameter(name="path", type=ToolParameterType.STRING,
-                              description="Directory to search in (default: project root or cwd)",
+                              description="Directory to search in (default: project root). Must be a directory, not a file path.",
                               required=False),
                 ToolParameter(name="include", type=ToolParameterType.STRING,
                               description="Glob filter for files to include (e.g. '*.py', '*.ts')",
@@ -60,12 +61,18 @@ class GrepTool(Tool):
     ) -> str:
         search_root = self._resolve(path)
         if not search_root.is_dir():
-            return f"Error: '{path}' is not a directory."
+            if search_root.is_file():
+                return (
+                    f"Error: '{path}' is a file, not a directory. "
+                    f"Use read_file to read this file, or search its parent directory: "
+                    f"grep_files(pattern='{pattern}', path='{search_root.parent}')"
+                )
+            return f"Error: '{path}' does not exist. Use list_directory to see available paths."
 
         try:
             regex = re.compile(pattern)
         except re.error as e:
-            return f"Error: Invalid regex pattern: {e}"
+            return f"Error: Invalid regex '{pattern}': {e}. Use a valid Python regex."
 
         matches = []
         for file_path in self._walk_files(search_root, include):

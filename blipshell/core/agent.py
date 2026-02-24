@@ -22,7 +22,7 @@ from blipshell.core.executor import TaskExecutor, build_executor_narrative
 from blipshell.core.planner import ComplexityClassifier, TaskPlanner
 from blipshell.core.repo_map import RepoMap
 from blipshell.core.tool_rules import ToolRuleEngine, create_coding_rules, create_default_rules
-from blipshell.core.tools.base import ToolRegistry, detect_tool_groups
+from blipshell.core.tools.base import ToolRegistry
 from blipshell.core.tools.code_tools import GlobTool, GrepTool
 from blipshell.core.tools.git_tools import (
     GitAddTool, GitCommitTool, GitDiffTool, GitStatusTool,
@@ -40,7 +40,7 @@ from blipshell.core.tools.memory_tools import (
     SaveCoreMemoryTool,
     SearchMemoriesTool,
 )
-from blipshell.core.tools.interaction_tools import AskUserTool
+from blipshell.core.tools.interaction_tools import AskUserTool, TaskCompleteTool
 from blipshell.core.tools.shell import ShellTool
 from blipshell.core.tools.task_tools import (
     CheckBackgroundTaskTool,
@@ -426,10 +426,11 @@ class Agent:
         self.tool_registry.register(GitAddTool(root_path=root), group="coding")
         self.tool_registry.register(GitCommitTool(root_path=root), group="coding")
 
-        # Register ask_user tool for interactive clarification during execution
+        # Register interaction tools for execution
         self.tool_registry.register(
             AskUserTool(callback=self._ask_user_callback), group="general",
         )
+        self.tool_registry.register(TaskCompleteTool(), group="general")
 
         # Initialize repo map for code structure context
         self._repo_map = RepoMap(root)
@@ -496,6 +497,7 @@ class Agent:
         self.tool_registry.unregister("git_add")
         self.tool_registry.unregister("git_commit")
         self.tool_registry.unregister("ask_user")
+        self.tool_registry.unregister("task_complete")
 
         # Clear planner + executor project state
         if self.task_planner:
@@ -1168,30 +1170,17 @@ class Agent:
             if not client:
                 return "Error: No available LLM endpoint."
 
-        # Tool gating: detect which tool groups the message needs and only pass those.
-        # Pure conversation (no groups detected) → no tools → faster response.
-        # In project mode, if tools are needed, pass all tools (coding mode).
+        # Always pass all tools — let the model decide what to use.
+        # Research shows every successful coding agent (Claude Code, Cline, Codex,
+        # SWE-agent) passes all tools always. Keyword-based gating causes failures
+        # when the model needs tools but keywords don't match (e.g. "review").
         ms = self.model_settings.get(model)
-        needed_groups = detect_tool_groups(user_message)
-        if needed_groups:
-            if self.active_project:
-                # Project mode: pass all tools when any action is detected
-                tools = self.tool_registry.get_all_ollama_tools() or None
-            else:
-                needed_groups.add("memory")
-                needed_groups.add("general")
-                needed_groups.add("tasks")
-                tools = self.tool_registry.get_tools_for_groups(needed_groups) or None
-        else:
-            tools = None
-        # Use per-model tool call limit if configured
+        tools = self.tool_registry.get_all_ollama_tools() or None
         max_iterations = self.config.agent.max_tool_iterations if tools else 0
         if self.active_project and tools:
             max_iterations = max(max_iterations, ms.max_tool_calls)
-        logger.info("Passing %d tools to model (groups=%s, max_iterations=%d)",
-                     len(tools) if tools else 0,
-                     "all" if self.active_project else (needed_groups if tools else "none"),
-                     max_iterations)
+        logger.info("Passing %d tools to model (max_iterations=%d)",
+                     len(tools) if tools else 0, max_iterations)
         full_response = ""
         tool_call_names: list[str] = []
         endpoint_name = ""
