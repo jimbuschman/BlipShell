@@ -60,10 +60,10 @@ class PoolConfig(BaseModel):
 
 class MemoryPoolsConfig(BaseModel):
     """All memory pool configurations."""
-    core: PoolConfig = PoolConfig(percentage=0.10, max_tokens=2048, priority=5)
+    core: PoolConfig = PoolConfig(percentage=0.10, priority=5)
     active_session: PoolConfig = PoolConfig(percentage=0.35, priority=3)
     recent_history: PoolConfig = PoolConfig(percentage=0.15, priority=4)
-    recall: PoolConfig = PoolConfig(percentage=0.30, max_tokens=8192, priority=2)
+    recall: PoolConfig = PoolConfig(percentage=0.30, priority=2)
     buffer: PoolConfig = PoolConfig(percentage=0.10, priority=1)
 
 
@@ -101,7 +101,7 @@ class EntityResolutionConfig(BaseModel):
 class MemoryConfig(BaseModel):
     """Memory system configuration."""
     pools: MemoryPoolsConfig = MemoryPoolsConfig()
-    total_context_tokens: int = 32768
+    total_context_tokens: int = 65536
     system_prompt_reserve: int = 2048
     overflow_batch_size: int = 4
     recall_search_limit: int = 20

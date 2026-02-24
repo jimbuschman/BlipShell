@@ -74,26 +74,21 @@ memory:
   pools:
     core:
       percentage: 0.10
-      max_tokens: 2048
       priority: 5
     active_session:
       percentage: 0.35
-      max_tokens: null
       priority: 3
     recent_history:
       percentage: 0.15
-      max_tokens: null
       priority: 4
     recall:
       percentage: 0.30
-      max_tokens: 8192
       priority: 2
     buffer:
       percentage: 0.10
-      max_tokens: null
       priority: 1
 
-  total_context_tokens: 32768  # fallback default; overridden by endpoint context_tokens
+  total_context_tokens: 65536  # match endpoint context_tokens
   system_prompt_reserve: 2048
   overflow_batch_size: 4
   recall_search_limit: 20

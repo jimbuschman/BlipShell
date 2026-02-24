@@ -4,6 +4,7 @@ Loops through plan steps sequentially. For each step, builds a focused
 prompt with accumulated context and runs the existing tool-calling loop.
 """
 
+import json
 import logging
 from typing import Callable, Optional
 
@@ -22,6 +23,82 @@ if TYPE_CHECKING:
     from blipshell.memory.processor import MemoryProcessor
 
 logger = logging.getLogger(__name__)
+
+
+def _estimate_messages_tokens(messages: list[dict]) -> int:
+    """Estimate total tokens in a message list (len/4 heuristic)."""
+    total = 0
+    for msg in messages:
+        content = msg.get("content", "") or ""
+        total += len(content) // 4
+        # Tool calls in assistant messages add tokens too
+        if "tool_calls" in msg:
+            total += len(json.dumps(msg["tool_calls"])) // 4
+    return total
+
+
+def _compact_messages(messages: list[dict], keep_last_n: int = 5) -> list[dict]:
+    """Compact older tool results in a message list to reduce context size.
+
+    Keeps:
+    - All system messages (prompt, memory context)
+    - The first user message (task instruction)
+    - The last N tool call/result pairs in full
+    - Assistant reasoning text in full (planning, explanations)
+
+    Compresses:
+    - Older tool result messages → one-line summary
+    """
+    # Find boundaries: system messages, first user message, then conversation
+    prefix = []  # system + first user message
+    conversation = []  # everything after
+    found_user = False
+    for msg in messages:
+        if not found_user:
+            prefix.append(msg)
+            if msg.get("role") == "user":
+                found_user = True
+        else:
+            conversation.append(msg)
+
+    if not conversation:
+        return messages
+
+    # Count tool result messages from the end to find the keep boundary
+    tool_results_from_end = 0
+    keep_from_idx = len(conversation)
+    for i in range(len(conversation) - 1, -1, -1):
+        msg = conversation[i]
+        if msg.get("role") == "tool":
+            tool_results_from_end += 1
+            if tool_results_from_end >= keep_last_n:
+                keep_from_idx = i
+                break
+
+    # Everything before keep_from_idx gets compacted
+    compacted = []
+    for msg in conversation[:keep_from_idx]:
+        role = msg.get("role")
+        if role == "tool":
+            # Compress tool results to a one-liner
+            content = msg.get("content", "")
+            # Estimate original size for the summary
+            orig_len = len(content)
+            # Take first 100 chars as preview
+            preview = content[:100].replace("\n", " ").strip()
+            if orig_len > 100:
+                preview += "..."
+            compacted.append({
+                "role": "tool",
+                "content": f"[Compacted — {orig_len} chars] {preview}",
+                **({"tool_call_id": msg["tool_call_id"]} if "tool_call_id" in msg else {}),
+            })
+        else:
+            # Keep assistant messages (reasoning text) and system messages as-is
+            compacted.append(msg)
+
+    # Reassemble: prefix + compacted older + recent full messages
+    return prefix + compacted + conversation[keep_from_idx:]
 
 
 def build_executor_narrative(messages: list[dict]) -> str:
@@ -433,6 +510,7 @@ class TaskExecutor:
         tool_call_names: list[str] = []
         final_response = ""
         wind_down_injected = False
+        self._force_complete_injected = False
 
         # Single continuous loop — LLM keeps full conversation history
         max_rounds = budget + 10  # generous round limit (text-only responses don't cost tools)
@@ -452,10 +530,42 @@ class TaskExecutor:
                 if on_token:
                     on_token("  [Budget warning injected]\n")
 
+            # Context compaction: if messages exceed 70% of context window,
+            # compress older tool results to prevent context overflow.
+            context_limit = endpoint.context_tokens or 65536
+            est_tokens = _estimate_messages_tokens(messages)
+            if est_tokens > int(context_limit * 0.7):
+                before = est_tokens
+                messages = _compact_messages(messages, keep_last_n=5)
+                after = _estimate_messages_tokens(messages)
+                logger.info("Context compacted: %d → %d tokens (saved %d)",
+                            before, after, before - after)
+                if on_token:
+                    on_token(f"  [Context compacted: {before} → {after} tokens]\n")
+
+            # Forced completion at 95%: strip all tools except task_complete
+            force_complete = (tool_call_count >= int(budget * 0.95)
+                              and tool_call_count < budget)
+            if force_complete and not getattr(self, '_force_complete_injected', False):
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "You have almost no tool calls left. You MUST call task_complete "
+                        "NOW with a summary of what you accomplished and what remains."
+                    ),
+                })
+                self._force_complete_injected = True
+                if on_token:
+                    on_token("  [Forced completion — only task_complete available]\n")
+
             # Stop offering tools once budget is exhausted
             iter_tools = None
             if tools and tool_call_count < budget:
-                iter_tools = self._tool_rules.filter_tools(tools, tool_call_names)
+                if force_complete:
+                    # Only offer task_complete
+                    iter_tools = [t for t in tools if t.get("function", {}).get("name") == "task_complete"]
+                else:
+                    iter_tools = self._tool_rules.filter_tools(tools, tool_call_names)
                 if not iter_tools:
                     iter_tools = None
 

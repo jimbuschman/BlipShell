@@ -1,6 +1,7 @@
 """Shell command execution tool with timeout and allowlist."""
 
 import asyncio
+import platform
 import shlex
 import sys
 
@@ -16,9 +17,18 @@ class ShellTool(Tool):
         self.cwd = cwd
 
     def definition(self) -> ToolDefinition:
+        os_name = platform.system()  # "Windows", "Linux", "Darwin"
+        os_hint = ""
+        if os_name == "Windows":
+            os_hint = " This is a Windows system — use Windows commands (dir, type, findstr), not Unix (ls, cat, grep)."
+        elif os_name == "Darwin":
+            os_hint = " This is macOS — use Unix commands."
+        else:
+            os_hint = f" This is {os_name} — use Unix commands."
+
         return ToolDefinition(
             name="run_command",
-            description="Run a shell command and return its output. Commands are validated against an allowlist.",
+            description=f"Run a shell command and return its output. Commands are validated against an allowlist.{os_hint}",
             parameters=[
                 ToolParameter(name="command", type=ToolParameterType.STRING,
                               description="The shell command to execute"),
@@ -67,7 +77,14 @@ class ShellTool(Tool):
             if process.returncode != 0:
                 result_parts.append(f"Exit code: {process.returncode}")
 
-            return "\n".join(result_parts) if result_parts else "(no output)"
+            result = "\n".join(result_parts) if result_parts else "(no output)"
+
+            # Cap output to prevent context blowup from large stack traces etc.
+            max_chars = 8000
+            if len(result) > max_chars:
+                result = result[:max_chars] + f"\n... [truncated — {len(result)} total chars]"
+
+            return result
 
         except Exception as e:
             return f"Error executing command: {e}"

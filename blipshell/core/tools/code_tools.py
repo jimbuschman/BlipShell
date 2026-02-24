@@ -84,7 +84,11 @@ class GrepTool(Tool):
             for line_num, line in enumerate(text.splitlines(), 1):
                 if regex.search(line):
                     rel = self._rel_path(file_path)
-                    matches.append(f"{rel}:{line_num}: {line.rstrip()}")
+                    # Cap individual lines to prevent huge matches from blowing up context
+                    line_text = line.rstrip()
+                    if len(line_text) > 200:
+                        line_text = line_text[:200] + "..."
+                    matches.append(f"{rel}:{line_num}: {line_text}")
                     if len(matches) >= max_results:
                         return "\n".join(matches) + f"\n... (truncated at {max_results} results)"
 

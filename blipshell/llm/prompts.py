@@ -393,6 +393,12 @@ def executor_system_prompt() -> str:
     Behavioral rules go in the system prompt (not the user message).
     Kept to 5 critical rules — weaker models can't track 15+ constraints.
     """
+    import platform
+    os_name = platform.system()
+    os_note = ""
+    if os_name == "Windows":
+        os_note = "\n\nNote: This is a Windows system. Use Windows-compatible commands (dir, type, findstr) — not Unix commands (ls, cat, grep)."
+
     return (
         "You are a coding assistant. You complete tasks by using tools to read, "
         "edit, and create files. You have access to the full project codebase.\n\n"
@@ -408,6 +414,7 @@ def executor_system_prompt() -> str:
         "1. read_file to understand existing code\n"
         "2. edit_file or write_file to make changes\n"
         "3. task_complete with summary"
+        + os_note
     )
 
 
