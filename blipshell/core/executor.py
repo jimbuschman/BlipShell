@@ -373,11 +373,16 @@ class TaskExecutor:
         if self.active_project:
             self._tool_rules = create_coding_rules()
 
-        # Wire file cache into ReadFileTool
+        # Wire file cache AND files_read into ReadFileTool so it can detect
+        # re-reads and serve cached content instead of re-reading from disk.
+        # Without this, the executor's files_read set and the tool's set are
+        # disconnected — the tool never sees what the executor already read.
         self._file_cache.clear()
+        self.files_read.clear()
         read_tool = self.tool_registry.get_tool("read_file")
         if read_tool is not None:
             read_tool.file_cache = self._file_cache
+            read_tool.files_read = self.files_read
 
         # Build system prompt — use executor-specific prompt with rules,
         # not the generic agent system prompt (which is for chat)
@@ -532,12 +537,6 @@ class TaskExecutor:
                 final_response = content
                 if on_token:
                     on_token(f"  [No tool calls — treating as complete]\n")
-                break
-
-            # Legacy fallback: check for TASK_COMPLETE in text (remove once tool is proven)
-            if "TASK_COMPLETE" in (content or ""):
-                parts = content.split("TASK_COMPLETE", 1)
-                final_response = parts[1].strip() if len(parts) > 1 else content
                 break
 
             # Empty response — model is stuck

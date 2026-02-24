@@ -199,8 +199,9 @@ def create_default_rules() -> ToolRuleEngine:
     engine.add_rule(CooldownRule("glob_files", cooldown=1))
     engine.add_rule(CooldownRule("list_directory", cooldown=1))
 
-    # git_commit is terminal — after committing, the task is done
+    # Terminal actions — after these, the task is done
     engine.add_rule(TerminalRule("git_commit"))
+    engine.add_rule(TerminalRule("task_complete"))
 
     return engine
 
@@ -227,5 +228,6 @@ def create_coding_rules() -> ToolRuleEngine:
 
     # Terminal actions
     engine.add_rule(TerminalRule("git_commit"))
+    engine.add_rule(TerminalRule("task_complete"))
 
     return engine
