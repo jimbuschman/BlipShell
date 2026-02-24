@@ -510,12 +510,10 @@ async def chat_loop(
                 console.print(Markdown(response))
             else:
                 console.print()  # newline after streaming
-                # If the final response differs from what was streamed
-                # (e.g., task_complete summary after tool call progress),
-                # display it so the user sees the result.
-                streamed = "".join(response_parts).strip()
-                if response and response.strip() and response.strip() != streamed:
-                    console.print()
+                # If this was a planned execution (force_plan / !plan), the
+                # streamed content is tool call progress, not the final result.
+                # Always show the result so the user sees the summary.
+                if response and response.strip():
                     console.print(Panel(
                         Markdown(response),
                         title="Result",
