@@ -75,6 +75,10 @@ class MemorySearch:
             self.fts_weight = config.fts_weight
             self.entity_boost = config.entity_boost
             self.project_boost = getattr(config, "project_boost", 0.15)
+            self.score_floor_ratio = getattr(config, "score_floor_ratio", 0.6)
+            self.min_score_floor = getattr(config, "min_score_floor", 0.4)
+            self.dedup_jaccard_threshold = getattr(config, "dedup_jaccard_threshold", 0.65)
+            self.project_session_limit = getattr(config, "project_session_limit", 50)
         else:
             self.min_rank = min_rank
             self.search_limit = search_limit
@@ -87,6 +91,10 @@ class MemorySearch:
             self.fts_weight = 0.3
             self.entity_boost = 0.15
             self.project_boost = 0.15
+            self.score_floor_ratio = 0.6
+            self.min_score_floor = 0.4
+            self.dedup_jaccard_threshold = 0.65
+            self.project_session_limit = 50
         self.last_search_stats: dict | None = None
 
     async def search(
@@ -118,20 +126,52 @@ class MemorySearch:
             self.last_search_stats = {"chroma_hits": 0, "fts_hits": 0, "entity_hits": 0, "post_filter": 0, "final_returned": 0, "skipped": "noise_filter"}
             return []
 
-        # Pre-load project session IDs for boosting
+        # Pre-load project session IDs for boosting / two-pass search
         project_session_ids: set[int] = set()
+        project_hits = 0
         if active_project:
-            project_session_ids = await self.sqlite.get_session_ids_for_project(active_project)
+            all_project_sids = await self.sqlite.get_session_ids_for_project(active_project)
+            # Limit to most recent N sessions for performant ChromaDB $in filter
+            if len(all_project_sids) > self.project_session_limit:
+                sorted_sids = sorted(all_project_sids, reverse=True)
+                project_session_ids = set(sorted_sids[:self.project_session_limit])
+            else:
+                project_session_ids = all_project_sids
 
-        # Step 2: ChromaDB semantic search
-        chroma_results = self.chroma.search_memories(
-            query=query,
-            n_results=n_results * self.search_overfetch_multiplier,
-        )
+        overfetch = n_results * self.search_overfetch_multiplier
+
+        # Step 2: ChromaDB semantic search — two-pass when project is active
+        chroma_results: list[dict] = []
+        if project_session_ids:
+            # Pass 1: Project-only memories
+            project_filter = {"session_id": {"$in": [str(sid) for sid in project_session_ids]}}
+            project_chroma = self.chroma.search_memories(
+                query=query, n_results=overfetch, where=project_filter,
+            )
+            # Mark project hits for later boosting
+            project_chroma_ids = set()
+            for cr in project_chroma:
+                cr["_project_hit"] = True
+                project_chroma_ids.add(cr["id"])
+            chroma_results.extend(project_chroma)
+            project_hits = len(project_chroma)
+
+            # Pass 2: General (unfiltered) — backfill, dedup by ID
+            general_chroma = self.chroma.search_memories(
+                query=query, n_results=overfetch,
+            )
+            for cr in general_chroma:
+                if cr["id"] not in project_chroma_ids:
+                    chroma_results.append(cr)
+        else:
+            # No project — single-pass search
+            chroma_results = self.chroma.search_memories(
+                query=query, n_results=overfetch,
+            )
 
         # Step 2b: FTS5 keyword search
         fts_results = await self.sqlite.search_fts(
-            query, limit=n_results * self.search_overfetch_multiplier,
+            query, limit=overfetch,
         )
 
         # Build RRF (Reciprocal Rank Fusion) scores from both result lists
@@ -150,21 +190,25 @@ class MemorySearch:
                 chroma_results.append({"id": fr["id"], "similarity": 0.0, "metadata": {}})
 
         if not chroma_results:
-            self.last_search_stats = {"chroma_hits": 0, "fts_hits": len(fts_results), "entity_hits": 0, "post_filter": 0, "final_returned": 0}
+            self.last_search_stats = {"chroma_hits": 0, "fts_hits": len(fts_results), "entity_hits": 0, "project_hits": 0, "post_filter": 0, "floor_dropped": 0, "dedup_dropped": 0, "final_returned": 0}
             return []
 
         # Tag the query (pure regex, <1ms)
         query_tags = set(tag_message(query))
 
-        # Collect candidate memory IDs for batch tag loading
+        # Collect candidate memory IDs for batch loading
         candidate_ids = [cr["id"] for cr in chroma_results]
         tags_by_memory = await self.sqlite.get_tags_for_memories(candidate_ids)
+
+        # Batch-load all candidate memories (single query instead of N individual ones)
+        memories_batch = await self.sqlite.get_memories_batch(candidate_ids)
 
         # Step 4+5: Filter and boost
         results = []
         filtered_by_similarity = 0
         filtered_by_session = 0
         filtered_by_rank = 0
+        now = datetime.now(timezone.utc)
         for cr in chroma_results:
             memory_id = cr["id"]
             similarity = cr["similarity"]
@@ -180,8 +224,8 @@ class MemorySearch:
                 filtered_by_session += 1
                 continue
 
-            # Load full memory from SQLite for rank check
-            memory = await self.sqlite.get_memory(memory_id)
+            # Load full memory from batch
+            memory = memories_batch.get(memory_id)
             if not memory:
                 continue
 
@@ -191,7 +235,6 @@ class MemorySearch:
                 continue
 
             # Temporal decay — per-type rates so facts persist longer than events
-            now = datetime.now(timezone.utc)
             mem_ts = memory.timestamp if memory.timestamp.tzinfo else memory.timestamp.replace(tzinfo=timezone.utc)
             hours_age = (now - mem_ts).total_seconds() / 3600
             mem_type = memory.memory_type.value if memory.memory_type else "conversation"
@@ -260,6 +303,42 @@ class MemorySearch:
 
         # Step 7: Sort by boosted score
         results.sort(key=lambda r: r.boosted_score, reverse=True)
+
+        # Step 8: Score floor — drop low-quality results
+        floor_dropped = 0
+        if results:
+            top_score = results[0].boosted_score
+            floor = max(top_score * self.score_floor_ratio, self.min_score_floor)
+            floored = []
+            for r in results:
+                if r.boosted_score >= floor:
+                    floored.append(r)
+                else:
+                    floor_dropped += 1
+            results = floored
+
+        # Step 9: Jaccard dedup on summaries — remove near-duplicate results
+        dedup_dropped = 0
+        if results and self.dedup_jaccard_threshold < 1.0:
+            deduped = []
+            accepted_word_sets: list[set[str]] = []
+            for r in results:
+                words = set(r.summary.lower().split())
+                is_dup = False
+                for accepted_ws in accepted_word_sets:
+                    union = len(words | accepted_ws)
+                    if union > 0:
+                        jaccard = len(words & accepted_ws) / union
+                        if jaccard > self.dedup_jaccard_threshold:
+                            is_dup = True
+                            break
+                if is_dup:
+                    dedup_dropped += 1
+                else:
+                    deduped.append(r)
+                    accepted_word_sets.append(words)
+            results = deduped
+
         final = results[:n_results]
 
         # Record access for returned memories (reinforces frequently recalled items)
@@ -277,10 +356,13 @@ class MemorySearch:
             "entity_hits": len(entity_memory_ids),
             "entity_names": matched_entity_names,
             "connected_entities": connected_entity_count,
+            "project_hits": project_hits,
             "filtered_by_similarity": filtered_by_similarity,
             "filtered_by_rank": filtered_by_rank,
             "filtered_by_session": filtered_by_session,
-            "post_filter": len(results),
+            "post_filter": len(results) + floor_dropped + dedup_dropped,
+            "floor_dropped": floor_dropped,
+            "dedup_dropped": dedup_dropped,
             "final_returned": len(final),
         }
 

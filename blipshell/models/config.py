@@ -126,6 +126,10 @@ class MemoryConfig(BaseModel):
     entity_extraction_batch_size: int = 50  # memories processed per startup run
     entity_boost: float = 0.15  # boost for memories found via entity graph
     project_boost: float = 0.15  # boost for memories from active project sessions
+    score_floor_ratio: float = 0.6  # results must be within this ratio of top score
+    min_score_floor: float = 0.4  # absolute minimum boosted_score to keep
+    dedup_jaccard_threshold: float = 0.65  # Jaccard similarity to consider summaries duplicate
+    project_session_limit: int = 50  # max recent project sessions for two-pass search
     dedup: DedupConfig = DedupConfig()
     entity_resolution: EntityResolutionConfig = EntityResolutionConfig()
 

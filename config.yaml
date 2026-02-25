@@ -117,6 +117,11 @@ memory:
     llm_arbitration_threshold: 0.70       # ask LLM between this and auto_merge
     max_candidates: 5
 
+  score_floor_ratio: 0.6        # results must be within 60% of the top score
+  min_score_floor: 0.4          # absolute minimum boosted_score to keep
+  dedup_jaccard_threshold: 0.65 # Jaccard similarity to consider summaries duplicate
+  project_session_limit: 50     # max recent project sessions for two-pass search
+
   auto_prune_days: 90
   prune_max_importance: 0.3
   prune_max_rank: 2

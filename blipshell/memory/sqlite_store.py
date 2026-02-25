@@ -610,6 +610,17 @@ class SQLiteStore:
             return None
         return self._row_to_memory(row)
 
+    async def get_memories_batch(self, memory_ids: list[int]) -> dict[int, "Memory"]:
+        """Get multiple memories by ID in a single query."""
+        if not memory_ids:
+            return {}
+        placeholders = ",".join("?" for _ in memory_ids)
+        cursor = await self._db.execute(
+            f"SELECT * FROM memories WHERE id IN ({placeholders})", memory_ids,
+        )
+        rows = await cursor.fetchall()
+        return {row["id"]: self._row_to_memory(row) for row in rows}
+
     def _row_to_memory(self, row) -> Memory:
         # access_count / last_accessed may not exist in very old DBs
         try:
