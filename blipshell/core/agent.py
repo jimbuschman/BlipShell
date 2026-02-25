@@ -19,7 +19,7 @@ from typing import AsyncIterator, Callable, Optional
 from blipshell.core.background import BackgroundTaskManager
 from blipshell.core.config import ConfigManager
 from blipshell.core.executor import TaskExecutor, build_executor_narrative
-from blipshell.core.planner import ComplexityClassifier, TaskPlanner
+from blipshell.core.planner import TaskPlanner
 from blipshell.core.repo_map import RepoMap
 from blipshell.core.tool_rules import ToolRuleEngine, create_coding_rules, create_default_rules
 from blipshell.core.tools.base import ToolRegistry
@@ -115,7 +115,6 @@ class Agent:
         self._tool_rules: ToolRuleEngine = create_default_rules()
 
         # Task planning + execution (Phase 1)
-        self.complexity_classifier: Optional[ComplexityClassifier] = None
         self.task_planner: Optional[TaskPlanner] = None
         self.task_executor: Optional[TaskExecutor] = None
 
@@ -203,8 +202,9 @@ class Agent:
             summary_chunk_size=self.config.session.summary_chunk_size,
         )
 
-        # Task planner + executor (Phase 1)
-        self.complexity_classifier = ComplexityClassifier(self.config.planner)
+        # Task planner + executor
+        # NOTE: ComplexityClassifier removed — model decides its own complexity.
+        # !plan CLI prefix sets force_plan=True directly. See git history for heuristic.
         self.task_planner = TaskPlanner(
             self.router, self.sqlite, self.config.planner,
         )
@@ -333,6 +333,61 @@ class Agent:
             logger.info("Sweep complete: %d/%d processed", processed, len(unprocessed))
         except Exception as e:
             logger.warning("Startup sweep error (non-fatal): %s", e)
+
+    async def night_cleanup(
+        self,
+        on_status: Callable[[str], None] | None = None,
+        timeout_per_message: int = 120,
+    ) -> dict:
+        """Reprocess failed messages with relaxed timeouts.
+
+        Unlike the startup sweep (30s, limit 50), this uses 120s per message
+        and processes up to 500 messages. Designed for manual/scheduled runs
+        when the system isn't under interactive load.
+
+        Returns:
+            Dict with processed, failed, total counts.
+        """
+        def _status(msg: str):
+            if on_status:
+                on_status(msg)
+            logger.info("Night cleanup: %s", msg)
+
+        _status("Fetching unprocessed messages...")
+        unprocessed = await self.sqlite.get_unprocessed_messages(limit=500)
+        if not unprocessed:
+            _status("No unprocessed messages found.")
+            return {"processed": 0, "failed": 0, "total": 0}
+
+        _status(f"Found {len(unprocessed)} unprocessed messages, reprocessing with {timeout_per_message}s timeout...")
+        processed = 0
+        failed = 0
+        for i, msg in enumerate(unprocessed):
+            _status(f"Processing message {i + 1}/{len(unprocessed)} (id={msg['id']})...")
+            try:
+                await asyncio.wait_for(
+                    self.processor.process_message(
+                        text=msg["content"],
+                        role=msg["role"],
+                        session_id=msg["session_id"],
+                    ),
+                    timeout=timeout_per_message,
+                )
+                await self.sqlite.mark_message_processed(msg["id"])
+                processed += 1
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Night cleanup: message %d timed out after %ds",
+                    msg["id"], timeout_per_message,
+                )
+                failed += 1
+            except Exception as e:
+                logger.warning("Night cleanup: message %d failed: %s", msg["id"], e)
+                failed += 1
+
+        result = {"processed": processed, "failed": failed, "total": len(unprocessed)}
+        _status(f"Done: {processed}/{len(unprocessed)} processed, {failed} failed")
+        return result
 
     def _register_tools(self):
         """Register all tools with their group for selective inclusion."""
@@ -467,10 +522,7 @@ class Agent:
                 name, settings_json=json.dumps(settings),
             )
 
-        # Sync planner + executor with project state so plan generation
-        # and step execution use the correct model/context
-        if self.task_planner:
-            self.task_planner.active_project = self.active_project
+        # Sync executor with project state
         if self.task_executor:
             self.task_executor.active_project = self.active_project
             self.task_executor.project_context = self._project_context
@@ -502,9 +554,7 @@ class Agent:
         self.tool_registry.unregister("ask_user")
         self.tool_registry.unregister("task_complete")
 
-        # Clear planner + executor project state
-        if self.task_planner:
-            self.task_planner.active_project = None
+        # Clear executor project state
         if self.task_executor:
             self.task_executor.active_project = None
             self.task_executor.project_context = ""
@@ -1096,8 +1146,9 @@ class Agent:
         # Add user message to session
         self.session_manager.add_message(MessageRole.USER, user_message)
 
-        # Decide execution path
-        needs_planning = force_plan or self.complexity_classifier.needs_planning(user_message)
+        # Decide execution path — only force_plan triggers the executor.
+        # The model handles complexity naturally through the unified chat loop.
+        needs_planning = force_plan
 
         # Event: turn_start
         self._turn_number += 1
@@ -1618,32 +1669,27 @@ class Agent:
 
             system_prompt += (
                 "\n\n--- PROJECT CONTEXT ---\n"
-                f"You are working on the project \"{self.active_project['name']}\".\n"
-                f"Project root: {root_path}\n"
-                "All file tools (read_file, write_file, edit_file, list_directory) resolve "
-                "relative paths against this project root. Use relative paths like "
-                "'blipshell/ui/cli.py', NOT absolute paths.\n"
-                "The run_command tool also runs from the project root.\n\n"
-                "INTERACTION MODE:\n"
-                "- When the user is discussing, asking questions, or exploring ideas — just have a conversation.\n"
-                "- When the user asks you to make changes, create files, or implement something — use your tools.\n"
-                "- For non-trivial changes, briefly describe your approach before starting.\n"
-                "- Ask clarifying questions if requirements are ambiguous — don't guess.\n"
-                "- You have tools available but do NOT use them unless the user is requesting action.\n\n"
-                "TOOL DISCIPLINE:\n"
-                "- Read a file ONCE, then use what you learned. Do NOT re-read files.\n"
-                "- List a directory ONCE. Do NOT re-list directories.\n"
-                "- Do NOT run the same grep or glob search twice.\n"
-                "- Always read a file before editing it.\n"
-                "- Use grep_files/glob_files tools, NOT shell grep/find/wc.\n"
-                "- NEVER launch interactive or full-screen apps via run_command (TUI, curses, Textual .run()). They destroy the terminal.\n"
-                "- NEVER create documentation files (.md, README) unless explicitly asked.\n"
-                f"- Target UNDER {tool_limit} tool calls per task. Read, write, test — do not explore endlessly.\n\n"
-                "PLATFORM: Windows.\n"
-                f"- Project root: {root_path}\n"
-                "- Do NOT use Linux commands (ls, cat, grep, head, tail, find, wc) in shell.\n"
-                "- Use 'dir' not 'ls', 'type' not 'cat'. Or better: use the file/grep/glob tools.\n"
-                "- Do NOT use 'cd' in run_command — it already runs from the project root.\n\n"
+                f"Project: \"{self.active_project['name']}\" at {root_path}\n"
+                "File tools resolve relative paths against this root.\n\n"
+                "# How to Respond\n"
+                "Answer questions conversationally. Only use tools when the user asks you "
+                "to create, modify, find, or run something.\n\n"
+                "Examples:\n"
+                '- "How does search work?" -> Answer from context/memory. No tools.\n'
+                '- "What do you think about X?" -> Conversation. No tools.\n'
+                '- "Create hello.py" -> Use write_file.\n'
+                '- "Find files that import asyncio" -> Use grep_files.\n'
+                '- "Fix the bug in search.py" -> Use read_file, then edit_file.\n\n'
+                "# Rules\n"
+                "- Do NOT narrate your process. Never say 'Let me read...' — just do it or answer.\n"
+                "- Read a file ONCE. Do not re-read files you already have.\n"
+                "- Always read before editing.\n"
+                "- Use grep_files/glob_files, not shell grep/find.\n"
+                "- Do NOT launch interactive apps via run_command.\n"
+                f"- Target under {tool_limit} tool calls. Do not explore endlessly.\n\n"
+                "# Platform: Windows\n"
+                "Use 'dir' not 'ls', 'type' not 'cat'. Or better: use file tools directly.\n"
+                "run_command already runs from the project root.\n\n"
             )
 
             # Add model-specific extra instructions

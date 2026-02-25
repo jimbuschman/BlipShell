@@ -69,12 +69,15 @@ class MemoryProcessor:
 
         Returns the memory ID, or None if filtered as noise.
         """
+        import time as _time
+
         # Step 1: Noise check
         if should_skip_memory(text):
             logger.debug("Skipping noise: %s", text[:50])
             return None
 
         # Step 2: Summarize
+        t0 = _time.monotonic()
         try:
             sum_system, sum_prompt = summarize_memory(text)
             summary = await self.router.generate(
@@ -89,6 +92,8 @@ class MemoryProcessor:
         except Exception as e:
             logger.error("Summarization failed, using raw text: %s", e)
             summary = text
+        t_summarize = _time.monotonic() - t0
+        logger.info("process_message: summarize=%.1fs", t_summarize)
 
         # Step 3: SQLite insert
         memory = Memory(
@@ -102,6 +107,7 @@ class MemoryProcessor:
         memory_id = await self.sqlite.create_memory(memory)
 
         # Step 4: ChromaDB embed (use summary for better semantic matching)
+        t0 = _time.monotonic()
         try:
             self.chroma.add_memory(memory_id, summary, {
                 "session_id": str(session_id),
@@ -109,9 +115,12 @@ class MemoryProcessor:
             })
         except Exception as e:
             logger.error("ChromaDB embed failed: %s", e)
+        t_embed = _time.monotonic() - t0
 
         # Step 4b: Dedup check — find similar memories, ask LLM what to do
+        t_dedup = 0.0
         if self._dedup_enabled:
+            t0 = _time.monotonic()
             try:
                 action = await self._decide_and_apply_action(memory_id, summary)
                 if action == "NONE":
@@ -125,6 +134,7 @@ class MemoryProcessor:
                     return None
             except Exception as e:
                 logger.error("Dedup check failed (continuing): %s", e)
+            t_dedup = _time.monotonic() - t0
 
         # Step 5: Tag
         try:
@@ -135,6 +145,7 @@ class MemoryProcessor:
             tags = []
 
         # Step 6+7: Combined rank (1-5) + importance (0.0-1.0) + type in one LLM call
+        t0 = _time.monotonic()
         try:
             ri_system, ri_prompt = rank_importance_and_classify(text)
             ri_text = await self.router.generate(
@@ -156,7 +167,13 @@ class MemoryProcessor:
             )
         except Exception as e:
             logger.error("Rank+importance+classify failed: %s", e)
+        t_rank = _time.monotonic() - t0
 
+        logger.info(
+            "process_message: summarize=%.1fs embed=%.1fs dedup=%.1fs rank=%.1fs total=%.1fs",
+            t_summarize, t_embed, t_dedup, t_rank,
+            t_summarize + t_embed + t_dedup + t_rank,
+        )
         return memory_id
 
     async def process_core_memory(

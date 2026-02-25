@@ -426,6 +426,8 @@ def executor_system_prompt() -> str:
         "- To ask the user a question → ask_user\n"
         "- To signal completion → task_complete (REQUIRED when done)\n"
         "\n# Critical Rules\n"
+        "- Do NOT narrate your thinking. Never say 'Let me read the file' or 'I need to check...' "
+        "— just call the tool or answer directly.\n"
         "- NEVER re-read a file you already read. Check the [STATE] block for files read.\n"
         "- NEVER use shell commands for file operations. Use the dedicated tools.\n"
         "- If something fails twice, use ask_user to get help instead of retrying blindly.\n"

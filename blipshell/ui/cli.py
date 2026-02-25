@@ -423,6 +423,9 @@ async def chat_loop(
                             continue
                     await _print_flow(agent, turn)
                     continue
+                elif cmd[0] == "cleanup":
+                    await _run_cleanup(agent)
+                    continue
                 elif cmd[0] == "changes":
                     _print_changes(agent)
                     continue
@@ -1347,6 +1350,23 @@ async def _print_health(agent: Agent, config, quick: bool = False):
         console.print("[dim](quick mode — ChromaDB sync skipped, use /health for full)[/dim]")
 
 
+async def _run_cleanup(agent: Agent):
+    """Reprocess failed messages with relaxed timeouts."""
+    from rich.status import Status
+
+    with Status("[bold cyan]Running cleanup...", console=console) as status:
+        def on_status(msg: str):
+            status.update(f"[bold cyan]{msg}")
+
+        result = await agent.night_cleanup(on_status=on_status)
+
+    console.print(
+        f"\n[bold green]Cleanup complete:[/bold green] "
+        f"{result['processed']}/{result['total']} processed, "
+        f"{result['failed']} failed"
+    )
+
+
 async def _print_flow(agent: Agent, turn: int | None = None):
     """Print conversation flow events for observability."""
     if not agent.sqlite or not agent.session_manager:
@@ -1751,6 +1771,7 @@ def _print_help():
         "[bold]/feedback <msg>[/bold]        - Save feedback as a lesson\n"
         "[bold]/offload <msg>[/bold]         - Run a task on remote PC in background\n"
         "[bold]/health[/bold] [dim][quick][/dim]          - Database + endpoint health check\n"
+        "[bold]/cleanup[/bold]               - Reprocess failed messages (relaxed timeouts)\n"
         "[bold]/flow[/bold] [dim][n][/dim]              - Show conversation flow events\n"
         "[bold]/plan[/bold]                  - Show current active plan\n"
         "[bold]/plans[/bold]                 - List all plans for this session\n"
