@@ -58,10 +58,13 @@ CANNED_TESTS = [
     {
         "name": "read_edit_flow",
         "task": (
-            "Read the file blipshell/core/tools/base.py, then add a one-line "
-            "comment '# test harness marker' at the very end of the file."
+            "Create a file called canned_test_scratch.py with the content:\n"
+            "def hello():\n"
+            "    return 'hello'\n\n"
+            "Then read it back, and use edit_file to add a second function "
+            "farewell() that returns 'goodbye'. Verify the file has valid syntax."
         ),
-        "expect_tools": ["read_file", "edit_file"],
+        "expect_tools": ["write_file", "read_file", "edit_file"],
         "expect_complete": True,
     },
 ]
