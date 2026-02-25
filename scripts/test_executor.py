@@ -94,8 +94,8 @@ STRESS_TESTS = [
         "name": "tool_read_file",
         "category": "tool_coverage",
         "task": (
-            "Use the read_file tool to read pyproject.toml. "
-            "Tell me the project name, version, and what build system it uses."
+            "Use the read_file tool to read blipshell/core/tools/shell.py. "
+            "Tell me what class it defines and what parameters __init__ takes."
         ),
         "expect_tools": ["read_file"],
         "expect_complete": True,
@@ -1295,9 +1295,16 @@ async def run_test_suite(
             if not ok:
                 passed = False
 
-        # Expected tools used
+        # Expected tools used (check both collector and flow events)
+        flow_tool_names = set()
+        for evt in report.get("flow_events", []):
+            if evt.get("type") == "llm_complete":
+                flow_tool_names.update(evt.get("data", {}).get("tool_calls", []))
         for expected_tool in test.get("expect_tools", []):
-            found = any(tc["name"] == expected_tool for tc in report["tool_calls"])
+            found = (
+                any(tc["name"] == expected_tool for tc in report["tool_calls"])
+                or expected_tool in flow_tool_names
+            )
             checks.append((f"used_{expected_tool}", found))
             if not found:
                 passed = False
