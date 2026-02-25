@@ -1920,6 +1920,34 @@ def web(ctx):
     )
 
 
+# --- Headless Test ---
+
+@main.command("test")
+@click.argument("task", required=False)
+@click.option("--project", "-p", default=None, help="Project to activate")
+@click.option("--output", "-o", default=None, help="Write JSON report to file")
+@click.option("--canned", is_flag=True, help="Run built-in test suite")
+@click.option("--quiet", "-q", is_flag=True, help="Suppress streaming output")
+@click.pass_context
+def test_cmd(ctx, task, project, output, canned, quiet):
+    """Run a headless test task and output JSON results."""
+    from scripts.test_executor import run_test, run_canned_tests
+
+    config_path = ctx.obj.get("config_path")
+
+    if canned:
+        asyncio.run(run_canned_tests(
+            project=project, config_path=config_path, quiet=quiet,
+        ))
+    elif task:
+        asyncio.run(run_test(
+            task=task, project=project, output_path=output,
+            config_path=config_path, quiet=quiet,
+        ))
+    else:
+        console.print("[yellow]Provide a task or use --canned[/yellow]")
+
+
 # --- ChatGPT Import ---
 
 @main.group("import-chatgpt")
