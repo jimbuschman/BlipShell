@@ -31,7 +31,13 @@ class ShellTool(Tool):
 
         return ToolDefinition(
             name="run_command",
-            description=f"Run a shell command and return its output. Commands are validated against an allowlist.{os_hint}",
+            description=(
+                f"Run a shell command and return its output. Commands are validated against an allowlist.{os_hint}\n\n"
+                "IMPORTANT:\n"
+                "- Commands time out after 30 seconds. Do NOT run interactive programs or servers.\n"
+                "- Do NOT try to launch the application being built — you cannot interact with it.\n"
+                "- Use this for quick checks: syntax validation, pip install, git, python -c '...', etc."
+            ),
             parameters=[
                 ToolParameter(name="command", type=ToolParameterType.STRING,
                               description="The shell command to execute"),
@@ -76,7 +82,11 @@ class ShellTool(Tool):
                 )
             except asyncio.TimeoutError:
                 process.kill()
-                return f"Error: Command timed out after {timeout} seconds."
+                return (
+                    f"Error: Command timed out after {timeout} seconds. "
+                    "The command likely started an interactive process or server. "
+                    "Do NOT retry — use a non-interactive alternative or skip this step."
+                )
 
             output = stdout.decode("utf-8", errors="replace").strip()
             errors = stderr.decode("utf-8", errors="replace").strip()
