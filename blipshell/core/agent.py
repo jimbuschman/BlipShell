@@ -1418,6 +1418,13 @@ class Agent:
                 memory_context = "Relevant memories from past sessions:\n"
                 for r in results:
                     memory_context += f"- {r.summary}\n"
+            # Log search results for /flow observability
+            await self._log_event("search_complete", {
+                "memory_results": len(results) if results else 0,
+                "lesson_results": 0,
+                "final_returned": len(results) if results else 0,
+                "skipped": None if results else "no results",
+            })
         except Exception as e:
             logger.error("Memory search for executor failed: %s", e)
 
@@ -1441,6 +1448,7 @@ class Agent:
                 on_token=on_token,
                 memory_context=memory_context,
                 chat_history=chat_history,
+                log_event=self._log_event,
             )
         except Exception as e:
             logger.error("Dynamic execution failed: %s", e)

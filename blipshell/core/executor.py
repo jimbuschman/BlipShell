@@ -438,6 +438,7 @@ class TaskExecutor:
         max_tool_calls: int = 0,
         memory_context: str = "",
         chat_history: list[dict] | None = None,
+        log_event: Optional[Callable] = None,
     ) -> str:
         """Execute a task dynamically — single continuous conversation.
 
@@ -449,6 +450,7 @@ class TaskExecutor:
             max_tool_calls: Tool call budget. 0 = use self.max_tool_iterations.
             memory_context: Relevant memories from past sessions (injected as system message).
             chat_history: Recent chat messages for design discussion context.
+            log_event: Optional async callback(event_type, data) for flow observability.
         """
         # Switch to coding rules if project is active
         if self.active_project:
@@ -509,6 +511,24 @@ class TaskExecutor:
 
         if on_step_start:
             on_step_start(1)
+
+        # Log executor context info for /flow observability
+        if log_event:
+            try:
+                memory_count = memory_context.count("\n- ") if memory_context else 0
+                await log_event("context_built", {
+                    "query_profile": "executor",
+                    "context_limit": endpoint.context_tokens or 65536,
+                    "available_tokens": (endpoint.context_tokens or 65536) - _estimate_messages_tokens(messages),
+                    "total_context_items": memory_count + len(chat_history or []),
+                    "pool_budgets": {"memory": memory_count, "chat_history": len(chat_history or [])},
+                    "pool_usage": {
+                        "memory": {"items": memory_count, "tokens": len(memory_context) // 4},
+                        "chat_history": {"items": len(chat_history or []), "tokens": sum(len(m.get("content", "") or "") // 4 for m in (chat_history or []))},
+                    },
+                })
+            except Exception:
+                pass
 
         tool_call_count = 0
         tool_call_names: list[str] = []
@@ -694,6 +714,24 @@ class TaskExecutor:
 
         # Store messages for narrative building
         self.last_messages = messages
+
+        # Log executor completion for /flow observability
+        if log_event:
+            try:
+                await log_event("llm_complete", {
+                    "endpoint": endpoint.name,
+                    "model": model,
+                    "fallback": False,
+                    "tool_calls": tool_call_names,
+                    "response_length": len(final_response or ""),
+                    "total_tool_calls": tool_call_count,
+                    "budget": budget,
+                    "files_read": len(self.files_read),
+                    "files_created": len(self._step_files_created),
+                    "files_edited": len(self._step_files_edited),
+                })
+            except Exception:
+                pass
 
         # Save transcript for reference
         if self.active_project:
