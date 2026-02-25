@@ -12,7 +12,20 @@ class WebSearchTool(Tool):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="web_search",
-            description="Search the web using DuckDuckGo and return results.",
+            description=(
+                "Search the web using DuckDuckGo and return results.\n\n"
+                "When to use:\n"
+                "- User asks a factual question you're not confident about\n"
+                "- User explicitly asks you to search or look something up\n"
+                "- You need current information (news, docs, releases, prices)\n\n"
+                "When NOT to use:\n"
+                "- Questions you can answer from memory or general knowledge\n"
+                "- Coding questions where you already know the answer\n\n"
+                "Tips:\n"
+                "- Use specific, concise queries (like you'd type into Google)\n"
+                "- Include the year for time-sensitive queries (e.g. 'Python 3.13 release date 2025')\n"
+                "- If the first search doesn't help, try rephrasing before giving up"
+            ),
             parameters=[
                 ToolParameter(name="query", type=ToolParameterType.STRING,
                               description="Search query"),
@@ -47,7 +60,19 @@ class WebFetchTool(Tool):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="web_fetch",
-            description="Fetch and extract text content from a web URL.",
+            description=(
+                "Fetch and extract text content from a web URL.\n\n"
+                "When to use:\n"
+                "- User gives you a specific URL to read\n"
+                "- You found a useful link in web_search results and need the full content\n\n"
+                "When NOT to use:\n"
+                "- To browse or explore — use web_search to find pages first\n"
+                "- For very large pages (documentation indexes, wikis) — content is truncated at 512KB\n\n"
+                "Notes:\n"
+                "- HTML is converted to plain text (scripts/nav/footers stripped)\n"
+                "- Times out after 15 seconds — some sites may be too slow\n"
+                "- Does not handle pages that require JavaScript rendering"
+            ),
             parameters=[
                 ToolParameter(name="url", type=ToolParameterType.STRING,
                               description="URL to fetch"),

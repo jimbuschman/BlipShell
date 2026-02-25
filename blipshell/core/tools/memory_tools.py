@@ -18,7 +18,19 @@ class SearchMemoriesTool(Tool):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="search_memories",
-            description="Search through past conversation memories using semantic similarity. Use this to recall past discussions, facts, or context.",
+            description=(
+                "Search through past conversation memories using semantic similarity.\n\n"
+                "IMPORTANT: Memories are AUTOMATICALLY searched before every response and loaded into your context. "
+                "Do NOT call this tool unless the user explicitly asks to search for something specific "
+                "(e.g. 'search for what I said about X' or 'find our conversation about Y').\n\n"
+                "When to use:\n"
+                "- User explicitly asks to recall or find a past conversation\n"
+                "- User says 'search memories for...' or 'do you remember when...'\n\n"
+                "When NOT to use:\n"
+                "- To answer a question — your context already has relevant memories\n"
+                "- To 'check' if you know something — just answer from context\n"
+                "- Before responding to any message — the system already did this for you"
+            ),
             parameters=[
                 ToolParameter(name="query", type=ToolParameterType.STRING,
                               description="Search query describing what you want to recall"),
@@ -59,7 +71,20 @@ class SaveCoreMemoryTool(Tool):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="save_core_memory",
-            description="Save an important fact, preference, or piece of information as a persistent core memory. Use this for information the user wants you to always remember.",
+            description=(
+                "Save an important, lasting fact about the user as a permanent core memory. "
+                "Core memories are always loaded into your context — use this sparingly.\n\n"
+                "When to use:\n"
+                "- User's name, job, location, or key personal details\n"
+                "- Stated preferences that affect how you should respond (e.g. 'I prefer concise answers')\n"
+                "- Important decisions or facts the user explicitly asks you to remember\n"
+                "- Skills, tools, or technologies the user works with regularly\n\n"
+                "When NOT to use:\n"
+                "- For conversation details — these are saved automatically as regular memories\n"
+                "- For temporary or situational information (e.g. 'I'm working on X today')\n"
+                "- If you're unsure whether it's important — it probably isn't\n"
+                "- For information already in your context from a previous core memory"
+            ),
             parameters=[
                 ToolParameter(name="content", type=ToolParameterType.STRING,
                               description="The information to remember permanently"),
@@ -121,9 +146,15 @@ class PromoteToCoreMemoryTool(Tool):
         return ToolDefinition(
             name="promote_to_core_memory",
             description=(
-                "Promote an existing memory or lesson to a permanent core memory. "
-                "Use this when you find a memory or lesson that contains critical information "
-                "that should always be available (user preferences, key facts, important patterns)."
+                "Promote an existing memory or lesson to a permanent core memory.\n\n"
+                "When to use:\n"
+                "- A search result or loaded memory contains a key fact that should always be available\n"
+                "- A lesson learned from a past session is broadly useful (not just project-specific)\n\n"
+                "When NOT to use:\n"
+                "- To save NEW information — use save_core_memory instead\n"
+                "- If the information is already a core memory — check your context first\n"
+                "- For project-specific details that are only relevant during that project\n\n"
+                "Requires the source_id from a memory or lesson you've seen in search results or context."
             ),
             parameters=[
                 ToolParameter(name="source_type", type=ToolParameterType.STRING,
