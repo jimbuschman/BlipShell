@@ -105,10 +105,13 @@ STRESS_TESTS = [
         "name": "tool_edit_file",
         "category": "tool_coverage",
         "task": (
-            "Read the file blipshell/__init__.py, then use edit_file to add a "
-            "comment '# Stress test edit marker' as the very last line."
+            "Create a file called stress_test_edit_target.py with this content:\n"
+            "def hello():\n"
+            "    return 'hello'\n\n"
+            "Then read it back, and use edit_file to change 'hello' to 'world' "
+            "in the return statement."
         ),
-        "expect_tools": ["read_file", "edit_file"],
+        "expect_tools": ["write_file", "read_file", "edit_file"],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -178,6 +181,29 @@ STRESS_TESTS = [
         "expect_complete": True,
         "force_plan": True,
     },
+    {
+        "name": "tool_search_memories",
+        "category": "tool_coverage",
+        "task": (
+            "Search your memories for anything related to 'Python programming' "
+            "using the search_memories tool. Report what you find."
+        ),
+        "expect_tools": ["search_memories"],
+        "expect_complete": True,
+        "force_plan": True,
+    },
+    {
+        "name": "tool_ask_user",
+        "category": "tool_coverage",
+        "task": (
+            "I need you to create a Python file, but I haven't told you what to put in it. "
+            "Use ask_user to ask me what the file should contain and what to name it. "
+            "Then create the file based on the answer."
+        ),
+        "expect_tools": ["ask_user", "write_file"],
+        "expect_complete": True,
+        "force_plan": True,
+    },
 
     # ======================================================================
     # Category 2: Multi-step Tasks -- chains of 3+ tools
@@ -200,11 +226,15 @@ STRESS_TESTS = [
         "name": "multi_grep_read_edit",
         "category": "multi_step",
         "task": (
-            "First, use grep_files to find which file contains the class 'StreamCollector'. "
+            "First, create a file stress_test_grep_target.py with:\n"
+            "class MyService:\n"
+            "    def run(self):\n"
+            "        pass\n\n"
+            "Then use grep_files to find which file contains 'class MyService'. "
             "Then read that file. Then use edit_file to add a one-line comment "
             "'# Found by stress test' right above the class definition line."
         ),
-        "expect_tools": ["grep_files", "read_file", "edit_file"],
+        "expect_tools": ["write_file", "grep_files", "read_file", "edit_file"],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -380,11 +410,13 @@ STRESS_TESTS = [
         "name": "scaffold_prefer_edit_over_write",
         "category": "scaffolding",
         "task": (
-            "Read stress_test_output.py (created by an earlier test). "
-            "Add a new function called farewell(name) that returns f'Goodbye, {name}!'. "
-            "Use edit_file, NOT write_file — the file already exists."
+            "Create a file stress_test_edit_pref.py with:\n"
+            "def greet():\n"
+            "    return 'hi'\n\n"
+            "Then read it back. Now add a second function farewell() that returns "
+            "'goodbye'. Use edit_file to add it, NOT write_file — the file already exists."
         ),
-        "expect_tools": ["read_file", "edit_file"],
+        "expect_tools": ["write_file", "read_file", "edit_file"],
         "expect_complete": True,
         "force_plan": True,
     },
