@@ -172,6 +172,8 @@ tools:
       - "cargo"
       - "make"
       - "cmake"
+      - "powershell"
+      - "pwsh"
   filesystem:
     max_file_size: 1048576  # 1MB
     blocked_paths:

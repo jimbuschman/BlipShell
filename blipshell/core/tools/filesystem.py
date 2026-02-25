@@ -178,7 +178,7 @@ class WriteFileTool(Tool):
     async def execute(self, path: str = "", content: str = "", **kwargs) -> str:
         if not path:
             return "Error: 'path' argument is required."
-        if not content:
+        if content is None:
             return "Error: 'content' argument is required — provide the file content to write."
         resolved = self._resolve(path)
         if any(blocked in str(resolved) for blocked in self.blocked_paths):

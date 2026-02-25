@@ -168,7 +168,7 @@ class ShellToolConfig(BaseModel):
     allowed_commands: list[str] = Field(default_factory=lambda: [
         "ls", "dir", "cat", "type", "echo", "pwd", "cd", "find", "grep",
         "head", "tail", "wc", "sort", "python", "pip", "git", "node", "npm",
-        "cargo", "make", "cmake",
+        "cargo", "make", "cmake", "powershell", "pwsh",
     ])
 
 
