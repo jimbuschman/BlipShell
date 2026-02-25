@@ -1,7 +1,6 @@
 """Tool base class and registry for native Ollama tool calling."""
 
 import logging
-import re
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Awaitable, Optional
@@ -12,37 +11,6 @@ from blipshell.models.tools import ToolCall, ToolDefinition, ToolParameter, Tool
 ApprovalCallback = Callable[[str, dict[str, Any]], Awaitable[bool]]
 
 logger = logging.getLogger(__name__)
-
-# Keyword patterns for detecting which tool groups a message needs.
-# If none match, no tools are passed (pure conversation = fast).
-TOOL_GROUP_PATTERNS: dict[str, re.Pattern] = {
-    "filesystem": re.compile(
-        r"\b(read|write|edit|create|open|save|file|folder|directory|list\s+dir|ls\b|"
-        r"cat\b|path|\.py\b|\.js\b|\.ts\b|\.txt\b|\.json\b|\.yaml\b|\.md\b|\.csv\b)",
-        re.IGNORECASE,
-    ),
-    "shell": re.compile(
-        r"\b(run|execute|command|shell|terminal|pip\b|git\b|npm\b|python\b|"
-        r"install|compile|build|make\b|cargo\b|cmake\b)",
-        re.IGNORECASE,
-    ),
-    "web": re.compile(
-        r"\b(search|google|look\s*up|web|fetch|url|http|browse|website|online)",
-        re.IGNORECASE,
-    ),
-    "memory": re.compile(
-        r"\b(remember|recall|forgot|memory|memories|session|previous|last\s+time|"
-        r"we\s+talked|you\s+said|i\s+told\s+you|do\s+you\s+know|save\s+this)",
-        re.IGNORECASE,
-    ),
-    "coding": re.compile(
-        r"\b(grep|glob|search\s+(for|files|code)|refactor|implement|function\s|class\s|"
-        r"import\s|variable|bug|fix\s|test|commit|branch|merge|diff|lint|"
-        r"type\s+error|add\s+a\s|remove\s+the|rename|move\s+the|update\s+the)",
-        re.IGNORECASE,
-    ),
-}
-
 
 class Tool(ABC):
     """Abstract base class for tools.
@@ -63,19 +31,6 @@ class Tool(ABC):
     def to_ollama_tool(self) -> dict:
         """Convert to Ollama's native tool format."""
         return self.definition().to_ollama_tool()
-
-
-def detect_tool_groups(message: str) -> set[str]:
-    """Detect which tool groups a message might need based on keywords.
-
-    Returns a set of group names like {"filesystem", "shell"}, or empty set
-    if the message is pure conversation (no tools needed).
-    """
-    groups = set()
-    for group, pattern in TOOL_GROUP_PATTERNS.items():
-        if pattern.search(message):
-            groups.add(group)
-    return groups
 
 
 class ToolRegistry:
