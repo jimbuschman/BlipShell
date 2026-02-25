@@ -1926,18 +1926,25 @@ def web(ctx):
 @click.argument("task", required=False)
 @click.option("--project", "-p", default=None, help="Project to activate")
 @click.option("--output", "-o", default=None, help="Write JSON report to file")
-@click.option("--canned", is_flag=True, help="Run built-in test suite")
+@click.option("--canned", is_flag=True, help="Quick test suite (~5 min)")
+@click.option("--stress", is_flag=True, help="Full stress suite (~1-2 hours)")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress streaming output")
 @click.pass_context
-def test_cmd(ctx, task, project, output, canned, quiet):
+def test_cmd(ctx, task, project, output, canned, stress, quiet):
     """Run a headless test task and output JSON results."""
-    from scripts.test_executor import run_test, run_canned_tests
+    from scripts.test_executor import run_test, run_canned_tests, run_stress_tests
 
     config_path = ctx.obj.get("config_path")
 
-    if canned:
+    if stress:
+        asyncio.run(run_stress_tests(
+            project=project, config_path=config_path,
+            output_path=output, quiet=quiet,
+        ))
+    elif canned:
         asyncio.run(run_canned_tests(
-            project=project, config_path=config_path, quiet=quiet,
+            project=project, config_path=config_path,
+            output_path=output, quiet=quiet,
         ))
     elif task:
         asyncio.run(run_test(
@@ -1945,7 +1952,7 @@ def test_cmd(ctx, task, project, output, canned, quiet):
             config_path=config_path, quiet=quiet,
         ))
     else:
-        console.print("[yellow]Provide a task or use --canned[/yellow]")
+        console.print("[yellow]Provide a task, or use --canned or --stress[/yellow]")
 
 
 # --- ChatGPT Import ---
