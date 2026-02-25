@@ -12,6 +12,7 @@ Extended with:
 import asyncio
 import json
 import logging
+import os
 import time
 from datetime import datetime
 from typing import AsyncIterator, Callable, Optional
@@ -1690,6 +1691,13 @@ class Agent:
                 "# Platform: Windows\n"
                 "Use 'dir' not 'ls', 'type' not 'cat'. Or better: use file tools directly.\n"
                 "run_command already runs from the project root.\n\n"
+                "# Scratchpad\n"
+                "You have a scratchpad file for persistent working notes across sessions.\n"
+                f"- Project: data/scratchpad_{self.active_project['name']}.md\n"
+                "- General: data/scratchpad.md\n"
+                "Use edit_file or write_file to update it. Good for: decisions made, current plan, "
+                "TODOs, context that should survive across conversations.\n"
+                "Do NOT dump everything there — only things you'd want to remember next session.\n\n"
             )
 
             # Add model-specific extra instructions
@@ -1701,6 +1709,11 @@ class Agent:
         messages = [
             {"role": "system", "content": system_prompt},
         ]
+
+        # Inject scratchpad content (persistent working notes)
+        scratchpad = self._read_scratchpad()
+        if scratchpad:
+            messages.append({"role": "system", "content": f"--- SCRATCHPAD ---\n{scratchpad}"})
 
         if memory_text.strip():
             messages.append({"role": "system", "content": memory_text})
@@ -1719,6 +1732,35 @@ class Agent:
             messages.append(msg.to_ollama_message())
 
         return messages
+
+    def _read_scratchpad(self) -> str:
+        """Read scratchpad files (general + project-specific) for context injection.
+
+        Returns combined scratchpad content, or empty string if none exist.
+        """
+        parts = []
+        # Project-specific scratchpad
+        if self.active_project:
+            proj_path = os.path.join("data", f"scratchpad_{self.active_project['name']}.md")
+            if os.path.exists(proj_path):
+                try:
+                    with open(proj_path, "r", encoding="utf-8") as f:
+                        content = f.read().strip()
+                    if content:
+                        parts.append(f"[Project: {self.active_project['name']}]\n{content}")
+                except Exception:
+                    pass
+        # General scratchpad
+        general_path = os.path.join("data", "scratchpad.md")
+        if os.path.exists(general_path):
+            try:
+                with open(general_path, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                if content:
+                    parts.append(f"[General]\n{content}")
+            except Exception:
+                pass
+        return "\n\n".join(parts)
 
     async def _log_event(self, event_type: str, data: dict):
         """Log a conversation flow event. Fire-and-forget safe."""
