@@ -196,7 +196,7 @@ calls navigating cli.py, model hallucinated XML tool calls when tools weren't pa
 #### 14b. Remove tool gating (always pass all tools)
 - [x] No successful agent does keyword-based tool filtering (Claude Code, Codex, Cline, OpenHands, SWE-agent all pass all tools always)
 - [x] `detect_tool_groups()` in `tools/base.py` causes: "review" stripped of tools, model hallucinates XML
-- [x] Remove `detect_tool_groups()` — always pass all tools in project mode
+- [x] Remove `detect_tool_groups()` — always pass all tools in project mode (dead code fully deleted)
 - [x] For non-project chat: keep tools available, let model decide (passing tools doesn't force their use)
 - [x] This also fixes Problem 5 (XML hallucination) — model only does that when tools aren't available via API
 - Files: `agent.py` (_chat_simple tool gating logic), `tools/base.py` (delete detect_tool_groups)
@@ -250,7 +250,7 @@ calls navigating cli.py, model hallucinated XML tool calls when tools weren't pa
 - 34 tool calls, zero wasted re-reads, `task_complete` called, budget wind-down respected
 
 **Remaining items:**
-- [ ] Windows shell compatibility — model tries Unix commands (`head`, etc.) that don't exist on Windows
+- [x] Windows shell compatibility — fixed: shell error messages redirect to correct tools, OS hints in tool descriptions
 - [ ] Speed optimization — `num_ctx` tuning, model alternatives for faster execution
 
 **Future considerations (after core fixes tested):**
@@ -268,14 +268,56 @@ calls navigating cli.py, model hallucinated XML tool calls when tools weren't pa
 - [Anthropic: Writing Effective Tools](https://www.anthropic.com/engineering/writing-tools-for-agents)
 - [Anthropic: Building Effective Agents](https://www.anthropic.com/research/building-effective-agents)
 
-### 15. Upgrade embedding model
+### 15. Executor Scaffolding Overhaul — COMPLETE
+Replicated Claude Code's scaffolding approach to fix the fundamental gap:
+the model lacked state awareness and the prompts were too sparse.
+
+- [x] **State injection**: `_build_state_block()` injects `[STATE]` block before every LLM turn — tool call count/budget, files read/created/edited, recent actions
+- [x] **Expanded system prompt**: From 5 rules to structured manual (~2300 chars) — How to Work, Tool Selection, Critical Rules, Completion, Error Recovery
+- [x] **Richer tool descriptions**: read_file references [STATE] block and warns about re-reads, write_file warns to prefer edit_file, list_directory explains when to use vs grep/glob
+- [x] **Executor context management**: `_estimate_messages_tokens()` + `_compact_messages()` compress older tool results at 70% context usage
+- [x] **Forced completion at 95%**: Strips all tools except task_complete
+- [x] **Same-args deduplication**: Blocks identical consecutive tool calls
+- [x] **OS-aware shell guidance**: Shell tool errors redirect to correct tools (e.g. "Use grep_files tool instead")
+- [x] **Interactive command prevention**: Shell tool warns about timeouts and launching apps
+- [x] **Memory budget from endpoint**: `total_context_tokens` derived from endpoint `context_tokens` (single source of truth)
+- [x] **Flow events for executor**: `/flow` now shows data for planned (executor) turns, not just simple chat
+
+**Test results (2026-02-24):** 36+ tool calls, task_complete fired autonomously, model self-corrected IndentationError, no nudging needed.
+
+### 16. Headless Test Harness — COMPLETE
+- [x] `scripts/test_executor.py` — bootstraps full Agent, runs task via `agent.chat()`, outputs structured JSON report
+- [x] `blipshell test` CLI command — delegates to test script
+- [x] `--canned` mode: 3 quick tests (file creation, grep, read+edit)
+- [x] `--stress` mode: 25 tests across 8 categories (tool coverage, multi-step, error recovery, scaffolding, simple chat, real-world, edge cases, observability)
+- [x] JSON reports with: tool calls, errors, warnings, timing, flow events, files read/created/edited, completion method
+- [x] `--quiet` mode for overnight runs (JSON only, no streaming)
+- [ ] **NEEDS TESTING**: Run `--canned` on Ollama PC to validate harness works
+- [ ] **NEEDS TESTING**: Run `--stress` overnight and analyze results
+
+### 17. Upgrade embedding model
 Benchmark new embedding models, then full re-embed. Benchmark first with real queries before committing.
 
-### 16. LLM-powered tag discovery
+### 18. LLM-powered tag discovery
 LLM reviews recent memories periodically and suggests new regex patterns for the tagger. Route to cloud endpoint, run as scheduled background task.
 
-### 17. Esc to cancel current LLM call
+### 19. Esc to cancel current LLM call
 Allow user to press Escape during streaming response to cancel the in-flight request and return to the prompt.
+
+### 20. Modularize agent.py — FUTURE
+glm-5 code review flagged agent.py at 86KB+ as a monolith doing too much (chat, tools, session, project, background tasks). Split into focused modules:
+- `agent/session.py` — session lifecycle
+- `agent/projects.py` — project mode activation
+- `agent/tools.py` — tool registration
+- `agent/chat.py` — chat orchestration
+Not urgent but pays compound interest on maintainability.
+
+### 21. Entity Matching Performance — FUTURE
+`_expand_via_entities` in search.py loads all 31K entity names and does regex matching per query. Could be slow. Options:
+- Cache entity names in memory (avoid DB round-trip)
+- Pre-compiled regex patterns or trie for fast matching
+- Only expand for longer/complex queries
+Profile first to see if it's actually a bottleneck before optimizing.
 
 ## Architecture Notes
 - Two-PC setup: Development on one PC, Ollama/benchmarks on another
