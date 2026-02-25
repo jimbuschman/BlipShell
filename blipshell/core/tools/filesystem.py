@@ -29,9 +29,14 @@ class ReadFileTool(Tool):
         return ToolDefinition(
             name="read_file",
             description=(
-                "Read the contents of a file. For large files, returns a window of lines "
-                "with a note about total file size. Use start_line to read specific sections. "
-                "Do not re-read files already in the conversation."
+                "Read the contents of a file. Returns up to 300 lines by default with line numbers.\n"
+                "For large files, a footer shows total lines and how to read the next section.\n\n"
+                "IMPORTANT:\n"
+                "- Check the [STATE] block before calling — if the file is listed in 'Files read', "
+                "it is already in the conversation. Do NOT re-read it.\n"
+                "- For large files, use start_line to continue reading from where you left off.\n"
+                "- Use max_lines to read smaller chunks if you only need a specific section.\n"
+                "- Always read a file BEFORE trying to edit it with edit_file."
             ),
             parameters=[
                 ToolParameter(name="path", type=ToolParameterType.STRING,
@@ -148,12 +153,19 @@ class WriteFileTool(Tool):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="write_file",
-            description="Write content to a file. Creates the file if it doesn't exist, overwrites if it does.",
+            description=(
+                "Create a new file or completely overwrite an existing file.\n\n"
+                "IMPORTANT:\n"
+                "- For EXISTING files, prefer edit_file instead — it's safer and only changes "
+                "what you specify. write_file replaces the ENTIRE file.\n"
+                "- For NEW files, this is the right tool. Parent directories are created automatically.\n"
+                "- You must provide the complete file content — there is no append mode."
+            ),
             parameters=[
                 ToolParameter(name="path", type=ToolParameterType.STRING,
                               description="File path to write to"),
                 ToolParameter(name="content", type=ToolParameterType.STRING,
-                              description="Content to write"),
+                              description="Complete file content to write"),
             ],
         )
 
@@ -491,10 +503,21 @@ class ListDirectoryTool(Tool):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="list_directory",
-            description="List files and directories at the given path.",
+            description=(
+                "List files and subdirectories at the given path. Shows one level only.\n\n"
+                "When to use:\n"
+                "- To see what files exist in a specific directory\n"
+                "- To verify a file path before reading\n\n"
+                "When NOT to use:\n"
+                "- To find files by name → use glob_files instead\n"
+                "- To search file contents → use grep_files instead\n"
+                "- If the project code structure was already provided in your context, "
+                "you likely don't need this."
+            ),
             parameters=[
                 ToolParameter(name="path", type=ToolParameterType.STRING,
-                              description="Directory path to list", required=False),
+                              description="Directory path to list (default: project root)",
+                              required=False),
             ],
         )
 

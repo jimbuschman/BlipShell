@@ -31,10 +31,17 @@ class GrepTool(Tool):
         return ToolDefinition(
             name="grep_files",
             description=(
-                "Search for a regex pattern across files in a directory. "
-                "Returns matching lines as 'file:line_number: content'. "
-                "The path must be a directory, not a file. To search within a single file, "
-                "use read_file instead. Results are capped at max_results (default 50)."
+                "Search for a regex pattern across files in a directory tree. "
+                "Returns matching lines as 'file:line_number: content'.\n\n"
+                "When to use:\n"
+                "- To find where a function, class, or variable is defined or used\n"
+                "- To find all files that import a specific module\n"
+                "- To locate specific strings or patterns across the codebase\n\n"
+                "IMPORTANT:\n"
+                "- The path must be a DIRECTORY, not a file. To search within a single file, "
+                "use read_file instead.\n"
+                "- Use the 'include' parameter to filter by file type (e.g. '*.py').\n"
+                "- Results are capped at max_results (default 50)."
             ),
             parameters=[
                 ToolParameter(name="pattern", type=ToolParameterType.STRING,
@@ -138,8 +145,13 @@ class GlobTool(Tool):
             name="glob_files",
             description=(
                 "Find files matching a glob pattern in a directory tree. "
-                "Returns file paths sorted by modification time (newest first). "
-                "Examples: '**/*.py', 'src/**/*.ts', '*.json'"
+                "Returns file paths with sizes, sorted by modification time (newest first).\n\n"
+                "When to use:\n"
+                "- To find files by name or extension (e.g. '**/*.py', 'src/**/*.ts')\n"
+                "- To see all files of a certain type in the project\n\n"
+                "When NOT to use:\n"
+                "- To search file CONTENTS → use grep_files instead\n"
+                "- To see a specific directory → use list_directory instead"
             ),
             parameters=[
                 ToolParameter(name="pattern", type=ToolParameterType.STRING,

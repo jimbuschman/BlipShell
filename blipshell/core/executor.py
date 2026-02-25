@@ -516,6 +516,7 @@ class TaskExecutor:
         wind_down_injected = False
         self._force_complete_injected = False
         last_tool_call: tuple[str, str] = ("", "")  # (name, args_key) for dedup
+        last_state_msg_idx: int = -1  # track state message for replacement
 
         # Single continuous loop — LLM keeps full conversation history
         max_rounds = budget + 10  # generous round limit (text-only responses don't cost tools)
@@ -573,6 +574,19 @@ class TaskExecutor:
                     iter_tools = self._tool_rules.filter_tools(tools, tool_call_names)
                 if not iter_tools:
                     iter_tools = None
+
+            # State injection: give model explicit awareness of progress.
+            # Replace previous state message (if any) to avoid accumulation.
+            state_block = self._build_state_block(
+                tool_call_count, budget, tool_call_names,
+            )
+            if last_state_msg_idx >= 0 and last_state_msg_idx < len(messages):
+                messages[last_state_msg_idx] = {
+                    "role": "system", "content": state_block,
+                }
+            else:
+                messages.append({"role": "system", "content": state_block})
+                last_state_msg_idx = len(messages) - 1
 
             response = await client.chat(
                 messages=messages,
@@ -907,6 +921,45 @@ class TaskExecutor:
         return await self.router.generate(
             task_type, prompt, system=UTILITY_SYSTEM_PROMPT,
         )
+
+    def _build_state_block(
+        self,
+        tool_call_count: int,
+        budget: int,
+        tool_call_names: list[str],
+    ) -> str:
+        """Build a structured state block for injection before each LLM turn.
+
+        Gives the model explicit awareness of what's been done, what it has,
+        and how much budget remains — so it doesn't have to re-parse the
+        full conversation history to figure out where it is.
+        """
+        parts = [f"[STATE] Tool calls: {tool_call_count}/{budget}"]
+
+        # Files read
+        if self.files_read:
+            files = sorted(self.files_read)
+            if len(files) > 10:
+                shown = files[:10]
+                parts.append(f"Files read ({len(files)}): {', '.join(shown)}, ... +{len(files) - 10} more")
+            else:
+                parts.append(f"Files read: {', '.join(files)}")
+
+        # Files created/modified
+        if self._step_files_created:
+            parts.append(f"Files created: {', '.join(self._step_files_created)}")
+        if self._step_files_edited:
+            parts.append(f"Files edited: {', '.join(self._step_files_edited)}")
+
+        # Recent actions (last 5 tool calls)
+        if tool_call_names:
+            recent = tool_call_names[-5:]
+            parts.append(f"Recent actions: {' → '.join(recent)}")
+
+        # Reminder
+        parts.append("Do NOT re-read files listed above. When done, call task_complete.")
+
+        return "\n".join(parts)
 
     @staticmethod
     def _extract_response(response) -> tuple[str, list | None]:
