@@ -10,6 +10,7 @@ import logging
 from collections import OrderedDict
 from typing import Any, AsyncIterator, Optional
 
+import httpx
 import openai
 
 from blipshell.llm.exceptions import RateLimitExhaustedError
@@ -35,10 +36,12 @@ class OpenAICompatClient:
         self.max_retries = max_retries
         self.retry_base_delay = retry_base_delay
         self.timeout = timeout
+        # Short connect timeout (5s) so failed cloud endpoints fall back fast.
+        # Read timeout stays long for slow model responses.
         self._client = openai.AsyncOpenAI(
             base_url=base_url,
             api_key=api_key or "unused",
-            timeout=timeout,
+            timeout=httpx.Timeout(timeout, connect=5.0),
         )
 
     async def _retry_call(self, func, *args, **kwargs):
