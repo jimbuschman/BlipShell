@@ -34,9 +34,10 @@ class ShellTool(Tool):
             description=(
                 f"Run a shell command and return its output. Commands are validated against an allowlist.{os_hint}\n\n"
                 "IMPORTANT:\n"
+                "- Do NOT use this for file searching — use grep_files or glob_files instead.\n"
+                "- Do NOT use this for reading files — use read_file instead.\n"
                 "- Commands time out after 30 seconds. Do NOT run interactive programs or servers.\n"
-                "- Do NOT try to launch the application being built — you cannot interact with it.\n"
-                "- Use this for quick checks: syntax validation, pip install, git, python -c '...', etc."
+                "- Use this for: syntax validation, pip install, git, python -c '...', pytest, etc."
             ),
             parameters=[
                 ToolParameter(name="command", type=ToolParameterType.STRING,

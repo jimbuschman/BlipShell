@@ -517,6 +517,11 @@ class TaskExecutor:
         if self.active_project:
             self._tool_rules = create_coding_rules()
 
+        # Ensure task_complete is available (may not be registered outside project mode)
+        if not self.tool_registry.get_tool("task_complete"):
+            from blipshell.core.tools.interaction_tools import TaskCompleteTool
+            self.tool_registry.register(TaskCompleteTool(), group="general")
+
         # Wire file cache AND files_read into ReadFileTool so it can detect
         # re-reads and serve cached content instead of re-reading from disk.
         # Without this, the executor's files_read set and the tool's set are
