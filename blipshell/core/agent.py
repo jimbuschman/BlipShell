@@ -128,6 +128,7 @@ class Agent:
 
         self._health_check_task: Optional[asyncio.Task] = None
         self._background_tasks: set[asyncio.Task] = set()
+        self._memory_worker = None  # MemoryWorker — dedicated thread for background processing
         self._last_endpoint_used: Optional[str] = None
         self._initialized = False
         self.think_enabled: bool = False  # /think toggle — off for fast simple chat, complex auto-enables
@@ -196,6 +197,12 @@ class Agent:
             self.sqlite, self.chroma, self.router,
             config=self.config.memory,
         )
+
+        # Background memory worker (dedicated thread with own event loop + connections)
+        _status("Starting memory worker...")
+        from blipshell.memory.worker import MemoryWorker
+        self._memory_worker = MemoryWorker(self.config, self.chroma)
+        self._memory_worker.start()
 
         # Session manager
         self.session_manager = SessionManager(
@@ -1773,12 +1780,36 @@ class Agent:
             logger.debug("Failed to log event %s: %s", event_type, e)
 
     async def _background_memory_processing(self):
-        """Background task to dump and process session memories."""
+        """Enqueue undumped messages to the memory worker thread."""
         try:
             if self.session_manager.message_count % 5 == 0:
-                await self.session_manager.dump_to_memory()
+                self._enqueue_undumped_messages()
         except Exception as e:
             logger.error("Background memory processing error: %s", e)
+
+    def _enqueue_undumped_messages(self):
+        """Push undumped session messages to the memory worker queue."""
+        if not self._memory_worker or not self._memory_worker.is_alive:
+            logger.debug("Memory worker not available, skipping enqueue")
+            return
+
+        from blipshell.memory.worker import WorkItem, WorkType
+
+        undumped = [
+            (i, msg) for i, msg in enumerate(self.session_manager._messages)
+            if i not in self.session_manager._dumped_indices
+        ]
+        for idx, msg in undumped:
+            if msg.role in (MessageRole.USER, MessageRole.ASSISTANT):
+                db_id = self.session_manager._message_db_ids.get(idx)
+                self._memory_worker.enqueue(WorkItem(
+                    work_type=WorkType.PROCESS_MESSAGE,
+                    text=msg.content,
+                    role=msg.role.value,
+                    session_id=self.session_manager.session_id,
+                    message_db_id=db_id,
+                ))
+                self.session_manager._dumped_indices.add(idx)
 
     async def _summarize_overflow(self, text: str) -> str:
         """Callback for memory manager overflow summarization."""
@@ -1819,26 +1850,47 @@ class Agent:
 
     async def end_session(self, on_status=None):
         """End the current session and clean up."""
-        # Cancel background memory tasks first to prevent writes during shutdown
+        def _status(msg: str):
+            if on_status:
+                on_status(msg)
+
+        # Cancel asyncio background tasks (lightweight, main-loop only)
         await self._cancel_background_tasks()
         if self._health_check_task:
             self._health_check_task.cancel()
             self._health_check_task = None
+
+        # Enqueue any remaining undumped messages to worker before session close
+        self._enqueue_undumped_messages()
+
         if self.session_manager:
+            # Summary + lesson extraction run on main loop (one-time, no contention)
             await self.session_manager.end_session(on_status=on_status)
+
+        # Shut down memory worker — drains queue first
+        if self._memory_worker and self._memory_worker.is_alive:
+            depth = self._memory_worker.queue_depth
+            if depth > 0:
+                _status(f"Draining memory queue ({depth} items)...")
+            self._memory_worker.shutdown(timeout=60.0)
+
         if self.job_queue:
             await self.job_queue.stop()
-        # Close ChromaDB after all writes are done
+        # Close ChromaDB after all writes are done (worker is stopped)
         if self.chroma:
             self.chroma.close()
 
     async def force_cleanup(self):
         """Cancel all background tasks so the process can exit cleanly.
 
-        Order matters: cancel in-flight writes → close ChromaDB → close SQLite.
+        Order matters: cancel in-flight writes → stop worker → close ChromaDB → close SQLite.
         """
         # 1. Cancel background memory processing tasks (prevents mid-write corruption)
         await self._cancel_background_tasks()
+
+        # 2. Stop memory worker thread (short timeout for forced cleanup)
+        if self._memory_worker:
+            self._memory_worker.shutdown(timeout=5.0)
 
         if self._health_check_task:
             self._health_check_task.cancel()
