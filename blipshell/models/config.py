@@ -143,7 +143,7 @@ class SessionConfig(BaseModel):
 
 class AgentConfig(BaseModel):
     """Agent behavior configuration."""
-    max_tool_iterations: int = 5
+    max_tool_iterations: int = 50  # CC has no limit; 50 is a generous safety net
     system_prompt: str = (
         "You are BlipShell, a local AI assistant with persistent memory.\n"
         "Past conversations and lessons are automatically loaded into your context.\n\n"
@@ -165,11 +165,7 @@ class AgentConfig(BaseModel):
 class ShellToolConfig(BaseModel):
     """Shell tool configuration."""
     timeout: int = 30
-    allowed_commands: list[str] = Field(default_factory=lambda: [
-        "ls", "dir", "cat", "type", "echo", "pwd", "cd", "find", "grep",
-        "head", "tail", "wc", "sort", "python", "pip", "git", "node", "npm",
-        "cargo", "make", "cmake", "powershell", "pwsh",
-    ])
+    allowed_commands: list[str] = Field(default_factory=list)  # empty = allow all (CC approach)
 
 
 class FilesystemToolConfig(BaseModel):

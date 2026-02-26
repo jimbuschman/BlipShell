@@ -32,7 +32,7 @@ class ShellTool(Tool):
         return ToolDefinition(
             name="run_command",
             description=(
-                f"Run a shell command and return its output. Commands are validated against an allowlist.{os_hint}\n\n"
+                f"Run a shell command and return its output.{os_hint}\n\n"
                 "IMPORTANT:\n"
                 "- Do NOT use this for file searching — use grep_files or glob_files instead.\n"
                 "- Do NOT use this for reading files — use read_file instead.\n"
