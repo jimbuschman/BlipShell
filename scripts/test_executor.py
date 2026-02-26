@@ -129,7 +129,7 @@ CANNED_TESTS = [
             "Find all Python files that contain the string 'TaskExecutor' "
             "and report which files contain it and on which lines."
         ),
-        "expect_tools": ["grep_files"],
+        "expect_tools": [],  # any search method is fine (grep_files, run_command, etc.)
         "expect_complete": True,
     },
     {
