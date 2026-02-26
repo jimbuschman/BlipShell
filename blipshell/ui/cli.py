@@ -429,6 +429,16 @@ async def chat_loop(
                 elif cmd[0] == "changes":
                     _print_changes(agent)
                     continue
+                elif cmd[0] == "compact":
+                    focus = " ".join(cmd_args) if cmd_args else ""
+                    await _handle_compact(agent, focus)
+                    continue
+                elif cmd[0] == "context":
+                    _print_context(agent)
+                    continue
+                elif cmd[0] == "tokens":
+                    _print_tokens(agent)
+                    continue
                 elif cmd[0] == "projects":
                     await _list_projects(agent)
                     continue
@@ -1755,12 +1765,130 @@ def _print_changes(agent):
     console.print(table)
 
 
+async def _handle_compact(agent: Agent, focus: str):
+    """Compact older conversation messages to free context space."""
+    with console.status("[dim]Compacting conversation...[/dim]", spinner="dots"):
+        result = await agent.compact_conversation(focus)
+    console.print(f"[dim]{result}[/dim]")
+
+
+def _print_context(agent: Agent):
+    """Print context window usage breakdown."""
+    info = agent.get_context_info()
+
+    table = Table(title="Context Window")
+    table.add_column("Property", style="cyan")
+    table.add_column("Value", justify="right")
+
+    table.add_row("Context limit", f"{info['context_limit']:,} tokens")
+    table.add_row("Overhead reserve", f"{info['overhead_reserve']:,} tokens")
+    available = info["context_limit"] - info["overhead_reserve"]
+    table.add_row("Available for content", f"{available:,} tokens")
+    table.add_row("Messages this session", str(info["message_count"]))
+    table.add_row("Session message tokens", f"{info['session_tokens']:,}")
+    table.add_row("Turn number", str(info["turn_number"]))
+    console.print(table)
+
+    # Pool usage
+    pool_usage = info.get("pool_usage", {})
+    if pool_usage:
+        pool_table = Table(title="Memory Pools (current allocations)")
+        pool_table.add_column("Pool", style="cyan")
+        pool_table.add_column("Items", justify="right")
+        pool_table.add_column("Used", justify="right")
+        pool_table.add_column("Max", justify="right")
+        pool_table.add_column("Hard Cap", justify="right")
+        pool_table.add_column("Usage", justify="right")
+
+        for name, stats in pool_usage.items():
+            used = stats.get("used", 0)
+            mx = stats.get("max", 0)
+            pct = (used / mx * 100) if mx > 0 else 0
+            color = "green" if pct < 70 else "yellow" if pct < 90 else "red"
+            cap = stats.get("hard_cap")
+            cap_str = f"{cap:,}" if cap else "-"
+            pool_table.add_row(
+                name,
+                str(stats.get("items", 0)),
+                f"{used:,}",
+                f"{mx:,}",
+                cap_str,
+                f"[{color}]{pct:.0f}%[/{color}]",
+            )
+        console.print(pool_table)
+
+    # Last context build stats (from most recent _build_messages call)
+    last = info.get("last_context_stats")
+    if last:
+        console.print(f"\n[dim]Last context build: profile={last.get('query_profile', '?')}, "
+                       f"items={last.get('total_context_items', '?')}, "
+                       f"available={last.get('available_tokens', 0):,} tokens[/dim]")
+        pool_budgets = last.get("pool_budgets", {})
+        pool_actual = last.get("pool_usage", {})
+        if pool_budgets:
+            budget_parts = []
+            for pool, budget in sorted(pool_budgets.items()):
+                actual = pool_actual.get(pool, {}).get("tokens", 0)
+                budget_parts.append(f"{pool}: {actual:,}/{budget:,}")
+            console.print(f"[dim]  Budgets: {', '.join(budget_parts)}[/dim]")
+
+
+def _print_tokens(agent: Agent):
+    """Print token usage per endpoint for this session."""
+    usage = agent.get_token_usage()
+    if not usage:
+        console.print("[dim]No token usage recorded this session.[/dim]")
+        return
+
+    table = Table(title="Token Usage (this session)")
+    table.add_column("Endpoint", style="cyan")
+    table.add_column("Requests", justify="right")
+    table.add_column("Prompt Tokens", justify="right")
+    table.add_column("Completion Tokens", justify="right")
+    table.add_column("Total", justify="right", style="bold")
+
+    grand_prompt = 0
+    grand_completion = 0
+    grand_requests = 0
+
+    for endpoint, stats in sorted(usage.items()):
+        prompt = stats.get("prompt_tokens", 0)
+        completion = stats.get("completion_tokens", 0)
+        total = prompt + completion
+        requests = stats.get("requests", 0)
+        grand_prompt += prompt
+        grand_completion += completion
+        grand_requests += requests
+        table.add_row(
+            endpoint,
+            str(requests),
+            f"{prompt:,}",
+            f"{completion:,}",
+            f"{total:,}",
+        )
+
+    # Totals row
+    if len(usage) > 1:
+        table.add_row(
+            "[bold]Total[/bold]",
+            f"[bold]{grand_requests}[/bold]",
+            f"[bold]{grand_prompt:,}[/bold]",
+            f"[bold]{grand_completion:,}[/bold]",
+            f"[bold]{grand_prompt + grand_completion:,}[/bold]",
+        )
+
+    console.print(table)
+
+
 def _print_help():
     """Print help for CLI commands."""
     console.print(Panel(
         "[bold]/quit[/bold]                  - Exit BlipShell\n"
         "[bold]/status[/bold]                - Show agent status, endpoints, routing\n"
         "[bold]/memory[/bold]                - Show memory pool usage\n"
+        "[bold]/context[/bold]               - Show context window usage breakdown\n"
+        "[bold]/tokens[/bold]                - Show token usage per endpoint this session\n"
+        "[bold]/compact[/bold] [dim][focus][/dim]        - Compact older messages to free context\n"
         "[bold]/save[/bold]                  - Force save session to memory\n"
         "[bold]/core[/bold]                  - Show core memories and lessons\n"
         "[bold]/think[/bold]                 - Toggle LLM thinking mode on/off\n"

@@ -25,6 +25,63 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def _stream_chat(
+    client: LLMClient,
+    messages: list[dict],
+    model: str,
+    tools: list[dict] | None,
+    chat_kwargs: dict,
+    on_token=None,
+) -> tuple[str, list | None]:
+    """Stream an LLM response, yielding text tokens to on_token as they arrive.
+
+    Returns (content, tool_calls). Falls back to non-streaming on error.
+    """
+    try:
+        content_parts: list[str] = []
+        tool_calls = None
+
+        async for chunk in client.chat_stream(
+            messages=messages, model=model, tools=tools, **chat_kwargs,
+        ):
+            msg = getattr(chunk, "message", None)
+            if msg is not None:
+                chunk_content = getattr(msg, "content", "") or ""
+                chunk_tool_calls = getattr(msg, "tool_calls", None)
+            else:
+                msg = chunk.get("message", {}) if isinstance(chunk, dict) else {}
+                chunk_content = msg.get("content", "") or ""
+                chunk_tool_calls = msg.get("tool_calls", None)
+
+            if chunk_content:
+                content_parts.append(chunk_content)
+                if on_token:
+                    on_token(chunk_content)
+
+            if chunk_tool_calls:
+                tool_calls = chunk_tool_calls
+
+        return "".join(content_parts), tool_calls
+    except Exception as e:
+        logger.warning("Streaming failed in executor, falling back: %s", e)
+        response = await client.chat(
+            messages=messages, model=model, tools=tools, **chat_kwargs,
+        )
+        msg = getattr(response, "message", None)
+        if msg is not None:
+            content = getattr(msg, "content", "") or ""
+            tool_calls = getattr(msg, "tool_calls", None)
+        elif isinstance(response, dict):
+            msg_d = response.get("message", {})
+            content = msg_d.get("content", "")
+            tool_calls = msg_d.get("tool_calls", None)
+        else:
+            content, tool_calls = "", None
+        if on_token and content:
+            on_token(content)
+        return content, tool_calls
+
+
 def _estimate_messages_tokens(messages: list[dict]) -> int:
     """Estimate total tokens in a message list (len/4 heuristic)."""
     total = 0
@@ -285,6 +342,10 @@ class TaskExecutor:
         self._step_files_edited: list[str] = []
         # Last execute_dynamic messages — available for narrative building after execution
         self.last_messages: list[dict] = []
+        # Phase 2 test override flags (set by TestOverrides.apply())
+        self._disable_winddown: bool = False
+        self._disable_state_block: bool = False
+        self._natural_completion_primary: bool = False
 
     async def execute_plan(
         self,
@@ -542,7 +603,8 @@ class TaskExecutor:
         max_rounds = budget + 10  # generous round limit (text-only responses don't cost tools)
         for _round in range(max_rounds):
             # Budget wind-down: inject guidance when ~80% of budget used
-            if (not wind_down_injected
+            if (not self._disable_winddown
+                    and not wind_down_injected
                     and tool_call_count >= int(budget * 0.8)
                     and tool_call_count > 0):
                 messages.append({
@@ -570,7 +632,8 @@ class TaskExecutor:
                     on_token(f"  [Context compacted: {before} → {after} tokens]\n")
 
             # Forced completion at 95%: strip all tools except task_complete
-            force_complete = (tool_call_count >= int(budget * 0.95)
+            force_complete = (not self._disable_winddown
+                              and tool_call_count >= int(budget * 0.95)
                               and tool_call_count < budget)
             if force_complete and not getattr(self, '_force_complete_injected', False):
                 messages.append({
@@ -597,25 +660,21 @@ class TaskExecutor:
 
             # State injection: give model explicit awareness of progress.
             # Replace previous state message (if any) to avoid accumulation.
-            state_block = self._build_state_block(
-                tool_call_count, budget, tool_call_names,
-            )
-            if last_state_msg_idx >= 0 and last_state_msg_idx < len(messages):
-                messages[last_state_msg_idx] = {
-                    "role": "system", "content": state_block,
-                }
-            else:
-                messages.append({"role": "system", "content": state_block})
-                last_state_msg_idx = len(messages) - 1
+            if not self._disable_state_block:
+                state_block = self._build_state_block(
+                    tool_call_count, budget, tool_call_names,
+                )
+                if last_state_msg_idx >= 0 and last_state_msg_idx < len(messages):
+                    messages[last_state_msg_idx] = {
+                        "role": "system", "content": state_block,
+                    }
+                else:
+                    messages.append({"role": "system", "content": state_block})
+                    last_state_msg_idx = len(messages) - 1
 
-            response = await client.chat(
-                messages=messages,
-                model=model,
-                tools=iter_tools,
-                **chat_kwargs,
+            content, tool_calls = await _stream_chat(
+                client, messages, model, iter_tools, chat_kwargs, on_token,
             )
-
-            content, tool_calls = self._extract_response(response)
 
             if tool_calls and tool_call_count < budget:
                 # Check if task_complete is among the tool calls
@@ -828,14 +887,9 @@ class TaskExecutor:
                 if not iter_tools:
                     iter_tools = None
 
-            response = await client.chat(
-                messages=messages,
-                model=model,
-                tools=iter_tools,
-                **chat_kwargs,
+            content, tool_calls = await _stream_chat(
+                client, messages, model, iter_tools, chat_kwargs, on_token,
             )
-
-            content, tool_calls = self._extract_response(response)
 
             if tool_calls and iteration < max_iterations:
                 messages.append({

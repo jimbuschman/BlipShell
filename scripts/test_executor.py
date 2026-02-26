@@ -10,6 +10,17 @@ Usage:
     python scripts/test_executor.py --canned               # quick built-in tests (~5 min)
     python scripts/test_executor.py --stress               # full stress suite (~1-2 hours)
     python scripts/test_executor.py --stress --quiet        # overnight, JSON only
+    python scripts/test_executor.py --simple-chat           # simple chat tests (no executor)
+    python scripts/test_executor.py --ab ITEM               # A/B comparison test for a Phase 2 item
+
+Phase 2 config flags (apply to any test mode):
+    --no-tool-rules         Disable tool rules engine
+    --no-iteration-cap      Remove iteration cap (set to 999)
+    --no-auto-nudge         Disable auto-continue/auto-nudge
+    --no-budget-winddown    Disable budget winddown in executor
+    --no-state-block        Disable [STATE] injection in executor
+    --natural-completion    Make task_complete optional (natural completion primary)
+    --single-system-msg     Consolidate system messages into one
 """
 
 import argparse
@@ -18,6 +29,8 @@ import json
 import re
 import sys
 import time
+from dataclasses import dataclass, field, asdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Ensure the project root is importable
@@ -30,6 +43,70 @@ from blipshell.core.agent import Agent
 from blipshell.core.config import ConfigManager
 
 console = Console(stderr=True)  # Rich output to stderr so JSON goes to stdout cleanly
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 configuration overrides
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TestOverrides:
+    """Configuration overrides for Phase 2 A/B testing.
+
+    Each flag disables a BS-specific feature to match Claude Code's approach.
+    Default (all False) = current BS behavior.
+    """
+    no_tool_rules: bool = False       # Disable tool rules engine
+    no_iteration_cap: bool = False    # Remove iteration cap (set to 999)
+    no_auto_nudge: bool = False       # Disable auto-continue/auto-nudge
+    no_budget_winddown: bool = False  # Disable budget winddown in executor
+    no_state_block: bool = False      # Disable [STATE] injection
+    natural_completion: bool = False  # task_complete optional
+    single_system_msg: bool = False   # Consolidate system messages
+
+    def label(self) -> str:
+        """Short label describing active overrides."""
+        active = [k for k, v in asdict(self).items() if v]
+        return "+".join(active) if active else "baseline"
+
+    def apply(self, agent: "Agent"):
+        """Apply overrides to an initialized agent.
+
+        Mutates agent and executor configuration in-place so the next
+        chat() call uses the modified behavior.
+        """
+        from blipshell.core.tool_rules import ToolRuleEngine
+
+        if self.no_tool_rules:
+            # Replace rule engines with empty engines (no filtering)
+            empty = ToolRuleEngine()
+            agent._tool_rules = empty
+            if agent.task_executor:
+                agent.task_executor._tool_rules = empty
+
+        if self.no_iteration_cap:
+            # Set very high cap instead of removing loop entirely
+            agent.config.agent.max_tool_iterations = 999
+            if agent.task_executor:
+                agent.task_executor.max_tool_iterations = 999
+
+        if self.no_auto_nudge:
+            # Monkey-patch _should_auto_continue to always return False
+            agent._should_auto_continue = staticmethod(lambda text: False)
+
+        if self.no_budget_winddown and agent.task_executor:
+            # Set winddown thresholds above 100% so they never fire
+            # The executor checks: tool_call_count >= int(budget * 0.8)
+            # We'll patch the threshold by setting a flag the executor checks
+            agent.task_executor._disable_winddown = True
+
+        if self.no_state_block and agent.task_executor:
+            # Patch _build_state_block to return empty string
+            agent.task_executor._disable_state_block = True
+
+        if self.natural_completion and agent.task_executor:
+            # Flag for executor to treat natural completion as primary
+            agent.task_executor._natural_completion_primary = True
 
 # ---------------------------------------------------------------------------
 # Built-in canned tests
@@ -66,6 +143,146 @@ CANNED_TESTS = [
         ),
         "expect_tools": ["write_file", "read_file", "edit_file"],
         "expect_complete": True,
+    },
+]
+
+
+# ---------------------------------------------------------------------------
+# Simple chat tests — exercises _chat_simple() path (no executor)
+# ---------------------------------------------------------------------------
+
+SIMPLE_CHAT_TESTS = [
+    # ======================================================================
+    # Category: Conversational — should NOT trigger tools
+    # ======================================================================
+    {
+        "name": "conv_greeting",
+        "category": "conversational",
+        "task": "Hello! How are you today?",
+        "force_plan": False,
+        "expect_complete": True,
+        "expect_no_tools": True,
+    },
+    {
+        "name": "conv_opinion",
+        "category": "conversational",
+        "task": "What do you think about Python vs JavaScript for web backends?",
+        "force_plan": False,
+        "expect_complete": True,
+        "expect_no_tools": True,
+    },
+    {
+        "name": "conv_explanation",
+        "category": "conversational",
+        "task": "Explain how async/await works in Python in 2-3 sentences.",
+        "force_plan": False,
+        "expect_complete": True,
+        "expect_no_tools": True,
+    },
+    {
+        "name": "conv_followup",
+        "category": "conversational",
+        "task": "What's the difference between a list and a tuple in Python?",
+        "force_plan": False,
+        "expect_complete": True,
+        "expect_no_tools": True,
+    },
+    {
+        "name": "conv_personal",
+        "category": "conversational",
+        "task": "What's your name? Tell me about yourself briefly.",
+        "force_plan": False,
+        "expect_complete": True,
+        "expect_no_tools": True,
+    },
+
+    # ======================================================================
+    # Category: Tool-requiring — SHOULD trigger tools via simple chat
+    # ======================================================================
+    {
+        "name": "tool_read_project",
+        "category": "tool_requiring",
+        "task": "Read the file blipshell/__init__.py and tell me what version is defined there.",
+        "force_plan": False,
+        "expect_complete": True,
+        "expect_tools": ["read_file"],
+    },
+    {
+        "name": "tool_find_files",
+        "category": "tool_requiring",
+        "task": "Find all Python files in the blipshell/core/ directory.",
+        "force_plan": False,
+        "expect_complete": True,
+        "expect_tools": ["glob_files"],
+    },
+    {
+        "name": "tool_search_code",
+        "category": "tool_requiring",
+        "task": "Search for the string 'def chat(' in the blipshell/ directory and tell me which files contain it.",
+        "force_plan": False,
+        "expect_complete": True,
+        "expect_tools": ["grep_files"],
+    },
+    {
+        "name": "tool_list_dir",
+        "category": "tool_requiring",
+        "task": "List the contents of the blipshell/core/tools/ directory.",
+        "force_plan": False,
+        "expect_complete": True,
+        "expect_tools": ["list_directory"],
+    },
+    {
+        "name": "tool_create_file",
+        "category": "tool_requiring",
+        "task": "Create a file called simple_chat_test.py with a function that adds two numbers.",
+        "force_plan": False,
+        "expect_complete": True,
+        "expect_tools": ["write_file"],
+    },
+
+    # ======================================================================
+    # Category: Mixed — conversation that naturally leads to tool use
+    # ======================================================================
+    {
+        "name": "mixed_question_then_tool",
+        "category": "mixed",
+        "task": (
+            "I'm trying to understand the project structure. "
+            "Can you list what's in the blipshell/ directory?"
+        ),
+        "force_plan": False,
+        "expect_complete": True,
+        "expect_tools": ["list_directory"],
+    },
+    {
+        "name": "mixed_ambiguous",
+        "category": "mixed",
+        "task": "What does the agent.py file do in this project?",
+        "force_plan": False,
+        "expect_complete": True,
+        # Could go either way — might read file or answer from knowledge
+    },
+
+    # ======================================================================
+    # Category: Tool discipline — should NOT over-call tools
+    # ======================================================================
+    {
+        "name": "discipline_single_file",
+        "category": "tool_discipline",
+        "task": "Read blipshell/models/config.py and tell me what the max_tool_iterations default is.",
+        "force_plan": False,
+        "expect_complete": True,
+        "expect_tools": ["read_file"],
+        "expect_max_tool_calls": 3,  # should be 1 read, maybe 1 more, definitely not 5+
+    },
+    {
+        "name": "discipline_simple_search",
+        "category": "tool_discipline",
+        "task": "Find files containing 'ToolRegistry' in the blipshell/ directory.",
+        "force_plan": False,
+        "expect_complete": True,
+        "expect_tools": ["grep_files"],
+        "expect_max_tool_calls": 3,
     },
 ]
 
@@ -1060,6 +1277,7 @@ async def run_test(
     config_path: str | None = None,
     quiet: bool = False,
     force_plan: bool = True,
+    overrides: TestOverrides | None = None,
 ) -> dict:
     """Run a single headless test and return structured results.
 
@@ -1070,13 +1288,17 @@ async def run_test(
         config_path: Optional config.yaml path.
         quiet: If True, suppress streaming output (JSON only).
         force_plan: If True, always use executor path. If False, let classifier decide.
+        overrides: Optional Phase 2 configuration overrides to apply.
 
     Returns:
         Dict with structured test results.
     """
+    overrides = overrides or TestOverrides()
+
     # 1. Bootstrap
     if not quiet:
-        console.print(f"[bold cyan]Bootstrapping agent...[/bold cyan]")
+        label = overrides.label()
+        console.print(f"[bold cyan]Bootstrapping agent... (config: {label})[/bold cyan]")
 
     config_manager = ConfigManager(config_path)
     config = config_manager.load()
@@ -1087,6 +1309,9 @@ async def run_test(
             console.print(f"  [dim]{msg}[/dim]")
 
     await agent.initialize(on_status=on_status)
+
+    # 1b. Apply Phase 2 overrides
+    overrides.apply(agent)
 
     # 2. Start session
     session_id = await agent.start_session(project=project)
@@ -1195,6 +1420,8 @@ async def run_test(
         "model": model,
         "endpoint": endpoint,
         "session_id": session_id,
+        "overrides": asdict(overrides),
+        "overrides_label": overrides.label(),
         "timing": {
             "total_seconds": elapsed,
             "first_tool_call_seconds": collector.first_tool_seconds,
@@ -1261,8 +1488,10 @@ async def run_test_suite(
     config_path: str | None = None,
     output_path: str | None = None,
     quiet: bool = False,
+    overrides: TestOverrides | None = None,
 ) -> list[dict]:
     """Run a list of test definitions and return results."""
+    overrides = overrides or TestOverrides()
     results = []
     total = len(tests)
     suite_start = time.monotonic()
@@ -1270,8 +1499,9 @@ async def run_test_suite(
     for i, test in enumerate(tests, 1):
         category = test.get("category", "")
         cat_label = f" [{category}]" if category else ""
+        override_label = f" ({overrides.label()})" if overrides.label() != "baseline" else ""
         console.print(f"\n[bold yellow]{'=' * 70}[/bold yellow]")
-        console.print(f"[bold yellow]Test {i}/{total}{cat_label}: {test['name']}[/bold yellow]")
+        console.print(f"[bold yellow]Test {i}/{total}{cat_label}: {test['name']}{override_label}[/bold yellow]")
         console.print(f"[bold yellow]{'=' * 70}[/bold yellow]\n")
 
         fp = test.get("force_plan", True)
@@ -1282,6 +1512,7 @@ async def run_test_suite(
             config_path=config_path,
             quiet=quiet,
             force_plan=fp,
+            overrides=overrides,
         )
 
         # Check expectations
@@ -1307,6 +1538,14 @@ async def run_test_suite(
             )
             checks.append((f"used_{expected_tool}", found))
             if not found:
+                passed = False
+
+        # No-tools check (conversational tests should NOT trigger tools)
+        if test.get("expect_no_tools"):
+            tool_count = report["tool_call_count"]
+            ok = tool_count == 0
+            checks.append((f"no_tools (got {tool_count})", ok))
+            if not ok:
                 passed = False
 
         # Max tool calls budget check
@@ -1379,6 +1618,9 @@ async def run_test_suite(
 
         report_data = {
             "suite": suite_name,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "overrides": asdict(overrides),
+            "overrides_label": overrides.label(),
             "total_tests": total_tests,
             "passed": passed_count,
             "failed": total_tests - passed_count,
@@ -1399,12 +1641,14 @@ async def run_canned_tests(
     config_path: str | None = None,
     output_path: str | None = None,
     quiet: bool = False,
+    overrides: TestOverrides | None = None,
 ) -> list[dict]:
     """Run the quick canned test suite."""
     return await run_test_suite(
         CANNED_TESTS, "Canned Tests",
         project=project, config_path=config_path,
         output_path=output_path, quiet=quiet,
+        overrides=overrides,
     )
 
 
@@ -1413,19 +1657,234 @@ async def run_stress_tests(
     config_path: str | None = None,
     output_path: str | None = None,
     quiet: bool = False,
+    overrides: TestOverrides | None = None,
 ) -> list[dict]:
     """Run the full stress test suite."""
     return await run_test_suite(
         STRESS_TESTS, "Stress Tests",
         project=project, config_path=config_path,
         output_path=output_path or "data/stress_test_results.json",
-        quiet=quiet,
+        quiet=quiet, overrides=overrides,
     )
+
+
+async def run_simple_chat_tests(
+    project: str | None = None,
+    config_path: str | None = None,
+    output_path: str | None = None,
+    quiet: bool = False,
+    overrides: TestOverrides | None = None,
+) -> list[dict]:
+    """Run the simple chat test suite (no executor)."""
+    return await run_test_suite(
+        SIMPLE_CHAT_TESTS, "Simple Chat Tests",
+        project=project, config_path=config_path,
+        output_path=output_path or "data/simple_chat_test_results.json",
+        quiet=quiet, overrides=overrides,
+    )
+
+
+# ---------------------------------------------------------------------------
+# A/B comparison runner
+# ---------------------------------------------------------------------------
+
+# Predefined Phase 2 A/B configurations
+AB_CONFIGS: dict[str, tuple[TestOverrides, TestOverrides]] = {
+    "iteration-limit": (
+        TestOverrides(),                          # A: baseline (cap at 5)
+        TestOverrides(no_iteration_cap=True),     # B: no cap (CC way)
+    ),
+    "auto-nudge": (
+        TestOverrides(),                          # A: baseline (auto-nudge ON)
+        TestOverrides(no_auto_nudge=True),        # B: auto-nudge OFF (CC way)
+    ),
+    "tool-rules": (
+        TestOverrides(),                          # A: baseline (rules ON)
+        TestOverrides(no_tool_rules=True),        # B: rules OFF (CC way)
+    ),
+    "budget-winddown": (
+        TestOverrides(),                          # A: baseline (winddown ON)
+        TestOverrides(no_budget_winddown=True),   # B: winddown OFF (CC way)
+    ),
+    "state-block": (
+        TestOverrides(),                          # A: baseline ([STATE] ON)
+        TestOverrides(no_state_block=True),       # B: [STATE] OFF (CC way)
+    ),
+    "completion": (
+        TestOverrides(),                          # A: baseline (task_complete required)
+        TestOverrides(natural_completion=True),   # B: natural completion primary (CC way)
+    ),
+}
+
+
+async def run_ab_comparison(
+    item: str,
+    tests: list[dict] | None = None,
+    project: str | None = None,
+    config_path: str | None = None,
+    output_path: str | None = None,
+    quiet: bool = False,
+) -> dict:
+    """Run A/B comparison for a Phase 2 item.
+
+    Args:
+        item: Name of the Phase 2 item (key in AB_CONFIGS).
+        tests: Test list to use. Defaults to STRESS_TESTS.
+        project: Optional project name.
+        config_path: Optional config path.
+        output_path: Optional output path for comparison report.
+        quiet: Suppress streaming output.
+
+    Returns:
+        Comparison report dict.
+    """
+    if item not in AB_CONFIGS:
+        available = ", ".join(sorted(AB_CONFIGS.keys()))
+        console.print(f"[bold red]Unknown A/B item: '{item}'[/bold red]")
+        console.print(f"Available: {available}")
+        return {}
+
+    config_a, config_b = AB_CONFIGS[item]
+    tests = tests or STRESS_TESTS
+
+    console.print(f"\n[bold magenta]{'=' * 70}[/bold magenta]")
+    console.print(f"[bold magenta]A/B Comparison: {item}[/bold magenta]")
+    console.print(f"[bold magenta]  A: {config_a.label()} (BS current)[/bold magenta]")
+    console.print(f"[bold magenta]  B: {config_b.label()} (CC way)[/bold magenta]")
+    console.print(f"[bold magenta]{'=' * 70}[/bold magenta]\n")
+
+    # Run A
+    console.print("[bold cyan]Running config A (baseline)...[/bold cyan]")
+    results_a = await run_test_suite(
+        tests, f"A/B {item} — A ({config_a.label()})",
+        project=project, config_path=config_path,
+        quiet=quiet, overrides=config_a,
+    )
+
+    # Run B
+    console.print(f"\n[bold cyan]Running config B ({config_b.label()})...[/bold cyan]")
+    results_b = await run_test_suite(
+        tests, f"A/B {item} — B ({config_b.label()})",
+        project=project, config_path=config_path,
+        quiet=quiet, overrides=config_b,
+    )
+
+    # Compare
+    comparison = _compare_results(results_a, results_b, config_a, config_b, item)
+
+    # Print summary
+    console.print(f"\n[bold magenta]{'=' * 70}[/bold magenta]")
+    console.print(f"[bold magenta]A/B Results: {item}[/bold magenta]")
+    console.print(f"[bold magenta]{'=' * 70}[/bold magenta]\n")
+
+    console.print(f"  Config A ({config_a.label()}):")
+    console.print(f"    Passed: {comparison['a_passed']}/{comparison['total_tests']}")
+    console.print(f"    Avg tool calls: {comparison['a_avg_tools']:.1f}")
+    console.print(f"    Avg time: {comparison['a_avg_time']:.1f}s")
+
+    console.print(f"  Config B ({config_b.label()}):")
+    console.print(f"    Passed: {comparison['b_passed']}/{comparison['total_tests']}")
+    console.print(f"    Avg tool calls: {comparison['b_avg_tools']:.1f}")
+    console.print(f"    Avg time: {comparison['b_avg_time']:.1f}s")
+
+    winner = comparison["recommendation"]
+    console.print(f"\n  [bold]Recommendation: {winner}[/bold]")
+
+    # Save
+    out = output_path or f"data/ab_{item}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    Path(out).write_text(json.dumps(comparison, indent=2, default=str), encoding="utf-8")
+    console.print(f"\n[bold green]Comparison saved to {out}[/bold green]")
+
+    return comparison
+
+
+def _compare_results(
+    results_a: list[dict],
+    results_b: list[dict],
+    config_a: TestOverrides,
+    config_b: TestOverrides,
+    item: str,
+) -> dict:
+    """Build a structured comparison of two test runs."""
+    def _stats(results):
+        passed = sum(1 for r in results if r.get("_passed", False))
+        total_tools = sum(r.get("tool_call_count", 0) for r in results)
+        total_time = sum(r.get("timing", {}).get("total_seconds", 0) for r in results)
+        total_errors = sum(len(r.get("errors", [])) for r in results)
+        n = len(results) or 1
+        return {
+            "passed": passed,
+            "avg_tools": total_tools / n,
+            "avg_time": total_time / n,
+            "total_errors": total_errors,
+        }
+
+    stats_a = _stats(results_a)
+    stats_b = _stats(results_b)
+    total = len(results_a)
+
+    # Simple recommendation logic
+    a_score = stats_a["passed"] * 10 - stats_a["total_errors"] * 5 - stats_a["avg_tools"]
+    b_score = stats_b["passed"] * 10 - stats_b["total_errors"] * 5 - stats_b["avg_tools"]
+
+    if b_score > a_score + 2:
+        recommendation = f"Config B ({config_b.label()}) is better — adopt CC way"
+    elif a_score > b_score + 2:
+        recommendation = f"Config A ({config_a.label()}) is better — keep BS way"
+    else:
+        recommendation = "Too close to call — needs manual review or more tests"
+
+    # Per-test comparison
+    per_test = []
+    for ra, rb in zip(results_a, results_b):
+        per_test.append({
+            "test_name": ra.get("_test_name", ""),
+            "a_passed": ra.get("_passed", False),
+            "b_passed": rb.get("_passed", False),
+            "a_tools": ra.get("tool_call_count", 0),
+            "b_tools": rb.get("tool_call_count", 0),
+            "a_time": ra.get("timing", {}).get("total_seconds", 0),
+            "b_time": rb.get("timing", {}).get("total_seconds", 0),
+            "a_errors": len(ra.get("errors", [])),
+            "b_errors": len(rb.get("errors", [])),
+        })
+
+    return {
+        "item": item,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "config_a": asdict(config_a),
+        "config_b": asdict(config_b),
+        "total_tests": total,
+        "a_passed": stats_a["passed"],
+        "b_passed": stats_b["passed"],
+        "a_avg_tools": round(stats_a["avg_tools"], 1),
+        "b_avg_tools": round(stats_b["avg_tools"], 1),
+        "a_avg_time": round(stats_a["avg_time"], 1),
+        "b_avg_time": round(stats_b["avg_time"], 1),
+        "a_total_errors": stats_a["total_errors"],
+        "b_total_errors": stats_b["total_errors"],
+        "recommendation": recommendation,
+        "per_test": per_test,
+    }
 
 
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
+def _parse_overrides(args) -> TestOverrides:
+    """Build TestOverrides from CLI args."""
+    return TestOverrides(
+        no_tool_rules=args.no_tool_rules,
+        no_iteration_cap=args.no_iteration_cap,
+        no_auto_nudge=args.no_auto_nudge,
+        no_budget_winddown=args.no_budget_winddown,
+        no_state_block=args.no_state_block,
+        natural_completion=args.natural_completion,
+        single_system_msg=args.single_system_msg,
+    )
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -1435,18 +1894,60 @@ def main():
     parser.add_argument("--project", "-p", default=None, help="Project to activate")
     parser.add_argument("--output", "-o", default=None, help="Write JSON report to file")
     parser.add_argument("--config", default=None, help="Path to config.yaml")
-    parser.add_argument("--canned", action="store_true", help="Quick test suite (~5 min)")
-    parser.add_argument("--stress", action="store_true", help="Full stress suite (~1-2 hours)")
     parser.add_argument("--quiet", "-q", action="store_true", help="Suppress streaming output")
 
-    args = parser.parse_args()
+    # Test suite modes
+    modes = parser.add_argument_group("test modes")
+    modes.add_argument("--canned", action="store_true", help="Quick test suite (~5 min)")
+    modes.add_argument("--stress", action="store_true", help="Full stress suite (~1-2 hours)")
+    modes.add_argument("--simple-chat", action="store_true", help="Simple chat tests (no executor)")
+    modes.add_argument("--ab", metavar="ITEM", default=None,
+                       help="A/B comparison for a Phase 2 item. "
+                            f"Options: {', '.join(sorted(AB_CONFIGS.keys()))}")
 
-    if args.stress:
+    # Phase 2 override flags
+    overrides_group = parser.add_argument_group("phase 2 overrides (match Claude Code)")
+    overrides_group.add_argument("--no-tool-rules", action="store_true",
+                                 help="Disable tool rules engine")
+    overrides_group.add_argument("--no-iteration-cap", action="store_true",
+                                 help="Remove iteration cap (set to 999)")
+    overrides_group.add_argument("--no-auto-nudge", action="store_true",
+                                 help="Disable auto-continue/auto-nudge")
+    overrides_group.add_argument("--no-budget-winddown", action="store_true",
+                                 help="Disable budget winddown in executor")
+    overrides_group.add_argument("--no-state-block", action="store_true",
+                                 help="Disable [STATE] injection in executor")
+    overrides_group.add_argument("--natural-completion", action="store_true",
+                                 help="Make task_complete optional (natural completion primary)")
+    overrides_group.add_argument("--single-system-msg", action="store_true",
+                                 help="Consolidate system messages into one")
+
+    args = parser.parse_args()
+    overrides = _parse_overrides(args)
+
+    if args.ab:
+        asyncio.run(run_ab_comparison(
+            item=args.ab,
+            project=args.project,
+            config_path=args.config,
+            output_path=args.output,
+            quiet=args.quiet,
+        ))
+    elif args.stress:
         asyncio.run(run_stress_tests(
             project=args.project,
             config_path=args.config,
             output_path=args.output,
             quiet=args.quiet,
+            overrides=overrides,
+        ))
+    elif args.simple_chat:
+        asyncio.run(run_simple_chat_tests(
+            project=args.project,
+            config_path=args.config,
+            output_path=args.output,
+            quiet=args.quiet,
+            overrides=overrides,
         ))
     elif args.canned:
         asyncio.run(run_canned_tests(
@@ -1454,6 +1955,7 @@ def main():
             config_path=args.config,
             output_path=args.output,
             quiet=args.quiet,
+            overrides=overrides,
         ))
     elif args.task:
         asyncio.run(run_test(
@@ -1462,6 +1964,7 @@ def main():
             output_path=args.output,
             config_path=args.config,
             quiet=args.quiet,
+            overrides=overrides,
         ))
     else:
         parser.print_help()

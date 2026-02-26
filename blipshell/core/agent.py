@@ -69,7 +69,7 @@ from blipshell.memory.tag_discovery import TagDiscovery
 from blipshell.memory.tagger import register_topic_patterns
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.models.config import BlipShellConfig, get_ollama_url
-from blipshell.models.session import MessageRole
+from blipshell.models.session import MessageRole, SessionMessage
 from blipshell.models.tools import ToolCall
 from blipshell.session.manager import SessionManager
 
@@ -135,6 +135,10 @@ class Agent:
         self.reflect_enabled: bool = False  # /reflect toggle — second-pass self-critique
         self._turn_number: int = 0
         self._last_context_stats: Optional[dict] = None
+
+        # Token usage tracking (per-endpoint, per-session)
+        # { endpoint_name: { "prompt_tokens": int, "completion_tokens": int, "requests": int } }
+        self._token_usage: dict[str, dict[str, int]] = {}
 
         # Interactive callbacks (wired by CLI)
         self._ask_user_callback: Optional[Callable] = None
@@ -653,6 +657,16 @@ class Agent:
         if tree_lines:
             parts.append(f"\nTop-level layout:\n" + "\n".join(tree_lines[:40]))
 
+        # BLIPSHELL.md — project-level instructions (loaded in full, like CLAUDE.md)
+        blipshell_md = root_path / "BLIPSHELL.md"
+        if blipshell_md.is_file():
+            try:
+                content = blipshell_md.read_text(encoding="utf-8", errors="replace")
+                parts.append(f"\n=== BLIPSHELL.md (project instructions) ===\n{content}")
+                logger.info("Loaded BLIPSHELL.md from %s (%d chars)", root, len(content))
+            except Exception:
+                pass
+
         # Key files
         key_files = ["README.md", "README.rst", "README.txt", "readme.md",
                      "pyproject.toml", "setup.py", "setup.cfg",
@@ -876,6 +890,112 @@ class Agent:
                 session_id=s.id,
             ))
 
+    async def _stream_llm_response(
+        self,
+        client,
+        messages: list[dict],
+        model: str,
+        tools: list[dict] | None,
+        chat_kwargs: dict,
+        on_token=None,
+    ) -> tuple[str, list | None]:
+        """Stream an LLM response, yielding text tokens to on_token as they arrive.
+
+        Returns (content, tool_calls) — same interface as _extract_response()
+        but with real-time streaming of text tokens.
+
+        Ollama streaming behavior:
+        - Text tokens arrive as chunks with message.content set
+        - Tool calls arrive in the final chunk(s) with message.tool_calls
+        - The last chunk has done=True and includes prompt_eval_count/eval_count
+
+        Falls back to non-streaming chat() if streaming fails.
+        """
+        try:
+            content_parts: list[str] = []
+            tool_calls = None
+
+            async for chunk in client.chat_stream(
+                messages=messages,
+                model=model,
+                tools=tools,
+                **chat_kwargs,
+            ):
+                # Extract chunk data — handle both object and dict format
+                msg = getattr(chunk, "message", None)
+                if msg is not None:
+                    # Object format (ollama 0.4+)
+                    chunk_content = getattr(msg, "content", "") or ""
+                    chunk_tool_calls = getattr(msg, "tool_calls", None)
+                else:
+                    # Dict format (older ollama)
+                    msg = chunk.get("message", {}) if isinstance(chunk, dict) else {}
+                    chunk_content = msg.get("content", "") or ""
+                    chunk_tool_calls = msg.get("tool_calls", None)
+
+                # Stream text tokens to user immediately
+                if chunk_content:
+                    content_parts.append(chunk_content)
+                    if on_token:
+                        on_token(chunk_content)
+
+                # Tool calls arrive in the final chunk
+                if chunk_tool_calls:
+                    tool_calls = chunk_tool_calls
+
+                # Capture token usage from the final chunk (done=True)
+                is_done = getattr(chunk, "done", False)
+                if not is_done and isinstance(chunk, dict):
+                    is_done = chunk.get("done", False)
+                if is_done:
+                    self._record_token_usage_from_chunk(chunk)
+
+            content = "".join(content_parts)
+            return content, tool_calls
+
+        except Exception as e:
+            # Fallback to non-streaming if streaming fails
+            logger.warning("Streaming failed, falling back to non-streaming: %s", e)
+            response = await client.chat(
+                messages=messages,
+                model=model,
+                tools=tools,
+                **chat_kwargs,
+            )
+            content, tool_calls = self._extract_response(response)
+            self._record_token_usage_from_chunk(response)
+            # Non-streaming: dump full response at once
+            if on_token and content:
+                on_token(content)
+            return content, tool_calls
+
+    def _record_token_usage_from_chunk(self, chunk):
+        """Extract and accumulate token usage from an Ollama response/chunk.
+
+        Ollama returns prompt_eval_count (input tokens) and eval_count (output tokens)
+        in the final chunk of a streaming response and in non-streaming responses.
+        """
+        # Extract counts — handle both object attrs and dict keys
+        prompt_tokens = getattr(chunk, "prompt_eval_count", None)
+        eval_tokens = getattr(chunk, "eval_count", None)
+        if prompt_tokens is None and isinstance(chunk, dict):
+            prompt_tokens = chunk.get("prompt_eval_count")
+        if eval_tokens is None and isinstance(chunk, dict):
+            eval_tokens = chunk.get("eval_count")
+
+        if prompt_tokens is None and eval_tokens is None:
+            return
+
+        endpoint_name = self._last_endpoint_used or "unknown"
+        if endpoint_name not in self._token_usage:
+            self._token_usage[endpoint_name] = {
+                "prompt_tokens": 0, "completion_tokens": 0, "requests": 0,
+            }
+        stats = self._token_usage[endpoint_name]
+        stats["prompt_tokens"] += prompt_tokens or 0
+        stats["completion_tokens"] += eval_tokens or 0
+        stats["requests"] += 1
+
     @staticmethod
     def _extract_response(response) -> tuple[str, list | None]:
         """Extract content and tool_calls from an Ollama response.
@@ -1067,13 +1187,9 @@ class Agent:
                     if not cont_tools:
                         cont_tools = None
 
-                response = await client.chat(
-                    messages=messages, model=model,
-                    tools=cont_tools,
-                    **chat_kwargs,
+                content, new_tc = await self._stream_llm_response(
+                    client, messages, model, cont_tools, chat_kwargs, on_token,
                 )
-
-                content, new_tc = self._extract_response(response)
 
                 if new_tc and iteration < max(remaining_iterations, 5) - 1:
                     messages.append({"role": "assistant", "content": content,
@@ -1113,9 +1229,8 @@ class Agent:
                         endpoint.record_success(0)
                     continue
                 else:
+                    # Text was already streamed to on_token by _stream_llm_response
                     full_response = content
-                    if on_token and content:
-                        on_token(content)
                     if endpoint:
                         endpoint.record_success(0)
                     break
@@ -1271,14 +1386,12 @@ class Agent:
                     if not iter_tools:
                         iter_tools = None  # all tools filtered out → force text response
 
-                response = await client.chat(
-                    messages=messages,
-                    model=model,
-                    tools=iter_tools,
-                    **chat_kwargs,
+                # Use streaming to show tokens as they arrive.
+                # Text tokens stream to on_token(); tool calls arrive in
+                # the final chunk and are extracted after the stream ends.
+                content, tool_calls = await self._stream_llm_response(
+                    client, messages, model, iter_tools, chat_kwargs, on_token,
                 )
-
-                content, tool_calls = self._extract_response(response)
                 logger.info("LLM response: tool_calls=%s, content_len=%d, tools_offered=%d",
                            bool(tool_calls), len(content),
                            len(iter_tools) if iter_tools else 0)
@@ -1332,10 +1445,8 @@ class Agent:
                         endpoint.record_success(0)
                     continue  # Loop back for LLM to process tool results
                 else:
-                    # No tool calls — use the response directly
+                    # No tool calls — text was already streamed to on_token
                     full_response = content
-                    if on_token and content:
-                        on_token(content)
                     if endpoint:
                         endpoint.record_success(0)
                     break
@@ -1381,14 +1492,10 @@ class Agent:
                 ),
             })
             try:
-                response = await client.chat(
-                    messages=messages, model=model, tools=None,
-                    **chat_kwargs,
+                content, _ = await self._stream_llm_response(
+                    client, messages, model, None, chat_kwargs, on_token,
                 )
-                content, _ = self._extract_response(response)
                 full_response = content
-                if on_token and content:
-                    on_token(content)
             except Exception as e:
                 logger.error("Auto-continue failed: %s", e)
                 full_response = f"[Hit tool limit after {len(tool_call_names)} calls]"
@@ -1409,11 +1516,9 @@ class Agent:
                 ),
             })
             try:
-                response = await client.chat(
-                    messages=messages, model=model, tools=tools,
-                    **chat_kwargs,
+                content, new_tool_calls = await self._stream_llm_response(
+                    client, messages, model, tools, chat_kwargs, on_token,
                 )
-                content, new_tool_calls = self._extract_response(response)
                 if new_tool_calls:
                     # The LLM wants to use tools — re-enter the tool loop
                     full_response = await self._continue_tool_loop(
@@ -1424,8 +1529,6 @@ class Agent:
                     )
                 elif content:
                     full_response = content
-                    if on_token:
-                        on_token(content)
             except Exception as e:
                 logger.error("Auto-nudge failed: %s", e)
                 # Keep original response
@@ -1674,32 +1777,17 @@ class Agent:
                 "\n\n--- PROJECT CONTEXT ---\n"
                 f"Project: \"{self.active_project['name']}\" at {root_path}\n"
                 "File tools resolve relative paths against this root.\n\n"
-                "# How to Respond\n"
                 "Answer questions conversationally. Only use tools when the user asks you "
                 "to create, modify, find, or run something.\n\n"
                 "Examples:\n"
-                '- "How does search work?" -> Answer from context/memory. No tools.\n'
-                '- "What do you think about X?" -> Conversation. No tools.\n'
+                '- "How does search work?" -> Answer from context. No tools.\n'
                 '- "Create hello.py" -> Use write_file.\n'
-                '- "Find files that import asyncio" -> Use grep_files.\n'
-                '- "Fix the bug in search.py" -> Use read_file, then edit_file.\n\n'
-                "# Rules\n"
-                "- Do NOT narrate your process. Never say 'Let me read...' — just do it or answer.\n"
-                "- Read a file ONCE. Do not re-read files you already have.\n"
-                "- Always read before editing.\n"
-                "- Use grep_files/glob_files, not shell grep/find.\n"
-                "- Do NOT launch interactive apps via run_command.\n"
-                f"- Target under {tool_limit} tool calls. Do not explore endlessly.\n\n"
-                "# Platform: Windows\n"
-                "Use 'dir' not 'ls', 'type' not 'cat'. Or better: use file tools directly.\n"
-                "run_command already runs from the project root.\n\n"
+                '- "Fix the bug in search.py" -> read_file, then edit_file.\n\n'
+                f"Target under {tool_limit} tool calls. Do not explore endlessly.\n\n"
                 "# Scratchpad\n"
-                "You have a scratchpad file for persistent working notes across sessions.\n"
-                f"- Project: data/scratchpad_{self.active_project['name']}.md\n"
-                "- General: data/scratchpad.md\n"
-                "Use edit_file or write_file to update it. Good for: decisions made, current plan, "
-                "TODOs, context that should survive across conversations.\n"
-                "Do NOT dump everything there — only things you'd want to remember next session.\n\n"
+                f"Project: data/scratchpad_{self.active_project['name']}.md | "
+                "General: data/scratchpad.md\n"
+                "For decisions, plans, and TODOs that should survive across sessions.\n\n"
             )
 
             # Add model-specific extra instructions
@@ -1941,3 +2029,106 @@ class Agent:
             "planner_enabled": self.config.planner.enabled,
             "workflows_loaded": len(self.workflow_registry.list_all()) if self.workflow_registry else 0,
         }
+
+    def get_context_info(self) -> dict:
+        """Get context window usage info for /context display.
+
+        Returns pool budgets, usage, context limit, and headroom — using
+        the stats captured during the most recent _build_messages() call.
+        """
+        context_role = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
+        context_limit = self.endpoint_manager.get_context_tokens_for_role(
+            context_role, default=65536,
+        ) if self.endpoint_manager else 65536
+
+        pool_usage = self.memory_manager.get_usage() if self.memory_manager else {}
+
+        # Total tokens currently used across all pools
+        total_pool_tokens = sum(s.get("used", 0) for s in pool_usage.values())
+
+        # Message count from session
+        message_count = self.session_manager.message_count if self.session_manager else 0
+
+        # Estimate tokens used by session messages (rough — messages in memory
+        # pools are already counted, but gives the user a sense of total usage)
+        session_tokens = 0
+        if self.session_manager:
+            for msg in self.session_manager.get_messages():
+                session_tokens += getattr(msg, "token_count", 0) or 0
+
+        return {
+            "context_limit": context_limit,
+            "overhead_reserve": MemoryManager.OVERHEAD_TOKENS,
+            "pool_usage": pool_usage,
+            "total_pool_tokens": total_pool_tokens,
+            "message_count": message_count,
+            "session_tokens": session_tokens,
+            "last_context_stats": self._last_context_stats,
+            "turn_number": self._turn_number,
+        }
+
+    def get_token_usage(self) -> dict[str, dict[str, int]]:
+        """Get token usage per endpoint for this session."""
+        return dict(self._token_usage)
+
+    async def compact_conversation(self, focus: str = "") -> str:
+        """Compact older conversation messages to free context space.
+
+        Summarizes older messages into a condensed form while keeping recent
+        messages intact. Returns a status message describing what was compacted.
+        """
+        if not self.session_manager:
+            return "No active session."
+
+        messages = self.session_manager.get_messages()
+        if len(messages) < 6:
+            return "Too few messages to compact (need at least 6)."
+
+        # Keep the most recent 4 messages untouched
+        keep_recent = 4
+        older = messages[:-keep_recent]
+        recent = messages[-keep_recent:]
+
+        # Build text from older messages for summarization
+        older_text = []
+        for msg in older:
+            prefix = msg.role.value
+            older_text.append(f"{prefix}: {msg.content[:500]}")
+        text_to_summarize = "\n".join(older_text)
+
+        focus_hint = f" Focus on: {focus}" if focus else ""
+        summary_prompt = (
+            f"Summarize the following conversation history into a concise summary "
+            f"(max 300 words) that preserves key facts, decisions, and context.{focus_hint}\n\n"
+            f"{text_to_summarize}"
+        )
+
+        # Use the summarization model to create a compact summary
+        try:
+            summary = await self.router.generate(
+                TaskType.SUMMARIZATION, summary_prompt,
+            )
+        except Exception as e:
+            return f"Compaction failed (LLM error): {e}"
+
+        # Replace older messages with a single system summary message
+        compacted_msg = SessionMessage(
+            role=MessageRole.SYSTEM,
+            content=f"[Compacted conversation summary]\n{summary}",
+            timestamp=recent[0].timestamp if recent else messages[0].timestamp,
+            token_count=estimate_tokens(summary),
+        )
+
+        # Replace the session manager's message list
+        self.session_manager._messages = [compacted_msg] + list(recent)
+        # Mark compacted indices as dumped (they were already processed)
+        self.session_manager._dumped_indices = {0}
+
+        old_count = len(older)
+        old_tokens = sum(getattr(m, "token_count", 0) or 0 for m in older)
+        new_tokens = estimate_tokens(summary)
+        return (
+            f"Compacted {old_count} older messages ({old_tokens:,} tokens) "
+            f"into a summary ({new_tokens:,} tokens). "
+            f"Saved ~{old_tokens - new_tokens:,} tokens."
+        )
