@@ -1232,16 +1232,15 @@ class Agent:
             if not client:
                 return "Error: No available LLM endpoint."
 
-        # Only pass tools when the message looks like an action request.
-        # Claude Code doesn't offer tools on conversational turns — the model
-        # can't over-call tools it doesn't have. This is the simplest and most
-        # reliable way to prevent tool spam on discussion questions.
+        # Always pass all tools — let the model decide what to use.
+        # Claude Code always passes all tools on every turn. Tool over-use
+        # is controlled by the system prompt and tool descriptions, not by
+        # withholding tools based on message content.
         ms = self.model_settings.get(model)
-        needs_tools = self._message_needs_tools(user_message)
-        tools = self.tool_registry.get_all_ollama_tools() if needs_tools else None
+        tools = self.tool_registry.get_all_ollama_tools() or None
         max_iterations = self.config.agent.max_tool_iterations if tools else 0
-        logger.info("Tools %s (needs_tools=%s, max_iterations=%d)",
-                     "ON" if tools else "OFF", needs_tools, max_iterations)
+        logger.info("Passing %d tools (max_iterations=%d)",
+                     len(tools) if tools else 0, max_iterations)
         full_response = ""
         tool_call_names: list[str] = []
         endpoint_name = ""
@@ -1782,46 +1781,6 @@ class Agent:
                 self._enqueue_undumped_messages()
         except Exception as e:
             logger.error("Background memory processing error: %s", e)
-
-    # Action keywords that indicate the user wants the model to DO something
-    # (not just talk). If none of these appear, tools are not passed.
-    _ACTION_KEYWORDS = {
-        "create", "make", "write", "add", "build", "generate", "implement",
-        "edit", "update", "change", "modify", "fix", "patch", "refactor",
-        "delete", "remove", "rename",
-        "read", "show", "open", "cat", "display",
-        "find", "search", "grep", "look up", "lookup",
-        "run", "execute", "install", "test", "deploy", "start", "stop",
-        "commit", "push", "pull", "merge", "branch", "checkout",
-        "save", "remember", "store",
-        "fetch", "download", "curl",
-        "list files", "list dir", "what files",
-    }
-
-    @staticmethod
-    def _message_needs_tools(message: str) -> bool:
-        """Check if a user message looks like an action request that needs tools.
-
-        Returns False for conversational/discussion messages so tools are not
-        passed to the model (preventing tool spam on casual questions).
-        """
-        lower = message.lower().strip()
-
-        # URLs always need tools (web_fetch)
-        if "http://" in lower or "https://" in lower:
-            return True
-
-        # Check for action keywords
-        for keyword in Agent._ACTION_KEYWORDS:
-            if keyword in lower:
-                return True
-
-        # Questions starting with "can you", "could you", "please" + verb
-        # are likely action requests
-        if lower.startswith(("can you ", "could you ", "would you ", "please ")):
-            return True
-
-        return False
 
     def _enqueue_undumped_messages(self):
         """Push undumped session messages to the memory worker queue."""
