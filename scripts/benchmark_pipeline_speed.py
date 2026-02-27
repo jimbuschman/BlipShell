@@ -25,10 +25,14 @@ import sys
 import time
 from pathlib import Path
 
-# Fix Windows console encoding for box-drawing characters
+# Fix Windows console encoding and ensure line-buffered output for log files
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+elif not sys.stdout.isatty():
+    # Redirected to file — force line buffering so logs appear in real-time
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding=sys.stdout.encoding, errors="replace", line_buffering=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding=sys.stderr.encoding, errors="replace", line_buffering=True)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
