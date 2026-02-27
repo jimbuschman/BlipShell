@@ -392,9 +392,10 @@ class MemorySearch:
         for name in entity_names:
             if len(name) < 3:
                 continue
-            # Word-boundary match: entity name must appear as a whole word/phrase
-            pattern = r'\b' + re.escape(name) + r'\b'
-            if re.search(pattern, query_lower):
+            # Fast substring pre-filter, then word-boundary regex on candidates only
+            if name not in query_lower:
+                continue
+            if re.search(r'\b' + re.escape(name) + r'\b', query_lower):
                 matched_names.append(name)
         if not matched_names:
             return [], [], 0
