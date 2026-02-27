@@ -116,10 +116,28 @@ class LLMRouter:
 
         # Skip straight to fallback if primary model is known to be down
         if self.is_model_failed(model):
-            fallback_model = self.get_fallback_model(task_type)
-            if fallback_model:
-                model = fallback_model
+            # Must also switch endpoint — can't send a local model name to a cloud API
+            fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
+                task_type, exclude=endpoint.name,
+            )
+            if fallback_ep:
+                fb_model = fallback_ep.models.get(task_type)
+                if not fb_model:
+                    fb_model = self.get_fallback_model(task_type) or self.get_model(task_type)
+                logger.info(
+                    "Model '%s' is failed, skipping to '%s' on '%s'",
+                    model, fb_model, fallback_ep.name,
+                )
+                endpoint = fallback_ep
+                model = fb_model
+                client = fallback_ep.client
                 use_fallback = True
+            else:
+                # No alternative endpoint — try fallback model on same endpoint as last resort
+                fallback_model = self.get_fallback_model(task_type)
+                if fallback_model:
+                    model = fallback_model
+                    use_fallback = True
 
         endpoint.start_request()
         try:

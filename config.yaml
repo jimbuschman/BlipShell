@@ -46,7 +46,7 @@ endpoints:
     max_concurrent: 2
     rate_limit_rpm: 10                    # free tier: 10 RPM (Google docs say 10, was 5)
     rate_limit_rpd: 250                  # free tier: 250 RPD (error showed 20 — may be per-interval burst limit)
-    enabled: true
+    enabled: false                       # disabled: 20-request burst limit makes free tier unreliable
     models:
       summarization: "gemini-2.5-flash"
   - name: "local-cloud"
