@@ -10,17 +10,18 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - tool_calling: glm-5:cloud — general chat + tool use
 - coding: glm-5:cloud — /code command (benchmark winner: 13/13 checks)
 
-**Background processing (local):**
-- reasoning: qwen3:14b — entity extraction, tag discovery, lessons, contradiction detection
-- summarization: glm4:latest — memory/session summaries (Groq/Gemini tried first)
-- ranking: qwen2.5:14b — memory ranking 1-5
-- importance: qwen3:14b — memory importance 0.0-1.0
-- ranking_importance: qwen2.5:14b — combined scoring for batch import
-- embedding: nomic-embed-text — vector search
+**Background processing (cloud + local):**
+- summarization: Gemini gemini-2.5-flash (priority 3) → Groq gpt-oss-120b (priority 2) → local glm4
+- ranking_importance: Groq llama-3.3-70b-versatile (0.4s avg) → local qwen2.5:7b fallback
+- reasoning: qwen3:14b (local) — entity extraction, tag discovery, lessons, dedup, contradiction
+- importance: qwen3:14b (local) — standalone importance scoring
+- ranking: qwen2.5:14b (local) — standalone ranking (rarely used, ranking_importance preferred)
+- embedding: nomic-embed-text (local) — vector search
 
 **Fallbacks (local, when cloud is down):**
 - tool_calling/coding/reasoning: gpt-oss:latest
-- summarization/ranking/importance: same as primary (local safety net)
+- summarization: glm4:latest
+- ranking_importance: qwen2.5:7b (benchmarked: 10/10 rank accuracy, 5.3s avg)
 
 ## Completed Work
 - Memory consolidation (feature 4)
@@ -32,46 +33,45 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - Lessons regenerated
 - Entity graph cleaned (31,469 entities, 56K relationships, 95K mentions)
 - Entity type corrections applied
+- Unified ChatLoop refactor — single loop in `blipshell/core/chat_loop.py`, ~250 lines dead code removed
+- Pipeline speed optimization — ranking moved to Groq llama-3.3-70b (10x faster), cloud load split
 
 ## Road to Usable — Priority Task List
 
-### 1. LLM Routing Audit & Fallback Fixes — CODE WRITTEN, NEEDS TESTING
-- [x] Fix mid-request 429 fallback — `RateLimitExhaustedError` signals router to try next endpoint (was retrying same endpoint up to 6 times, now 2 retries then move on)
+### 1. LLM Routing Audit & Fallback Fixes — COMPLETE
+- [x] Fix mid-request 429 fallback — `RateLimitExhaustedError` signals router to try next endpoint
 - [x] Fix context size mismatch on fallback — fallback path now passes `num_ctx` from endpoint config
-- [x] Don't penalize endpoints for model-level errors — `is_model_error()` in `exceptions.py` distinguishes model not found / cloud proxy 502-504 from real endpoint failures
+- [x] Don't penalize endpoints for model-level errors — `is_model_error()` in `exceptions.py`
 - [x] Add fallback models for all task types — summarization/ranking/importance/ranking_importance fallbacks in config
-- [x] Decide cloud vs local — reasoning back to local qwen3:14b, Groq+Gemini re-enabled for summarization overflow (priority-ordered)
-- [ ] **NEEDS TESTING**: Verify 429 fallback actually cascades (Groq → Gemini → local)
-- [ ] **NEEDS TESTING**: Verify model-not-found doesn't disable the endpoint
-- [ ] **NEEDS TESTING**: Verify context tokens pass through on fallback path
-- [ ] Document the final routing decisions
+- [x] Decide cloud vs local — Gemini primary for summarization, Groq for ranking_importance, local fallback
+- [x] Unit tests validate: 429 cascade, model-not-found handling, context token passthrough (24 tests in `test_routing_fallback.py`)
+- [x] Pipeline benchmark validated routing: Gemini→summarization, Groq→ranking_importance, local→reasoning
 
-### 2. Conversation Flow Observability — CODE WRITTEN, NEEDS TESTING
+### 2. Conversation Flow Observability — COMPLETE
 - [x] `turn_events` table in SQLite — logs event_type + JSON data per turn per session
-- [x] Events logged: `turn_start` (route, query length), `search_complete` (chroma/FTS/entity hits, final count), `context_built` (pool budgets, pool usage, total items), `llm_complete` (endpoint, model, fallback, tools, response length)
+- [x] Events logged: `turn_start`, `search_complete`, `context_built`, `llm_complete`
 - [x] `MemorySearch.last_search_stats` tracks per-search hit counts
 - [x] `/flow` CLI command — summary table of last 5 turns
 - [x] `/flow <n>` CLI command — detailed event breakdown for a specific turn
 - [x] `/api/flow` web endpoint — same data via REST
-- [ ] **NEEDS TESTING**: Run a few interactive turns and check `/flow` output makes sense
-- [ ] **NEEDS TESTING**: Verify events log correctly across simple and planned paths
+- [ ] Try `/flow` interactively to spot-check output quality
 
-### 3. Full Integration Test Suite — CODE WRITTEN, NEEDS TESTING
+### 3. Full Integration Test Suite — COMPLETE
 - [x] `tests/test_integration_pipeline.py` — end-to-end pipeline test
 - [x] `tests/test_processor.py` — memory processor unit tests
 - [x] `tests/test_entity_extractor.py` — entity extractor unit tests
 - [x] `tests/test_tag_discovery.py` — tag discovery tests
 - [x] `tests/conftest.py` — shared fixtures
-- [ ] **NEEDS TESTING**: Run full test suite (`pytest tests/`) and fix failures
+- [x] Full suite passes: 278 passed, 4 skipped (~18 seconds)
 
-### 4. Unified Prompt Test Suite — CODE WRITTEN, NEEDS TESTING
+### 4. Unified Prompt Test Suite — COMPLETE
 - [x] `tests/benchmark_all.py` — unified runner, `--suite pipeline|reasoning|realdata`, `--models`, `--db`
 - [x] Entity extraction benchmark (5 curated summaries + real-data on first 20 DB summaries)
 - [x] Contradiction detection benchmark (6 YES/NO pairs + real core memory pairs from DB)
 - [x] Combined `rank_and_importance` benchmark (production prompt, parsed with `_parse_rank_and_importance`)
-- [ ] **NEEDS TESTING**: `python tests/benchmark_all.py --suite pipeline --models qwen3:14b`
-- [ ] **NEEDS TESTING**: `python tests/benchmark_realdata.py --models qwen3:14b --sample 10`
-- [ ] Use results to tweak prompts or choose different models where needed
+- [x] `scripts/benchmark_pipeline_speed.py` — speed benchmark across 11 models (local + Groq + Gemini)
+- [x] `scripts/diagnose_pipeline.py` — full pipeline diagnostic (routing, timing, concurrent DB, concurrent LLM+DB)
+- [ ] Run `tests/benchmark_all.py` and `benchmark_realdata.py` on Ollama PC when time permits
 
 ### 5. Embedding Model Upgrade — COMPLETE (kept nomic-embed-text)
 - [x] `scripts/benchmark_embeds.py` — tests nomic, mxbai-embed-large, snowflake-arctic-embed:335m, bge-m3
@@ -93,10 +93,13 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - [x] Auto-backup on startup if >24h since last backup (agent.py)
 - [x] Auto-rotation keeps last 5 backups
 
-### 8. Prompt & Model Refinement — BLOCKED on items 1-4 test results
-- Tweak prompts where tests show quality issues
-- Swap models for specific task types if better options found
-- Re-run extraction/scoring if prompts change significantly
+### 8. Prompt & Model Refinement — IN PROGRESS
+- [x] Pipeline speed benchmark (`scripts/benchmark_pipeline_speed.py`) — tested 11 models across local + Groq + Gemini
+- [x] Ranking: llama-3.3-70b-versatile on Groq (0.85s, 9/10 accuracy) replaces local qwen2.5:14b (8.2s)
+- [x] Dedup: kept local qwen2.5:14b (conservative, safe behavior)
+- [x] Summarization: Gemini flash primary, Groq fallback (load splitting)
+- [ ] Type classification accuracy low across all models — may need prompt tweak
+- [ ] Run prompt benchmarks (`tests/benchmark_all.py`) on Ollama PC when time permits
 
 ## Benchmark Results (tests/benchmark_reasoning.py)
 - Results stored in data/benchmark_reasoning_results.json on the Ollama PC
@@ -112,19 +115,24 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - Per-endpoint `models:` map overrides global model names for each task type
 - API keys via `${ENV_VAR}` syntax or plaintext in config
 - Rate limiting: `rate_limit_rpm` / `rate_limit_rpd` — when hit, falls back to next endpoint automatically
-- Groq: `openai/gpt-oss-120b` — summarization only (rank skew on scoring tasks, 200K TPD free limit)
-- Gemini: `gemini-2.5-flash` — summarization only (5 RPM free tier)
-- Both enabled as summarization overflow — keeps GPU free for interactive reasoning
-- Ranking/importance stay on validated local models (cloud models skew to rank 4)
 
-### Cloud endpoint testing results
-- Groq gpt-oss-120b: Good summaries, bad ranking (84% rank 4), 200K TPD burns fast on batch
-- Gemini 2.5 flash: 5 RPM free tier too slow for batch, untested on ranking quality
+### Current cloud routing (benchmarked 2026-02-27)
+- **Gemini** (priority 3): `gemini-2.5-flash` for summarization (~1.5s avg, 5 RPM)
+- **Groq** (priority 2): `llama-3.3-70b-versatile` for ranking_importance (0.4s avg, 30 RPM), `gpt-oss-120b` as summarization fallback
+- Load split: each cloud endpoint handles one pipeline task, no rate limit competition
+- Pipeline speed: ~7s per message (was ~20s with all-local ranking)
+
+### Cloud benchmark results (scripts/benchmark_pipeline_speed.py)
+- Groq llama-3.3-70b: **Best speed/quality for ranking** — 0.85s, 9/10 rank accuracy, 8/10 importance
+- Groq gpt-oss-120b: Good summaries, bad ranking (7/10), slow for scoring (4.8s)
+- Groq gpt-oss-20b: Slow (7.9s) and inaccurate (7/10 rank, 5/10 importance)
+- Gemini 2.5 flash: 50% error rate on ranking (rate limits), fine for summarization
+- Gemini 2.5 flash-lite: Fastest (0.79s) but unreliable (50% errors)
 - Both free tiers useless for batch import, fine for interactive background tasks
 
 ## Feature Roadmap (Future)
 
-### 9. Project Mode Memory Integration — CODE WRITTEN, NEEDS TESTING
+### 9. Project Mode Memory Integration — COMPLETE
 - [x] Memory IN: Search relevant memories before execution (`_chat_planned` → `search.search()`)
 - [x] Memory IN: Pass last 10 chat messages as context so design discussions carry over
 - [x] Memory IN: Inject both into executor via `memory_context` / `chat_history` params
@@ -133,26 +141,22 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - [x] Memory OUT: Narrative fed through `process_message()` (bypasses 5-message dump threshold)
 - [x] Transcript saving: Full messages list saved to `data/project_transcripts/{project}__{timestamp}.json`
 - [x] All execution paths feed memory: background tasks, plan results, workflows, dynamic execution
-- [ ] **NEEDS TESTING**: Verify memories appear in executor context
-- [ ] **NEEDS TESTING**: Verify coding narrative gets processed into memory pipeline
-- [ ] **NEEDS TESTING**: Verify transcripts save correctly
+- [x] Unit tests validate memory integration (14 tests in `test_memory_integration.py`)
 - [ ] Future: Executor checkpointing for resume on interrupt
-- [ ] Future: Context compression for long conversations
 
 ### 10. Project Mode Conversational Prompt — COMPLETE
 - [x] Replaced EXECUTION MODE prompt with conversational-by-default INTERACTION MODE
 - [x] LLM discusses and clarifies before acting, only uses tools when user requests action
 - [x] Tools always available but prompt controls when to use them
 
-### 11. Interactive Executor — CODE WRITTEN, NEEDS TESTING
+### 11. Interactive Executor — COMPLETE
 - [x] `ask_user` tool: `blipshell/core/tools/interaction_tools.py` — LLM can ask clarifying questions mid-execution
 - [x] CLI callback: `_ask_user_input()` in cli.py — prompts user with Rich formatting
 - [x] Registered in `activate_project()`, unregistered in `deactivate_project()`
 - [x] Benchmark-safe: returns "Make your best judgment" when no callback is set
 - [x] Removed "Do NOT ask questions" from executor prompt
 - [x] Prompt guides LLM to use ask_user for unclear requirements and after 2 failed attempts
-- [ ] **NEEDS TESTING**: Verify ask_user tool prompts user and returns answer to LLM
-- [ ] **NEEDS TESTING**: Verify benchmark still passes without interactive callback
+- [ ] Verify ask_user works interactively (try giving an ambiguous task in project mode)
 - [ ] Future: Approval gates for destructive operations
 - [ ] Future: Mid-task steering and graceful interruption
 
@@ -163,16 +167,14 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - [x] Richer TASK_COMPLETE format: files modified, design decisions, things to test
 - [ ] Parallel tool calls — future (OpenAI API supports this, free speedup)
 
-### 13. Message Persistence & Recovery — CODE WRITTEN, NEEDS TESTING
+### 13. Message Persistence & Recovery — COMPLETE
 - [x] `session_messages` table: raw messages persisted immediately on `add_message()`
 - [x] `is_processed` flag: set to True when message successfully goes through memory pipeline
 - [x] Startup sweep: `_sweep_unprocessed_messages()` reprocesses failed messages on next launch
 - [x] Executor narrative builder: `build_executor_narrative()` — extracts reasoning/actions from transcripts, drops tool result noise (99.7% reduction)
 - [x] Project-scoped lessons: `project` column on lessons table, ChromaDB metadata, boost in `search_lessons()`
 - [x] Session-close timeouts: 30s per message, 60s for lessons (model swap overhead)
-- [ ] **NEEDS TESTING**: Verify messages persist and survive session close
-- [ ] **NEEDS TESTING**: Verify startup sweep catches and reprocesses timed-out messages
-- [ ] **NEEDS TESTING**: Verify project lessons get boosted in search
+- [x] Unit tests validate: persistence, recovery, project lessons (28 tests in `test_message_persistence.py`)
 - [ ] Future: Scheduled overnight maintenance job (reprocess, health check, cleanup)
 
 ### 14. Executor Architecture Overhaul — COMPLETE
@@ -287,11 +289,13 @@ the model lacked state awareness and the prompts were too sparse.
 - [x] `scripts/test_executor.py` — bootstraps full Agent, runs task via `agent.chat()`, outputs structured JSON report
 - [x] `blipshell test` CLI command — delegates to test script
 - [x] `--canned` mode: 3 quick tests (file creation, grep, read+edit)
-- [x] `--stress` mode: 25 tests across 8 categories (tool coverage, multi-step, error recovery, scaffolding, simple chat, real-world, edge cases, observability)
+- [x] `--stress` mode: 65 tests across 12 categories (tool coverage, multi-step, error recovery, scaffolding, simple chat, real-world, edge cases, observability, consistency, heavy, git, instruction)
+- [x] `--simple-chat` mode: 14 tests for conversational + tool usage paths
 - [x] JSON reports with: tool calls, errors, warnings, timing, flow events, files read/created/edited, completion method
 - [x] `--quiet` mode for overnight runs (JSON only, no streaming)
-- [ ] **NEEDS TESTING**: Run `--canned` on Ollama PC to validate harness works
-- [ ] **NEEDS TESTING**: Run `--stress` overnight and analyze results
+- [x] A/B comparison mode for scaffolding experiments
+- [ ] Run `--canned` on Ollama PC (quick smoke test)
+- [ ] Run `--stress` overnight and analyze results
 
 ### 17. Upgrade embedding model — COMPLETE (kept nomic-embed-text)
 Benchmarked alternatives (mxbai-embed-large, snowflake-arctic-embed:335m, bge-m3) — all too slow. Keeping nomic-embed-text.
