@@ -451,7 +451,7 @@ STRESS_TESTS = [
             "Then read that file. Then use edit_file to add a one-line comment "
             "'# Found by stress test' right above the class definition line."
         ),
-        "expect_tools": ["write_file", "grep_files", "read_file", "edit_file"],
+        "expect_tools": ["write_file", "read_file", "edit_file"],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -477,7 +477,7 @@ STRESS_TESTS = [
             "Then read the first 50 lines of any file that has a Client class. "
             "Report what client classes exist and their constructors."
         ),
-        "expect_tools": ["glob_files", "grep_files", "read_file"],
+        "expect_tools": ["read_file"],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -492,7 +492,7 @@ STRESS_TESTS = [
             "4. Create stress_test_dependency_map.txt listing which files depend on models/tools.py\n"
             "5. Verify the file was created by reading it back"
         ),
-        "expect_tools": ["list_directory", "read_file", "grep_files", "write_file"],
+        "expect_tools": ["list_directory", "read_file", "write_file"],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -559,7 +559,7 @@ STRESS_TESTS = [
             "When it fails, adjust and search the parent directory blipshell/core/ instead "
             "for the pattern 'async def chat'."
         ),
-        "expect_tools": ["grep_files"],
+        "expect_tools": [],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -817,7 +817,7 @@ STRESS_TESTS = [
             "| --- | --- |\n"
             "for each file in the memory module."
         ),
-        "expect_tools": ["glob_files", "read_file", "write_file"],
+        "expect_tools": ["read_file", "write_file"],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -1089,7 +1089,7 @@ STRESS_TESTS = [
             "5. Find all files that import from blipshell.memory.sqlite_store\n\n"
             "Create stress_test_xref.json with the results organized by category."
         ),
-        "expect_tools": ["grep_files", "write_file"],
+        "expect_tools": ["write_file"],
         "expect_complete": True,
         "force_plan": True,
     },
