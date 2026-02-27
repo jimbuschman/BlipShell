@@ -621,7 +621,7 @@ async def main():
     args = parser.parse_args()
 
     config_mgr = ConfigManager(args.config)
-    config = config_mgr.config
+    config = config_mgr.load()
 
     print("=" * 70)
     print("  BLIPSHELL MEMORY PIPELINE DIAGNOSTIC")

@@ -19,7 +19,7 @@ class ModelsConfig(BaseModel):
     tool_calling: str = "qwen3:14b"
     coding: str = "qwen3:14b"
     summarization: str = "glm4:latest"
-    ranking: str = "gemma3:4b"
+    ranking: str = "qwen2.5:14b"
     importance: str = "qwen3:14b"
     ranking_importance: Optional[str] = None  # combined scoring; falls back to ranking model
     embedding: str = "nomic-embed-text"
