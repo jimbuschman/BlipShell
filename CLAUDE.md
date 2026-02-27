@@ -309,8 +309,41 @@ the model lacked state awareness and the prompts were too sparse.
 ### 17. Upgrade embedding model — COMPLETE (kept nomic-embed-text)
 Benchmarked alternatives (mxbai-embed-large, snowflake-arctic-embed:335m, bge-m3) — all too slow. Keeping nomic-embed-text.
 
-### 18. LLM-powered tag discovery
-LLM reviews recent memories periodically and suggests new regex patterns for the tagger. Route to cloud endpoint, run as scheduled background task.
+### 18. Tag Discovery Overhaul + Nightly Jobs — CODE WRITTEN, NEEDS TESTING
+Complete rewrite of tag discovery with three-layer approach plus nightly job infrastructure.
+
+**Centroid Tagger** (`blipshell/memory/centroid_tagger.py`):
+- [x] Computes centroid embedding vectors per tag from ChromaDB (zero LLM cost)
+- [x] Assigns tags to poorly-tagged memories via cosine similarity (threshold 0.75)
+- [x] Config: `centroid_tag_similarity`, `centroid_tag_min_members`, `centroid_tag_batch_size`
+
+**LLM Batch Tagger** (`blipshell/memory/batch_tagger.py`):
+- [x] Sends batches of 10 poorly-tagged memory summaries to LLM for direct tag assignment
+- [x] Validates assigned tags against known tag set (strict match)
+- [x] Prompt in `prompts.py:batch_assign_tags()`
+- [x] Config: `batch_tag_batch_size`, `batch_tag_max_batches`
+
+**Nightly Job Runner** (`blipshell/core/nightly.py`):
+- [x] Orchestrates 7 jobs: backup → cleanup → centroid_tag → batch_tag → prune → consolidate → tag_discovery
+- [x] Each job isolated (one failure doesn't abort the run)
+- [x] `NightlyRunner.create_from_config()` factory for headless execution
+- [x] Stats persisted to `app_metadata["nightly_last_run"]`
+- [x] `/nightly` interactive CLI command + `blipshell nightly` Click subcommand
+- [x] `--quiet` flag for scheduled runs (JSON output only)
+- [x] `--job` flag to run a single job
+
+**Benchmark** (`scripts/benchmark_tagger.py`):
+- [x] Tests model quality on tag assignment (precision/recall/F1 vs ground truth)
+- [x] Rich table output + JSON results file
+- [ ] **NEEDS TESTING**: `python scripts/benchmark_tagger.py --models qwen3:14b,qwen2.5:14b,qwen2.5:7b`
+
+**Supporting changes**:
+- [x] `sqlite_store.py`: 5 new methods (tag counts, poorly-tagged IDs, well-tagged sample, all tag names)
+- [x] `chroma_store.py`: `get_embeddings_by_ids()` for raw vector retrieval
+- [x] `config.py`: 5 new `MemoryConfig` fields
+- [ ] **NEEDS TESTING**: Run `/nightly` interactively
+- [ ] **NEEDS TESTING**: Run `blipshell nightly --quiet` headless
+- [ ] **NEEDS TESTING**: Run benchmark on Ollama PC to pick best model
 
 ### 19. Esc to cancel current LLM call — COMPLETE
 - [x] `_poll_for_escape()` in cli.py — Windows-native msvcrt key detection

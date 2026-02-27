@@ -345,6 +345,21 @@ class Agent(
         _status(f"Done: {processed}/{len(unprocessed)} processed, {failed} failed")
         return result
 
+    async def run_nightly(
+        self,
+        on_status: Callable[[str], None] | None = None,
+        job: str | None = None,
+    ) -> dict:
+        """Run nightly maintenance jobs using the agent's existing connections."""
+        from blipshell.core.nightly import NightlyRunner
+
+        runner = NightlyRunner(
+            self.config, self.sqlite, self.chroma,
+            self.router, self.processor,
+        )
+        jobs = [job] if job else None
+        return await runner.run(on_status=on_status, jobs=jobs)
+
     def _record_token_usage_from_chunk(self, chunk):
         """Extract and accumulate token usage from an Ollama response/chunk.
 

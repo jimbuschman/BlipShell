@@ -307,6 +307,33 @@ class ChromaStore:
             })
         return formatted
 
+    def get_embeddings_by_ids(self, memory_ids: list[int]) -> dict[int, list[float]]:
+        """Retrieve raw embedding vectors for memories by ID.
+
+        Returns dict mapping memory_id to embedding vector.
+        Missing IDs (not in ChromaDB) are silently skipped.
+        """
+        self._require_collections()
+        if not memory_ids:
+            return {}
+
+        str_ids = [str(mid) for mid in memory_ids]
+        try:
+            # ChromaDB get() with include=["embeddings"] returns stored vectors
+            result = self._memories.get(ids=str_ids, include=["embeddings"])
+        except Exception as e:
+            logger.error("Failed to get embeddings by IDs: %s", e)
+            return {}
+
+        if not result or not result.get("ids"):
+            return {}
+
+        embeddings = {}
+        for i, str_id in enumerate(result["ids"]):
+            if result["embeddings"] and result["embeddings"][i] is not None:
+                embeddings[int(str_id)] = result["embeddings"][i]
+        return embeddings
+
     def get_counts(self) -> dict[str, int]:
         """Get document counts for all collections."""
         return {

@@ -1457,6 +1457,88 @@ class SQLiteStore:
         rows = await cursor.fetchall()
         return [r["summary"] for r in rows]
 
+    async def get_tag_member_counts(self, min_members: int = 10) -> dict[str, int]:
+        """Get tags with at least min_members non-archived memories."""
+        cursor = await self._db.execute(
+            """SELECT t.name, COUNT(mt.memory_id) as cnt
+               FROM tags t
+               INNER JOIN memory_tags mt ON mt.tag_id = t.id
+               INNER JOIN memories m ON m.id = mt.memory_id
+               WHERE m.is_archived = 0
+               GROUP BY t.id
+               HAVING cnt >= ?
+               ORDER BY cnt DESC""",
+            (min_members,),
+        )
+        rows = await cursor.fetchall()
+        return {r["name"]: r["cnt"] for r in rows}
+
+    async def get_memory_ids_for_tag(self, tag_name: str, limit: int = 200) -> list[int]:
+        """Get IDs of non-archived memories with a specific tag."""
+        cursor = await self._db.execute(
+            """SELECT mt.memory_id FROM memory_tags mt
+               INNER JOIN tags t ON t.id = mt.tag_id
+               INNER JOIN memories m ON m.id = mt.memory_id
+               WHERE t.name = ? AND m.is_archived = 0
+               ORDER BY m.timestamp DESC
+               LIMIT ?""",
+            (tag_name, limit),
+        )
+        rows = await cursor.fetchall()
+        return [r["memory_id"] for r in rows]
+
+    async def get_poorly_tagged_memory_ids(
+        self, max_tags: int = 1, limit: int = 500,
+    ) -> list[int]:
+        """Get IDs of non-archived memories with few tags."""
+        cursor = await self._db.execute(
+            """SELECT m.id FROM memories m
+               LEFT JOIN memory_tags mt ON mt.memory_id = m.id
+               WHERE m.is_archived = 0 AND m.summary IS NOT NULL
+               GROUP BY m.id
+               HAVING COUNT(mt.id) <= ?
+               ORDER BY m.timestamp DESC
+               LIMIT ?""",
+            (max_tags, limit),
+        )
+        rows = await cursor.fetchall()
+        return [r["id"] for r in rows]
+
+    async def get_well_tagged_memory_sample(
+        self, min_tags: int = 3, limit: int = 30,
+    ) -> list[dict]:
+        """Get a sample of well-tagged memories for benchmarking.
+
+        Returns list of {id, summary, tags: [str]}.
+        """
+        cursor = await self._db.execute(
+            """SELECT m.id, m.summary, GROUP_CONCAT(t.name) as tag_names
+               FROM memories m
+               INNER JOIN memory_tags mt ON mt.memory_id = m.id
+               INNER JOIN tags t ON t.id = mt.tag_id
+               WHERE m.is_archived = 0 AND m.summary IS NOT NULL
+               GROUP BY m.id
+               HAVING COUNT(mt.id) >= ?
+               ORDER BY RANDOM()
+               LIMIT ?""",
+            (min_tags, limit),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": r["id"],
+                "summary": r["summary"],
+                "tags": r["tag_names"].split(",") if r["tag_names"] else [],
+            }
+            for r in rows
+        ]
+
+    async def get_all_tag_names(self) -> list[str]:
+        """Get all tag names from the tags table."""
+        cursor = await self._db.execute("SELECT name FROM tags ORDER BY name")
+        rows = await cursor.fetchall()
+        return [r["name"] for r in rows]
+
     # --- Entity Graph ---
 
     async def get_or_create_entity(self, name: str, entity_type: str = "concept") -> int:

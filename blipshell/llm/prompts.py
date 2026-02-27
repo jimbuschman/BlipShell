@@ -502,6 +502,32 @@ def discover_tag_patterns(
     return system, user
 
 
+def batch_assign_tags(
+    summaries: list[tuple[int, str]], available_tags: list[str],
+) -> tuple[str, str]:
+    """Prompt for batch tag assignment to memories.
+
+    Returns (system_prompt, user_prompt).
+    summaries is a list of (memory_id, summary_text) tuples.
+    """
+    system = (
+        "You assign tags to memories. For each numbered memory, assign 1-5 "
+        "relevant tags from the available list. Use ONLY tags from the list.\n\n"
+        "Output format (one line per memory):\n"
+        "1: tag1, tag2, tag3\n"
+        "2: tag1, tag4\n\n"
+        "If no tags fit a memory, write: N: NONE\n"
+        "Do NOT add commentary or explanations."
+    )
+    tags_str = ", ".join(sorted(available_tags))
+    summaries_str = "\n".join(f"{i + 1}. {s}" for i, (_, s) in enumerate(summaries))
+    user = (
+        f"Available tags:\n{tags_str}\n\n"
+        f"Memories to tag:\n{summaries_str}"
+    )
+    return system, user
+
+
 def resolve_entity_duplicate(
     new_entity: str, existing_entity: str,
 ) -> tuple[str, str]:

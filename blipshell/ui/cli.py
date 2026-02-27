@@ -426,6 +426,10 @@ async def chat_loop(
                 elif cmd[0] == "cleanup":
                     await _run_cleanup(agent)
                     continue
+                elif cmd[0] == "nightly":
+                    job_name = cmd_args[0] if cmd_args else None
+                    await _run_nightly(agent, job_name)
+                    continue
                 elif cmd[0] == "changes":
                     _print_changes(agent)
                     continue
@@ -1377,6 +1381,56 @@ async def _run_cleanup(agent: Agent):
     )
 
 
+async def _run_nightly(agent: Agent, job_name: str | None = None):
+    """Run nightly maintenance jobs."""
+    from rich.status import Status
+    from rich.table import Table
+
+    from blipshell.core.nightly import NightlyRunner
+
+    runner = NightlyRunner(
+        agent.config, agent.sqlite, agent.chroma,
+        agent.router, agent.processor,
+    )
+
+    jobs = [job_name] if job_name else None
+    label = f"job: {job_name}" if job_name else "all jobs"
+
+    with Status(f"[bold cyan]Running nightly ({label})...", console=console) as status:
+        def on_status(msg: str):
+            status.update(f"[bold cyan]{msg}")
+
+        result = await runner.run(on_status=on_status, jobs=jobs)
+
+    # Print results table
+    table = Table(title="Nightly Run Results")
+    table.add_column("Job", style="cyan")
+    table.add_column("Status")
+    table.add_column("Time", justify="right")
+    table.add_column("Details")
+
+    for name, stats in result.get("jobs", {}).items():
+        status_str = stats.get("status", "?")
+        style = "green" if status_str == "ok" else "red"
+        elapsed = f"{stats.get('elapsed_s', 0):.1f}s"
+
+        # Build details string from non-meta keys
+        detail_parts = []
+        for k, v in stats.items():
+            if k not in ("status", "elapsed_s", "error"):
+                detail_parts.append(f"{k}={v}")
+        details = ", ".join(detail_parts) if detail_parts else ""
+
+        if stats.get("error"):
+            details = f"[red]{stats['error']}[/red]"
+
+        table.add_row(name, f"[{style}]{status_str}[/{style}]", elapsed, details)
+
+    console.print()
+    console.print(table)
+    console.print(f"\n[dim]Total: {result.get('elapsed_s', 0):.0f}s[/dim]")
+
+
 async def _print_flow(agent: Agent, turn: int | None = None):
     """Print conversation flow events for observability."""
     if not agent.sqlite or not agent.session_manager:
@@ -1900,6 +1954,7 @@ def _print_help():
         "[bold]/offload <msg>[/bold]         - Run a task on remote PC in background\n"
         "[bold]/health[/bold] [dim][quick][/dim]          - Database + endpoint health check\n"
         "[bold]/cleanup[/bold]               - Reprocess failed messages (relaxed timeouts)\n"
+        "[bold]/nightly[/bold] [dim][job][/dim]          - Run nightly maintenance (tagging, pruning, etc.)\n"
         "[bold]/flow[/bold] [dim][n][/dim]              - Show conversation flow events\n"
         "[bold]/plan[/bold]                  - Show current active plan\n"
         "[bold]/plans[/bold]                 - List all plans for this session\n"
@@ -2104,6 +2159,65 @@ def test_cmd(ctx, task, project, output, canned, stress, quiet, category):
         ))
     else:
         console.print("[yellow]Provide a task, or use --canned or --stress[/yellow]")
+
+
+# --- Nightly Jobs ---
+
+@main.command("nightly")
+@click.option("--job", default=None, help="Run a specific job only (e.g. centroid_tag, batch_tag)")
+@click.option("--quiet", "-q", is_flag=True, help="JSON output only (for scheduled runs)")
+@click.pass_context
+def nightly_cmd(ctx, job, quiet):
+    """Run nightly maintenance jobs (backup, tagging, pruning, etc.)."""
+    import json as _json
+
+    async def _run():
+        from blipshell.core.nightly import NightlyRunner
+
+        runner = await NightlyRunner.create_from_config(ctx.obj.get("config_path"))
+        try:
+            jobs = [job] if job else None
+
+            if quiet:
+                result = await runner.run(jobs=jobs)
+                print(_json.dumps(result, indent=2, default=str))
+            else:
+                from rich.status import Status
+                from rich.table import Table
+
+                label = f"job: {job}" if job else "all jobs"
+                with Status(f"[bold cyan]Running nightly ({label})...", console=console) as status:
+                    def on_status(msg: str):
+                        status.update(f"[bold cyan]{msg}")
+
+                    result = await runner.run(on_status=on_status, jobs=jobs)
+
+                table = Table(title="Nightly Run Results")
+                table.add_column("Job", style="cyan")
+                table.add_column("Status")
+                table.add_column("Time", justify="right")
+                table.add_column("Details")
+
+                for name, stats in result.get("jobs", {}).items():
+                    status_str = stats.get("status", "?")
+                    style = "green" if status_str == "ok" else "red"
+                    elapsed = f"{stats.get('elapsed_s', 0):.1f}s"
+                    detail_parts = []
+                    for k, v in stats.items():
+                        if k not in ("status", "elapsed_s", "error"):
+                            detail_parts.append(f"{k}={v}")
+                    details = ", ".join(detail_parts) if detail_parts else ""
+                    if stats.get("error"):
+                        details = f"[red]{stats['error']}[/red]"
+                    table.add_row(name, f"[{style}]{status_str}[/{style}]", elapsed, details)
+
+                console.print()
+                console.print(table)
+                console.print(f"\n[dim]Total: {result.get('elapsed_s', 0):.0f}s[/dim]")
+        finally:
+            await runner.close()
+
+    asyncio.run(_run())
 
 
 # --- ChatGPT Import ---
