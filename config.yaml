@@ -29,7 +29,7 @@ endpoints:
     provider: "openai"
     api_key: "${GROQ_API_KEY}"
     roles: ["summarization", "ranking_importance"]
-    priority: 3                          # tried first for summarization + ranking (fast, 30 RPM)
+    priority: 2                          # ranking primary (30 RPM), summarization fallback when Gemini rate-limits
     max_concurrent: 3
     rate_limit_rpm: 30
     rate_limit_rpd: 1000
@@ -42,7 +42,7 @@ endpoints:
     provider: "openai"
     api_key: "${GEMINI_API_KEY}"
     roles: ["summarization"]
-    priority: 2                          # tried second when Groq rate-limited (5 RPM)
+    priority: 3                          # tried first for summarization (5 RPM, Groq fallback)
     max_concurrent: 2
     rate_limit_rpm: 5
     rate_limit_rpd: 1000
