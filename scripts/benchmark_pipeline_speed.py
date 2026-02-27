@@ -379,6 +379,27 @@ def print_comparison(all_results: dict, task: str):
         print(line)
 
 
+OUTPUT_PATH = Path("data") / "benchmark_pipeline_speed.json"
+
+
+def _save_results(all_results: dict, messages: list[dict]):
+    """Save results to JSON (called incrementally after each model)."""
+    OUTPUT_PATH.parent.mkdir(exist_ok=True)
+    save_data = {}
+    for model_name, data in all_results.items():
+        save_data[model_name] = {}
+        for task, stats in data.items():
+            # Include per-call results for later analysis
+            save_data[model_name][task] = stats
+    save_data["_meta"] = {
+        "sample_size": len(messages),
+        "sample_ids": [m["id"] for m in messages],
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    with open(OUTPUT_PATH, "w") as f:
+        json.dump(save_data, f, indent=2, default=str)
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Benchmark pipeline speed: find faster models")
     parser.add_argument("--models", nargs="*", default=None,
@@ -506,6 +527,10 @@ async def main():
 
         all_results[model_name] = model_data
 
+        # Incremental save after each model (crash-safe)
+        _save_results(all_results, messages)
+        print(f"  [saved incrementally]")
+
     # Print comparison tables
     if args.task in ("ranking", "all"):
         print_comparison(all_results, "ranking")
@@ -514,24 +539,9 @@ async def main():
     if args.task in ("summarize", "all"):
         print_comparison(all_results, "summarize")
 
-    # Save results
-    output_path = Path("data") / "benchmark_pipeline_speed.json"
-    output_path.parent.mkdir(exist_ok=True)
-    # Strip non-serializable bits
-    save_data = {}
-    for model_name, data in all_results.items():
-        save_data[model_name] = {}
-        for task, stats in data.items():
-            save_copy = {k: v for k, v in stats.items() if k != "results"}
-            save_data[model_name][task] = save_copy
-    save_data["_meta"] = {
-        "sample_size": len(messages),
-        "sample_ids": [m["id"] for m in messages],
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    with open(output_path, "w") as f:
-        json.dump(save_data, f, indent=2)
-    print(f"\n  Results saved to {output_path}")
+    # Final save
+    _save_results(all_results, messages)
+    print(f"\n  Results saved to data/benchmark_pipeline_speed.json")
 
     # Recommendation
     print(f"\n{'=' * 80}")
