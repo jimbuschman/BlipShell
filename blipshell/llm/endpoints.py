@@ -33,6 +33,7 @@ class Endpoint:
     context_tokens: Optional[int] = None  # per-endpoint context window
     provider: str = "ollama"
     models: dict[str, str] = field(default_factory=dict)  # per-endpoint model overrides
+    pii_sanitize: Optional[bool] = None  # None = auto (true for openai, false for ollama)
     rate_limit_rpm: Optional[int] = None
     rate_limit_rpd: Optional[int] = None
     _minute_requests: list[float] = field(default_factory=list, repr=False)
@@ -58,6 +59,17 @@ class Endpoint:
                 return True
 
         return False
+
+    @property
+    def should_sanitize_pii(self) -> bool:
+        """Whether PII should be sanitized before sending to this endpoint.
+
+        If pii_sanitize is explicitly set, use that. Otherwise auto-detect:
+        true for cloud providers (openai), false for local (ollama).
+        """
+        if self.pii_sanitize is not None:
+            return self.pii_sanitize
+        return self.provider == "openai"
 
     @property
     def can_accept_request(self) -> bool:
@@ -111,6 +123,7 @@ class EndpointManager:
                 context_tokens=cfg.context_tokens,
                 provider=cfg.provider,
                 models=cfg.models,
+                pii_sanitize=cfg.pii_sanitize,
                 rate_limit_rpm=cfg.rate_limit_rpm,
                 rate_limit_rpd=cfg.rate_limit_rpd,
                 client=client,

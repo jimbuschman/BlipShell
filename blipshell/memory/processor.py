@@ -414,14 +414,19 @@ class MemoryProcessor:
             imp = float(numbers[1])
             importance = min(max(imp, 0.0), 1.0)
 
-        # Extract memory type — look for a known type word in the response
+        # Extract memory type — prefer last word (prompt format: "rank importance type")
+        # then fall back to reverse scan if last word isn't a valid type
         words = text.lower().split()
-        for word in words:
-            # Strip any punctuation from the word
-            cleaned = re.sub(r"[^a-z]", "", word)
-            if cleaned in MemoryProcessor._VALID_MEMORY_TYPES:
-                memory_type = cleaned
-                break
+        if words:
+            last_cleaned = re.sub(r"[^a-z]", "", words[-1])
+            if last_cleaned in MemoryProcessor._VALID_MEMORY_TYPES:
+                memory_type = last_cleaned
+            else:
+                for word in reversed(words):
+                    cleaned = re.sub(r"[^a-z]", "", word)
+                    if cleaned in MemoryProcessor._VALID_MEMORY_TYPES:
+                        memory_type = cleaned
+                        break
 
         return rank, importance, memory_type
 

@@ -35,10 +35,11 @@ class LLMRouter:
     and EndpointManager to select the best endpoint for the role.
     """
 
-    def __init__(self, models_config: ModelsConfig, endpoint_manager: EndpointManager):
+    def __init__(self, models_config: ModelsConfig, endpoint_manager: EndpointManager, *, pii_enabled: bool = True):
         self._models = models_config
         self._endpoint_manager = endpoint_manager
         self._failed_models: dict[str, float] = {}  # model_name → failure timestamp
+        self._pii_enabled = pii_enabled
 
     def get_model(self, task_type: str) -> str:
         """Get the configured model name for a task type."""
@@ -139,6 +140,13 @@ class LLMRouter:
                     model = fallback_model
                     use_fallback = True
 
+        # Sanitize PII before sending to cloud endpoints
+        if self._pii_enabled and endpoint.should_sanitize_pii:
+            from blipshell.llm.pii import sanitize_text
+            prompt = sanitize_text(prompt)
+            if system:
+                system = sanitize_text(system)
+
         endpoint.start_request()
         try:
             gen_kwargs = {}
@@ -176,13 +184,20 @@ class LLMRouter:
                             "Primary '%s' on '%s' failed, trying '%s' on '%s'",
                             model, endpoint.name, fb_model, fallback_ep.name,
                         )
+                        # Sanitize PII if falling back to a cloud endpoint
+                        fb_prompt, fb_system = prompt, system
+                        if self._pii_enabled and fallback_ep.should_sanitize_pii:
+                            from blipshell.llm.pii import sanitize_text
+                            fb_prompt = sanitize_text(prompt)
+                            if fb_system:
+                                fb_system = sanitize_text(fb_system)
                         fb_kwargs = {}
                         if not self._models.fallback_think:
                             fb_kwargs["think"] = False
                         if fallback_ep.context_tokens:
                             fb_kwargs["options"] = {"num_ctx": fallback_ep.context_tokens}
                         result = await fallback_ep.client.generate(
-                            prompt=prompt, model=fb_model, system=system,
+                            prompt=fb_prompt, model=fb_model, system=fb_system,
                             **fb_kwargs,
                         )
                         return result

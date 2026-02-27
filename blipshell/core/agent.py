@@ -174,7 +174,7 @@ class Agent:
         self.endpoint_manager = EndpointManager(self.config.endpoints, self.config.llm)
 
         # Router
-        self.router = LLMRouter(self.config.models, self.endpoint_manager)
+        self.router = LLMRouter(self.config.models, self.endpoint_manager, pii_enabled=self.config.pii.enabled)
 
         # Job queue
         self.job_queue = LLMJobQueue()

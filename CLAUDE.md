@@ -40,6 +40,9 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - Background startup — entity extraction and unprocessed message sweep moved to MemoryWorker
 - Fallback routing fix — `is_model_failed` now switches endpoint too, not just model name
 - Gemini disabled — 20-request burst limit made free tier unreliable, summarization now Groq → local
+- PII sanitization — Presidio NER + regex fallback, per-endpoint `pii_sanitize` flag, covers all cloud paths
+- Type classification parser fix — last-word priority prevents misparse from explanatory text
+- `/context` command — pool usage and context window breakdown (already existed)
 
 ## Road to Usable — Priority Task List
 
@@ -103,7 +106,8 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - [x] Ranking: llama-3.3-70b-versatile on Groq (0.85s, 9/10 accuracy) replaces local qwen2.5:14b (8.2s)
 - [x] Dedup: kept local qwen2.5:14b (conservative, safe behavior)
 - [x] Summarization: Groq gpt-oss-120b primary → local glm4 fallback (Gemini disabled)
-- [ ] Type classification accuracy low across all models — may need prompt tweak
+- [x] Type classification parser fix — last-word priority instead of first-match scan (prevents "factual preference" misparse)
+- [ ] Run type classification benchmark on Ollama PC to measure accuracy with prompt
 - [ ] Run prompt benchmarks (`tests/benchmark_all.py`) on Ollama PC when time permits
 
 ## Benchmark Results (tests/benchmark_reasoning.py)
@@ -316,12 +320,18 @@ LLM reviews recent memories periodically and suggests new regex patterns for the
 - [x] Integrated in both main chat loop and `/code` command
 - [x] Help text mentions "Press Esc during a response to cancel"
 
-### 20. PII / Sensitive Data Sanitization — FUTURE
-Detect personal information before sending to cloud endpoints. Options:
-- Route to local LLM when PII detected (emails, phone numbers, SSNs, addresses)
-- Redact/mask PII with placeholders before cloud, map back after response
-- Hybrid: hard PII always local, soft PII (names, locations) gets redacted
-Start with regex-based PII detection + forced local routing.
+### 20. PII / Sensitive Data Sanitization — COMPLETE
+PII detection in `blipshell/llm/pii.py`. Uses Microsoft Presidio (spaCy NER) when installed, regex fallback otherwise. Intercepts `router.generate()` before cloud endpoints.
+- [x] Presidio engine: detects names, addresses, locations, plus all structured PII via NER + regex
+- [x] Regex fallback: email, phone (US), SSN, credit card, GitHub tokens, AWS keys, generic API keys, IPs
+- [x] API key patterns run on both engines (Presidio doesn't detect these)
+- [x] IP exclusions: localhost, LAN (192.168.x.x, 10.x.x.x) preserved in both engines
+- [x] Per-endpoint `pii_sanitize` flag: auto-detects for openai provider, explicit for cloud-via-Ollama (local-cloud)
+- [x] Config: `pii.enabled` toggle in config.yaml, wired to router via `pii_enabled` flag
+- [x] Local LLM calls NOT sanitized — raw text preserved for search quality
+- [x] Tests: 34 tests — structured PII, regex fallback, Presidio-specific (skipped when not installed)
+- [x] Dependencies: `presidio-analyzer`, `presidio-anonymizer`, `spacy` in pyproject.toml
+- [ ] **ON OLLAMA PC**: `pip install presidio-analyzer presidio-anonymizer spacy && python -m spacy download en_core_web_lg`
 
 ### 21. Modularize agent.py — FUTURE
 glm-5 code review flagged agent.py at 86KB+ as a monolith doing too much (chat, tools, session, project, background tasks). Split into focused modules:
@@ -338,11 +348,19 @@ Not urgent but pays compound interest on maintainability.
 - Only expand for longer/complex queries
 Profile first to see if it's actually a bottleneck before optimizing.
 
-### 23. `/context` command — FUTURE
-Show pool usage breakdown and context window state. CC has this, BS only shows it via `/flow`.
+### 23. `/context` command — COMPLETE
+- [x] `_print_context()` in cli.py — shows pool usage breakdown, context window state, memory counts per pool
+- Already existed, was just missing from roadmap tracking
 
 ### 24. Parallel tool calls in executor — FUTURE
 OpenAI API supports multiple tool calls per response. Free speedup for multi-step tasks.
+
+### 25. Memory Timelines — FUTURE
+Temporal view of memories, searches, and projects. Details TBD — could include:
+- Timeline visualization of when memories were created/accessed
+- Time-scoped search (e.g., "what did we discuss last week?")
+- Project timelines showing activity/progress over time
+Discuss approach before designing.
 
 ## Architecture Notes
 - Two-PC setup: Development on one PC, Ollama/benchmarks on another

@@ -94,6 +94,28 @@ class TestParseRankImportanceType:
         assert imp == 0.7
         assert mtype == "skill"
 
+    def test_last_word_priority(self):
+        """Type should be parsed from last word, not first type-like word found."""
+        # LLM says "this is a factual preference" — last word wins
+        rank, imp, mtype = MemoryProcessor._parse_rank_importance_type(
+            "4 0.7 this is a factual preference"
+        )
+        assert mtype == "preference"
+
+    def test_type_word_in_explanation_ignored(self):
+        """If LLM explains with type words, the actual type (last) should win."""
+        rank, imp, mtype = MemoryProcessor._parse_rank_importance_type(
+            "This fact about events is 4 0.8 skill"
+        )
+        assert mtype == "skill"
+
+    def test_last_word_with_trailing_junk(self):
+        """Last word with punctuation should still be recognized."""
+        rank, imp, mtype = MemoryProcessor._parse_rank_importance_type(
+            "4 0.7 event."
+        )
+        assert mtype == "event"
+
 
 # --- Action parser (Feature 3: Memory Dedup) ---
 

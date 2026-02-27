@@ -49,6 +49,7 @@ class EndpointConfig(BaseModel):
     rate_limit_rpm: Optional[int] = None  # max requests per minute
     rate_limit_rpd: Optional[int] = None  # max requests per day
     models: dict[str, str] = Field(default_factory=dict)  # per-endpoint model overrides
+    pii_sanitize: Optional[bool] = None  # None = auto (true for openai, false for ollama)
 
 
 class PoolConfig(BaseModel):
@@ -231,6 +232,12 @@ class PlannerConfig(BaseModel):
     complexity_threshold_words: int = 20
 
 
+class PIIConfig(BaseModel):
+    """PII sanitization configuration."""
+    enabled: bool = True  # sanitize PII before cloud calls
+    cloud_only: bool = True  # only sanitize for cloud (openai) endpoints
+
+
 class WorkerConfig(BaseModel):
     """Remote worker configuration."""
     enabled: bool = False
@@ -271,6 +278,7 @@ class BlipShellConfig(BaseModel):
     auth: AuthConfig = AuthConfig()
     database: DatabaseConfig = DatabaseConfig()
     web_ui: WebUIConfig = WebUIConfig()
+    pii: PIIConfig = PIIConfig()
     planner: PlannerConfig = PlannerConfig()
     worker: WorkerConfig = WorkerConfig()
     model_settings: dict[str, dict] = Field(default_factory=dict)

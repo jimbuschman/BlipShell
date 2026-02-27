@@ -55,6 +55,7 @@ endpoints:
     priority: 1
     max_concurrent: 5
     context_tokens: 196608  # 192K — glm-5:cloud supports 198K
+    pii_sanitize: true       # glm-5:cloud relays to remote server — data leaves machine
     enabled: true
   - name: "local"
     url: "http://localhost:11434"
@@ -150,6 +151,10 @@ tools:
   web:
     max_fetch_size: 524288  # 512KB
     timeout: 15
+
+pii:
+  enabled: true        # sanitize PII (emails, phones, SSNs, etc.) before cloud calls
+  cloud_only: true     # only sanitize for cloud (openai) endpoints, not local Ollama
 
 noise:
   min_word_count: 3
