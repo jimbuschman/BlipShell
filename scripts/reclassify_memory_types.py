@@ -107,9 +107,10 @@ async def run(args):
 
     try:
         # Get all memories that are currently 'conversation'
-        rows = await sqlite.db.execute_fetchall(
+        cursor = await sqlite._db.execute(
             "SELECT id, summary FROM memories WHERE memory_type = 'conversation' ORDER BY id"
         )
+        rows = await cursor.fetchall()
         total = len(rows)
         logger.info("Found %d memories to reclassify", total)
 
