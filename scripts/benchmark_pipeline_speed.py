@@ -48,8 +48,15 @@ LOCAL_MODELS = [
 
 # Cloud models to test (need --cloud flag and config with endpoints)
 CLOUD_MODELS = [
-    ("groq", "openai/gpt-oss-120b"),
-    ("gemini", "gemini-2.5-flash"),
+    # Groq — fast inference on open-source models
+    ("groq", "openai/gpt-oss-120b"),       # current summarization model
+    ("groq", "openai/gpt-oss-20b"),         # 1000 t/s, fastest on Groq
+    ("groq", "llama-3.3-70b-versatile"),    # strong general model
+    ("groq", "llama-3.1-8b-instant"),       # small and fast
+    ("groq", "qwen/qwen3-32b"),            # same family as local qwen3:14b
+    # Gemini — Google free tier
+    ("gemini", "gemini-2.5-flash"),         # current config
+    ("gemini", "gemini-2.5-flash-lite"),    # faster, 4x daily quota (1000 RPD)
 ]
 
 
@@ -164,9 +171,10 @@ def make_cloud_router(endpoint_name: str, model_name: str, config) -> LLMRouter 
     return LLMRouter(models, EndpointManager([ep_config_copy], config.llm))
 
 
-async def bench_rank_importance(router: LLMRouter, messages: list[dict]) -> dict:
+async def bench_rank_importance(router: LLMRouter, messages: list[dict], is_cloud: bool = False) -> dict:
     """Benchmark rank_importance_and_classify (the production prompt)."""
     results = []
+    delay = 3.0 if is_cloud else 0.05  # respect cloud rate limits
     for msg in messages:
         sys_prompt, user_prompt = rank_importance_and_classify(msg["content"])
         t0 = time.monotonic()
@@ -196,7 +204,7 @@ async def bench_rank_importance(router: LLMRouter, messages: list[dict]) -> dict
                 "error": str(e)[:80],
                 "ok": False,
             })
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(delay)
 
     return _analyze_ranking(results)
 
@@ -242,9 +250,10 @@ def _analyze_ranking(results: list[dict]) -> dict:
     }
 
 
-async def bench_dedup(router: LLMRouter, pairs: list[tuple[dict, list[str]]]) -> dict:
+async def bench_dedup(router: LLMRouter, pairs: list[tuple[dict, list[str]]], is_cloud: bool = False) -> dict:
     """Benchmark decide_memory_action (dedup reasoning call)."""
     results = []
+    delay = 3.0 if is_cloud else 0.05
     for msg, existing in pairs:
         sys_prompt, user_prompt = decide_memory_action(msg["summary"], existing)
         t0 = time.monotonic()
@@ -269,7 +278,7 @@ async def bench_dedup(router: LLMRouter, pairs: list[tuple[dict, list[str]]]) ->
                 "error": str(e)[:80],
                 "ok": False,
             })
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(delay)
 
     ok = [r for r in results if r["ok"]]
     errors = [r for r in results if not r["ok"]]
@@ -290,9 +299,10 @@ async def bench_dedup(router: LLMRouter, pairs: list[tuple[dict, list[str]]]) ->
     }
 
 
-async def bench_summarize(router: LLMRouter, messages: list[dict]) -> dict:
+async def bench_summarize(router: LLMRouter, messages: list[dict], is_cloud: bool = False) -> dict:
     """Benchmark summarize_memory."""
     results = []
+    delay = 3.0 if is_cloud else 0.05
     for msg in messages[:10]:  # summarization is less critical, test fewer
         sys_prompt, user_prompt = summarize_memory(msg["content"])
         t0 = time.monotonic()
@@ -317,7 +327,7 @@ async def bench_summarize(router: LLMRouter, messages: list[dict]) -> dict:
                 "error": str(e)[:80],
                 "ok": False,
             })
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(delay)
 
     ok = [r for r in results if r["ok"]]
     times = [r["time"] for r in ok]
@@ -413,7 +423,7 @@ async def main():
 
     # Determine which models to test
     local_models = args.models or LOCAL_MODELS
-    test_configs: list[tuple[str, LLMRouter]] = []
+    test_configs: list[tuple[str, LLMRouter, bool]] = []  # (name, router, is_cloud)
 
     # Check which local models are actually available
     print(f"\n  Checking model availability...")
@@ -439,7 +449,7 @@ async def main():
         base = model.split(":")[0]
         if model in available_names or base in available_base:
             router = make_local_router(model, ollama_url)
-            test_configs.append((f"{model} (local)", router))
+            test_configs.append((f"{model} (local)", router, False))
             print(f"    {model}: available")
         else:
             print(f"    {model}: NOT FOUND, skipping")
@@ -449,7 +459,7 @@ async def main():
         for ep_name, model_name in CLOUD_MODELS:
             router = make_cloud_router(ep_name, model_name, config)
             if router:
-                test_configs.append((f"{model_name} ({ep_name})", router))
+                test_configs.append((f"{model_name} ({ep_name})", router, True))
                 print(f"    {model_name} ({ep_name}): configured")
 
     if not test_configs:
@@ -457,21 +467,21 @@ async def main():
         return
 
     print(f"\n  Testing {len(test_configs)} model configs: "
-          f"{', '.join(name for name, _ in test_configs)}")
+          f"{', '.join(name for name, _, _ in test_configs)}")
 
     # Run benchmarks
     all_results: dict[str, dict] = {}
 
-    for model_name, router in test_configs:
+    for model_name, router, is_cloud in test_configs:
         print(f"\n{'─' * 80}")
-        print(f"  MODEL: {model_name}")
+        print(f"  MODEL: {model_name}{'  [cloud - 3s delay between calls]' if is_cloud else ''}")
         print(f"{'─' * 80}")
 
         model_data = {}
 
         if args.task in ("ranking", "all"):
             print(f"  Running rank_importance_and_classify ({len(messages)} messages)...")
-            stats = await bench_rank_importance(router, messages)
+            stats = await bench_rank_importance(router, messages, is_cloud)
             model_data["ranking"] = stats
             print(f"    avg={stats['avg_time']}s  "
                   f"rank±1={stats['rank_within_1']}  "
@@ -480,7 +490,7 @@ async def main():
 
         if args.task in ("dedup", "all") and dedup_pairs:
             print(f"  Running decide_memory_action ({len(dedup_pairs)} pairs)...")
-            stats = await bench_dedup(router, dedup_pairs)
+            stats = await bench_dedup(router, dedup_pairs, is_cloud)
             model_data["dedup"] = stats
             print(f"    avg={stats['avg_time']}s  "
                   f"actions={stats.get('action_distribution', {})}  "
@@ -488,7 +498,7 @@ async def main():
 
         if args.task in ("summarize", "all"):
             print(f"  Running summarize_memory (10 messages)...")
-            stats = await bench_summarize(router, messages)
+            stats = await bench_summarize(router, messages, is_cloud)
             model_data["summarize"] = stats
             print(f"    avg={stats['avg_time']}s  "
                   f"skips={stats.get('skips', 0)}  "
