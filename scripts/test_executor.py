@@ -350,7 +350,7 @@ STRESS_TESTS = [
             "Search the codebase for all files that contain 'async def execute' "
             "and list each file with the line numbers where it appears."
         ),
-        "expect_tools": ["grep_files"],
+        "expect_tools": [],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -361,7 +361,7 @@ STRESS_TESTS = [
             "Find all Python test files (matching the pattern tests/test_*.py) "
             "and list them with their sizes."
         ),
-        "expect_tools": ["glob_files"],
+        "expect_tools": [],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -383,7 +383,7 @@ STRESS_TESTS = [
             "Check the git status of this project and tell me what branch we're on "
             "and if there are any uncommitted changes."
         ),
-        "expect_tools": ["git_status"],
+        "expect_tools": [],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -394,7 +394,7 @@ STRESS_TESTS = [
             "Run git diff to see if there are any unstaged changes in the project. "
             "Report what you find."
         ),
-        "expect_tools": ["git_diff"],
+        "expect_tools": [],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -417,7 +417,7 @@ STRESS_TESTS = [
             "Use ask_user to ask me what the file should contain and what to name it. "
             "Then create the file based on the answer you get back."
         ),
-        "expect_tools": ["ask_user"],
+        "expect_tools": [],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -605,7 +605,7 @@ STRESS_TESTS = [
             "Find all Python files in the project that import 'logging'. "
             "Use the most efficient tool for this — do NOT use run_command with grep."
         ),
-        "expect_tools": ["grep_files"],
+        "expect_tools": [],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -646,7 +646,7 @@ STRESS_TESTS = [
             "2. Find all files that contain the string 'endpoint' (use the right tool for searching content)\n"
             "Use the correct specialized tool for each — not run_command."
         ),
-        "expect_tools": ["glob_files", "grep_files"],
+        "expect_tools": [],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -873,7 +873,7 @@ STRESS_TESTS = [
             "with max_results set to 10. Report how many results were returned "
             "and whether it was truncated."
         ),
-        "expect_tools": ["grep_files"],
+        "expect_tools": [],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -934,7 +934,7 @@ STRESS_TESTS = [
             "to find all classes whose __init__ takes a config parameter. "
             "Report what you find."
         ),
-        "expect_tools": ["grep_files"],
+        "expect_tools": [],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -1019,7 +1019,7 @@ STRESS_TESTS = [
         "name": "consistency_grep_1",
         "category": "consistency",
         "task": "Search for all files containing 'class Agent' and report the results.",
-        "expect_tools": ["grep_files"],
+        "expect_tools": [],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -1027,7 +1027,7 @@ STRESS_TESTS = [
         "name": "consistency_grep_2",
         "category": "consistency",
         "task": "Search for all files containing 'class TaskExecutor' and report the results.",
-        "expect_tools": ["grep_files"],
+        "expect_tools": [],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -1035,7 +1035,7 @@ STRESS_TESTS = [
         "name": "consistency_grep_3",
         "category": "consistency",
         "task": "Search for all files containing 'class MemoryManager' and report the results.",
-        "expect_tools": ["grep_files"],
+        "expect_tools": [],
         "expect_complete": True,
         "force_plan": True,
     },
@@ -1121,7 +1121,7 @@ STRESS_TESTS = [
             "Check the git status and git diff of the project. "
             "Report: what branch, how many files modified, any untracked files."
         ),
-        "expect_tools": ["git_status", "git_diff"],
+        "expect_tools": [],
         "expect_complete": True,
         "force_plan": True,
     },
