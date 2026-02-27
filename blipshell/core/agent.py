@@ -505,8 +505,7 @@ class Agent:
         # Initialize repo map for code structure context
         self._repo_map = RepoMap(root)
 
-        # Switch to coding-mode tool rules (more permissive)
-        self._tool_rules = create_coding_rules()
+        # Tool rules disabled (CC approach: model picks tools freely)
 
         # Tag current session with this project
         if self.session_manager and self.session_manager.session_id:
@@ -551,8 +550,6 @@ class Agent:
         self.active_project = None
         self._project_context = ""
         self._repo_map = None
-        self._tool_rules = create_default_rules()
-
         # Re-register file tools without root
         self._register_tools_with_root(None)
 
@@ -1180,12 +1177,8 @@ class Agent:
                 if endpoint:
                     endpoint.start_request()
 
-                # Apply tool rules in continue loop too
-                cont_tools = None
-                if tools and iteration < max(remaining_iterations, 5) - 1:
-                    cont_tools = self._tool_rules.filter_tools(tools, tool_call_names)
-                    if not cont_tools:
-                        cont_tools = None
+                # Offer all tools in continue loop too (CC approach: no tool rules)
+                cont_tools = tools if (tools and iteration < max(remaining_iterations, 5) - 1) else None
 
                 content, new_tc = await self._stream_llm_response(
                     client, messages, model, cont_tools, chat_kwargs, on_token,
@@ -1379,12 +1372,8 @@ class Agent:
                 if not self.think_enabled:
                     chat_kwargs["think"] = False
 
-                # Apply tool rules to filter available tools based on call history
-                iter_tools = None
-                if tools and iteration < max_iterations:
-                    iter_tools = self._tool_rules.filter_tools(tools, tool_call_names)
-                    if not iter_tools:
-                        iter_tools = None  # all tools filtered out → force text response
+                # Offer all tools until the last iteration (CC approach: no tool rules)
+                iter_tools = tools if (tools and iteration < max_iterations) else None
 
                 # Use streaming to show tokens as they arrive.
                 # Text tokens stream to on_token(); tool calls arrive in
@@ -1500,38 +1489,8 @@ class Agent:
                 logger.error("Auto-continue failed: %s", e)
                 full_response = f"[Hit tool limit after {len(tool_call_names)} calls]"
 
-        # Auto-nudge: if the LLM stopped mid-task (asking permission or
-        # narrating intent without acting), nudge it to continue.
-        # Only fires if tool calls have already been made — otherwise the LLM
-        # is having a conversation and its questions are meant for the user.
-        if (full_response and tool_call_names and self._should_auto_continue(full_response)):
-            if on_token:
-                on_token("\n\x1b[2m[Auto-continuing...]\x1b[0m\n")
-            messages.append({"role": "assistant", "content": full_response})
-            messages.append({
-                "role": "user",
-                "content": (
-                    "Yes, go ahead. Execute the full task autonomously. "
-                    "Do not ask for permission again — just do it."
-                ),
-            })
-            try:
-                content, new_tool_calls = await self._stream_llm_response(
-                    client, messages, model, tools, chat_kwargs, on_token,
-                )
-                if new_tool_calls:
-                    # The LLM wants to use tools — re-enter the tool loop
-                    full_response = await self._continue_tool_loop(
-                        messages, client, model, tools, chat_kwargs,
-                        content, new_tool_calls, tool_call_names,
-                        max_iterations - len(tool_call_names),
-                        on_token, task_type,
-                    )
-                elif content:
-                    full_response = content
-            except Exception as e:
-                logger.error("Auto-nudge failed: %s", e)
-                # Keep original response
+        # Auto-nudge disabled (CC approach: model naturally continues or user responds).
+        # _should_auto_continue() and _continue_tool_loop() kept for potential re-enable.
 
         # Event: llm_complete
         await self._log_event("llm_complete", {

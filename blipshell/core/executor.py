@@ -371,10 +371,6 @@ class TaskExecutor:
         step_results: list[str] = []
         total_steps = len(plan.steps)
 
-        # Switch to coding rules if project is active
-        if self.active_project:
-            self._tool_rules = create_coding_rules()
-
         # Clear file cache at plan start and wire it into ReadFileTool
         self._file_cache.clear()
         read_tool = self.tool_registry.get_tool("read_file")
@@ -513,10 +509,6 @@ class TaskExecutor:
             chat_history: Recent chat messages for design discussion context.
             log_event: Optional async callback(event_type, data) for flow observability.
         """
-        # Switch to coding rules if project is active
-        if self.active_project:
-            self._tool_rules = create_coding_rules()
-
         # Ensure task_complete is available (may not be registered outside project mode)
         if not self.tool_registry.get_tool("task_complete"):
             from blipshell.core.tools.interaction_tools import TaskCompleteTool
@@ -599,7 +591,7 @@ class TaskExecutor:
         tool_call_count = 0
         tool_call_names: list[str] = []
         final_response = ""
-        wind_down_injected = False
+        # wind_down_injected removed (CC approach: no budget winddown)
         self._force_complete_injected = False
         last_tool_call: tuple[str, str] = ("", "")  # (name, args_key) for dedup
         last_state_msg_idx: int = -1  # track state message for replacement
@@ -607,21 +599,8 @@ class TaskExecutor:
         # Single continuous loop — LLM keeps full conversation history
         max_rounds = budget + 10  # generous round limit (text-only responses don't cost tools)
         for _round in range(max_rounds):
-            # Budget wind-down: inject guidance when ~80% of budget used
-            if (not self._disable_winddown
-                    and not wind_down_injected
-                    and tool_call_count >= int(budget * 0.8)
-                    and tool_call_count > 0):
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "You are running low on tool calls. Wrap up your current work "
-                        "and call the task_complete tool with a summary of what you accomplished."
-                    ),
-                })
-                wind_down_injected = True
-                if on_token:
-                    on_token("  [Budget warning injected]\n")
+            # Budget winddown disabled (CC approach: no budget concept).
+            # With budget=50, models naturally complete well before the cap.
 
             # Context compaction: if messages exceed 70% of context window,
             # compress older tool results to prevent context overflow.
@@ -636,32 +615,8 @@ class TaskExecutor:
                 if on_token:
                     on_token(f"  [Context compacted: {before} → {after} tokens]\n")
 
-            # Forced completion at 95%: strip all tools except task_complete
-            force_complete = (not self._disable_winddown
-                              and tool_call_count >= int(budget * 0.95)
-                              and tool_call_count < budget)
-            if force_complete and not getattr(self, '_force_complete_injected', False):
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "You have almost no tool calls left. You MUST call task_complete "
-                        "NOW with a summary of what you accomplished and what remains."
-                    ),
-                })
-                self._force_complete_injected = True
-                if on_token:
-                    on_token("  [Forced completion — only task_complete available]\n")
-
-            # Stop offering tools once budget is exhausted
-            iter_tools = None
-            if tools and tool_call_count < budget:
-                if force_complete:
-                    # Only offer task_complete
-                    iter_tools = [t for t in tools if t.get("function", {}).get("name") == "task_complete"]
-                else:
-                    iter_tools = self._tool_rules.filter_tools(tools, tool_call_names)
-                if not iter_tools:
-                    iter_tools = None
+            # Offer all tools until budget exhausted (CC approach: no rules, no winddown)
+            iter_tools = tools if (tools and tool_call_count < budget) else None
 
             # State injection: give model explicit awareness of progress.
             # Replace previous state message (if any) to avoid accumulation.
@@ -885,12 +840,8 @@ class TaskExecutor:
         full_response = ""
         tool_call_names: list[str] = []
         for iteration in range(max_iterations + 1):
-            # Apply tool rules to filter available tools
-            iter_tools = None
-            if tools and iteration < max_iterations:
-                iter_tools = self._tool_rules.filter_tools(tools, tool_call_names)
-                if not iter_tools:
-                    iter_tools = None
+            # Offer all tools until last iteration (CC approach: no tool rules)
+            iter_tools = tools if (tools and iteration < max_iterations) else None
 
             content, tool_calls = await _stream_chat(
                 client, messages, model, iter_tools, chat_kwargs, on_token,
