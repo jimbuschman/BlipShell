@@ -345,6 +345,12 @@ Complete rewrite of tag discovery with three-layer approach plus nightly job inf
 - [ ] **NEEDS TESTING**: Run `blipshell nightly --quiet` headless
 - [ ] **NEEDS TESTING**: Run benchmark on Ollama PC to pick best model
 
+**Future: In-process scheduler**:
+- Add background asyncio task that triggers nightly run at ~3:12 AM if app is open and idle
+- Check `app_metadata["nightly_last_run"]` staleness (>24h)
+- Pause GPU-heavy jobs (batch_tag) if user activity resumes
+- Additional nightly job candidates: health check (audit_db), entity graph cleanup, session summary backfill, stale lesson review, ChromaDB/SQLite sync check, re-embedding (on model swap)
+
 ### 19. Esc to cancel current LLM call — COMPLETE
 - [x] `_poll_for_escape()` in cli.py — Windows-native msvcrt key detection
 - [x] Races chat task vs escape key poller using `asyncio.wait(FIRST_COMPLETED)`
