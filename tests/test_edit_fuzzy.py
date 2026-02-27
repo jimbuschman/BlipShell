@@ -163,14 +163,14 @@ async def test_root_path_resolution(temp_file):
     """Root path is used for relative path resolution."""
     root = os.path.dirname(temp_file)
     basename = os.path.basename(temp_file)
-    write_file(temp_file, "old content")
+    write_file(temp_file, "x = 'old'")
     tool = EditFileTool(root_path=root)
 
     result = await tool.execute(
         path=basename,
-        old_text="old content",
-        new_text="new content",
+        old_text="x = 'old'",
+        new_text="x = 'new'",
     )
 
     assert "Successfully edited" in result
-    assert "new content" in read_file(temp_file)
+    assert "x = 'new'" in read_file(temp_file)

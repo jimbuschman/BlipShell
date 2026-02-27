@@ -297,7 +297,7 @@ class SQLiteStore:
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA foreign_keys = ON")
         await self._db.execute("PRAGMA journal_mode = WAL")
-        await self._db.execute("PRAGMA busy_timeout = 5000")  # wait up to 5s for write lock
+        await self._db.execute("PRAGMA busy_timeout = 30000")  # wait up to 30s for write lock
         await self._db.executescript(SCHEMA_SQL)
         # Schema migrations for existing databases
         for col_sql in (

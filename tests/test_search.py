@@ -3,6 +3,12 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+# ChromaDB uses pydantic v1 which is broken on Python 3.14+
+try:
+    import chromadb  # noqa: F401
+except Exception:
+    pytest.skip("ChromaDB incompatible with Python 3.14+ (pydantic v1)", allow_module_level=True)
+
 from blipshell.memory.search import MemorySearch, SearchResult
 from blipshell.models.config import MemoryConfig
 from blipshell.models.memory import Memory, MemoryType

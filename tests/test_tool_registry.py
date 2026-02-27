@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock
 
-from blipshell.core.tools.base import Tool, ToolRegistry, detect_tool_groups
+from blipshell.core.tools.base import Tool, ToolRegistry
 from blipshell.models.tools import ToolCall, ToolDefinition, ToolParameter, ToolParameterType
 
 
@@ -105,28 +105,3 @@ class TestToolRegistry:
         assert result.execution_time_ms >= 0
 
 
-class TestDetectToolGroups:
-    def test_filesystem_keywords(self):
-        groups = detect_tool_groups("read the file at path/to/file.py")
-        assert "filesystem" in groups
-
-    def test_shell_keywords(self):
-        groups = detect_tool_groups("run the pip install command")
-        assert "shell" in groups
-
-    def test_web_keywords(self):
-        groups = detect_tool_groups("search for python tutorials online")
-        assert "web" in groups
-
-    def test_memory_keywords(self):
-        groups = detect_tool_groups("do you remember what we talked about")
-        assert "memory" in groups
-
-    def test_no_match(self):
-        groups = detect_tool_groups("what is the meaning of life")
-        assert len(groups) == 0
-
-    def test_multiple_groups(self):
-        groups = detect_tool_groups("read the file and search online for documentation")
-        assert "filesystem" in groups
-        assert "web" in groups

@@ -41,7 +41,7 @@ class SessionManager:
     PER_MESSAGE_TIMEOUT = 30  # seconds
     # Max total time for session-end operations
     SUMMARY_TIMEOUT = 60  # seconds (summary can be slow for long sessions)
-    LESSON_TIMEOUT = 60  # seconds (reasoning model can be slow)
+    LESSON_TIMEOUT = 90  # seconds (reasoning model can be slow, esp. local)
 
     def __init__(
         self,

@@ -1900,19 +1900,21 @@ class Agent:
             self._health_check_task.cancel()
             self._health_check_task = None
 
-        # Enqueue any remaining undumped messages to worker before session close
+        # Enqueue any remaining undumped messages to worker before shutdown
         self._enqueue_undumped_messages()
 
-        if self.session_manager:
-            # Summary + lesson extraction run on main loop (one-time, no contention)
-            await self.session_manager.end_session(on_status=on_status)
-
-        # Shut down memory worker — drains queue first
+        # Drain memory worker FIRST — must finish all DB writes before
+        # end_session runs summary/lessons on the main loop's connection.
+        # Without this ordering, worker and main loop compete for the SQLite
+        # write lock, causing "database is locked" errors and lesson timeouts.
         if self._memory_worker and self._memory_worker.is_alive:
             depth = self._memory_worker.queue_depth
             if depth > 0:
                 _status(f"Draining memory queue ({depth} items)...")
             self._memory_worker.shutdown(timeout=60.0)
+
+        if self.session_manager:
+            await self.session_manager.end_session(on_status=on_status)
 
         if self.job_queue:
             await self.job_queue.stop()
