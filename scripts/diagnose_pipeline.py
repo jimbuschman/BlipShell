@@ -28,6 +28,7 @@ from blipshell.core.config import ConfigManager
 from blipshell.llm.endpoints import EndpointManager
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.sqlite_store import SQLiteStore
+from blipshell.models.config import get_ollama_url
 
 # Set up detailed logging
 logging.basicConfig(
@@ -95,7 +96,19 @@ async def diagnose_routing(router: LLMRouter, endpoint_mgr: EndpointManager):
     print()
 
 
-async def diagnose_individual_calls(router: LLMRouter, endpoint_mgr: EndpointManager):
+def create_chroma(config):
+    """Create a ChromaStore with proper config (persist_dir, embedding model, ollama url)."""
+    from blipshell.memory.chroma_store import ChromaStore
+    chroma = ChromaStore(
+        persist_dir=config.database.chroma_path,
+        embedding_model=config.models.embedding,
+        ollama_url=get_ollama_url(config.endpoints),
+    )
+    chroma.initialize()
+    return chroma
+
+
+async def diagnose_individual_calls(router: LLMRouter, endpoint_mgr: EndpointManager, config):
     """Time individual LLM calls for each task type used in the pipeline."""
     print("=" * 70)
     print("INDIVIDUAL LLM CALL TIMING")
@@ -138,16 +151,13 @@ async def diagnose_individual_calls(router: LLMRouter, endpoint_mgr: EndpointMan
     print(f"  embedding")
     t0 = time.monotonic()
     try:
-        from blipshell.memory.chroma_store import ChromaStore
-        chroma = ChromaStore()
-        chroma._collection.add(
-            ids=["diag_test_001"],
-            documents=["Test embedding for diagnostic purposes"],
-            metadatas=[{"session_id": "0", "role": "user"}],
-        )
+        chroma = create_chroma(config)
+        chroma.add_memory(999999, "Test embedding for diagnostic purposes", {
+            "session_id": "0", "role": "user",
+        })
         elapsed = time.monotonic() - t0
         print(f"    Time: {elapsed:.3f}s")
-        chroma._collection.delete(ids=["diag_test_001"])
+        chroma.delete_memory(999999)
     except Exception as e:
         elapsed = time.monotonic() - t0
         print(f"    FAILED after {elapsed:.2f}s: {e}")
@@ -170,8 +180,7 @@ async def diagnose_full_pipeline(config, num_messages: int):
     router = LLMRouter(config.models, endpoint_mgr)
 
     try:
-        from blipshell.memory.chroma_store import ChromaStore
-        chroma = ChromaStore()
+        chroma = create_chroma(config)
     except Exception as e:
         print(f"  ChromaDB unavailable: {e}")
         await sqlite.close()
@@ -510,8 +519,7 @@ async def diagnose_concurrent_with_llm(config):
     router = LLMRouter(config.models, endpoint_mgr)
 
     try:
-        from blipshell.memory.chroma_store import ChromaStore
-        chroma = ChromaStore()
+        chroma = create_chroma(config)
     except Exception as e:
         print(f"  ChromaDB unavailable: {e}")
         await sqlite1.close()
@@ -635,7 +643,7 @@ async def main():
     if args.routing_only:
         return
 
-    await diagnose_individual_calls(router, endpoint_mgr)
+    await diagnose_individual_calls(router, endpoint_mgr, config)
     await diagnose_full_pipeline(config, args.messages)
 
     if not args.skip_concurrent:
