@@ -73,11 +73,9 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - [ ] **NEEDS TESTING**: `python tests/benchmark_realdata.py --models qwen3:14b --sample 10`
 - [ ] Use results to tweak prompts or choose different models where needed
 
-### 5. Embedding Model Upgrade — BENCHMARK SCRIPT EXISTS, NEEDS RUNNING
+### 5. Embedding Model Upgrade — COMPLETE (kept nomic-embed-text)
 - [x] `scripts/benchmark_embeds.py` — tests nomic, mxbai-embed-large, snowflake-arctic-embed:335m, bge-m3
-- [ ] **RUN ON OLLAMA PC**: `python scripts/benchmark_embeds.py --db data/blipshell.db --sample 500`
-- [ ] Analyze results: if a model beats nomic-embed-text on quality AND speed, swap in config
-- [ ] If swapping: run `scripts/rebuild_chroma.py` to re-embed full corpus
+- [x] Benchmarked on Ollama PC — alternatives were too slow, nomic-embed-text retained
 
 ### 6. Automated Audit / Health Check — COMPLETE
 - [x] `scripts/audit_db.py` — 8 check categories: SQLite integrity, memory pipeline, entity quality, ChromaDB sync, sessions, tags, FTS5, storage
@@ -295,8 +293,8 @@ the model lacked state awareness and the prompts were too sparse.
 - [ ] **NEEDS TESTING**: Run `--canned` on Ollama PC to validate harness works
 - [ ] **NEEDS TESTING**: Run `--stress` overnight and analyze results
 
-### 17. Upgrade embedding model
-Benchmark new embedding models, then full re-embed. Benchmark first with real queries before committing.
+### 17. Upgrade embedding model — COMPLETE (kept nomic-embed-text)
+Benchmarked alternatives (mxbai-embed-large, snowflake-arctic-embed:335m, bge-m3) — all too slow. Keeping nomic-embed-text.
 
 ### 18. LLM-powered tag discovery
 LLM reviews recent memories periodically and suggests new regex patterns for the tagger. Route to cloud endpoint, run as scheduled background task.

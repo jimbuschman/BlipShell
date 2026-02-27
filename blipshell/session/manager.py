@@ -105,6 +105,8 @@ class SessionManager:
         message is successfully run through the memory pipeline.
         """
         cleaned = self._clean_text(content)
+        if not cleaned:
+            return  # skip empty messages — they contaminate session history
         now = datetime.now(timezone.utc)
         msg = SessionMessage(
             role=role,

@@ -90,9 +90,7 @@ class TestOverrides:
             if agent.task_executor:
                 agent.task_executor.max_tool_iterations = 999
 
-        if self.no_auto_nudge:
-            # Monkey-patch _should_auto_continue to always return False
-            agent._should_auto_continue = staticmethod(lambda text: False)
+        # no_auto_nudge: now controlled by ChatLoop's auto_continue_on_exhaustion config
 
         if self.no_budget_winddown and agent.task_executor:
             # Set winddown thresholds above 100% so they never fire

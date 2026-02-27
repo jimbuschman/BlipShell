@@ -22,7 +22,6 @@ from blipshell.core.config import ConfigManager
 from blipshell.core.executor import TaskExecutor, build_executor_narrative
 from blipshell.core.planner import TaskPlanner
 from blipshell.core.repo_map import RepoMap
-from blipshell.core.tool_rules import ToolRuleEngine, create_coding_rules, create_default_rules
 from blipshell.core.tools.base import ToolRegistry
 from blipshell.core.tools.code_tools import GlobTool, GrepTool
 from blipshell.core.tools.git_tools import (
@@ -51,7 +50,6 @@ from blipshell.core.tools.task_tools import (
 )
 from blipshell.core.tools.web import WebFetchTool, WebSearchTool
 from blipshell.core.workflows import WorkflowExecutor, WorkflowRegistry
-from blipshell.llm.client import LLMClient
 from blipshell.llm.endpoints import EndpointManager
 from blipshell.llm.exceptions import is_model_error
 from blipshell.llm.job_queue import LLMJobQueue
@@ -70,7 +68,6 @@ from blipshell.memory.tagger import register_topic_patterns
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.models.config import BlipShellConfig, get_ollama_url
 from blipshell.models.session import MessageRole, SessionMessage
-from blipshell.models.tools import ToolCall
 from blipshell.session.manager import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -113,7 +110,6 @@ class Agent:
 
         # Tools
         self.tool_registry = ToolRegistry()
-        self._tool_rules: ToolRuleEngine = create_default_rules()
 
         # Task planning + execution (Phase 1)
         self.task_planner: Optional[TaskPlanner] = None
@@ -887,85 +883,6 @@ class Agent:
                 session_id=s.id,
             ))
 
-    async def _stream_llm_response(
-        self,
-        client,
-        messages: list[dict],
-        model: str,
-        tools: list[dict] | None,
-        chat_kwargs: dict,
-        on_token=None,
-    ) -> tuple[str, list | None]:
-        """Stream an LLM response, yielding text tokens to on_token as they arrive.
-
-        Returns (content, tool_calls) — same interface as _extract_response()
-        but with real-time streaming of text tokens.
-
-        Ollama streaming behavior:
-        - Text tokens arrive as chunks with message.content set
-        - Tool calls arrive in the final chunk(s) with message.tool_calls
-        - The last chunk has done=True and includes prompt_eval_count/eval_count
-
-        Falls back to non-streaming chat() if streaming fails.
-        """
-        try:
-            content_parts: list[str] = []
-            tool_calls = None
-
-            async for chunk in client.chat_stream(
-                messages=messages,
-                model=model,
-                tools=tools,
-                **chat_kwargs,
-            ):
-                # Extract chunk data — handle both object and dict format
-                msg = getattr(chunk, "message", None)
-                if msg is not None:
-                    # Object format (ollama 0.4+)
-                    chunk_content = getattr(msg, "content", "") or ""
-                    chunk_tool_calls = getattr(msg, "tool_calls", None)
-                else:
-                    # Dict format (older ollama)
-                    msg = chunk.get("message", {}) if isinstance(chunk, dict) else {}
-                    chunk_content = msg.get("content", "") or ""
-                    chunk_tool_calls = msg.get("tool_calls", None)
-
-                # Stream text tokens to user immediately
-                if chunk_content:
-                    content_parts.append(chunk_content)
-                    if on_token:
-                        on_token(chunk_content)
-
-                # Tool calls arrive in the final chunk
-                if chunk_tool_calls:
-                    tool_calls = chunk_tool_calls
-
-                # Capture token usage from the final chunk (done=True)
-                is_done = getattr(chunk, "done", False)
-                if not is_done and isinstance(chunk, dict):
-                    is_done = chunk.get("done", False)
-                if is_done:
-                    self._record_token_usage_from_chunk(chunk)
-
-            content = "".join(content_parts)
-            return content, tool_calls
-
-        except Exception as e:
-            # Fallback to non-streaming if streaming fails
-            logger.warning("Streaming failed, falling back to non-streaming: %s", e)
-            response = await client.chat(
-                messages=messages,
-                model=model,
-                tools=tools,
-                **chat_kwargs,
-            )
-            content, tool_calls = self._extract_response(response)
-            self._record_token_usage_from_chunk(response)
-            # Non-streaming: dump full response at once
-            if on_token and content:
-                on_token(content)
-            return content, tool_calls
-
     def _record_token_usage_from_chunk(self, chunk):
         """Extract and accumulate token usage from an Ollama response/chunk.
 
@@ -993,252 +910,28 @@ class Agent:
         stats["completion_tokens"] += eval_tokens or 0
         stats["requests"] += 1
 
-    @staticmethod
-    def _extract_response(response) -> tuple[str, list | None]:
-        """Extract content and tool_calls from an Ollama response.
+    async def _on_tool_executed(self, name: str, arguments: dict, result) -> None:
+        """Callback for ChatLoop — tracks files and logs events."""
+        # Track files/dirs already read
+        if result.success and name in ("read_file", "list_directory"):
+            read_path = arguments.get("path", "")
+            if read_path:
+                self._files_read.add(read_path)
 
-        Handles both dict responses (old ollama) and object responses (ollama 0.4+).
-        """
-        # Try object attribute access first (ollama 0.4+)
-        msg = getattr(response, "message", None)
-        if msg is not None:
-            content = getattr(msg, "content", "") or ""
-            tool_calls = getattr(msg, "tool_calls", None)
-            return content, tool_calls
-
-        # Fallback to dict access (older ollama)
-        if isinstance(response, dict):
-            msg = response.get("message", {})
-            return msg.get("content", ""), msg.get("tool_calls", None)
-
-        return "", None
-
-    @staticmethod
-    def _extract_tool_call_info(tc) -> tuple[str, dict, str]:
-        """Extract name, arguments, and id from a tool call object or dict.
-
-        Returns (name, arguments, tool_call_id). Handles both Ollama (args
-        as dict) and OpenAI-compatible APIs (args as JSON string).
-        """
-        # Object access (ollama 0.4+)
-        fn = getattr(tc, "function", None)
-        if fn is not None:
-            name = getattr(fn, "name", "") or ""
-            args = getattr(fn, "arguments", {}) or {}
-            tc_id = getattr(tc, "id", "") or ""
-            if isinstance(args, str):
-                import json
-                try:
-                    args = json.loads(args)
-                except (json.JSONDecodeError, TypeError):
-                    args = {}
-            return name, args, tc_id
-
-        # Dict access
-        if isinstance(tc, dict):
-            fn = tc.get("function", {})
-            args = fn.get("arguments", {})
-            tc_id = tc.get("id", "")
-            if isinstance(args, str):
-                import json
-                try:
-                    args = json.loads(args)
-                except (json.JSONDecodeError, TypeError):
-                    args = {}
-            return fn.get("name", ""), args, tc_id
-
-        return "", {}, ""
-
-    @staticmethod
-    def _format_tool_arg_hint(tool_call: ToolCall) -> str:
-        """Format a short argument hint for tool call display."""
-        args = tool_call.arguments
-        if not args:
-            return ""
-        if "pattern" in args:
-            return f" {args['pattern'][:50]}"
-        if "path" in args:
-            return f" {args['path']}"
-        if "command" in args:
-            return f" {args['command'][:60]}"
-        if "query" in args:
-            return f" {args['query'][:50]}"
-        if "message" in args:
-            return f" {args['message'][:60]}"
-        if "paths" in args:
-            return f" {args['paths'][:60]}"
-        return ""
-
-    @staticmethod
-    def _should_auto_continue(text: str) -> bool:
-        """Detect if the LLM stopped but clearly intends to continue.
-
-        Catches two patterns:
-        1. Permission-asking: "Should I proceed?", "Want me to...", etc.
-        2. Continuation-intent: "Now let me verify...", "Next I'll...", etc.
-           where the LLM narrates its next action but doesn't actually do it.
-
-        Returns True if the LLM should be nudged to continue.
-
-        NOTE: Only called when tool_call_names is non-empty (model already
-        used tools this turn), so these patterns indicate mid-task pausing,
-        not normal conversational questions.
-        """
-        text_lower = text.lower().strip()
-
-        # Pattern 1: asking permission (question in last 200 chars)
-        # Tightened: only match explicit "should I do X" patterns, not
-        # generic questions like "what do you think?" or "let me know"
-        if "?" in text_lower[-200:]:
-            tail_200 = text_lower[-200:]
-            permission_patterns = [
-                "should i proceed", "should i continue",
-                "should i go ahead", "should i start",
-                "want me to proceed", "want me to continue",
-                "shall i proceed", "shall i continue",
-                "would you like me to proceed", "would you like me to continue",
-                "ready to proceed", "ready to continue",
-            ]
-            if any(p in tail_200 for p in permission_patterns):
-                return True
-
-        # Pattern 2: continuation intent — the LLM says it's going to do
-        # something but stopped without actually calling a tool.
-        # Tightened: only match "let me [verb]" and "next i'll [verb]"
-        # patterns, not generic "i need to" or "need to add" which can
-        # appear in normal explanations.
-        tail = text_lower[-300:]
-        continuation_patterns = [
-            "now let me ", "let me also ", "let me check",
-            "let me fix", "let me update", "let me verify",
-            "let me read", "let me look", "next i'll",
-            "next i need to", "i'll also ",
-        ]
-        if any(p in tail for p in continuation_patterns):
-            return True
-
-        return False
-
-    async def _continue_tool_loop(
-        self,
-        messages: list[dict],
-        client,
-        model: str,
-        tools,
-        chat_kwargs: dict,
-        initial_content: str,
-        initial_tool_calls: list,
-        tool_call_names: list[str],
-        remaining_iterations: int,
-        on_token=None,
-        task_type=None,
-    ) -> str:
-        """Continue the tool call loop after auto-nudge triggered new tool calls."""
-        # Process the initial tool calls from the nudge response
-        messages.append({"role": "assistant", "content": initial_content,
-                        "tool_calls": initial_tool_calls})
-
-        for tc in initial_tool_calls:
-            name, arguments, tc_id = self._extract_tool_call_info(tc)
-            tool_call_names.append(name)
-            tool_call = ToolCall(id=tc_id, name=name, arguments=arguments)
-
-            if on_token:
-                arg_hint = self._format_tool_arg_hint(tool_call)
-                on_token(f"\n\x1b[36m\x1b[1m[Tool: {tool_call.name}{arg_hint}]\x1b[0m\n")
-
-            result = await self.tool_registry.execute_tool_call(tool_call)
-            result.tool_call_id = tc_id
-            messages.append(result.to_ollama_message())
-
-            if result.success and name in ("read_file", "list_directory"):
-                read_path = arguments.get("path", "")
-                if read_path:
-                    self._files_read.add(read_path)
-            if result.success and name in ("write_file", "edit_file"):
-                file_path = arguments.get("path", "")
-                self._file_changes.append({
-                    "path": file_path, "tool": name,
-                    "turn_number": self._turn_number,
-                })
-
-            if on_token:
-                preview = result.result[:120].replace("\n", " ")
-                if result.success:
-                    on_token(f"\x1b[2m[{preview}]\x1b[0m\n\n")
-                else:
-                    on_token(f"\x1b[31m[{preview}]\x1b[0m\n\n")
-
-        # Continue the main loop for remaining iterations
-        full_response = ""
-        for iteration in range(max(remaining_iterations, 5)):
-            try:
-                endpoint = await self.endpoint_manager.get_endpoint_for_role(task_type)
-                if endpoint:
-                    endpoint.start_request()
-
-                # Offer all tools in continue loop too (CC approach: no tool rules)
-                cont_tools = tools if (tools and iteration < max(remaining_iterations, 5) - 1) else None
-
-                content, new_tc = await self._stream_llm_response(
-                    client, messages, model, cont_tools, chat_kwargs, on_token,
-                )
-
-                if new_tc and iteration < max(remaining_iterations, 5) - 1:
-                    messages.append({"role": "assistant", "content": content,
-                                    "tool_calls": new_tc})
-                    for tc in new_tc:
-                        name, arguments, tc_id = self._extract_tool_call_info(tc)
-                        tool_call_names.append(name)
-                        tool_call = ToolCall(id=tc_id, name=name, arguments=arguments)
-
-                        if on_token:
-                            arg_hint = self._format_tool_arg_hint(tool_call)
-                            on_token(f"\n\x1b[36m\x1b[1m[Tool: {tool_call.name}{arg_hint}]\x1b[0m\n")
-
-                        result = await self.tool_registry.execute_tool_call(tool_call)
-                        result.tool_call_id = tc_id
-                        messages.append(result.to_ollama_message())
-
-                        if result.success and name in ("read_file", "list_directory"):
-                            read_path = arguments.get("path", "")
-                            if read_path:
-                                self._files_read.add(read_path)
-                        if result.success and name in ("write_file", "edit_file"):
-                            file_path = arguments.get("path", "")
-                            self._file_changes.append({
-                                "path": file_path, "tool": name,
-                                "turn_number": self._turn_number,
-                            })
-
-                        if on_token:
-                            preview = result.result[:120].replace("\n", " ")
-                            if result.success:
-                                on_token(f"\x1b[2m[{preview}]\x1b[0m\n\n")
-                            else:
-                                on_token(f"\x1b[31m[{preview}]\x1b[0m\n\n")
-
-                    if endpoint:
-                        endpoint.record_success(0)
-                    continue
-                else:
-                    # Text was already streamed to on_token by _stream_llm_response
-                    full_response = content
-                    if endpoint:
-                        endpoint.record_success(0)
-                    break
-            except Exception as e:
-                logger.error("Continue tool loop error: %s", e)
-                full_response = f"Error: {e}"
-                break
-            finally:
-                if endpoint:
-                    endpoint.complete_request()
-
-        if not full_response:
-            full_response = "[Completed tool calls — no final summary generated]"
-
-        return full_response
+        # Track file modifications
+        if result.success and name in ("write_file", "edit_file"):
+            file_path = arguments.get("path", "")
+            self._file_changes.append({
+                "path": file_path,
+                "tool": name,
+                "turn_number": self._turn_number,
+            })
+            # Invalidate repo map cache for edited files
+            if self._repo_map and file_path.endswith(".py"):
+                self._repo_map.invalidate(file_path)
+            await self._log_event("file_modified", {
+                "path": file_path, "tool": name,
+            })
 
     async def chat(
         self,
@@ -1287,8 +980,10 @@ class Agent:
                 on_token("\n\n\x1b[2m[Reflecting...]\x1b[0m\n\n")
             response = await self._reflect_on_response(user_message, response, on_token)
 
-        # Add assistant response to session
-        self.session_manager.add_message(MessageRole.ASSISTANT, response)
+        # Add assistant response to session (skip empty — prevents cascade of
+        # blank responses where an empty assistant message confuses the model)
+        if response and response.strip():
+            self.session_manager.add_message(MessageRole.ASSISTANT, response)
 
         # Background: dump to memory periodically (tracked for clean shutdown)
         task = asyncio.create_task(self._background_memory_processing())
@@ -1302,7 +997,9 @@ class Agent:
         user_message: str,
         on_token: Optional[Callable[[str], None]] = None,
     ) -> str:
-        """Simple chat path — existing flat tool-calling loop."""
+        """Simple chat path — uses unified ChatLoop with endpoint fallback."""
+        from blipshell.core.chat_loop import ChatLoop, LoopConfig, LoopResult
+
         # Search relevant memories for recall
         await self._search_relevant_memories(user_message)
 
@@ -1316,12 +1013,10 @@ class Agent:
         # Route to coding model when a project is active, otherwise tool_calling
         task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
 
-        # Get model and client (with fallback if cloud is down)
+        # Get model (with fallback if primary is known to be down)
         model = self.router.get_model(task_type)
-        client = await self.router.get_client(task_type)
         using_fallback = False
 
-        # Skip straight to fallback if primary model is known to be down
         if self.router.is_model_failed(model):
             fallback = self.router.get_fallback_model(task_type)
             if fallback:
@@ -1329,129 +1024,72 @@ class Agent:
                 model = fallback
                 using_fallback = True
 
-        if not client:
-            # Try fallback model
-            fallback = self.router.get_fallback_model(task_type)
-            if fallback:
-                logger.warning("Primary endpoint down, using fallback model '%s'", fallback)
-                model = fallback
-                using_fallback = True
-                client = await self.router.get_client(task_type)
-            if not client:
-                return "Error: No available LLM endpoint."
-
         # Always pass all tools — let the model decide what to use.
-        # Claude Code always passes all tools on every turn. Tool over-use
-        # is controlled by the system prompt and tool descriptions, not by
-        # withholding tools based on message content.
-        ms = self.model_settings.get(model)
         tools = self.tool_registry.get_all_ollama_tools() or None
         max_iterations = self.config.agent.max_tool_iterations if tools else 0
         logger.info("Passing %d tools (max_iterations=%d)",
                      len(tools) if tools else 0, max_iterations)
-        full_response = ""
-        tool_call_names: list[str] = []
+
+        loop = ChatLoop(self.tool_registry, on_token)
+        config = LoopConfig(
+            budget=max_iterations,
+            enable_dedup=True,
+            auto_continue_on_exhaustion=True,
+        )
+
+        # Try primary, then fallback on error
+        result = None
         endpoint_name = ""
+        full_response = ""
 
-        for iteration in range(max_iterations + 1):
-            endpoint = None
+        for attempt in range(2):  # primary + one fallback
+            endpoint = await self.endpoint_manager.get_endpoint_for_role(task_type)
+            if not endpoint:
+                if attempt == 0 and not using_fallback:
+                    fallback = self.router.get_fallback_model(task_type)
+                    if fallback and fallback != model:
+                        model = fallback
+                        using_fallback = True
+                        continue
+                full_response = "Error: No available LLM endpoint."
+                break
+
+            self._last_endpoint_used = endpoint.name
+            endpoint_name = endpoint.name
+            client = endpoint.client
+
+            chat_kwargs: dict = {}
+            if endpoint.context_tokens:
+                chat_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
+            if not self.think_enabled:
+                chat_kwargs["think"] = False
+
+            endpoint.start_request()
             try:
-                endpoint = await self.endpoint_manager.get_endpoint_for_role(task_type)
-                if endpoint:
-                    endpoint.start_request()
-                    self._last_endpoint_used = endpoint.name
-                    endpoint_name = endpoint.name
-
-                # Pass context window size to Ollama so it doesn't truncate
-                ctx_tokens = endpoint.context_tokens if endpoint and endpoint.context_tokens else None
-                chat_kwargs = {}
-                if ctx_tokens:
-                    chat_kwargs["options"] = {"num_ctx": ctx_tokens}
-
-                # Pass thinking mode toggle to Ollama (models that don't support it ignore it)
-                if not self.think_enabled:
-                    chat_kwargs["think"] = False
-
-                # Offer all tools until the last iteration (CC approach: no tool rules)
-                iter_tools = tools if (tools and iteration < max_iterations) else None
-
-                # Use streaming to show tokens as they arrive.
-                # Text tokens stream to on_token(); tool calls arrive in
-                # the final chunk and are extracted after the stream ends.
-                content, tool_calls = await self._stream_llm_response(
-                    client, messages, model, iter_tools, chat_kwargs, on_token,
+                result = await loop.run(
+                    client=client,
+                    messages=messages,
+                    model=model,
+                    tools=tools,
+                    chat_kwargs=chat_kwargs,
+                    config=config,
+                    on_tool_executed=self._on_tool_executed,
+                    on_stream_done=self._record_token_usage_from_chunk,
                 )
-                logger.info("LLM response: tool_calls=%s, content_len=%d, tools_offered=%d",
-                           bool(tool_calls), len(content),
-                           len(iter_tools) if iter_tools else 0)
-
-                if tool_calls and iteration < max_iterations:
-                    # Process tool calls
-                    messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
-
-                    for tc in tool_calls:
-                        name, arguments, tc_id = self._extract_tool_call_info(tc)
-                        tool_call_names.append(name)
-                        tool_call = ToolCall(id=tc_id, name=name, arguments=arguments)
-
-                        if on_token:
-                            arg_hint = self._format_tool_arg_hint(tool_call)
-                            on_token(f"\n\x1b[36m\x1b[1m[Tool: {tool_call.name}{arg_hint}]\x1b[0m\n")
-
-                        result = await self.tool_registry.execute_tool_call(tool_call)
-                        result.tool_call_id = tc_id
-                        messages.append(result.to_ollama_message())
-
-                        # Track files/dirs already read (prevents re-reading across turns)
-                        if result.success and name in ("read_file", "list_directory"):
-                            read_path = arguments.get("path", "")
-                            if read_path:
-                                self._files_read.add(read_path)
-
-                        # Track file modifications
-                        if result.success and name in ("write_file", "edit_file"):
-                            file_path = arguments.get("path", "")
-                            self._file_changes.append({
-                                "path": file_path,
-                                "tool": name,
-                                "turn_number": self._turn_number,
-                            })
-                            # Invalidate repo map cache for edited files
-                            if self._repo_map and file_path.endswith(".py"):
-                                self._repo_map.invalidate(file_path)
-                            await self._log_event("file_modified", {
-                                "path": file_path, "tool": name,
-                            })
-
-                        if on_token:
-                            preview = result.result[:120].replace("\n", " ")
-                            if result.success:
-                                on_token(f"\x1b[2m[{preview}]\x1b[0m\n\n")
-                            else:
-                                on_token(f"\x1b[31m[{preview}]\x1b[0m\n\n")
-
-                    if endpoint:
-                        endpoint.record_success(0)
-                    continue  # Loop back for LLM to process tool results
-                else:
-                    # No tool calls — text was already streamed to on_token
-                    full_response = content
-                    if endpoint:
-                        endpoint.record_success(0)
-                    break
+                endpoint.record_success(0)
+                full_response = result.response
+                break  # Success
             except Exception as e:
-                if endpoint:
-                    if is_model_error(e):
-                        logger.warning(
-                            "Model-level error on endpoint '%s' (not penalizing): %s",
-                            endpoint.name, e,
-                        )
-                        self.router.mark_model_failed(model)
-                    else:
-                        endpoint.record_failure()
+                if is_model_error(e):
+                    logger.warning(
+                        "Model-level error on endpoint '%s' (not penalizing): %s",
+                        endpoint.name, e,
+                    )
+                    self.router.mark_model_failed(model)
+                else:
+                    endpoint.record_failure()
 
-                # Try fallback model if we haven't already
-                if not using_fallback:
+                if attempt == 0 and not using_fallback:
                     fallback = self.router.get_fallback_model(task_type)
                     if fallback and fallback != model:
                         logger.warning("Primary model '%s' failed, falling back to '%s'", model, fallback)
@@ -1459,45 +1097,20 @@ class Agent:
                         using_fallback = True
                         if on_token:
                             on_token(f"\n\x1b[33m[Falling back to {fallback}]\x1b[0m\n")
-                        continue  # Retry the iteration with fallback model
+                        continue  # Retry with fallback
 
                 logger.error("Chat error: %s", e)
                 full_response = f"Error: {e}"
                 break
             finally:
-                if endpoint:
-                    endpoint.complete_request()
-
-        # Auto-continue: if the loop ended without a text response (hit iteration
-        # limit mid-task), nudge the model to wrap up instead of going silent.
-        if not full_response and tool_call_names:
-            if on_token:
-                on_token("\n\x1b[2m[Continuing...]\x1b[0m\n")
-            messages.append({
-                "role": "user",
-                "content": (
-                    "You hit the tool call limit. Summarize what you've done so far "
-                    "and what remains. Do NOT call any more tools — just respond."
-                ),
-            })
-            try:
-                content, _ = await self._stream_llm_response(
-                    client, messages, model, None, chat_kwargs, on_token,
-                )
-                full_response = content
-            except Exception as e:
-                logger.error("Auto-continue failed: %s", e)
-                full_response = f"[Hit tool limit after {len(tool_call_names)} calls]"
-
-        # Auto-nudge disabled (CC approach: model naturally continues or user responds).
-        # _should_auto_continue() and _continue_tool_loop() kept for potential re-enable.
+                endpoint.complete_request()
 
         # Event: llm_complete
         await self._log_event("llm_complete", {
             "endpoint": endpoint_name,
             "model": model,
             "fallback": using_fallback,
-            "tool_calls": tool_call_names,
+            "tool_calls": result.tool_call_names if result else [],
             "response_length": len(full_response),
         })
 
