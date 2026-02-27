@@ -154,6 +154,7 @@ class MemoryProcessor:
                 system=ri_system,
             )
             rank, importance, memory_type = self._parse_rank_importance_type(ri_text)
+            logger.debug("Classification: raw=%r → rank=%d imp=%.2f type=%s", ri_text.strip(), rank, importance, memory_type)
 
             # Apply bonuses
             importance += self._recency_bonus

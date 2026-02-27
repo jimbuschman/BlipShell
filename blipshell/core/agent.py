@@ -1506,9 +1506,14 @@ class Agent:
 
         if self.job_queue:
             await self.job_queue.stop()
-        # Close ChromaDB after all writes are done (worker is stopped)
+        # Close ChromaDB after all writes are done (worker is stopped).
+        # If the worker didn't exit in time, skip — the daemon thread is still
+        # using ChromaDB and closing it causes errors. Process exit kills it.
         if self.chroma:
-            self.chroma.close()
+            if self._memory_worker and self._memory_worker.is_alive:
+                logger.warning("Memory worker still alive, deferring ChromaDB close to process exit")
+            else:
+                self.chroma.close()
 
     async def force_cleanup(self):
         """Cancel all background tasks so the process can exit cleanly.
