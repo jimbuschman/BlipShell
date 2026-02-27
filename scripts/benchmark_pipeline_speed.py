@@ -457,14 +457,15 @@ async def main():
 
     client = LLMClient(host=ollama_url)
     try:
-        available = await client.list_models()
-        available_names = {m.get("name", "") for m in available if isinstance(m, dict)}
-        # Also match without tag
+        available = await client.list_models()  # returns list[str] like ["qwen2.5:14b", ...]
+        available_names = set(available)
+        # Also match without tag (e.g. "qwen2.5" matches "qwen2.5:14b")
         available_base = {n.split(":")[0] for n in available_names}
-    except Exception:
+        print(f"  Found {len(available_names)} models on {ollama_url}")
+    except Exception as e:
         available_names = set()
         available_base = set()
-        print(f"  WARNING: Could not list models from {ollama_url}")
+        print(f"  WARNING: Could not list models from {ollama_url}: {e}")
 
     for model in local_models:
         base = model.split(":")[0]
