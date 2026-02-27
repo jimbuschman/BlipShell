@@ -358,6 +358,12 @@ Complete rewrite of tag discovery with three-layer approach plus nightly job inf
 - `stale_lessons` — flag/archive lessons not relevant in 90+ days (needs code)
 - `re_embed` — re-embed full corpus after embedding model swap (needs code, heavy job)
 
+**Future: Health check feedback loop**:
+- Store nightly health check reports (JSON in `data/` or `nightly_reports` table)
+- On session startup, surface flagged issues as system notification
+- LLM analyzes trends across reports ("sync drift increasing", "entity extraction spam")
+- Generate actionable report for user review with suggested fixes
+
 ### 19. Esc to cancel current LLM call — COMPLETE
 - [x] `_poll_for_escape()` in cli.py — Windows-native msvcrt key detection
 - [x] Races chat task vs escape key poller using `asyncio.wait(FIRST_COMPLETED)`
