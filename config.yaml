@@ -45,7 +45,7 @@ endpoints:
     priority: 3                          # tried first for summarization (5 RPM, Groq fallback)
     max_concurrent: 2
     rate_limit_rpm: 5
-    rate_limit_rpd: 1000
+    rate_limit_rpd: 20                   # free tier is 20 RPD (not 1000 — verified 2026-02-27)
     enabled: true
     models:
       summarization: "gemini-2.5-flash"

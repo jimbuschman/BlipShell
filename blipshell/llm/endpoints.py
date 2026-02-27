@@ -136,7 +136,7 @@ class EndpointManager:
             timeout=llm_cfg.timeout,
         )
 
-    async def get_endpoint_for_role(self, role: str) -> Optional[Endpoint]:
+    async def get_endpoint_for_role(self, role: str, exclude: str | None = None) -> Optional[Endpoint]:
         """Get the best available endpoint that supports the given role.
 
         Selection priority:
@@ -144,16 +144,22 @@ class EndpointManager:
         2. Enabled and can accept requests
         3. Highest priority value
         4. Fewest active requests (load balancing)
+
+        Args:
+            exclude: Endpoint name to skip (used for fallback to avoid retrying the same endpoint).
         """
         async with self._lock:
             candidates = [
                 ep for ep in self._endpoints
-                if role in ep.roles and ep.can_accept_request
+                if role in ep.roles and ep.can_accept_request and ep.name != exclude
             ]
             is_fallback = False
             if not candidates:
-                # Fallback: any enabled endpoint
-                candidates = [ep for ep in self._endpoints if ep.can_accept_request]
+                # Fallback: any enabled endpoint (still excluding the failed one)
+                candidates = [
+                    ep for ep in self._endpoints
+                    if ep.can_accept_request and ep.name != exclude
+                ]
                 is_fallback = True
             if not candidates:
                 return None

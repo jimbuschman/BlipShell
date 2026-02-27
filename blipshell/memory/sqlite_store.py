@@ -293,11 +293,11 @@ class SQLiteStore:
     async def initialize(self):
         """Open connection and create schema."""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(self.db_path)
+        self._db = await aiosqlite.connect(self.db_path, isolation_level=None)
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA foreign_keys = ON")
         await self._db.execute("PRAGMA journal_mode = WAL")
-        await self._db.execute("PRAGMA busy_timeout = 30000")  # wait up to 30s for write lock
+        await self._db.execute("PRAGMA busy_timeout = 60000")  # wait up to 60s for write lock
         await self._db.executescript(SCHEMA_SQL)
         # Schema migrations for existing databases
         for col_sql in (

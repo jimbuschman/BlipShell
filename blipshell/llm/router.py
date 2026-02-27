@@ -148,7 +148,11 @@ class LLMRouter:
                 if fallback_model and fallback_model != model:
                     logger.warning("Primary model '%s' failed, trying fallback '%s'", model, fallback_model)
                     try:
-                        fallback_ep = await self._endpoint_manager.get_endpoint_for_role(task_type)
+                        # Exclude the failed endpoint so we don't send a local model name
+                        # to a cloud API (e.g. glm4:latest to Gemini → 404)
+                        fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
+                            task_type, exclude=endpoint.name,
+                        )
                         if fallback_ep:
                             fb_kwargs = {}
                             if not self._models.fallback_think:
