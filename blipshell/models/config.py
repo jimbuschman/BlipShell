@@ -133,7 +133,7 @@ class MemoryConfig(BaseModel):
     project_session_limit: int = 50  # max recent project sessions for two-pass search
     centroid_tag_similarity: float = 0.75  # cosine similarity threshold for centroid tag assignment
     centroid_tag_min_members: int = 10  # minimum tagged memories to compute a tag centroid
-    centroid_tag_batch_size: int = 500  # memories processed per centroid tagging batch
+    centroid_tag_batch_size: int = 50000  # memories processed per centroid tagging batch
     batch_tag_batch_size: int = 10  # memory summaries per LLM batch tag call
     batch_tag_max_batches: int = 500  # max LLM batches per nightly run
     dedup: DedupConfig = DedupConfig()
