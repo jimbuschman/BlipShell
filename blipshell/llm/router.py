@@ -142,30 +142,34 @@ class LLMRouter:
                 self.mark_model_failed(model)
             else:
                 endpoint.record_failure()
-            # Try fallback model if we aren't already on it
+            # Try fallback: get next endpoint (excluding failed one), use its model
             if not use_fallback:
-                fallback_model = self.get_fallback_model(task_type)
-                if fallback_model and fallback_model != model:
-                    logger.warning("Primary model '%s' failed, trying fallback '%s'", model, fallback_model)
-                    try:
-                        # Exclude the failed endpoint so we don't send a local model name
-                        # to a cloud API (e.g. glm4:latest to Gemini → 404)
-                        fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
-                            task_type, exclude=endpoint.name,
+                try:
+                    fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
+                        task_type, exclude=endpoint.name,
+                    )
+                    if fallback_ep:
+                        # Use the fallback endpoint's own model for this task,
+                        # or the global fallback model if it's a local endpoint
+                        fb_model = fallback_ep.models.get(task_type)
+                        if not fb_model:
+                            fb_model = self.get_fallback_model(task_type) or self.get_model(task_type)
+                        logger.warning(
+                            "Primary '%s' on '%s' failed, trying '%s' on '%s'",
+                            model, endpoint.name, fb_model, fallback_ep.name,
                         )
-                        if fallback_ep:
-                            fb_kwargs = {}
-                            if not self._models.fallback_think:
-                                fb_kwargs["think"] = False
-                            if fallback_ep.context_tokens:
-                                fb_kwargs["options"] = {"num_ctx": fallback_ep.context_tokens}
-                            result = await fallback_ep.client.generate(
-                                prompt=prompt, model=fallback_model, system=system,
-                                **fb_kwargs,
-                            )
-                            return result
-                    except Exception as fallback_err:
-                        logger.error("Fallback model '%s' also failed: %s", fallback_model, fallback_err)
+                        fb_kwargs = {}
+                        if not self._models.fallback_think:
+                            fb_kwargs["think"] = False
+                        if fallback_ep.context_tokens:
+                            fb_kwargs["options"] = {"num_ctx": fallback_ep.context_tokens}
+                        result = await fallback_ep.client.generate(
+                            prompt=prompt, model=fb_model, system=system,
+                            **fb_kwargs,
+                        )
+                        return result
+                except Exception as fallback_err:
+                    logger.error("Fallback also failed: %s", fallback_err)
             raise primary_err
         finally:
             endpoint.complete_request()
