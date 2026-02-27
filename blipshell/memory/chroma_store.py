@@ -329,9 +329,12 @@ class ChromaStore:
             return {}
 
         embeddings = {}
+        raw_embeddings = result.get("embeddings")
+        if raw_embeddings is None:
+            return {}
         for i, str_id in enumerate(result["ids"]):
-            if result["embeddings"] and result["embeddings"][i] is not None:
-                embeddings[int(str_id)] = result["embeddings"][i]
+            if raw_embeddings[i] is not None:
+                embeddings[int(str_id)] = raw_embeddings[i]
         return embeddings
 
     def get_counts(self) -> dict[str, int]:
