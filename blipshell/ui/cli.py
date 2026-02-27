@@ -2077,9 +2077,10 @@ def web(ctx):
 @click.option("--output", "-o", default=None, help="Write JSON report to file")
 @click.option("--canned", is_flag=True, help="Quick test suite (~5 min)")
 @click.option("--stress", is_flag=True, help="Full stress suite (~1-2 hours)")
+@click.option("--category", "-c", default=None, help="Only run tests in this category (e.g. multi_step, real_world)")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress streaming output")
 @click.pass_context
-def test_cmd(ctx, task, project, output, canned, stress, quiet):
+def test_cmd(ctx, task, project, output, canned, stress, quiet, category):
     """Run a headless test task and output JSON results."""
     from scripts.test_executor import run_test, run_canned_tests, run_stress_tests
 
@@ -2089,6 +2090,7 @@ def test_cmd(ctx, task, project, output, canned, stress, quiet):
         asyncio.run(run_stress_tests(
             project=project, config_path=config_path,
             output_path=output, quiet=quiet,
+            category=category,
         ))
     elif canned:
         asyncio.run(run_canned_tests(
