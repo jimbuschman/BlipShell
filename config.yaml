@@ -44,8 +44,8 @@ endpoints:
     roles: ["summarization"]
     priority: 3                          # tried first for summarization (5 RPM, Groq fallback)
     max_concurrent: 2
-    rate_limit_rpm: 5
-    rate_limit_rpd: 20                   # free tier is 20 RPD (not 1000 — verified 2026-02-27)
+    rate_limit_rpm: 10                    # free tier: 10 RPM (Google docs say 10, was 5)
+    rate_limit_rpd: 250                  # free tier: 250 RPD (error showed 20 — may be per-interval burst limit)
     enabled: true
     models:
       summarization: "gemini-2.5-flash"
