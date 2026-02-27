@@ -1,0 +1,529 @@
+"""Chat pipeline mixin for Agent.
+
+Extracts the main chat entry point, simple/planned paths, memory search,
+message building, and event logging.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+from typing import TYPE_CHECKING, Callable, Optional
+
+if TYPE_CHECKING:
+    pass  # All types accessed via self
+
+from blipshell.core.executor import build_executor_narrative
+from blipshell.llm.exceptions import is_model_error
+from blipshell.llm.router import TaskType
+from blipshell.memory.manager import PoolItem, estimate_tokens
+from blipshell.memory.query_profiles import classify_query, compute_pool_budgets
+from blipshell.models.session import MessageRole
+
+logger = logging.getLogger(__name__)
+
+
+class ChatMixin:
+    """Chat pipeline methods mixed into Agent."""
+
+    async def chat(
+        self,
+        user_message: str,
+        on_token: Optional[Callable[[str], None]] = None,
+        force_plan: bool = False,
+    ) -> str:
+        """Process a user message through the full agent pipeline.
+
+        Routes between simple chat and planned execution based on
+        complexity classification.
+
+        Args:
+            user_message: The user's input
+            on_token: Optional callback for streaming tokens
+            force_plan: If True, skip classification and go straight to planning
+
+        Returns:
+            The assistant's complete response
+        """
+        # Add user message to session
+        self.session_manager.add_message(MessageRole.USER, user_message)
+
+        # Decide execution path — only force_plan triggers the executor.
+        # The model handles complexity naturally through the unified chat loop.
+        needs_planning = force_plan
+
+        # Event: turn_start
+        self._turn_number += 1
+        session_id = self.session_manager.session_id
+        await self._log_event("turn_start", {
+            "query_length": len(user_message),
+            "route": "planned" if needs_planning else "simple",
+        })
+
+        if needs_planning:
+            logger.info("Message classified as complex — using planned execution")
+            response = await self._chat_planned(user_message, on_token=on_token)
+        else:
+            logger.info("Message classified as simple — using direct chat")
+            response = await self._chat_simple(user_message, on_token=on_token)
+
+        # Self-reflection: second LLM pass to catch errors/gaps
+        if self.reflect_enabled and response and not response.startswith("Error:"):
+            if on_token:
+                on_token("\n\n\x1b[2m[Reflecting...]\x1b[0m\n\n")
+            response = await self._reflect_on_response(user_message, response, on_token)
+
+        # Add assistant response to session (skip empty — prevents cascade of
+        # blank responses where an empty assistant message confuses the model)
+        if response and response.strip():
+            self.session_manager.add_message(MessageRole.ASSISTANT, response)
+
+        # Background: dump to memory periodically (tracked for clean shutdown)
+        task = asyncio.create_task(self._background_memory_processing())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+        return response
+
+    async def _chat_simple(
+        self,
+        user_message: str,
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """Simple chat path — uses unified ChatLoop with endpoint fallback."""
+        from blipshell.core.chat_loop import ChatLoop, LoopConfig, LoopResult
+
+        # Search relevant memories for recall
+        await self._search_relevant_memories(user_message)
+
+        # Build message list
+        messages = self._build_messages(user_message)
+
+        # Event: context_built (stats computed in _build_messages)
+        if self._last_context_stats:
+            await self._log_event("context_built", self._last_context_stats)
+
+        # Route to coding model when a project is active, otherwise tool_calling
+        task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
+
+        # Get model (with fallback if primary is known to be down)
+        model = self.router.get_model(task_type)
+        using_fallback = False
+
+        if self.router.is_model_failed(model):
+            fallback = self.router.get_fallback_model(task_type)
+            if fallback:
+                logger.info("Skipping failed model '%s', using fallback '%s'", model, fallback)
+                model = fallback
+                using_fallback = True
+
+        # Always pass all tools — let the model decide what to use.
+        tools = self.tool_registry.get_all_ollama_tools() or None
+        max_iterations = self.config.agent.max_tool_iterations if tools else 0
+        logger.info("Passing %d tools (max_iterations=%d)",
+                     len(tools) if tools else 0, max_iterations)
+
+        loop = ChatLoop(self.tool_registry, on_token)
+        config = LoopConfig(
+            budget=max_iterations,
+            enable_dedup=True,
+            auto_continue_on_exhaustion=True,
+        )
+
+        # Try primary, then fallback on error
+        result = None
+        endpoint_name = ""
+        full_response = ""
+
+        for attempt in range(2):  # primary + one fallback
+            endpoint = await self.endpoint_manager.get_endpoint_for_role(task_type)
+            if not endpoint:
+                if attempt == 0 and not using_fallback:
+                    fallback = self.router.get_fallback_model(task_type)
+                    if fallback and fallback != model:
+                        model = fallback
+                        using_fallback = True
+                        continue
+                full_response = "Error: No available LLM endpoint."
+                break
+
+            self._last_endpoint_used = endpoint.name
+            endpoint_name = endpoint.name
+            client = endpoint.client
+
+            chat_kwargs: dict = {}
+            if endpoint.context_tokens:
+                chat_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
+            if not self.think_enabled:
+                chat_kwargs["think"] = False
+
+            endpoint.start_request()
+            try:
+                result = await loop.run(
+                    client=client,
+                    messages=messages,
+                    model=model,
+                    tools=tools,
+                    chat_kwargs=chat_kwargs,
+                    config=config,
+                    on_tool_executed=self._on_tool_executed,
+                    on_stream_done=self._record_token_usage_from_chunk,
+                )
+                endpoint.record_success(0)
+                full_response = result.response
+                break  # Success
+            except Exception as e:
+                if is_model_error(e):
+                    logger.warning(
+                        "Model-level error on endpoint '%s' (not penalizing): %s",
+                        endpoint.name, e,
+                    )
+                    self.router.mark_model_failed(model)
+                else:
+                    endpoint.record_failure()
+
+                if attempt == 0 and not using_fallback:
+                    fallback = self.router.get_fallback_model(task_type)
+                    if fallback and fallback != model:
+                        logger.warning("Primary model '%s' failed, falling back to '%s'", model, fallback)
+                        model = fallback
+                        using_fallback = True
+                        if on_token:
+                            on_token(f"\n\x1b[33m[Falling back to {fallback}]\x1b[0m\n")
+                        continue  # Retry with fallback
+
+                logger.error("Chat error: %s", e)
+                full_response = f"Error: {e}"
+                break
+            finally:
+                endpoint.complete_request()
+
+        # Event: llm_complete
+        await self._log_event("llm_complete", {
+            "endpoint": endpoint_name,
+            "model": model,
+            "fallback": using_fallback,
+            "tool_calls": result.tool_call_names if result else [],
+            "response_length": len(full_response),
+        })
+
+        return full_response
+
+    async def _chat_planned(
+        self,
+        user_message: str,
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """Planned chat path — dynamic iterative execution (no pre-generated plan).
+
+        The LLM decides what to do next after each action, stopping when done.
+        This is how Claude Code, Cursor, and modern coding agents work.
+
+        Memory integration:
+        - Searches relevant memories before execution (context IN)
+        - Passes recent chat history so design discussions carry over
+        - Feeds the coding result through the memory pipeline (context OUT)
+        """
+        if on_token:
+            on_token("[Preparing context...]\n")
+
+        # Search relevant memories for this task
+        memory_context = ""
+        try:
+            results = await self.search.search(
+                query=user_message,
+                current_session_id=self.session_manager.session_id,
+                n_results=10,
+                active_project=self.active_project["name"] if self.active_project else None,
+            )
+            if results:
+                memory_context = "Relevant memories from past sessions:\n"
+                for r in results:
+                    memory_context += f"- {r.summary}\n"
+            # Log search results for /flow observability
+            await self._log_event("search_complete", {
+                "memory_results": len(results) if results else 0,
+                "lesson_results": 0,
+                "final_returned": len(results) if results else 0,
+                "skipped": None if results else "no results",
+            })
+        except Exception as e:
+            logger.error("Memory search for executor failed: %s", e)
+
+        # Get recent chat history (design discussion context)
+        chat_history = []
+        for msg in self.session_manager.get_messages()[-10:]:
+            if msg.role in (MessageRole.USER, MessageRole.ASSISTANT):
+                chat_history.append(msg.to_ollama_message())
+
+        if on_token:
+            on_token("[Executing task...]\n\n")
+
+        def on_step_complete(step_num, result_summary):
+            if on_token:
+                on_token(f"\n[Iteration {step_num} complete]\n")
+
+        try:
+            result = await self.task_executor.execute_dynamic(
+                user_message,
+                on_step_complete=on_step_complete,
+                on_token=on_token,
+                memory_context=memory_context,
+                chat_history=chat_history,
+                log_event=self._log_event,
+            )
+        except Exception as e:
+            logger.error("Dynamic execution failed: %s", e)
+            # Fallback to simple chat
+            if on_token:
+                on_token("[Execution failed, falling back to direct chat]\n")
+            return await self._chat_simple(user_message, on_token=on_token)
+
+        # Build a clean narrative from the executor transcript and feed through memory
+        try:
+            narrative = build_executor_narrative(self.task_executor.last_messages)
+            if narrative and narrative.strip():
+                await self.session_manager.processor.process_message(
+                    text=narrative,
+                    role="assistant",
+                    session_id=self.session_manager.session_id,
+                )
+        except Exception as e:
+            logger.error("Failed to process coding narrative into memory: %s", e)
+
+        return result
+
+    async def _search_relevant_memories(self, query: str):
+        """Search for relevant memories and lessons, add to Recall pool."""
+        # Search conversation memories
+        memory_count = 0
+        try:
+            active_proj = self.active_project["name"] if self.active_project else None
+            results = await self.search.search(
+                query=query,
+                current_session_id=self.session_manager.session_id,
+                n_results=10,
+                active_project=active_proj,
+            )
+            memory_count = len(results)
+            for r in results:
+                self.memory_manager.add_memory("Recall", PoolItem(
+                    text=r.summary,
+                    session_role="system",
+                    priority_score=r.boosted_score,
+                ))
+        except Exception as e:
+            logger.error("Memory search failed: %s", e)
+
+        # Search lessons semantically (closes the lessons loop)
+        lesson_count = 0
+        try:
+            active_proj = self.active_project["name"] if self.active_project else None
+            lesson_results = await self.search.search_lessons(
+                query, n_results=5, active_project=active_proj,
+            )
+            for lr in lesson_results:
+                similarity = lr.get("similarity", 0.0)
+                if similarity < 0.4:
+                    continue
+                lesson_count += 1
+                self.memory_manager.add_memory("Recall", PoolItem(
+                    text=lr.get("document", ""),
+                    session_role="system2",  # labeled as "RelevantLessons" in context
+                    priority_score=similarity + 0.1,  # slight boost for lessons
+                ))
+        except Exception as e:
+            logger.error("Lesson search failed: %s", e)
+
+        # Event: search_complete
+        search_stats = self.search.last_search_stats or {}
+        await self._log_event("search_complete", {
+            "memory_results": memory_count,
+            "lesson_results": lesson_count,
+            **search_stats,
+        })
+
+    def _build_messages(self, user_message: str) -> list[dict]:
+        """Build the full message list with memory context.
+
+        Port of OllamaChat.SendMessageToOllama message building.
+        Uses dynamic context window based on the active endpoint.
+        """
+        from blipshell.memory.manager import MemoryManager
+
+        user_tokens = estimate_tokens(user_message)
+
+        # Use endpoint-specific context window if available
+        # Route to coding endpoint's context window when a project is active
+        context_role = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
+        context_limit = self.endpoint_manager.get_context_tokens_for_role(
+            context_role,
+            default=65536,
+        )
+
+        available = (
+            context_limit
+            - user_tokens
+            - MemoryManager.OVERHEAD_TOKENS
+        )
+
+        # Classify query and compute dynamic pool budgets
+        profile = classify_query(user_message)
+        pool_budgets = compute_pool_budgets(
+            profile, available, self.memory_manager.get_hard_caps(),
+        )
+        logger.debug("Query profile: %s", profile)
+
+        # Gather memory from all pools with dynamic budgets
+        memory_items = self.memory_manager.gather_memory(
+            token_budget=available, pool_budgets=pool_budgets,
+        )
+
+        # Build memory context string organized by pool
+        # Order: Core first (stable facts, LLM attends to start), history in
+        # the middle (lowest attention), Recall last (most relevant, LLM
+        # attends to end) — mitigates lost-in-the-middle effect.
+        pool_labels = {
+            "Core": "CoreFoundation",
+            "Lessons": "RelevantLessons",
+            "Recall": "RelevantMemory",
+            "RecentHistory": "RecentHistory",
+            "Buffer": "RecentHistory",
+            "ActiveSession": "ActiveSession",
+        }
+        pool_order = ["Core", "Lessons", "RecentHistory", "Buffer", "ActiveSession", "Recall"]
+        context_parts: dict[str, list[str]] = {}
+        for item in memory_items:
+            pool = item.pool_name
+            if pool not in context_parts:
+                context_parts[pool] = []
+            context_parts[pool].append(f"   - {item.text}")
+
+        # Compute context stats for observability
+        pool_usage = {}
+        for item in memory_items:
+            p = item.pool_name
+            if p not in pool_usage:
+                pool_usage[p] = {"items": 0, "tokens": 0}
+            pool_usage[p]["items"] += 1
+            pool_usage[p]["tokens"] += item.estimated_tokens
+        self._last_context_stats = {
+            "query_profile": profile,
+            "context_limit": context_limit,
+            "available_tokens": available,
+            "pool_budgets": pool_budgets,
+            "pool_usage": pool_usage,
+            "total_context_items": len(memory_items),
+        }
+
+        memory_text = ""
+        for pool_name in pool_order:
+            if pool_name not in context_parts:
+                continue
+            label = pool_labels.get(pool_name, pool_name)
+            memory_text += f"{label}:\n" + "\n".join(context_parts[pool_name]) + "\n\n"
+        # Include any pools not in the explicit order (future-proofing)
+        for pool_name, items in context_parts.items():
+            if pool_name not in pool_order:
+                label = pool_labels.get(pool_name, pool_name)
+                memory_text += f"{label}:\n" + "\n".join(items) + "\n\n"
+
+        # Build messages
+        system_prompt = self.config.agent.system_prompt
+
+        # Get per-model settings for the active model
+        task_type_for_model = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
+        active_model = self.router.get_model(task_type_for_model)
+        ms = self.model_settings.get(active_model)
+
+        if self.active_project and self._project_context:
+            root_path = self.active_project.get("root_path", "")
+            tool_limit = ms.max_tool_calls
+
+            system_prompt += (
+                "\n\n--- PROJECT CONTEXT ---\n"
+                f"Project: \"{self.active_project['name']}\" at {root_path}\n"
+                "File tools resolve relative paths against this root.\n\n"
+                "Answer questions conversationally. Only use tools when the user asks you "
+                "to create, modify, find, or run something.\n\n"
+                "Examples:\n"
+                '- "How does search work?" -> Answer from context. No tools.\n'
+                '- "Create hello.py" -> Use write_file.\n'
+                '- "Fix the bug in search.py" -> read_file, then edit_file.\n\n'
+                f"Target under {tool_limit} tool calls. Do not explore endlessly.\n\n"
+                "# Scratchpad\n"
+                f"Project: data/scratchpad_{self.active_project['name']}.md | "
+                "General: data/scratchpad.md\n"
+                "For decisions, plans, and TODOs that should survive across sessions.\n\n"
+            )
+
+            # Add model-specific extra instructions
+            if ms.extra_instructions:
+                system_prompt += f"MODEL-SPECIFIC INSTRUCTIONS:\n{ms.extra_instructions}\n\n"
+
+            system_prompt += self._project_context
+
+        # Consolidate all context into a single system message (CC approach)
+        scratchpad = self._read_scratchpad()
+        if scratchpad:
+            system_prompt += f"\n\n--- SCRATCHPAD ---\n{scratchpad}"
+
+        if memory_text.strip():
+            system_prompt += f"\n\n{memory_text}"
+
+        if self._files_read:
+            files_list = "\n".join(f"  - {f}" for f in sorted(self._files_read))
+            system_prompt += (
+                "\n\nFILES ALREADY READ THIS SESSION (do NOT re-read these):\n"
+                + files_list
+            )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+        ]
+
+        # Add conversation history from ActiveSession (last messages)
+        for msg in self.session_manager.get_messages()[-20:]:
+            messages.append(msg.to_ollama_message())
+
+        return messages
+
+    def _read_scratchpad(self) -> str:
+        """Read scratchpad files (general + project-specific) for context injection.
+
+        Returns combined scratchpad content, or empty string if none exist.
+        """
+        parts = []
+        # Project-specific scratchpad
+        if self.active_project:
+            proj_path = os.path.join("data", f"scratchpad_{self.active_project['name']}.md")
+            if os.path.exists(proj_path):
+                try:
+                    with open(proj_path, "r", encoding="utf-8") as f:
+                        content = f.read().strip()
+                    if content:
+                        parts.append(f"[Project: {self.active_project['name']}]\n{content}")
+                except Exception:
+                    pass
+        # General scratchpad
+        general_path = os.path.join("data", "scratchpad.md")
+        if os.path.exists(general_path):
+            try:
+                with open(general_path, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+                if content:
+                    parts.append(f"[General]\n{content}")
+            except Exception:
+                pass
+        return "\n\n".join(parts)
+
+    async def _log_event(self, event_type: str, data: dict):
+        """Log a conversation flow event. Fire-and-forget safe."""
+        try:
+            session_id = self.session_manager.session_id if self.session_manager else 0
+            await self.sqlite.log_turn_event(
+                session_id, self._turn_number, event_type, data,
+            )
+        except Exception as e:
+            logger.debug("Failed to log event %s: %s", event_type, e)

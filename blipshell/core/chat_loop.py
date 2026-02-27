@@ -49,6 +49,12 @@ class LoopConfig:
     auto_continue_on_exhaustion: bool = False
     """When budget is hit with no text response, nudge model to summarize."""
 
+    enable_parallel: bool = True
+    """Execute multiple tool calls from the same LLM response concurrently."""
+
+    max_parallel: int = 8
+    """Maximum number of concurrent tool executions per batch."""
+
 
 @dataclass
 class LoopResult:
@@ -283,6 +289,35 @@ class ChatLoop:
         self.tool_registry = tool_registry
         self.on_token = on_token
 
+    def _partition_for_parallel(
+        self,
+        parsed_calls: list[tuple[str, dict, str]],
+        config: LoopConfig,
+    ) -> tuple[list[int], list[int]]:
+        """Partition tool call indices into sequential and parallel groups.
+
+        Sequential: tools requiring approval or ask_user (interactive prompts).
+        Parallel: everything else (reads, greps, globs, web tools, etc.).
+
+        Returns (sequential_indices, parallel_indices).
+        """
+        sequential: list[int] = []
+        parallel: list[int] = []
+        approval_set = self.tool_registry._tools_requiring_approval
+        has_approval_cb = self.tool_registry._approval_callback is not None
+
+        for i, (name, _args, _tc_id) in enumerate(parsed_calls):
+            needs_sequential = (
+                (has_approval_cb and name in approval_set)
+                or name == "ask_user"
+            )
+            if needs_sequential:
+                sequential.append(i)
+            else:
+                parallel.append(i)
+
+        return sequential, parallel
+
     async def run(
         self,
         client: LLMClient,
@@ -347,48 +382,112 @@ class ChatLoop:
                     "tool_calls": tool_calls,
                 })
 
+                # Phase 1: Parse all tool calls up front
+                parsed_calls: list[tuple[str, dict, str]] = []
                 for tc in tool_calls:
-                    name, arguments, tc_id = extract_tool_call_info(tc)
-                    tool_call_names.append(name)
-                    tool_call_count += 1
-                    tool_call = ToolCall(id=tc_id, name=name, arguments=arguments)
+                    parsed_calls.append(extract_tool_call_info(tc))
 
+                # Phase 2: Budget — trim to remaining budget, reserve slots
+                remaining = config.budget - tool_call_count
+                parsed_calls = parsed_calls[:remaining]
+                tool_call_count += len(parsed_calls)
+                for name, _, _ in parsed_calls:
+                    tool_call_names.append(name)
+
+                # Phase 3: Batch dedup — across previous batch + within this batch
+                dedup_blocked: set[int] = set()
+                batch_seen: set[tuple[str, str]] = set()
+                if config.enable_dedup:
+                    for i, (name, arguments, _) in enumerate(parsed_calls):
+                        args_key = json.dumps(arguments, sort_keys=True, default=str)
+                        call_key = (name, args_key)
+                        if call_key == last_tool_call and name != config.completion_tool:
+                            dedup_blocked.add(i)
+                        elif call_key in batch_seen and name != config.completion_tool:
+                            dedup_blocked.add(i)
+                        else:
+                            batch_seen.add(call_key)
+
+                # Phase 4: Display tool headers
+                for i, (name, arguments, _) in enumerate(parsed_calls):
                     if self.on_token:
                         arg_hint = format_tool_arg_hint(name, arguments)
                         self.on_token(f"\n\x1b[36m\x1b[1m[Tool: {name}{arg_hint}]\x1b[0m\n")
 
-                    # ── Same-args dedup ──
-                    if config.enable_dedup:
-                        args_key = json.dumps(arguments, sort_keys=True, default=str)
-                        current_call = (name, args_key)
-                        if (current_call == last_tool_call
-                                and name != config.completion_tool):
-                            result = ToolResult(
-                                tool_call_id=tc_id,
-                                name=name,
+                # Phase 5: Partition into sequential (approval/ask_user) and parallel
+                results: list[ToolResult | None] = [None] * len(parsed_calls)
+                use_parallel = (
+                    config.enable_parallel
+                    and len(parsed_calls) > 1
+                )
+
+                if use_parallel:
+                    seq_indices, par_indices = self._partition_for_parallel(
+                        parsed_calls, config,
+                    )
+                else:
+                    seq_indices = list(range(len(parsed_calls)))
+                    par_indices = []
+
+                # Phase 6a: Execute sequential tools (approval, ask_user)
+                for i in seq_indices:
+                    name, arguments, tc_id = parsed_calls[i]
+                    if i in dedup_blocked:
+                        results[i] = ToolResult(
+                            tool_call_id=tc_id, name=name,
+                            result=(
+                                f"You just called {name} with the same arguments. "
+                                "Try a different approach or complete the task."
+                            ),
+                            success=False,
+                        )
+                    else:
+                        tc_obj = ToolCall(id=tc_id, name=name, arguments=arguments)
+                        results[i] = await self.tool_registry.execute_tool_call(tc_obj)
+                        results[i].tool_call_id = tc_id
+
+                # Phase 6b: Execute parallel tools concurrently
+                if par_indices:
+                    semaphore = asyncio.Semaphore(config.max_parallel)
+
+                    async def _run_one(idx: int) -> None:
+                        pname, pargs, ptc_id = parsed_calls[idx]
+                        if idx in dedup_blocked:
+                            results[idx] = ToolResult(
+                                tool_call_id=ptc_id, name=pname,
                                 result=(
-                                    f"You just called {name} with the same arguments. "
+                                    f"You just called {pname} with the same arguments. "
                                     "Try a different approach or complete the task."
                                 ),
                                 success=False,
                             )
-                            if self.on_token:
-                                self.on_token("  [Duplicate call blocked]\n")
-                        else:
-                            result = await self.tool_registry.execute_tool_call(tool_call)
-                        last_tool_call = current_call
-                    else:
-                        result = await self.tool_registry.execute_tool_call(tool_call)
+                            return
+                        try:
+                            async with semaphore:
+                                tc_obj = ToolCall(id=ptc_id, name=pname, arguments=pargs)
+                                results[idx] = await self.tool_registry.execute_tool_call(tc_obj)
+                                results[idx].tool_call_id = ptc_id
+                        except Exception as e:
+                            logger.error("Parallel tool %s[%d] failed: %s", pname, idx, e)
+                            results[idx] = ToolResult(
+                                tool_call_id=ptc_id, name=pname,
+                                result=f"Error executing {pname}: {e}",
+                                success=False,
+                            )
 
-                    result.tool_call_id = tc_id
+                    await asyncio.gather(*[_run_one(i) for i in par_indices])
 
-                    # ── Completion tool detection ──
+                # Phase 7: Append results in order, run callbacks, display
+                for i, (name, arguments, tc_id) in enumerate(parsed_calls):
+                    result = results[i]
+
+                    # Completion tool detection
                     if config.completion_tool and name == config.completion_tool:
                         completion_tool_result = result.result
                         if self.on_token:
                             self.on_token("  [Task complete signal received]\n")
 
-                    # ── Caller tracking callback (sync or async) ──
+                    # Caller tracking callback (sync or async)
                     if on_tool_executed:
                         ret = on_tool_executed(name, arguments, result)
                         if asyncio.iscoroutine(ret):
@@ -396,12 +495,24 @@ class ChatLoop:
 
                     messages.append(result.to_ollama_message())
 
+                    # Display result preview
                     if self.on_token:
-                        preview = result.result[:120].replace("\n", " ")
-                        if result.success:
-                            self.on_token(f"\x1b[2m[{preview}]\x1b[0m\n\n")
+                        if i in dedup_blocked:
+                            self.on_token("  [Duplicate call blocked]\n")
                         else:
-                            self.on_token(f"\x1b[31m[{preview}]\x1b[0m\n\n")
+                            preview = result.result[:120].replace("\n", " ")
+                            if result.success:
+                                self.on_token(f"\x1b[2m[{preview}]\x1b[0m\n\n")
+                            else:
+                                self.on_token(f"\x1b[31m[{preview}]\x1b[0m\n\n")
+
+                # Update last_tool_call for next batch dedup
+                if parsed_calls:
+                    last_name, last_args, _ = parsed_calls[-1]
+                    last_tool_call = (
+                        last_name,
+                        json.dumps(last_args, sort_keys=True, default=str),
+                    )
 
                 # ── Completion tool fired ──
                 if completion_tool_result is not None:

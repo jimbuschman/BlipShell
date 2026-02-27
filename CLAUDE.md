@@ -333,27 +333,36 @@ PII detection in `blipshell/llm/pii.py`. Uses Microsoft Presidio (spaCy NER) whe
 - [x] Dependencies: `presidio-analyzer`, `presidio-anonymizer`, `spacy` in pyproject.toml
 - [ ] **ON OLLAMA PC**: `pip install presidio-analyzer presidio-anonymizer spacy && python -m spacy download en_core_web_lg`
 
-### 21. Modularize agent.py — FUTURE
-glm-5 code review flagged agent.py at 86KB+ as a monolith doing too much (chat, tools, session, project, background tasks). Split into focused modules:
-- `agent/session.py` — session lifecycle
-- `agent/projects.py` — project mode activation
-- `agent/tools.py` — tool registration
-- `agent/chat.py` — chat orchestration
-Not urgent but pays compound interest on maintainability.
+### 21. Modularize agent.py — COMPLETE
+Refactored 1687-line monolith into thin facade + 5 mixin classes:
+- [x] `agent_tools.py` — ToolsMixin: tool registration (105 lines)
+- [x] `agent_background.py` — BackgroundMixin: memory worker callbacks, reflection (91 lines)
+- [x] `agent_project.py` — ProjectMixin: project activation/deactivation, context scanning (251 lines)
+- [x] `agent_session.py` — SessionMixin: session lifecycle, memory loading, startup tasks (237 lines)
+- [x] `agent_chat.py` — ChatMixin: chat pipeline, message building, event logging (529 lines)
+- [x] `agent.py` stays as facade (612 lines): __init__, initialize, end_session, status/properties
+- [x] External callers (cli.py, web/app.py, test_executor.py) need zero changes
+- [x] Mixin pattern avoids rewriting self.* references — all shared state stays on Agent
 
-### 22. Entity Matching Performance — FUTURE
-`_expand_via_entities` in search.py loads all 31K entity names and does regex matching per query. Could be slow. Options:
-- Cache entity names in memory (avoid DB round-trip)
-- Pre-compiled regex patterns or trie for fast matching
-- Only expand for longer/complex queries
-Profile first to see if it's actually a bottleneck before optimizing.
+### 22. Entity Matching Performance — COMPLETE
+- [x] Profiled: 31K entity names × regex per query = 1,160ms per query
+- [x] Fix: substring pre-filter (`name in query_lower`) before regex — 340x speedup (1,160ms → 3.4ms)
+- [x] Applied in `search.py:_expand_via_entities()` — 3-line change
 
 ### 23. `/context` command — COMPLETE
 - [x] `_print_context()` in cli.py — shows pool usage breakdown, context window state, memory counts per pool
 - Already existed, was just missing from roadmap tracking
 
-### 24. Parallel tool calls in executor — FUTURE
-OpenAI API supports multiple tool calls per response. Free speedup for multi-step tasks.
+### 24. Parallel tool calls in executor — COMPLETE
+- [x] `chat_loop.py`: `enable_parallel` and `max_parallel` config fields on `LoopConfig`
+- [x] 7-phase execution: parse → budget → dedup → display → partition → execute → results
+- [x] Parallel tools via `asyncio.gather()` with `Semaphore(max_parallel=8)`
+- [x] Sequential tools first (approval-required, ask_user), then parallel (reads, greps, etc.)
+- [x] Result ordering preserved — appended to messages in original tool_call order
+- [x] Batch dedup — catches duplicates within batch AND across batches
+- [x] Error isolation — one failing tool doesn't crash the batch
+- [x] Callbacks remain sequential (Phase 7) — no thread-safety changes needed
+- [ ] **NEEDS TESTING**: Run `blipshell test --canned` and verify parallel execution happens
 
 ### 25. Memory Timelines — FUTURE
 Temporal view of memories, searches, and projects. Details TBD — could include:
