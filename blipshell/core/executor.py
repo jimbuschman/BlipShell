@@ -550,15 +550,13 @@ class TaskExecutor:
         if self.active_project:
             budget = max(budget, 50)
 
-        # Build initial messages — one continuous conversation
+        # Build initial messages — single system message (CC approach)
         task_prompt = dynamic_execution_prompt(user_request)
+        if memory_context:
+            sys_prompt += f"\n\n--- RELEVANT MEMORIES ---\n{memory_context}"
         messages = [
             {"role": "system", "content": sys_prompt},
         ]
-
-        # Inject memory context so executor has relevant past knowledge
-        if memory_context:
-            messages.append({"role": "system", "content": memory_context})
 
         # Inject recent chat history so executor has design discussion context
         if chat_history:
@@ -602,11 +600,12 @@ class TaskExecutor:
             # Budget winddown disabled (CC approach: no budget concept).
             # With budget=50, models naturally complete well before the cap.
 
-            # Context compaction: if messages exceed 70% of context window,
+            # Context compaction: if messages exceed 85% of context window,
             # compress older tool results to prevent context overflow.
+            # CC compacts at 92-95%; 85% is conservative for weaker models.
             context_limit = endpoint.context_tokens or 65536
             est_tokens = _estimate_messages_tokens(messages)
-            if est_tokens > int(context_limit * 0.7):
+            if est_tokens > int(context_limit * 0.85):
                 before = est_tokens
                 messages = _compact_messages(messages, keep_last_n=5)
                 after = _estimate_messages_tokens(messages)
@@ -618,19 +617,9 @@ class TaskExecutor:
             # Offer all tools until budget exhausted (CC approach: no rules, no winddown)
             iter_tools = tools if (tools and tool_call_count < budget) else None
 
-            # State injection: give model explicit awareness of progress.
-            # Replace previous state message (if any) to avoid accumulation.
-            if not self._disable_state_block:
-                state_block = self._build_state_block(
-                    tool_call_count, budget, tool_call_names,
-                )
-                if last_state_msg_idx >= 0 and last_state_msg_idx < len(messages):
-                    messages[last_state_msg_idx] = {
-                        "role": "system", "content": state_block,
-                    }
-                else:
-                    messages.append({"role": "system", "content": state_block})
-                    last_state_msg_idx = len(messages) - 1
+            # State injection disabled (CC approach: no per-turn state block).
+            # CC only injects system-reminders after file edits, not every turn.
+            # _build_state_block() kept for potential re-enable if testing shows regressions.
 
             content, tool_calls = await _stream_chat(
                 client, messages, model, iter_tools, chat_kwargs, on_token,

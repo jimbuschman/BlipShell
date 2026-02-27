@@ -1755,26 +1755,24 @@ class Agent:
 
             system_prompt += self._project_context
 
+        # Consolidate all context into a single system message (CC approach)
+        scratchpad = self._read_scratchpad()
+        if scratchpad:
+            system_prompt += f"\n\n--- SCRATCHPAD ---\n{scratchpad}"
+
+        if memory_text.strip():
+            system_prompt += f"\n\n{memory_text}"
+
+        if self._files_read:
+            files_list = "\n".join(f"  - {f}" for f in sorted(self._files_read))
+            system_prompt += (
+                "\n\nFILES ALREADY READ THIS SESSION (do NOT re-read these):\n"
+                + files_list
+            )
+
         messages = [
             {"role": "system", "content": system_prompt},
         ]
-
-        # Inject scratchpad content (persistent working notes)
-        scratchpad = self._read_scratchpad()
-        if scratchpad:
-            messages.append({"role": "system", "content": f"--- SCRATCHPAD ---\n{scratchpad}"})
-
-        if memory_text.strip():
-            messages.append({"role": "system", "content": memory_text})
-
-        # Inject files-already-read list so the model doesn't re-read across turns
-        if self._files_read:
-            files_list = "\n".join(f"  - {f}" for f in sorted(self._files_read))
-            messages.append({"role": "system", "content": (
-                "FILES ALREADY READ THIS SESSION (do NOT re-read these):\n"
-                + files_list
-                + "\nSkip straight to your task — do not list directories or read files you already have."
-            )})
 
         # Add conversation history from ActiveSession (last messages)
         for msg in self.session_manager.get_messages()[-20:]:
