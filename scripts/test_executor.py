@@ -1658,10 +1658,18 @@ async def run_stress_tests(
     output_path: str | None = None,
     quiet: bool = False,
     overrides: TestOverrides | None = None,
+    category: str | None = None,
 ) -> list[dict]:
-    """Run the full stress test suite."""
+    """Run the full stress test suite, optionally filtered by category."""
+    tests = STRESS_TESTS
+    if category:
+        tests = [t for t in tests if t.get("category") == category]
+        if not tests:
+            categories = sorted(set(t.get("category", "") for t in STRESS_TESTS))
+            print(f"No tests in category '{category}'. Available: {', '.join(categories)}")
+            return []
     return await run_test_suite(
-        STRESS_TESTS, "Stress Tests",
+        tests, f"Stress Tests{f' [{category}]' if category else ''}",
         project=project, config_path=config_path,
         output_path=output_path or "data/stress_test_results.json",
         quiet=quiet, overrides=overrides,
@@ -1904,6 +1912,8 @@ def main():
     modes.add_argument("--ab", metavar="ITEM", default=None,
                        help="A/B comparison for a Phase 2 item. "
                             f"Options: {', '.join(sorted(AB_CONFIGS.keys()))}")
+    modes.add_argument("--category", "-c", default=None,
+                       help="Only run tests in this category (e.g. multi_step, real_world, heavy)")
 
     # Phase 2 override flags
     overrides_group = parser.add_argument_group("phase 2 overrides (match Claude Code)")
@@ -1940,6 +1950,7 @@ def main():
             output_path=args.output,
             quiet=args.quiet,
             overrides=overrides,
+            category=args.category,
         ))
     elif args.simple_chat:
         asyncio.run(run_simple_chat_tests(
