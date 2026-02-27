@@ -349,7 +349,14 @@ Complete rewrite of tag discovery with three-layer approach plus nightly job inf
 - Add background asyncio task that triggers nightly run at ~3:12 AM if app is open and idle
 - Check `app_metadata["nightly_last_run"]` staleness (>24h)
 - Pause GPU-heavy jobs (batch_tag) if user activity resumes
-- Additional nightly job candidates: health check (audit_db), entity graph cleanup, session summary backfill, stale lesson review, ChromaDB/SQLite sync check, re-embedding (on model swap)
+
+**Future: Additional nightly jobs to add to runner**:
+- `health_check` — run `audit_db.py` checks, log results (code exists, needs wrapper)
+- `sync_check` — verify ChromaDB/SQLite aren't drifting (check exists in audit_db.py)
+- `entity_cleanup` — prune orphaned entities, merge near-duplicates incrementally (needs code)
+- `session_backfill` — generate summaries for sessions interrupted before summarization (needs code)
+- `stale_lessons` — flag/archive lessons not relevant in 90+ days (needs code)
+- `re_embed` — re-embed full corpus after embedding model swap (needs code, heavy job)
 
 ### 19. Esc to cancel current LLM call — COMPLETE
 - [x] `_poll_for_escape()` in cli.py — Windows-native msvcrt key detection
