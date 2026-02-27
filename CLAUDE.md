@@ -11,7 +11,7 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - coding: glm-5:cloud — /code command (benchmark winner: 13/13 checks)
 
 **Background processing (cloud + local):**
-- summarization: Gemini gemini-2.5-flash (priority 3) → Groq gpt-oss-120b (priority 2) → local glm4
+- summarization: Groq gpt-oss-120b (priority 2) → local glm4 (Gemini disabled — 20-req burst limit too unreliable)
 - ranking_importance: Groq llama-3.3-70b-versatile (0.4s avg) → local qwen2.5:7b fallback
 - reasoning: qwen3:14b (local) — entity extraction, tag discovery, lessons, dedup, contradiction
 - importance: qwen3:14b (local) — standalone importance scoring
@@ -34,7 +34,12 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - Entity graph cleaned (31,469 entities, 56K relationships, 95K mentions)
 - Entity type corrections applied
 - Unified ChatLoop refactor — single loop in `blipshell/core/chat_loop.py`, ~250 lines dead code removed
+- Real SSE streaming — tokens stream to UI as they arrive (via ChatLoop `stream_chat()`)
 - Pipeline speed optimization — ranking moved to Groq llama-3.3-70b (10x faster), cloud load split
+- Esc to cancel LLM call — `_poll_for_escape()` in cli.py races chat task vs escape key
+- Background startup — entity extraction and unprocessed message sweep moved to MemoryWorker
+- Fallback routing fix — `is_model_failed` now switches endpoint too, not just model name
+- Gemini disabled — 20-request burst limit made free tier unreliable, summarization now Groq → local
 
 ## Road to Usable — Priority Task List
 
@@ -97,7 +102,7 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - [x] Pipeline speed benchmark (`scripts/benchmark_pipeline_speed.py`) — tested 11 models across local + Groq + Gemini
 - [x] Ranking: llama-3.3-70b-versatile on Groq (0.85s, 9/10 accuracy) replaces local qwen2.5:14b (8.2s)
 - [x] Dedup: kept local qwen2.5:14b (conservative, safe behavior)
-- [x] Summarization: Gemini flash primary, Groq fallback (load splitting)
+- [x] Summarization: Groq gpt-oss-120b primary → local glm4 fallback (Gemini disabled)
 - [ ] Type classification accuracy low across all models — may need prompt tweak
 - [ ] Run prompt benchmarks (`tests/benchmark_all.py`) on Ollama PC when time permits
 
@@ -116,10 +121,10 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - API keys via `${ENV_VAR}` syntax or plaintext in config
 - Rate limiting: `rate_limit_rpm` / `rate_limit_rpd` — when hit, falls back to next endpoint automatically
 
-### Current cloud routing (benchmarked 2026-02-27)
-- **Gemini** (priority 3): `gemini-2.5-flash` for summarization (~1.5s avg, 5 RPM)
-- **Groq** (priority 2): `llama-3.3-70b-versatile` for ranking_importance (0.4s avg, 30 RPM), `gpt-oss-120b` as summarization fallback
-- Load split: each cloud endpoint handles one pipeline task, no rate limit competition
+### Current cloud routing (updated 2026-02-27)
+- **Gemini**: DISABLED — 20-request burst limit made free tier unreliable (cascading 429 errors)
+- **Groq** (priority 2): `llama-3.3-70b-versatile` for ranking_importance (0.4s avg, 30 RPM), `gpt-oss-120b` for summarization
+- Fallback: Groq → local (glm4 for summarization, qwen2.5:7b for ranking_importance)
 - Pipeline speed: ~7s per message (was ~20s with all-local ranking)
 
 ### Cloud benchmark results (scripts/benchmark_pipeline_speed.py)
@@ -303,10 +308,22 @@ Benchmarked alternatives (mxbai-embed-large, snowflake-arctic-embed:335m, bge-m3
 ### 18. LLM-powered tag discovery
 LLM reviews recent memories periodically and suggests new regex patterns for the tagger. Route to cloud endpoint, run as scheduled background task.
 
-### 19. Esc to cancel current LLM call
-Allow user to press Escape during streaming response to cancel the in-flight request and return to the prompt.
+### 19. Esc to cancel current LLM call — COMPLETE
+- [x] `_poll_for_escape()` in cli.py — Windows-native msvcrt key detection
+- [x] Races chat task vs escape key poller using `asyncio.wait(FIRST_COMPLETED)`
+- [x] Cancels pending chat task, saves partial response with `[cancelled]` suffix
+- [x] `_drain_keyboard()` clears buffered keypresses after cancellation
+- [x] Integrated in both main chat loop and `/code` command
+- [x] Help text mentions "Press Esc during a response to cancel"
 
-### 20. Modularize agent.py — FUTURE
+### 20. PII / Sensitive Data Sanitization — FUTURE
+Detect personal information before sending to cloud endpoints. Options:
+- Route to local LLM when PII detected (emails, phone numbers, SSNs, addresses)
+- Redact/mask PII with placeholders before cloud, map back after response
+- Hybrid: hard PII always local, soft PII (names, locations) gets redacted
+Start with regex-based PII detection + forced local routing.
+
+### 21. Modularize agent.py — FUTURE
 glm-5 code review flagged agent.py at 86KB+ as a monolith doing too much (chat, tools, session, project, background tasks). Split into focused modules:
 - `agent/session.py` — session lifecycle
 - `agent/projects.py` — project mode activation
@@ -314,12 +331,18 @@ glm-5 code review flagged agent.py at 86KB+ as a monolith doing too much (chat, 
 - `agent/chat.py` — chat orchestration
 Not urgent but pays compound interest on maintainability.
 
-### 21. Entity Matching Performance — FUTURE
+### 22. Entity Matching Performance — FUTURE
 `_expand_via_entities` in search.py loads all 31K entity names and does regex matching per query. Could be slow. Options:
 - Cache entity names in memory (avoid DB round-trip)
 - Pre-compiled regex patterns or trie for fast matching
 - Only expand for longer/complex queries
 Profile first to see if it's actually a bottleneck before optimizing.
+
+### 23. `/context` command — FUTURE
+Show pool usage breakdown and context window state. CC has this, BS only shows it via `/flow`.
+
+### 24. Parallel tool calls in executor — FUTURE
+OpenAI API supports multiple tool calls per response. Free speedup for multi-step tasks.
 
 ## Architecture Notes
 - Two-PC setup: Development on one PC, Ollama/benchmarks on another

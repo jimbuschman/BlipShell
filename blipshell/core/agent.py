@@ -58,7 +58,6 @@ from blipshell.llm.prompts import reflect_on_response, summarize_session_chunk
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.chroma_store import ChromaStore
 from blipshell.memory.consolidation import MemoryConsolidator
-from blipshell.memory.entity_extractor import EntityExtractor
 from blipshell.memory.manager import MemoryManager, PoolItem, estimate_tokens
 from blipshell.memory.processor import MemoryProcessor
 from blipshell.memory.query_profiles import classify_query, compute_pool_budgets
@@ -258,9 +257,6 @@ class Agent:
         _status("Running tag discovery...")
         await self._auto_tag_discovery()
 
-        _status("Extracting entities...")
-        await self._auto_extract_entities()
-
         _status("Backfilling entity embeddings...")
         await self._backfill_entity_embeddings()
 
@@ -269,9 +265,8 @@ class Agent:
             interval=60, on_check=self.router.clear_failed_models,
         )
 
-        # Process any messages that failed during previous session close
-        _status("Checking for unprocessed messages...")
-        await self._sweep_unprocessed_messages()
+        # Queue background tasks instead of blocking startup
+        await self._enqueue_startup_background_tasks()
 
         self._initialized = True
         logger.info("Agent initialized")
@@ -311,36 +306,6 @@ class Agent:
                 logger.warning("Auto-backup failed")
         except Exception as e:
             logger.warning("Auto-backup error (non-fatal): %s", e)
-
-    async def _sweep_unprocessed_messages(self):
-        """Reprocess messages that failed during previous session close.
-
-        Scans session_messages for is_processed=False rows and runs them
-        through the memory pipeline. Non-fatal — logs and skips on error.
-        """
-        try:
-            unprocessed = await self.sqlite.get_unprocessed_messages(limit=50)
-            if not unprocessed:
-                return
-
-            logger.info("Found %d unprocessed messages, reprocessing...", len(unprocessed))
-            processed = 0
-            for msg in unprocessed:
-                try:
-                    await self.processor.process_message(
-                        text=msg["content"],
-                        role=msg["role"],
-                        session_id=msg["session_id"],
-                    )
-                    await self.sqlite.mark_message_processed(msg["id"])
-                    processed += 1
-                except Exception as e:
-                    logger.warning(
-                        "Sweep: message %d failed: %s", msg["id"], e,
-                    )
-            logger.info("Sweep complete: %d/%d processed", processed, len(unprocessed))
-        except Exception as e:
-            logger.warning("Startup sweep error (non-fatal): %s", e)
 
     async def night_cleanup(
         self,
@@ -809,31 +774,41 @@ class Agent:
         except Exception as e:
             logger.error("Tag discovery failed: %s", e)
 
-    async def _auto_extract_entities(self):
-        """Extract entity relationship triples from unprocessed memories on startup."""
+    async def _enqueue_startup_background_tasks(self):
+        """Enqueue entity extraction and unprocessed messages to the background worker.
+
+        Replaces the old blocking _auto_extract_entities() and _sweep_unprocessed_messages()
+        so startup completes in seconds instead of minutes.
+        """
+        if not self._memory_worker or not self._memory_worker.is_alive:
+            logger.warning("Memory worker not running, skipping background startup tasks")
+            return
+
+        from blipshell.memory.worker import WorkItem, WorkType
+
+        # Entity extraction — worker processes in background
+        self._memory_worker.enqueue(
+            WorkItem(work_type=WorkType.EXTRACT_ENTITIES, text="startup")
+        )
+
+        # Unprocessed message sweep — enqueue each as PROCESS_MESSAGE
         try:
-            er_config = self.config.memory.entity_resolution
-            extractor = EntityExtractor(
-                self.sqlite, self.router,
-                chroma=self.chroma,
-                batch_size=self.config.memory.entity_extraction_batch_size,
-                entity_resolution_enabled=er_config.enabled,
-                entity_auto_merge_threshold=er_config.embedding_auto_merge_threshold,
-                entity_llm_threshold=er_config.llm_arbitration_threshold,
-                entity_max_candidates=er_config.max_candidates,
-            )
-            stats = await extractor.extract_batch()
-            if stats["triples"] > 0:
+            unprocessed = await self.sqlite.get_unprocessed_messages(limit=50)
+            if unprocessed:
                 logger.info(
-                    "Extracted %d entity triples from %d memories",
-                    stats["triples"], stats["extracted"],
+                    "Enqueueing %d unprocessed messages for background processing",
+                    len(unprocessed),
                 )
-            if stats["errors"] > 0:
-                logger.warning(
-                    "Entity extraction had %d errors", stats["errors"],
-                )
+                for msg in unprocessed:
+                    self._memory_worker.enqueue(WorkItem(
+                        work_type=WorkType.PROCESS_MESSAGE,
+                        text=msg["content"],
+                        role=msg["role"],
+                        session_id=msg["session_id"],
+                        message_db_id=msg["id"],
+                    ))
         except Exception as e:
-            logger.error("Entity extraction failed: %s", e)
+            logger.warning("Failed to enqueue unprocessed messages: %s", e)
 
     async def _backfill_entity_embeddings(self):
         """One-time backfill: embed all existing entities into ChromaDB for resolution.

@@ -31,6 +31,7 @@ class WorkType(Enum):
     PROCESS_MESSAGE = "process_message"
     PROCESS_LESSON = "process_lesson"
     PROCESS_CORE_MEMORY = "process_core_memory"
+    EXTRACT_ENTITIES = "extract_entities"
     SHUTDOWN = "shutdown"
 
 
@@ -111,25 +112,34 @@ class MemoryWorker:
         self._started.set()
 
         try:
-            await self._process_loop(loop, processor, sqlite)
+            await self._process_loop(loop, processor, sqlite, router)
         finally:
             await sqlite.close()
 
-    async def _process_loop(self, loop, processor, sqlite):
+    async def _process_loop(self, loop, processor, sqlite, router):
         """Main processing loop. Polls the thread-safe queue."""
+        last_idle_extract = time.monotonic()
+        idle_extract_interval = 60  # seconds between idle extraction attempts
+        idle_extract_batch = 10    # smaller batch during idle (vs 50 on startup)
+
         while True:
             try:
                 item = await loop.run_in_executor(
                     None, self._queue_get,
                 )
                 if item is None:
-                    continue  # timeout, loop again
+                    # Queue empty — chip away at unextracted entities during idle
+                    if time.monotonic() - last_idle_extract > idle_extract_interval:
+                        await self._idle_extract_entities(sqlite, router, idle_extract_batch)
+                        last_idle_extract = time.monotonic()
+                    continue
 
                 if item.work_type == WorkType.SHUTDOWN:
                     logger.info("Memory worker received shutdown signal")
                     break
 
-                await self._process_item(item, processor, sqlite)
+                await self._process_item(item, processor, sqlite, router)
+                last_idle_extract = time.monotonic()  # reset after real work
 
             except Exception as e:
                 logger.error("Memory worker loop error: %s", e)
@@ -141,7 +151,7 @@ class MemoryWorker:
         except queue.Empty:
             return None
 
-    async def _process_item(self, item: WorkItem, processor, sqlite):
+    async def _process_item(self, item: WorkItem, processor, sqlite, router):
         """Process a single work item."""
         t0 = time.monotonic()
 
@@ -169,6 +179,12 @@ class MemoryWorker:
                     item.text, session_id=item.session_id,
                 )
 
+            elif item.work_type == WorkType.EXTRACT_ENTITIES:
+                await self._run_entity_extraction(
+                    sqlite, router,
+                    batch_size=self._config.memory.entity_extraction_batch_size,
+                )
+
             elapsed = time.monotonic() - t0
             logger.info(
                 "Worker: %s in %.1fs (queue: %d remaining)",
@@ -181,6 +197,43 @@ class MemoryWorker:
                 "Worker: %s failed after %.1fs: %s",
                 item.work_type.value, elapsed, e,
             )
+
+    # --- Entity extraction helpers ---
+
+    async def _run_entity_extraction(self, sqlite, router, batch_size: int = 50):
+        """Run entity extraction batch using the worker's own resources."""
+        from blipshell.memory.entity_extractor import EntityExtractor
+
+        er_cfg = self._config.memory.entity_resolution
+        extractor = EntityExtractor(
+            sqlite, router,
+            chroma=self._chroma,
+            batch_size=batch_size,
+            entity_resolution_enabled=er_cfg.enabled,
+            entity_auto_merge_threshold=er_cfg.embedding_auto_merge_threshold,
+            entity_llm_threshold=er_cfg.llm_arbitration_threshold,
+            entity_max_candidates=er_cfg.max_candidates,
+        )
+        stats = await extractor.extract_batch()
+        if stats.get("triples", 0) > 0:
+            logger.info(
+                "Entity extraction: %d triples from %d memories",
+                stats["triples"], stats["extracted"],
+            )
+        return stats
+
+    async def _idle_extract_entities(self, sqlite, router, batch_size: int = 10):
+        """Extract entities from a small batch during idle periods."""
+        try:
+            # Quick check: are there any unextracted memories?
+            unextracted = await sqlite.get_unextracted_memory_ids(limit=1)
+            if not unextracted:
+                return
+            stats = await self._run_entity_extraction(sqlite, router, batch_size)
+            if stats.get("extracted", 0) > 0:
+                logger.info("Idle entity extraction: processed %d memories", stats["extracted"])
+        except Exception as e:
+            logger.debug("Idle entity extraction error: %s", e)
 
     # --- Public API (called from main thread) ---
 
