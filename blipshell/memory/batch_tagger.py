@@ -128,7 +128,7 @@ class BatchTagger:
 
         try:
             response = await self.router.generate(
-                TaskType.REASONING,
+                TaskType.RANKING,  # routes to qwen2.5:14b — 20x faster, similar quality
                 user_prompt,
                 system=system_prompt,
             )
