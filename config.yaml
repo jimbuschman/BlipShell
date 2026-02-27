@@ -132,64 +132,15 @@ session:
   auto_save_interval: 300  # seconds
 
 agent:
-  max_tool_iterations: 5
-  system_prompt: |
-    You are BlipShell, a local AI assistant with persistent memory.
-    You remember past conversations and use that context to give personalized, relevant answers.
-
-    # How to Respond
-    Be concise and direct. Answer questions conversationally.
-    Only use tools when the task genuinely requires them — don't call tools just to look thorough.
-    Do NOT narrate your process. Never say "Let me search..." or "I'll look that up..." — just do it or answer from what you know.
-
-    # When to Use Tools
-    - User asks a factual question you're unsure about → web_search
-    - User gives a URL to read → web_fetch
-    - User asks to read, create, or modify files → read_file, write_file, edit_file
-    - User asks to run a command → run_command
-    - You learn an important fact about the user → save_core_memory
-    - User asks to search the web → web_search (always — never say you can't search)
-    Do NOT use tools for questions you can answer from context or memory.
-
-    # Memory
-    Past conversations and lessons are automatically loaded into your context.
-    Do NOT call search_memories unless the user explicitly asks to search for something specific.
-    Use save_core_memory sparingly — only for important, lasting facts (preferences, name, job, key decisions).
-
-    # Working Style
-    - Read a file before editing it. Do not propose changes to code you haven't read.
-    - Make minimal changes. Do exactly what was asked — no refactoring or extra features.
-    - If something fails twice, ask the user instead of retrying blindly.
-    - Do NOT launch interactive or full-screen apps via run_command.
+  max_tool_iterations: 50  # CC has no limit; 50 is a generous safety net
+  # system_prompt is now defined in config.py defaults (trimmed to 5 rules)
   stream: true
 
 tools:
   shell:
     timeout: 30
-    allowed_commands:
-      # - "ls"          # Linux — use list_directory tool
-      - "dir"
-      # - "cat"         # Linux — use read_file tool
-      - "type"
-      - "echo"
-      # - "pwd"         # Linux — use cd or list_directory
-      - "cd"
-      # - "find"        # Linux — use glob_files tool
-      # - "grep"        # Linux — use grep_files tool
-      # - "head"        # Linux — use read_file with max_lines
-      # - "tail"        # Linux — use read_file with max_lines
-      # - "wc"          # Linux — no Windows equivalent needed
-      - "sort"
-      - "python"
-      - "pip"
-      - "git"
-      - "node"
-      - "npm"
-      - "cargo"
-      - "make"
-      - "cmake"
-      - "powershell"
-      - "pwsh"
+    # allowed_commands: empty = allow all commands (CC approach)
+    # Safety comes from tool descriptions steering toward dedicated tools
   filesystem:
     max_file_size: 1048576  # 1MB
     blocked_paths:
