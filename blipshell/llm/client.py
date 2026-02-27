@@ -194,7 +194,15 @@ class LLMClient:
         """List available models on the server."""
         try:
             response = await self._client.list()
-            return [m.get("name", "") for m in response.get("models", [])]
+            # Ollama SDK returns ListResponse with .models list of Model objects.
+            # Each Model has .model (str) attribute — NOT .name.
+            models = response.models if hasattr(response, "models") else response.get("models", [])
+            names = []
+            for m in models:
+                name = getattr(m, "model", None) or (m.get("name", "") if isinstance(m, dict) else "")
+                if name:
+                    names.append(name)
+            return names
         except Exception as e:
             logger.error("Failed to list models: %s", e)
             return []

@@ -18,11 +18,17 @@ Usage:
 
 import argparse
 import asyncio
+import io
 import json
 import sqlite3
 import sys
 import time
 from pathlib import Path
+
+# Fix Windows console encoding for box-drawing characters
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -495,9 +501,9 @@ async def main():
     all_results: dict[str, dict] = {}
 
     for model_name, router, is_cloud in test_configs:
-        print(f"\n{'─' * 80}")
+        print(f"\n{'-' * 80}")
         print(f"  MODEL: {model_name}{'  [cloud - 3s delay between calls]' if is_cloud else ''}")
-        print(f"{'─' * 80}")
+        print(f"{'-' * 80}")
 
         model_data = {}
 
