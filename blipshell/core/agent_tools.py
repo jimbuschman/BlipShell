@@ -18,6 +18,7 @@ from blipshell.core.tools.filesystem import (
     ReadFileTool,
     WriteFileTool,
 )
+from blipshell.core.tools.plan_tools import EnterPlanModeTool, ExitPlanModeTool
 from blipshell.core.tools.memory_tools import (
     ListSessionsTool,
     PromoteToCoreMemoryTool,
@@ -69,6 +70,12 @@ class ToolsMixin:
             timeout=cfg.web.timeout,
         ), group="web")
 
+        # Plan mode tools
+        self.tool_registry.register(
+            EnterPlanModeTool(self.tool_registry), group="general")
+        self.tool_registry.register(
+            ExitPlanModeTool(self.tool_registry), group="general")
+
     def _register_memory_tools(self):
         """Register memory tools (needs session_id, so called after session start)."""
         session_id = self.session_manager.session_id if self.session_manager else None
@@ -99,6 +106,42 @@ class ToolsMixin:
             self.tool_registry.register(RunWorkflowTool(
                 self.workflow_executor, session_id,
             ), group="tasks")
+
+    async def _connect_mcp_servers(self):
+        """Connect to configured MCP servers and register their tools."""
+        from blipshell.mcp.manager import MCPManager
+        from blipshell.mcp.tools import MCPTool
+
+        self.mcp_manager = MCPManager()
+
+        for server_config in self.config.mcp_servers:
+            if not server_config.enabled:
+                continue
+            try:
+                definitions = await self.mcp_manager.connect_server(server_config)
+                for defn in definitions:
+                    # Strip prefix to get original name for MCP calls
+                    prefix = f"mcp_{server_config.name}_"
+                    original_name = defn.name[len(prefix):]
+                    tool = MCPTool(
+                        tool_def=defn,
+                        server_name=server_config.name,
+                        original_name=original_name,
+                        manager=self.mcp_manager,
+                        timeout=server_config.timeout,
+                    )
+                    self.tool_registry.register(tool, group=f"mcp_{server_config.name}")
+
+                    # Require approval unless auto_approve
+                    if not server_config.auto_approve:
+                        self.tool_registry._tools_requiring_approval.add(defn.name)
+
+                logger.info(
+                    "MCP server '%s': %d tools registered",
+                    server_config.name, len(definitions),
+                )
+            except Exception as e:
+                logger.error("Failed to connect MCP server '%s': %s", server_config.name, e)
 
     def set_ask_user_callback(self, callback):
         """Set the callback for ask_user tool (wired by CLI)."""

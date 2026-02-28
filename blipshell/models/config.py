@@ -243,6 +243,17 @@ class PIIConfig(BaseModel):
     cloud_only: bool = True  # only sanitize for cloud (openai) endpoints
 
 
+class MCPServerConfig(BaseModel):
+    """Configuration for an MCP (Model Context Protocol) server connection."""
+    name: str
+    command: str  # e.g. "npx", "python", "uvx"
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)  # supports ${ENV_VAR}
+    enabled: bool = True
+    auto_approve: bool = False  # if True, tools skip user confirmation
+    timeout: int = 30  # per-call timeout in seconds
+
+
 class WorkerConfig(BaseModel):
     """Remote worker configuration."""
     enabled: bool = False
@@ -286,4 +297,5 @@ class BlipShellConfig(BaseModel):
     pii: PIIConfig = PIIConfig()
     planner: PlannerConfig = PlannerConfig()
     worker: WorkerConfig = WorkerConfig()
+    mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
     model_settings: dict[str, dict] = Field(default_factory=dict)

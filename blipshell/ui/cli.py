@@ -430,6 +430,9 @@ async def chat_loop(
                     job_name = cmd_args[0] if cmd_args else None
                     await _run_nightly(agent, job_name)
                     continue
+                elif cmd[0] == "mcp":
+                    _print_mcp_status(agent, cmd_args)
+                    continue
                 elif cmd[0] == "changes":
                     _print_changes(agent)
                     continue
@@ -1381,6 +1384,48 @@ async def _run_cleanup(agent: Agent):
     )
 
 
+def _print_mcp_status(agent: Agent, args: list[str]):
+    """Show MCP server status and tools."""
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+
+    if not agent.mcp_manager:
+        console.print("[dim]No MCP servers configured.[/dim]")
+        return
+
+    servers = agent.mcp_manager.get_connected_servers()
+    if not servers:
+        console.print("[dim]No MCP servers connected.[/dim]")
+        return
+
+    # /mcp tools [server] — list tools for a server
+    if args and args[0] == "tools":
+        server_name = args[1] if len(args) > 1 else servers[0]
+        if server_name not in servers:
+            console.print(f"[red]Server '{server_name}' not connected.[/red]")
+            return
+        tool_names = agent.mcp_manager.get_server_tool_names(server_name)
+        console.print(f"\n[bold]MCP Server: {server_name}[/bold] ({len(tool_names)} tools)")
+        for name in sorted(tool_names):
+            console.print(f"  - mcp_{server_name}_{name}")
+        console.print()
+        return
+
+    # /mcp — list connected servers
+    table = Table(title="MCP Servers")
+    table.add_column("Server", style="cyan")
+    table.add_column("Tools", justify="right")
+    table.add_column("Status")
+
+    for name in servers:
+        count = agent.mcp_manager.get_server_tool_count(name)
+        table.add_row(name, str(count), "[green]connected[/green]")
+
+    console.print(table)
+
+
 async def _run_nightly(agent: Agent, job_name: str | None = None):
     """Run nightly maintenance jobs."""
     from rich.status import Status
@@ -1955,6 +2000,7 @@ def _print_help():
         "[bold]/health[/bold] [dim][quick][/dim]          - Database + endpoint health check\n"
         "[bold]/cleanup[/bold]               - Reprocess failed messages (relaxed timeouts)\n"
         "[bold]/nightly[/bold] [dim][job][/dim]          - Run nightly maintenance (tagging, pruning, etc.)\n"
+        "[bold]/mcp[/bold] [dim][tools [server]][/dim]  - Show MCP server status and tools\n"
         "[bold]/flow[/bold] [dim][n][/dim]              - Show conversation flow events\n"
         "[bold]/plan[/bold]                  - Show current active plan\n"
         "[bold]/plans[/bold]                 - List all plans for this session\n"

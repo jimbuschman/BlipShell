@@ -104,6 +104,9 @@ class Agent(
         self.workflow_registry: Optional[WorkflowRegistry] = None
         self.workflow_executor: Optional[WorkflowExecutor] = None
 
+        # MCP (Model Context Protocol) servers
+        self.mcp_manager = None
+
         self._health_check_task: Optional[asyncio.Task] = None
         self._background_tasks: set[asyncio.Task] = set()
         self._memory_worker = None  # MemoryWorker — dedicated thread for background processing
@@ -222,6 +225,11 @@ class Agent(
 
         # Register tools
         self._register_tools()
+
+        # Connect MCP servers (if configured)
+        if self.config.mcp_servers:
+            _status("Connecting MCP servers...")
+            await self._connect_mcp_servers()
 
         # Load per-model behavioral settings
         if self.config.model_settings:
@@ -471,13 +479,19 @@ class Agent(
                 await self.job_queue.stop()
             except Exception:
                 pass
-        # 2. Close ChromaDB before SQLite (ChromaDB may reference SQLite data)
+        # 2. Disconnect MCP servers
+        if self.mcp_manager:
+            try:
+                await self.mcp_manager.disconnect_all()
+            except Exception:
+                pass
+        # 3. Close ChromaDB before SQLite (ChromaDB may reference SQLite data)
         if self.chroma:
             try:
                 self.chroma.close()
             except Exception:
                 pass
-        # 3. Close SQLite last
+        # 4. Close SQLite last
         if self.sqlite:
             try:
                 await self.sqlite.close()

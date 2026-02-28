@@ -423,35 +423,45 @@ Temporal view of memories, searches, and projects. Details TBD — could include
 - Project timelines showing activity/progress over time
 Discuss approach before designing.
 
-### 26. MCP Client Support — FUTURE (HIGH PRIORITY)
-Add Model Context Protocol client support so BlipShell can use the 10,000+ existing MCP tool servers.
-MCP is an open protocol (Anthropic, now Linux Foundation) that standardizes how AI agents connect to external tools/data.
-Python SDK: `pip install mcp` (v1.26+, MIT licensed).
+### 26. MCP Client Support — CODE WRITTEN, NEEDS TESTING
+Model Context Protocol client — BlipShell can connect to external MCP servers and use their tools.
+Python SDK: `pip install mcp`. Phase 1 (stdio transport) implemented.
 
-**Why it matters**: Instant access to GitHub, web search, databases, Slack, Notion, Sentry, and thousands of community tools without writing custom code. BlipShell's existing `ToolRegistry` schema is nearly identical to MCP's tool format — integration is an adapter pattern.
+**What's implemented**:
+- [x] `blipshell/mcp/manager.py` — `MCPManager`: starts subprocesses, manages sessions via `AsyncExitStack`, discovers tools, routes calls
+- [x] `blipshell/mcp/tools.py` — `MCPTool(Tool)`: wraps MCP tools as BlipShell tools, handles timeouts and errors
+- [x] `blipshell/mcp/schema.py` — Converts MCP JSON Schema to `ToolDefinition` (type mapping, parameter flattening)
+- [x] `MCPServerConfig` in config.py — command, args, env (${ENV_VAR}), auto_approve, timeout
+- [x] `mcp_servers` list in `BlipShellConfig` — config-driven server definitions
+- [x] Agent init: connects enabled servers, registers tools in `ToolRegistry` with `mcp_{server}_` prefix
+- [x] Agent cleanup: disconnects all servers on shutdown
+- [x] `/mcp` CLI command — shows connected servers; `/mcp tools [server]` lists tools
+- [x] Non-auto-approve tools require user confirmation
+- [ ] **NEEDS TESTING**: Configure a test MCP server and verify tool discovery + execution
+- [ ] **NEEDS TESTING**: Verify timeout handling (server hangs → clean error)
+- [ ] **NEEDS TESTING**: Verify subprocess cleanup on disconnect
 
-**Architecture**:
-- `MCPManager` class: manages connections to multiple MCP servers (stdio + HTTP transports)
-- `MCPToolProxy`: wraps MCP tools as BlipShell `Tool` objects, registered in existing `ToolRegistry`
-- Config in `config.yaml` under `mcp_servers:` section
-- LLM sees MCP tools identically to native tools — no changes to chat_loop or executor
+**Future phases**:
+- Phase 2: HTTP/SSE transport, reconnection, Windows npx handling
+- Phase 3: Dynamic server management, resource support, tool search for context budget
 
-**Implementation phases**:
-- Phase 1 (MVP, ~5-7 days): stdio transport, tool discovery, proxy adapter, `/mcp` command
-- Phase 2 (hardening): HTTP transport, reconnection, output truncation, approval flow, Windows npx handling
-- Phase 3 (advanced): tool search for context budget, project-scoped configs, MCP resources as context
+**Key servers to try first**: Filesystem, GitHub, Fetch (web), Sequential Thinking.
 
-**Concerns**: Node.js dependency for npm-based servers, context window inflation from many tool definitions, Windows compatibility.
+### 27. Plan Mode (LLM-Controlled) — CODE WRITTEN, NEEDS TESTING
+LLM can self-restrict to read-only tools before making complex changes.
 
-**Key servers to integrate first**: Filesystem, GitHub, Fetch (web), Sequential Thinking.
-
-### 27. Plan Mode (LLM-Controlled) — FUTURE
-Let the LLM decide when to enter read-only planning mode before making changes.
-- `enter_plan_mode` / `exit_plan_mode` tools: LLM calls these to self-restrict to read-only tools
-- When in plan mode: only read_file, list_directory, grep_files, glob_files, run_command (read-only) available
-- `exit_plan_mode` takes a plan summary; system prompts user for approval before enabling write tools
-- Prompt guidance: "For complex multi-file changes, enter plan mode first to explore and design"
-- Low effort: just filter `get_all_ollama_tools()` based on a mode flag
+**What's implemented**:
+- [x] `read_only: bool` property on `Tool` base class — 13 tools tagged as read-only
+- [x] `ToolRegistry.in_plan_mode` / `get_plan_mode_tools()` — filters to read-only tools + exit_plan_mode
+- [x] `tool_provider` callback in `LoopConfig` — ChatLoop checks each iteration for current tool list
+- [x] `enter_plan_mode` / `exit_plan_mode` tools in `blipshell/core/tools/plan_tools.py`
+- [x] Wired into both `_chat_simple()` and `execute_dynamic()` via tool_provider
+- [x] Safety reset: plan mode auto-clears if loop exits while still planning
+- [x] Prompt guidance added to executor system prompt (rule 8)
+- [ ] **NEEDS TESTING**: Verify plan mode filters tools correctly mid-loop
+- [ ] **NEEDS TESTING**: Verify write tools blocked during plan mode
+- [ ] **NEEDS TESTING**: Verify exit_plan_mode restores full tool set
+- [ ] **NEEDS TESTING**: Verify canned tests still pass with plan tools registered
 
 ### Wish List
 Items worth doing eventually but not prioritized:
