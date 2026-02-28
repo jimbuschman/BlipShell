@@ -1389,6 +1389,11 @@ async def run_test(
         completion_method = "text"
     elif "FATAL ERROR" in (result or ""):
         completion_method = "error"
+    elif force_plan and result and len(result.strip()) > 50 and collector.tool_calls:
+        # Executor path: model used tools and produced a substantial result
+        # but didn't call task_complete (common for informational/read-only tasks).
+        completed = True
+        completion_method = "text_after_tools"
     elif not force_plan and result and len(result.strip()) > 0:
         # Simple chat path: no executor loop, so no task_complete signal.
         # A non-empty result means the model responded successfully.
