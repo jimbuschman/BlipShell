@@ -1217,8 +1217,8 @@ class StreamCollector:
         """Callback for agent.chat(on_token=...)."""
         self.raw_output.append(chunk)
 
-        # Parse tool call markers
-        tool_match = re.search(r"\[Tool: (\w+)\]", chunk)
+        # Parse tool call markers (name may be followed by arg hint before closing ])
+        tool_match = re.search(r"\[Tool: (\w+)", chunk)
         if tool_match:
             name = tool_match.group(1)
             self._current_tool = name
@@ -1384,6 +1384,9 @@ async def run_test(
     elif "[No tool calls — treating as complete]" in raw_joined:
         completed = True
         completion_method = "no_tool_calls"
+    elif "[Inline text used as completion]" in raw_joined:
+        completed = True
+        completion_method = "text"
     elif "FATAL ERROR" in (result or ""):
         completion_method = "error"
     elif not force_plan and result and len(result.strip()) > 0:

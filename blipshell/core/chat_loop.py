@@ -582,6 +582,8 @@ class ChatLoop:
             if last_inline_text:
                 final_response = last_inline_text
                 completion_method = "text"
+                if self.on_token:
+                    self.on_token("  [Inline text used as completion]\n")
                 logger.info(
                     "Using inline text fallback (%d chars) — model answered "
                     "alongside tool calls without calling task_complete",

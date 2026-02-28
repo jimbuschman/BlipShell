@@ -596,19 +596,31 @@ All prompts are centralized in `llm/prompts.py` (23 templates):
 
 ## 5. Agent Core
 
-### 5.1 Chat Loop
+### 5.1 Agent Architecture
 
-Defined in `core/agent.py` (1673 lines). The Agent class is the central orchestrator.
+The Agent class (`core/agent.py`, ~612 lines) is a thin facade composed of 5 mixins:
+
+| Mixin | File | Responsibility |
+|-------|------|---------------|
+| `ToolsMixin` | `agent_tools.py` | Tool registration (native + MCP) |
+| `BackgroundMixin` | `agent_background.py` | Memory worker callbacks, reflection |
+| `ProjectMixin` | `agent_project.py` | Project activation/deactivation, context scanning |
+| `SessionMixin` | `agent_session.py` | Session lifecycle, memory loading, startup tasks |
+| `ChatMixin` | `agent_chat.py` | Chat pipeline, message building, event logging |
+
+All shared state lives on the Agent instance — mixins access it via `self.*`.
+External callers (cli.py, web/app.py, test_executor.py) need zero changes.
 
 **Initialization Pipeline:**
 1. Load SQLite store and ChromaDB
 2. Initialize endpoint manager with fallback routing
 3. Create memory manager, processor, and search systems
 4. Register all tools (grouped by category)
-5. Load discovered tag patterns into the tagger
-6. Health check all endpoints
-7. Auto-backup if >24h since last backup
-8. Trigger auto tag discovery and entity extraction
+5. Connect MCP servers (if configured) and register their tools
+6. Load discovered tag patterns into the tagger
+7. Health check all endpoints
+8. Auto-backup if >24h since last backup
+9. Trigger auto tag discovery and entity extraction
 
 **Two Execution Paths:**
 
@@ -616,9 +628,9 @@ Defined in `core/agent.py` (1673 lines). The Agent class is the central orchestr
 The default path for most interactions:
 
 1. Build messages array with memory context (core memories, lessons, recall, history)
-2. **Tool gating**: Detect which tool groups the message needs via regex patterns
-   (`detect_tool_groups()`). Pure conversation → no tools passed → faster response.
-   Project mode → all tools always available.
+2. **All tools always available**: Tools are passed on every turn — the model decides
+   which to use. `tool_provider` callback enables dynamic tool switching mid-loop
+   (used by Plan Mode to restrict to read-only tools).
 3. **Tool rules**: Apply structural constraints (max calls, cooldowns, terminal rules)
    to filter available tools on each iteration of the tool loop
 4. If LLM returns tool calls → execute tools → feed results back → loop
@@ -659,25 +671,37 @@ conversational queries get more ActiveSession).
 
 ### 5.3 Tool System
 
-Defined in `core/tools/base.py` and individual tool files (10 files).
+Defined in `core/tools/base.py` and individual tool files (10+ files).
 
 **Tool Groups:**
 
-| Group | Tools | Trigger Keywords |
-|-------|-------|------------------|
-| filesystem | read_file, write_file, edit_file, list_directory | file, read, write, edit, create, save |
-| shell | run_command | run, execute, command, terminal |
-| web | web_search, web_fetch | search, look up, find, web, url |
-| memory | search_memories, save_core_memory, promote_to_core, list_sessions | remember, recall, memory, session |
-| coding | grep_files, glob_files, git_status, git_diff, git_add, git_commit | grep, find files, git, code |
-| tasks | start_background_task, check_task, list_tasks, run_workflow | background, task, workflow |
+| Group | Tools |
+|-------|-------|
+| filesystem | read_file, write_file, edit_file, list_directory |
+| shell | run_command |
+| web | web_search, web_fetch |
+| memory | search_memories, save_core_memory, promote_to_core, list_sessions |
+| coding | grep_files, glob_files, git_status, git_diff, git_add, git_commit |
+| tasks | start_background_task, check_task, list_tasks, run_workflow |
+| general | enter_plan_mode, exit_plan_mode, ask_user, create_project |
+| mcp_{name} | Dynamically registered from MCP servers (see 5.8) |
 
-**Tool Gating** (`detect_tool_groups()` in `tools/base.py`):
-Regex patterns match keywords in user messages to determine which tool groups are
-relevant. When no project is active:
-- Detected groups → only those tools (plus memory/general/tasks) are passed
-- No groups detected → pure conversation, no tools passed (faster, no unwanted calls)
-- Project mode → all tools always available
+**No Tool Gating**: All registered tools are always passed to the model on every turn.
+The model decides which tools to use. This follows the approach used by every successful
+coding agent (Claude Code, Codex CLI, Cline, SWE-agent, OpenHands). Keyword-based
+filtering was removed (item 14b) because it caused tool-less turns where the model
+hallucinated XML tool calls.
+
+**`read_only` Property**: Each tool declares `read_only: bool = False` on the class.
+Tools that don't modify state (read_file, list_directory, grep_files, glob_files,
+web_search, web_fetch, search_memories, list_sessions, ask_user, git_status, git_diff,
+check_task, list_tasks) set `read_only = True`. Used by Plan Mode to filter tool lists.
+
+**`tool_provider` Callback**: `LoopConfig.tool_provider` is an optional callback that
+returns the current tool list. When set, `ChatLoop` calls it each iteration instead of
+using the static `tools` parameter. This enables dynamic tool switching mid-loop
+(e.g., Plan Mode restricts to read-only tools, then restores full tools on exit).
+Backward-compatible — `None` means use static tools.
 
 **Tool Rules Engine** (`core/tool_rules.py`, inspired by Letta/MemGPT):
 Structural constraints that filter available tools dynamically during the tool loop:
@@ -687,15 +711,30 @@ Structural constraints that filter available tools dynamically during the tool l
 | `MaxCallsRule` | Cap per-tool calls per turn | `list_directory` max 3 |
 | `CooldownRule` | Prevent immediate re-calls | `grep_files` cooldown 1 |
 | `SequenceRule` | Constrain valid next-tools | After `read_file`, only `edit_file`/`write_file` |
-| `TerminalRule` | Stop after specific tool | `git_commit` ends the turn |
+| `TerminalRule` | Stop after specific tool | `task_complete` ends the executor turn |
 
 Two rule sets: `create_default_rules()` for conversation mode, `create_coding_rules()`
 for project mode (more permissive caps). Rules switch automatically on project
 activation/deactivation.
 
+**Plan Mode** (`core/tools/plan_tools.py`):
+LLM can self-restrict to read-only tools before making complex changes:
+
+1. LLM calls `enter_plan_mode` → `ToolRegistry._plan_mode = True`
+2. `tool_provider` callback returns only `read_only=True` tools + `exit_plan_mode`
+3. LLM explores codebase with read-only tools, designs approach
+4. LLM calls `exit_plan_mode(summary=...)` → `ToolRegistry._plan_mode = False`
+5. Full tool set restored, LLM proceeds with changes
+
+Safety: plan mode auto-resets if the loop exits while still planning (budget exhaustion).
+
 **File Re-read Prevention**: `ReadFileTool` holds a reference to the agent's
 `_files_read` set. If a file was already read this session, the tool returns
 `"ALREADY READ: ..."` instead of re-reading — enforced at execution time, not advisory.
+
+**Edit Linting**: After `edit_file` applies a change to a Python file, it runs
+`ast.parse()` to validate syntax. If there's a syntax error, the edit is rejected and
+the tool returns an actionable error with the line number.
 
 **Approval Gates**: Dangerous tools (write_file, edit_file, git_commit, run_command)
 require user approval. Options: allow once, allow for session, deny. File edits show
@@ -761,6 +800,83 @@ undumped messages through the full processing pipeline.
 - Executes using local Ollama models
 - Reports completion/failure back
 
+### 5.7 Executor (Project Mode)
+
+The executor (`core/executor.py`) handles autonomous multi-tool task execution in
+project mode. Invoked when a project is active and the user requests work.
+
+**Architecture** (modeled after Claude Code / SWE-agent patterns):
+
+1. **System prompt**: Structured manual (~2300 chars) — How to Work, Tool Selection,
+   Critical Rules, Completion, Error Recovery. Behavioral rules live in system prompt,
+   not user message.
+2. **State injection**: `_build_state_block()` injects a `[STATE]` block before every
+   LLM turn — tool call count/budget, files read/created/edited, recent actions.
+   Gives the model situational awareness.
+3. **`task_complete` tool**: Completion tool with `summary`, `files_modified`,
+   `decisions_made` params. Every iteration checks for this tool call. Replaces
+   unreliable magic-string scanning.
+4. **`capture_inline_text`**: Fallback for models that answer alongside tool calls
+   without calling `task_complete`. Captures substantial text (>=200 chars) but does
+   NOT break the loop — used as response only if the model produces nothing on
+   subsequent turns.
+5. **Budget wind-down**: At 80% budget, injects system message: "Running low on tool
+   calls. Wrap up and use task_complete." At 95%, strips all tools except
+   `task_complete`.
+6. **Context management**: `_estimate_messages_tokens()` + `_compact_messages()`
+   compress older tool results at 70% context usage. Forced completion at 95%.
+7. **Deduplication**: Same-args consecutive tool calls are blocked with an error
+   message redirecting the model.
+8. **Parallel tool calls**: Independent tool calls execute concurrently via
+   `asyncio.gather()` with `Semaphore(max_parallel=8)`. Approval-required and
+   interactive tools run sequentially first.
+
+**Memory Integration**:
+- Memory IN: Searches relevant memories and injects last 10 chat messages as context
+- Memory OUT: `build_executor_narrative()` compresses transcripts (~99.7% reduction)
+  and feeds through `process_message()` for persistent storage
+
+**Tool Descriptions**: Rich descriptions with usage guidance — read_file references
+the STATE block and warns about re-reads, write_file warns to prefer edit_file,
+shell errors redirect to appropriate tools with OS-aware hints.
+
+### 5.8 MCP Client
+
+Model Context Protocol client (`blipshell/mcp/`) enables connecting to external MCP
+servers and using their tools as native BlipShell tools. Phase 1: stdio transport only.
+
+**Components**:
+
+| File | Class | Purpose |
+|------|-------|---------|
+| `mcp/manager.py` | `MCPManager` | Server lifecycle (start/stop), session management via `AsyncExitStack`, tool discovery, call routing |
+| `mcp/tools.py` | `MCPTool(Tool)` | Wraps MCP tool as BlipShell `Tool`, handles timeouts and error extraction |
+| `mcp/schema.py` | — | Converts MCP JSON Schema → `ToolDefinition` (type mapping, parameter flattening, name prefixing) |
+
+**Connection Flow**:
+1. On agent init: iterate `config.mcp_servers`, connect enabled servers
+2. For each server: start subprocess via `mcp.client.stdio.stdio_client`
+3. Initialize MCP session, call `list_tools()` to discover available tools
+4. Convert each MCP tool to a `ToolDefinition`, prefix name with `mcp_{server_name}_`
+5. Wrap as `MCPTool` and register in `ToolRegistry` under `mcp_{server_name}` group
+6. Non-auto-approve tools added to `_tools_requiring_approval` set
+7. On agent shutdown: disconnect all servers, clean up subprocesses
+
+**Namespacing**: Tool names are prefixed with `mcp_{server_name}_` to avoid collisions
+with native tools. The original name is stored for routing calls back to the MCP server.
+
+**Config** (`config.yaml`):
+```yaml
+mcp_servers:
+  - name: "filesystem"
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/path"]
+    env: {"KEY": "${ENV_VAR}"}     # supports env var expansion
+    enabled: true
+    auto_approve: false            # require user confirmation
+    timeout: 30                    # per-call timeout in seconds
+```
+
 ---
 
 ## 6. UI Layer
@@ -812,6 +928,7 @@ argument parsing.
 | `/changes` | Files modified in this session |
 | `/health [quick]` | Run database audit (8 check categories) |
 | `/flow [turn_number]` | Conversation flow events (last 5 turns or specific) |
+| `/context` | Pool usage breakdown and context window state |
 
 **Background Tasks:**
 | Command | Description |
@@ -820,6 +937,13 @@ argument parsing.
 | `/task <id>` | Show task details |
 | `/workflow list` | List available workflows |
 | `/workflow run <name> <params>` | Execute workflow |
+
+**Operations:**
+| Command | Description |
+|---------|-------------|
+| `/mcp` | List connected MCP servers and tool counts |
+| `/mcp tools [server]` | List tools from an MCP server |
+| `/nightly` | Run nightly maintenance jobs interactively |
 
 ### 6.2 Web API Endpoints
 
@@ -1099,6 +1223,15 @@ tools:                     # Tool-specific settings
   filesystem: { max_file_size, blocked_paths }
   web: { max_fetch_size, timeout }
 
+mcp_servers:               # External MCP tool servers
+  - name: "filesystem"
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/path"]
+    env: { "KEY": "${ENV_VAR}" }
+    enabled: true
+    auto_approve: false
+    timeout: 30
+
 llm:                       # LLM client settings
   max_retries: 2
   retry_base_delay: 1.0
@@ -1125,6 +1258,7 @@ Defined in `models/config.py`:
 - `MemoryPoolsConfig` — Pool percentages and hard caps
 - `DecayRatesConfig` — Per-memory-type decay rates
 - `EntityResolutionConfig` — Merge thresholds
+- `MCPServerConfig` — MCP server connection (name, command, args, env, auto_approve, timeout)
 - `LLMConfig` — Retry and timeout settings
 - `AuthConfig` — Optional Bearer token auth
 
@@ -1298,11 +1432,10 @@ first. Auto-backup on startup with 24h cooldown. Good defensive practice.
 
 ### 11.2 Potential Issues
 
-**agent.py Size**: At ~1750 lines, `agent.py` is the largest file and handles many
-responsibilities: chat loop, message building, tool execution, project activation,
-auto-continue, file tracking, and session management. Some responsibilities have been
-extracted (tool rules into `tool_rules.py`), but further extraction of `MessageBuilder`
-and `ProjectManager` classes would improve maintainability.
+**agent.py Modularized**: Agent was refactored from ~1750-line monolith into thin facade
+(~612 lines) + 5 mixins (ToolsMixin, BackgroundMixin, ProjectMixin, SessionMixin,
+ChatMixin). External callers unchanged. Further extraction of `MessageBuilder` is still
+a potential improvement.
 
 **cli.py Size**: Similarly large at 2300+ lines. The slash command handling could be
 extracted into a command registry pattern.
@@ -1332,10 +1465,12 @@ against 31K+ entity names, causing queries like "time" to match every entity con
 minimum 3-character entity names, and caps at every stage (10 matched → 20 connected →
 50 memory IDs).
 
-**Tools Always Passed** (fixed): All registered tools were passed to the model on every
-turn, causing the model to use tools on conversational messages. Fixed with
-`detect_tool_groups()` — pure conversation gets no tools, tool groups are detected by
-regex keyword matching. Project mode still passes all tools.
+**Tool Gating Evolution**: Initially all tools were passed on every turn, causing
+unwanted tool calls. `detect_tool_groups()` was added as a regex-based filter, but this
+caused a new problem — turns with no tools made the model hallucinate XML tool calls.
+`detect_tool_groups()` was removed entirely (item 14b); all tools are now always
+available, matching the approach of Claude Code, Cline, and SWE-agent. The model
+reliably self-selects appropriate tools when properly prompted.
 
 **File Re-read Advisory Only** (fixed): The `_files_read` tracking set was maintained
 correctly, but only injected as an advisory system message. Models ignored it. Fixed by
@@ -1366,9 +1501,10 @@ intent.
    instead of 0.85), require both memories to be in the same session or same topic,
    and add a dry-run mode that logs what would be merged without acting.
 
-2. **Extract MessageBuilder from agent.py**: The `_build_messages()` method and its
-   helper functions could be a standalone class, reducing agent.py by ~200 lines and
-   making context construction independently testable.
+2. **Extract MessageBuilder from agent_chat.py**: The `_build_messages()` method and its
+   helper functions could be a standalone class, making context construction
+   independently testable. (agent.py was modularized into mixins, but `_build_messages`
+   still lives in ChatMixin.)
 
 3. **Add schema version tracking**: Store a `schema_version` in `app_metadata`.
    Run migrations only for versions above the current. This prevents re-running
@@ -1391,6 +1527,6 @@ intent.
 
 ---
 
-*Last updated: 2026-02-22*
-*Updated with tool rules engine, tool gating, entity search fix, session timeouts, file re-read enforcement*
+*Last updated: 2026-02-28*
+*Updated with agent modularization, executor architecture, plan mode, MCP client, tool gating removal*
 *Generated from codebase review of BlipShell v0.1.0*

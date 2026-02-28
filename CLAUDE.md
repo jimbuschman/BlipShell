@@ -43,6 +43,15 @@ Config-driven model routing per task type with per-endpoint model overrides.
 - PII sanitization — Presidio NER + regex fallback, per-endpoint `pii_sanitize` flag, covers all cloud paths
 - Type classification parser fix — last-word priority prevents misparse from explanatory text
 - `/context` command — pool usage and context window breakdown (already existed)
+- Agent modularization — 1687-line monolith → thin facade + 5 mixins (tools, background, project, session, chat)
+- Executor architecture overhaul — task_complete tool, state injection, budget wind-down, edit linting
+- Executor scaffolding — Claude Code-inspired state blocks, expanded prompts, context management
+- Parallel tool calls — asyncio.gather with semaphore, sequential-first for approval tools
+- Headless test harness — `blipshell test` with --canned, --stress, --simple-chat modes
+- Plan mode — LLM self-restricts to read-only tools via enter/exit_plan_mode tools
+- MCP client (Phase 1) — connect to external MCP servers, stdio transport, tool discovery and execution
+- Message persistence — raw messages persisted immediately, startup sweep for unprocessed
+- Centroid tagger full pass — 5,658 memories tagged, 16,634 tags assigned, 45s (zero LLM cost)
 
 ## Road to Usable — Priority Task List
 
@@ -303,8 +312,10 @@ the model lacked state awareness and the prompts were too sparse.
 - [x] JSON reports with: tool calls, errors, warnings, timing, flow events, files read/created/edited, completion method
 - [x] `--quiet` mode for overnight runs (JSON only, no streaming)
 - [x] A/B comparison mode for scaffolding experiments
+- [x] Completion detection fix: `capture_inline_text` captures substantial text alongside tool calls as fallback response (predicted to fix 17/20 false negative failures in stress test)
+- [x] First stress test run: 45/65 passed (69%), 17/20 failures were false negatives (model did work but didn't call `task_complete`)
 - [ ] Run `--canned` on Ollama PC (quick smoke test)
-- [ ] Run `--stress` overnight and analyze results
+- [ ] Run `--stress` overnight and analyze results (with completion detection fix)
 
 ### 17. Upgrade embedding model — COMPLETE (kept nomic-embed-text)
 Benchmarked alternatives (mxbai-embed-large, snowflake-arctic-embed:335m, bge-m3) — all too slow. Keeping nomic-embed-text.
@@ -316,6 +327,7 @@ Complete rewrite of tag discovery with three-layer approach plus nightly job inf
 - [x] Computes centroid embedding vectors per tag from ChromaDB (zero LLM cost)
 - [x] Assigns tags to poorly-tagged memories via cosine similarity (threshold 0.75)
 - [x] Config: `centroid_tag_similarity`, `centroid_tag_min_members`, `centroid_tag_batch_size`
+- [x] Full-pass results: 17,188 memories checked, 5,658 tagged, 16,634 tags assigned, 60 centroids built, 45s
 
 **LLM Batch Tagger** (`blipshell/memory/batch_tagger.py`):
 - [x] Sends batches of 10 poorly-tagged memory summaries to LLM for direct tag assignment
