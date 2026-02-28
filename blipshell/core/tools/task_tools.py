@@ -55,6 +55,7 @@ class StartBackgroundTaskTool(Tool):
 
 
 class CheckBackgroundTaskTool(Tool):
+    read_only = True
     """Allows the LLM to check the status of a background task."""
 
     def __init__(self, background_manager):
@@ -93,6 +94,7 @@ class CheckBackgroundTaskTool(Tool):
 
 
 class ListBackgroundTasksTool(Tool):
+    read_only = True
     """Allows the LLM to list active background tasks."""
 
     def __init__(self, background_manager, session_id: Optional[int] = None):

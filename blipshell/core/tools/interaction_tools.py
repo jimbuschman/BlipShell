@@ -73,6 +73,7 @@ class TaskCompleteTool(Tool):
 
 
 class AskUserTool(Tool):
+    read_only = True
     """Allows the LLM to ask the user a question mid-execution.
 
     In interactive mode (CLI), prompts the user and returns their answer.

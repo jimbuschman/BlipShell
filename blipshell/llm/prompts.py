@@ -409,6 +409,8 @@ def executor_system_prompt() -> str:
         "5. Call task_complete when DONE. Do NOT just stop responding.\n"
         "6. Each tool's description explains when/how to use it — follow that guidance.\n"
         "7. Do NOT narrate your thinking — just call tools or answer directly.\n"
+        "8. For complex multi-file tasks, use enter_plan_mode to explore and design "
+        "your approach before making changes. Call exit_plan_mode with your plan.\n"
     )
 
 

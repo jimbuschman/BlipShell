@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 class ReadFileTool(Tool):
+    read_only = True
+
     def __init__(self, max_file_size: int = 1048576, blocked_paths: list[str] | None = None,
                  root_path: str | None = None, files_read: set[str] | None = None,
                  file_cache: dict[str, str] | None = None):
@@ -491,6 +493,8 @@ class EditFileTool(Tool):
 
 
 class ListDirectoryTool(Tool):
+    read_only = True
+
     def __init__(self, root_path: str | None = None):
         self.root_path = root_path
 

@@ -49,6 +49,10 @@ class LoopConfig:
     auto_continue_on_exhaustion: bool = False
     """When budget is hit with no text response, nudge model to summarize."""
 
+    tool_provider: Optional[Callable[[], list[dict] | None]] = None
+    """If set, called each iteration to get current tools (for plan mode).
+    When None, the static ``tools`` passed to run() is used."""
+
     enable_parallel: bool = True
     """Execute multiple tool calls from the same LLM response concurrently."""
 
@@ -365,7 +369,10 @@ class ChatLoop:
                         self.on_token(f"  [Context compacted: {before} → {after} tokens]\n")
 
             # ── Tool availability ──
-            iter_tools = tools if (tools and tool_call_count < config.budget) else None
+            if config.tool_provider is not None:
+                iter_tools = config.tool_provider() if tool_call_count < config.budget else None
+            else:
+                iter_tools = tools if (tools and tool_call_count < config.budget) else None
 
             # ── LLM call ──
             content, tool_calls = await stream_chat(
@@ -567,6 +574,10 @@ class ChatLoop:
                 final_response = "No response generated."
             if completion_method == "empty":
                 completion_method = "budget"
+
+        # Safety: reset plan mode if loop exits while still planning
+        if self.tool_registry._plan_mode:
+            self.tool_registry._plan_mode = False
 
         return LoopResult(
             response=final_response,

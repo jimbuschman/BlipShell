@@ -9,6 +9,8 @@ logger = logging.getLogger(__name__)
 
 
 class WebSearchTool(Tool):
+    read_only = True
+
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="web_search",
@@ -53,6 +55,7 @@ class WebSearchTool(Tool):
 
 
 class WebFetchTool(Tool):
+    read_only = True
     def __init__(self, max_size: int = 524288, timeout: int = 15):
         self.max_size = max_size
         self.timeout = timeout

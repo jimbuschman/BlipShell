@@ -11,6 +11,8 @@ from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterT
 
 
 class SearchMemoriesTool(Tool):
+    read_only = True
+
     def __init__(self, search: MemorySearch, current_session_id: int | None = None):
         self.search = search
         self.current_session_id = current_session_id
@@ -103,6 +105,8 @@ class SaveCoreMemoryTool(Tool):
 
 
 class ListSessionsTool(Tool):
+    read_only = True
+
     def __init__(self, sqlite: SQLiteStore):
         self.sqlite = sqlite
 

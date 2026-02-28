@@ -18,6 +18,8 @@ class Tool(ABC):
     Subclasses define their tool schema and implement execute().
     """
 
+    read_only: bool = False  # Override to True for tools safe in plan mode
+
     @abstractmethod
     def definition(self) -> ToolDefinition:
         """Return the tool definition for Ollama."""
@@ -41,6 +43,7 @@ class ToolRegistry:
         self._tool_groups: dict[str, str] = {}  # tool_name -> group
         self._approval_callback: Optional[ApprovalCallback] = None
         self._tools_requiring_approval: set[str] = set()
+        self._plan_mode: bool = False
 
     def register(self, tool: Tool, group: str = "general"):
         """Register a tool with a group name."""
@@ -91,6 +94,19 @@ class ToolRegistry:
     def get_tool_names(self) -> list[str]:
         """Get names of all registered tools."""
         return list(self._tools.keys())
+
+    @property
+    def in_plan_mode(self) -> bool:
+        """Whether the registry is in plan (read-only) mode."""
+        return self._plan_mode
+
+    def get_plan_mode_tools(self) -> list[dict]:
+        """Get only read-only tools + exit_plan_mode in Ollama format."""
+        return [
+            tool.to_ollama_tool()
+            for name, tool in self._tools.items()
+            if tool.read_only or name == "exit_plan_mode"
+        ]
 
     @staticmethod
     def _coerce_arguments(tool: Tool, arguments: dict[str, Any]) -> dict[str, Any]:

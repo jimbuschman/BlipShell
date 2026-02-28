@@ -23,6 +23,7 @@ BINARY_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".bmp", ".webp",
 
 class GrepTool(Tool):
     """Search file contents with a regex pattern across a directory tree."""
+    read_only = True
 
     def __init__(self, root_path: str | None = None):
         self.root_path = root_path
@@ -136,6 +137,7 @@ class GrepTool(Tool):
 
 class GlobTool(Tool):
     """Find files matching a glob pattern."""
+    read_only = True
 
     def __init__(self, root_path: str | None = None):
         self.root_path = root_path

@@ -36,6 +36,7 @@ async def _run_git(args: list[str], cwd: str | None = None,
 
 
 class GitStatusTool(Tool):
+    read_only = True
     """Show git status: changed, staged, and untracked files."""
 
     def __init__(self, root_path: str | None = None):
@@ -84,6 +85,7 @@ class GitStatusTool(Tool):
 
 
 class GitDiffTool(Tool):
+    read_only = True
     """Show git diff for working tree changes."""
 
     def __init__(self, root_path: str | None = None):

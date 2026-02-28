@@ -124,11 +124,18 @@ class ChatMixin:
         logger.info("Passing %d tools (max_iterations=%d)",
                      len(tools) if tools else 0, max_iterations)
 
+        # Dynamic tool provider — switches tools mid-loop when plan mode toggles
+        def _get_current_tools():
+            if self.tool_registry.in_plan_mode:
+                return self.tool_registry.get_plan_mode_tools() or None
+            return tools
+
         loop = ChatLoop(self.tool_registry, on_token)
         config = LoopConfig(
             budget=max_iterations,
             enable_dedup=True,
             auto_continue_on_exhaustion=True,
+            tool_provider=_get_current_tools,
         )
 
         # Try primary, then fallback on error

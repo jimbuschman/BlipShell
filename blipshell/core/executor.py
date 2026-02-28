@@ -442,6 +442,12 @@ class TaskExecutor:
             except Exception:
                 pass
 
+        # Dynamic tool provider — switches tools mid-loop when plan mode toggles
+        def _get_current_tools():
+            if self.tool_registry.in_plan_mode:
+                return self.tool_registry.get_plan_mode_tools() or None
+            return tools
+
         # Run the unified tool-calling loop
         loop = ChatLoop(self.tool_registry, on_token)
         config = LoopConfig(
@@ -451,6 +457,7 @@ class TaskExecutor:
             compaction_threshold=0.85,
             context_limit=endpoint.context_tokens or 65536,
             completion_tool="task_complete",
+            tool_provider=_get_current_tools,
         )
         result = await loop.run(
             client=client,
