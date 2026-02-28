@@ -457,6 +457,7 @@ class TaskExecutor:
             compaction_threshold=0.85,
             context_limit=endpoint.context_tokens or 65536,
             completion_tool="task_complete",
+            capture_inline_text=True,
             tool_provider=_get_current_tools,
         )
         result = await loop.run(

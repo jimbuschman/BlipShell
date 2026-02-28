@@ -46,6 +46,11 @@ class LoopConfig:
     completion_tool: str | None = None
     """Tool name that signals task completion (e.g. 'task_complete'). None = text-only."""
 
+    capture_inline_text: bool = False
+    """When True, capture substantial text (>=200 chars) returned alongside tool calls.
+    Used as a fallback response if the model never calls the completion_tool and
+    produces nothing on subsequent turns."""
+
     auto_continue_on_exhaustion: bool = False
     """When budget is hit with no text response, nudge model to summarize."""
 
@@ -351,6 +356,7 @@ class ChatLoop:
         tool_call_count = 0
         tool_call_names: list[str] = []
         last_tool_call: tuple[str, str] | None = None  # (name, args_key) for dedup
+        last_inline_text = ""  # substantial text returned alongside tool calls (fallback)
         final_response = ""
         completion_method = "empty"
 
@@ -527,6 +533,10 @@ class ChatLoop:
                     completion_method = "tool"
                     break
 
+                # ── Capture substantial inline text as fallback ──
+                if config.capture_inline_text and content and len(content) >= 200:
+                    last_inline_text = content
+
                 continue
 
             # ── Text-only response (no tool calls) — model is done ──
@@ -568,12 +578,23 @@ class ChatLoop:
 
         # ── Budget/empty exhaustion fallback ──
         if not final_response:
-            if tool_call_names:
+            # Use captured inline text if available (model answered alongside tool calls)
+            if last_inline_text:
+                final_response = last_inline_text
+                completion_method = "text"
+                logger.info(
+                    "Using inline text fallback (%d chars) — model answered "
+                    "alongside tool calls without calling task_complete",
+                    len(last_inline_text),
+                )
+            elif tool_call_names:
                 final_response = f"[Completed {len(tool_call_names)} tool calls but no summary generated]"
+                if completion_method == "empty":
+                    completion_method = "budget"
             else:
                 final_response = "No response generated."
-            if completion_method == "empty":
-                completion_method = "budget"
+                if completion_method == "empty":
+                    completion_method = "budget"
 
         # Safety: reset plan mode if loop exits while still planning
         if self.tool_registry._plan_mode:
