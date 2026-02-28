@@ -457,7 +457,40 @@ Python SDK: `pip install mcp`. Phase 1 (stdio transport) implemented.
 - Phase 2: HTTP/SSE transport, reconnection, Windows npx handling
 - Phase 3: Dynamic server management, resource support, tool search for context budget
 
-**Key servers to try first**: Filesystem, GitHub, Fetch (web), Sequential Thinking.
+**MCP Server Research (2026-02-28)**:
+
+Servers to integrate (high value, low overlap):
+- **GitHub Official** (by GitHub, Go binary): 51 tools — issues, PRs, code search, notifications, security alerts. Use `--toolsets repos,issues,pull_requests` to reduce context (~30 tools). [github.com/github/github-mcp-server](https://github.com/github/github-mcp-server)
+- **Context7** (library docs): 2 tools — `resolve-library-id` + `query-docs`. Fetches current, version-specific API docs. Free. Fixes #1 coding agent problem (hallucinated APIs). `npx -y @upstash/context7-mcp`. [github.com/upstash/context7](https://github.com/upstash/context7)
+- **Telegram Communicator**: 4 tools — `ask_user`, `notify_user`, `send_file`, `zip_project`. LLM-to-user communication via Telegram bot. Great for background task notifications and remote ask_user. `npx -y mcp-communicator-telegram`. [github.com/qpd-v/mcp-communicator-telegram](https://github.com/qpd-v/mcp-communicator-telegram)
+
+Servers to consider (medium value):
+- **Sequential Thinking**: 1 tool — structured reasoning scratchpad with revision/branching. Better as native BlipShell tool (no MCP overhead). `npx -y @modelcontextprotocol/server-sequential-thinking`
+- **Playwright** (Microsoft): 34 tools — full browser automation, accessibility tree snapshots, test assertions. Only option for JS-heavy sites. Heavy (requires Chromium). Phase 2. `npx -y @playwright/mcp`
+- **Brave Search**: 6 tools — web/news/image/video search with freshness filtering and AI summaries. Better than ddgs but requires API key. `npx -y @smithery/cli install brave`
+
+Servers to skip (redundant with BlipShell):
+- Filesystem (13 tools) — BlipShell's native tools are better integrated (edit linting, file tracking)
+- Fetch — BlipShell's web_fetch covers this; borrow pagination idea (start_index/max_length)
+- Memory — JSONL file with substring search, BlipShell's memory is far superior
+- Git (12 tools) — BlipShell has native git + run_command; borrow git_log date filtering idea
+- Desktop Commander (18 tools) — fully redundant; borrow in-memory code execution idea
+
+Ideas to steal for native tools (no MCP needed):
+- `read_multiple_files` — batch reads in one call (from Filesystem)
+- `web_fetch` pagination — `start_index`/`max_length` for long pages (from Fetch)
+- `git_log` with date filtering — "what changed last week?" (from Git)
+- Edit dry-run mode — preview changes before applying (from Filesystem)
+- In-memory code execution — `run_python(code)` without file creation (from Desktop Commander)
+- `directory_tree` — recursive JSON tree (from Filesystem)
+- `sequential_thinking` — native reasoning scratchpad with revision/branching (from Sequential Thinking)
+
+Context budget impact (131K local context):
+- BlipShell native tools (~25): ~7.5K tokens
+- + GitHub (~30 filtered): ~9K tokens
+- + Context7 (2): ~600 tokens
+- + Telegram (4): ~1.2K tokens
+- Total: ~18.3K tokens of schema, leaves ~113K for conversation. Manageable.
 
 ### 27. Plan Mode (LLM-Controlled) — CODE WRITTEN, NEEDS TESTING
 LLM can self-restrict to read-only tools before making complex changes.
@@ -477,6 +510,7 @@ LLM can self-restrict to read-only tools before making complex changes.
 
 ### Wish List
 Items worth doing eventually but not prioritized:
+- **Telegram notifications**: Via mcp-communicator-telegram — background tasks notify you on phone, executor can ask_user remotely. Set up @BotFather bot + chat ID.
 - **Hooks system**: Shell commands that fire at lifecycle events (before commit, after file edit, on session start). User-configured, not automatic. Power-user feature for automation.
 - **IDE integration**: VS Code extension for inline chat, file context, diagnostics. Big build (TypeScript extension API). Would dramatically expand UX but significant effort.
 
