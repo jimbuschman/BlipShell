@@ -443,7 +443,9 @@ class Agent(
             depth = self._memory_worker.queue_depth
             if depth > 0:
                 _status(f"Draining memory queue ({depth} items)...")
-            self._memory_worker.shutdown(timeout=60.0)
+            # Scale timeout: 15s per queued item, minimum 30s
+            drain_timeout = max(30.0, depth * 15.0)
+            self._memory_worker.shutdown(timeout=drain_timeout)
 
         if self.session_manager:
             await self.session_manager.end_session(on_status=on_status)

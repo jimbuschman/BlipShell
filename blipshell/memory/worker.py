@@ -138,7 +138,16 @@ class MemoryWorker:
                     logger.info("Memory worker received shutdown signal")
                     break
 
-                await self._process_item(item, processor, sqlite, router)
+                try:
+                    await asyncio.wait_for(
+                        self._process_item(item, processor, sqlite, router),
+                        timeout=60.0,  # per-item safety net
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Worker: %s timed out after 60s, skipping",
+                        item.work_type.value,
+                    )
                 last_idle_extract = time.monotonic()  # reset after real work
 
             except Exception as e:
