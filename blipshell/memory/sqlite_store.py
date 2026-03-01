@@ -587,6 +587,36 @@ class SQLiteStore:
             for r in rows
         ]
 
+    async def search_sessions_by_keyword(
+        self, keyword: str, limit: int = 50,
+    ) -> list[Session]:
+        """Search sessions whose title or summary mentions a keyword.
+
+        Used as a fallback when no sessions are tagged with a project name
+        (e.g., imported sessions that predate project creation).
+        """
+        pattern = f"%{keyword}%"
+        cursor = await self._db.execute(
+            "SELECT * FROM sessions WHERE summary IS NOT NULL "
+            "AND (title LIKE ? OR summary LIKE ?) "
+            "ORDER BY created_at ASC LIMIT ?",
+            (pattern, pattern, limit),
+        )
+        rows = await cursor.fetchall()
+        return [
+            Session(
+                id=r["id"],
+                title=r["title"],
+                summary=r["summary"],
+                project=r["project"],
+                timestamp=r["created_at"],
+                last_active=r["last_active"],
+                is_archived=bool(r["is_archived"]),
+                message_count=r["message_count"],
+            )
+            for r in rows
+        ]
+
     async def get_lessons_by_project(self, project: str) -> list[Lesson]:
         """Get all lessons tagged with a project."""
         cursor = await self._db.execute(

@@ -43,8 +43,19 @@ class ProjectDigestManager:
         Processes in batches of 5 chronologically, folding each batch
         into a running digest to avoid context overflow.
         Returns the final digest (also saved to DB).
+
+        Falls back to keyword search if no sessions are tagged with the
+        project name (common for imported sessions that predate project creation).
         """
         sessions = await self.sqlite.list_sessions_chronological(project_name)
+        if not sessions:
+            # Fallback: search for sessions mentioning the project by name
+            sessions = await self.sqlite.search_sessions_by_keyword(project_name)
+            if sessions:
+                logger.info(
+                    "No tagged sessions for '%s', found %d via keyword search",
+                    project_name, len(sessions),
+                )
         if not sessions:
             logger.info("No sessions with summaries for project '%s'", project_name)
             return ""
