@@ -102,8 +102,8 @@ async def summarize_session(
 async def backfill(limit: int = 0, dry_run: bool = False):
     """Backfill session summaries for all sessions missing them."""
     config_mgr = ConfigManager()
-    config = config_mgr.config
-    db_path = config_mgr.get_db_path()
+    config = config_mgr.load()
+    db_path = config.database.path
     ollama_url = get_ollama_url()
 
     sqlite = SQLiteStore(db_path)
