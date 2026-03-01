@@ -595,6 +595,95 @@ def extract_entities(summary: str) -> tuple[str, str]:
     return system, user
 
 
+def generate_initial_digest(project_name: str, session_summaries: str) -> tuple[str, str]:
+    """Bootstrap a project digest from session summaries.
+
+    Returns (system_prompt, user_prompt). Uses REASONING task type since it
+    needs to synthesize across multiple sessions, not just summarize.
+    """
+    system = (
+        "You create a concise project status digest from session summaries.\n\n"
+        "The digest captures the current state of a software project across multiple "
+        "work sessions. It should be 300-500 words and include these sections:\n\n"
+        "**Overview**: What the project is and its purpose (1-2 sentences)\n"
+        "**Current Status**: Where things stand right now — what works, what's in progress\n"
+        "**Key Decisions**: Important architectural or design choices made\n"
+        "**Recent Activity**: What happened in the most recent sessions (brief)\n"
+        "**Open Issues**: Known bugs, TODOs, or unfinished work\n\n"
+        "Rules:\n"
+        "- Write in third person, objective voice\n"
+        "- Focus on SUBSTANCE — decisions, implementations, problems solved\n"
+        "- Skip greetings, small talk, and process noise\n"
+        "- If a later session contradicts an earlier one, use the latest info\n"
+        "- Keep it factual and scannable — someone reading this should immediately "
+        "understand where the project stands"
+    )
+    user = (
+        f"Project: {project_name}\n\n"
+        f"Session summaries (chronological order):\n{session_summaries}\n\n"
+        "Create the project digest."
+    )
+    return system, user
+
+
+def update_digest_incremental(
+    current_digest: str, session_summary: str, session_title: str,
+) -> tuple[str, str]:
+    """Update an existing project digest with one new session.
+
+    Returns (system_prompt, user_prompt). Keeps the same structure and length
+    budget as the original digest.
+    """
+    system = (
+        "You update a project status digest with information from a new session.\n\n"
+        "Rules:\n"
+        "- Keep the same section structure (Overview, Current Status, Key Decisions, "
+        "Recent Activity, Open Issues)\n"
+        "- Update sections that are affected by the new session\n"
+        "- Move older activity out of 'Recent Activity' if needed to stay under budget\n"
+        "- If the new session changes the project status, update 'Current Status'\n"
+        "- If new decisions were made, add to 'Key Decisions'\n"
+        "- If issues were resolved, remove from 'Open Issues'\n"
+        "- Keep total length 300-500 words\n"
+        "- Write in third person, objective voice\n"
+        "- Output ONLY the updated digest, no commentary"
+    )
+    user = (
+        f"Current digest:\n{current_digest}\n\n"
+        f"New session: {session_title}\n"
+        f"Summary: {session_summary}\n\n"
+        "Update the digest."
+    )
+    return system, user
+
+
+def update_digest_with_sessions(
+    current_digest: str, session_summaries: str,
+) -> tuple[str, str]:
+    """Update an existing project digest with multiple sessions (batch fold).
+
+    Returns (system_prompt, user_prompt). Used during bootstrap when processing
+    sessions in batches of 5.
+    """
+    system = (
+        "You update a project status digest with information from multiple new sessions.\n\n"
+        "Rules:\n"
+        "- Keep the same section structure (Overview, Current Status, Key Decisions, "
+        "Recent Activity, Open Issues)\n"
+        "- Incorporate all new session information, prioritizing the most recent\n"
+        "- If later sessions override earlier info, use the latest\n"
+        "- Keep total length 300-500 words\n"
+        "- Write in third person, objective voice\n"
+        "- Output ONLY the updated digest, no commentary"
+    )
+    user = (
+        f"Current digest:\n{current_digest}\n\n"
+        f"New sessions (chronological):\n{session_summaries}\n\n"
+        "Update the digest."
+    )
+    return system, user
+
+
 def summarize_plan_results(user_request: str, step_results: list[str]) -> str:
     """Prompt for summarizing all completed plan steps into a final response."""
     results_text = ""

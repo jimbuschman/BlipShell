@@ -274,7 +274,32 @@ class SessionManager:
         except Exception as e:
             logger.error("Lesson extraction failed (skipping): %s", e)
 
+        # Update project digest (if session is project-tagged)
+        if self.project:
+            _status("Updating project digest...")
+            try:
+                await asyncio.wait_for(
+                    self._update_project_digest(), timeout=45,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Project digest update timed out, skipping")
+            except Exception as e:
+                logger.error("Project digest update failed: %s", e)
+
         logger.info("Session %d ended", self.session_id)
+
+    async def _update_project_digest(self):
+        """Update the project digest with this session's summary."""
+        if not self.project or not self.session_id:
+            return
+        session = await self.sqlite.get_session(self.session_id)
+        if not session or not session.summary:
+            return
+        from blipshell.memory.project_digest import ProjectDigestManager
+        digest_mgr = ProjectDigestManager(self.sqlite, self.router)
+        await digest_mgr.update_digest(
+            self.project, session.summary, session.title or "", self.session_id,
+        )
 
     async def _extract_lessons(self):
         """Extract lessons from the session conversation.

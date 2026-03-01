@@ -29,6 +29,7 @@ JOB_ORDER = [
     "prune",
     "consolidate",
     "tag_discovery",
+    "rebuild_digests",
 ]
 
 
@@ -156,6 +157,7 @@ class NightlyRunner:
             "prune": self._job_prune,
             "consolidate": self._job_consolidate,
             "tag_discovery": self._job_tag_discovery,
+            "rebuild_digests": self._job_rebuild_digests,
         }
         handler = handlers.get(job_name)
         if not handler:
@@ -258,6 +260,29 @@ class NightlyRunner:
             new_patterns = await self.sqlite.get_discovered_tag_patterns()
             register_topic_patterns(new_patterns)
         return stats
+
+    async def _job_rebuild_digests(self, on_status) -> dict:
+        """Rebuild project digests for all active projects."""
+        from blipshell.memory.project_digest import ProjectDigestManager
+
+        digest_mgr = ProjectDigestManager(self.sqlite, self.router)
+        projects = await self.sqlite.list_projects()
+        rebuilt = 0
+        skipped = 0
+        for project in projects:
+            name = project.get("name")
+            if not name:
+                continue
+            try:
+                digest = await digest_mgr.bootstrap_digest(name)
+                if digest:
+                    rebuilt += 1
+                else:
+                    skipped += 1
+            except Exception as e:
+                logger.error("Digest rebuild failed for '%s': %s", name, e)
+                skipped += 1
+        return {"rebuilt": rebuilt, "skipped": skipped, "total": len(projects)}
 
     async def close(self):
         """Clean up resources."""

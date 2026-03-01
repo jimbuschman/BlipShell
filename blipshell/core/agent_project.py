@@ -248,4 +248,18 @@ class ProjectMixin:
                 except Exception:
                     pass
 
+        # Project digest — memory of what's been done across sessions
+        try:
+            from blipshell.memory.project_digest import ProjectDigestManager
+            digest_mgr = ProjectDigestManager(self.sqlite, self.router)
+            digest = await digest_mgr.get_digest(project["name"])
+            if digest:
+                parts.append(f"\n=== Project Digest (auto-maintained) ===\n{digest}")
+                logger.info(
+                    "Injected project digest for '%s' (%d chars)",
+                    project["name"], len(digest),
+                )
+        except Exception as e:
+            logger.error("Failed to load project digest: %s", e)
+
         return "\n".join(parts)

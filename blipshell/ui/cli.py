@@ -777,6 +777,38 @@ async def _handle_project_command(agent: Agent, args: list[str]):
         await agent.sqlite.delete_project(name)
         console.print(f"[green]Project '{name}' deleted (files on disk untouched).[/green]")
 
+    elif subcmd == "digest":
+        if not agent.active_project:
+            console.print("[dim]No active project. Activate one first.[/dim]")
+            return
+        project_name = agent.active_project["name"]
+        if len(args) > 1 and args[1].lower() == "rebuild":
+            from blipshell.memory.project_digest import ProjectDigestManager
+            digest_mgr = ProjectDigestManager(agent.sqlite, agent.router)
+            with console.status("[dim]Rebuilding project digest...[/dim]", spinner="dots"):
+                digest = await digest_mgr.bootstrap_digest(project_name)
+            if digest:
+                console.print(Panel(digest, title=f"Project Digest — {project_name} (rebuilt)"))
+            else:
+                console.print("[dim]No sessions with summaries found for this project.[/dim]")
+        else:
+            import json
+            project = agent.active_project
+            meta = json.loads(project.get("metadata_json") or "{}")
+            digest = meta.get("digest")
+            if digest:
+                updated_at = meta.get("digest_updated_at", "unknown")
+                session_count = len(meta.get("digest_session_ids", []))
+                console.print(Panel(
+                    digest,
+                    title=f"Project Digest — {project_name}",
+                    subtitle=f"Updated: {updated_at[:19]} | Sessions: {session_count}",
+                ))
+            else:
+                console.print(
+                    "[dim]No digest yet. Use /project digest rebuild to generate one.[/dim]"
+                )
+
     else:
         # Treat as project name to activate
         name = args[0]
@@ -2013,7 +2045,9 @@ def _print_help():
         "[bold]/project new <n> <path>[/bold] - Create project from directory\n"
         "[bold]/project info[/bold]          - Show active project details\n"
         "[bold]/project off[/bold]           - Deactivate current project\n"
-        "[bold]/project delete <name>[/bold] - Remove project from DB\n\n"
+        "[bold]/project delete <name>[/bold] - Remove project from DB\n"
+        "[bold]/project digest[/bold]        - Show project status digest\n"
+        "[bold]/project digest rebuild[/bold] - Regenerate digest from scratch\n\n"
         "[bold]/help[/bold]                  - Show this help\n\n"
         "[dim]Press [bold]Esc[/bold] during a response to cancel the LLM call[/dim]\n"
         "[dim]Prefix with !plan to force planning: !plan <message>[/dim]",

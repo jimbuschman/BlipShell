@@ -560,6 +560,54 @@ class SQLiteStore:
             for r in rows
         ]
 
+    async def list_sessions_chronological(
+        self, project: str, limit: int = 200,
+    ) -> list[Session]:
+        """List sessions for a project in chronological order (oldest first).
+
+        Only returns sessions that have a summary (needed for digest generation).
+        """
+        cursor = await self._db.execute(
+            "SELECT * FROM sessions WHERE project = ? AND summary IS NOT NULL "
+            "ORDER BY created_at ASC LIMIT ?",
+            (project, limit),
+        )
+        rows = await cursor.fetchall()
+        return [
+            Session(
+                id=r["id"],
+                title=r["title"],
+                summary=r["summary"],
+                project=r["project"],
+                timestamp=r["created_at"],
+                last_active=r["last_active"],
+                is_archived=bool(r["is_archived"]),
+                message_count=r["message_count"],
+            )
+            for r in rows
+        ]
+
+    async def get_lessons_by_project(self, project: str) -> list[Lesson]:
+        """Get all lessons tagged with a project."""
+        cursor = await self._db.execute(
+            "SELECT * FROM lessons WHERE project = ? ORDER BY timestamp ASC",
+            (project,),
+        )
+        rows = await cursor.fetchall()
+        return [
+            Lesson(
+                id=r["id"],
+                content=r["content"],
+                summary=r["summary"],
+                timestamp=r["timestamp"],
+                rank=r["rank"],
+                importance=r["importance"],
+                source_session_id=r["source_session_id"],
+                project=r["project"] if "project" in r.keys() else None,
+            )
+            for r in rows
+        ]
+
     # --- Memories ---
 
     async def create_memory(self, memory: Memory) -> int:

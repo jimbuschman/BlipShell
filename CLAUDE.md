@@ -314,13 +314,13 @@ the model lacked state awareness and the prompts were too sparse.
 - [x] A/B comparison mode for scaffolding experiments
 - [x] Completion detection fix: `capture_inline_text` captures substantial text alongside tool calls as fallback response (predicted to fix 17/20 false negative failures in stress test)
 - [x] First stress test run: 45/65 passed (69%), 17/20 failures were false negatives (model did work but didn't call `task_complete`)
-- [ ] Run `--canned` on Ollama PC (quick smoke test)
-- [ ] Run `--stress` overnight and analyze results (with completion detection fix)
+- [x] `--canned` passed on Ollama PC
+- [x] `--stress` run 3x overnight, analyzed results, harness bugs fixed (44/65 raw, ~91% adjusted)
 
 ### 17. Upgrade embedding model — COMPLETE (kept nomic-embed-text)
 Benchmarked alternatives (mxbai-embed-large, snowflake-arctic-embed:335m, bge-m3) — all too slow. Keeping nomic-embed-text.
 
-### 18. Tag Discovery Overhaul + Nightly Jobs — CODE WRITTEN, NEEDS TESTING
+### 18. Tag Discovery Overhaul + Nightly Jobs — COMPLETE
 Complete rewrite of tag discovery with three-layer approach plus nightly job infrastructure.
 
 **Centroid Tagger** (`blipshell/memory/centroid_tagger.py`):
@@ -347,15 +347,15 @@ Complete rewrite of tag discovery with three-layer approach plus nightly job inf
 **Benchmark** (`scripts/benchmark_tagger.py`):
 - [x] Tests model quality on tag assignment (precision/recall/F1 vs ground truth)
 - [x] Rich table output + JSON results file
-- [ ] **NEEDS TESTING**: `python scripts/benchmark_tagger.py --models qwen3:14b,qwen2.5:14b,qwen2.5:7b`
+- [x] Tagger benchmark ran, model selected and configured
 
 **Supporting changes**:
 - [x] `sqlite_store.py`: 5 new methods (tag counts, poorly-tagged IDs, well-tagged sample, all tag names)
 - [x] `chroma_store.py`: `get_embeddings_by_ids()` for raw vector retrieval
 - [x] `config.py`: 5 new `MemoryConfig` fields
-- [ ] **NEEDS TESTING**: Run `/nightly` interactively
-- [ ] **NEEDS TESTING**: Run `blipshell nightly --quiet` headless
-- [ ] **NEEDS TESTING**: Run benchmark on Ollama PC to pick best model
+- [x] `/nightly` ran successfully (2026-02-28)
+- [ ] Run `blipshell nightly --quiet` headless (verify JSON output)
+- [ ] Run benchmark on Ollama PC to pick best model
 
 **Future: In-process scheduler**:
 - Add background asyncio task that triggers nightly run at ~3:12 AM if app is open and idle
@@ -395,7 +395,7 @@ PII detection in `blipshell/llm/pii.py`. Uses Microsoft Presidio (spaCy NER) whe
 - [x] Local LLM calls NOT sanitized — raw text preserved for search quality
 - [x] Tests: 34 tests — structured PII, regex fallback, Presidio-specific (skipped when not installed)
 - [x] Dependencies: `presidio-analyzer`, `presidio-anonymizer`, `spacy` in pyproject.toml
-- [ ] **ON OLLAMA PC**: `pip install presidio-analyzer presidio-anonymizer spacy && python -m spacy download en_core_web_lg`
+- [x] Presidio + spaCy installed on Ollama PC (2026-02-28)
 
 ### 21. Modularize agent.py — COMPLETE
 Refactored 1687-line monolith into thin facade + 5 mixin classes:
@@ -426,14 +426,27 @@ Refactored 1687-line monolith into thin facade + 5 mixin classes:
 - [x] Batch dedup — catches duplicates within batch AND across batches
 - [x] Error isolation — one failing tool doesn't crash the batch
 - [x] Callbacks remain sequential (Phase 7) — no thread-safety changes needed
-- [ ] **NEEDS TESTING**: Run `blipshell test --canned` and verify parallel execution happens
+- [x] Parallel execution verified via stress tests (up to 22 tools in one batch)
 
-### 25. Memory Timelines — FUTURE
-Temporal view of memories, searches, and projects. Details TBD — could include:
-- Timeline visualization of when memories were created/accessed
-- Time-scoped search (e.g., "what did we discuss last week?")
-- Project timelines showing activity/progress over time
-Discuss approach before designing.
+### 25. Project Digest — CODE WRITTEN, NEEDS TESTING
+Auto-maintained summary of project state across sessions. Solves the "full picture" problem —
+when activating a project, the LLM now gets a structured digest of what's been done, key decisions,
+current status, and open issues.
+
+- [x] `ProjectDigestManager` in `blipshell/memory/project_digest.py` — bootstrap + incremental update
+- [x] 3 prompt functions in `prompts.py` — `generate_initial_digest`, `update_digest_incremental`, `update_digest_with_sessions`
+- [x] 2 new SQLite methods — `list_sessions_chronological()`, `get_lessons_by_project()`
+- [x] Storage in `projects.metadata_json["digest"]` with timestamp and session ID tracking
+- [x] Auto-update in `end_session()` — after lesson extraction, updates digest with new session summary
+- [x] Injection in `activate_project()` → `_scan_project_context()` — digest loaded from metadata (no LLM call)
+- [x] `/project digest` CLI command — show current digest with metadata
+- [x] `/project digest rebuild` — regenerate from scratch
+- [x] `rebuild_digests` nightly job — rebuilds all project digests
+- [x] Bootstrap uses progressive batching (5 sessions at a time) + lesson folding
+- [x] Uses REASONING model (qwen3:14b) for synthesis
+- [ ] **NEEDS TESTING**: Run `/project digest rebuild` on a project with session history
+- [ ] **NEEDS TESTING**: Verify digest updates automatically on session close
+- [ ] **NEEDS TESTING**: Check digest injection via `/context` after project activation
 
 ### 26. MCP Client Support — CODE WRITTEN, NEEDS TESTING
 Model Context Protocol client — BlipShell can connect to external MCP servers and use their tools.
