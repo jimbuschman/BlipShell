@@ -104,13 +104,13 @@ async def backfill(limit: int = 0, dry_run: bool = False):
     config_mgr = ConfigManager()
     config = config_mgr.load()
     db_path = config.database.path
-    ollama_url = get_ollama_url()
+    ollama_url = get_ollama_url(config.endpoints)
 
     sqlite = SQLiteStore(db_path)
     await sqlite.initialize()
 
-    endpoint_mgr = EndpointManager(config)
-    router = LLMRouter(ollama_url, endpoint_mgr)
+    endpoint_mgr = EndpointManager(config.endpoints, llm_config=config.llm)
+    router = LLMRouter(config.models, endpoint_mgr)
 
     # Find sessions needing summaries
     query_limit = limit if limit > 0 else 10000
