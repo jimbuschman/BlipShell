@@ -8,7 +8,10 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+import httpx
+
 import chromadb
+from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 from chromadb.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -16,6 +19,36 @@ logger = logging.getLogger(__name__)
 # nomic-embed-text has 8192 token context but Ollama may default lower.
 # 2000 chars (~500 tokens) is safe for any model and plenty for quality.
 MAX_EMBED_CHARS = 2000
+
+# Default timeout for Ollama embedding requests (seconds).
+# OllamaEmbeddingFunction uses httpx default (~10s) which is too short
+# when Ollama is swapping models on a single GPU.
+EMBED_TIMEOUT = 120.0
+
+
+class _OllamaEmbedder(EmbeddingFunction):
+    """Ollama embedding function with configurable timeout.
+
+    ChromaDB's built-in OllamaEmbeddingFunction doesn't support a timeout
+    parameter (https://github.com/chroma-core/chroma/issues/3473).
+    This reimplements it with a generous timeout to survive model swaps.
+    """
+
+    def __init__(self, url: str, model_name: str, timeout: float = EMBED_TIMEOUT):
+        self._url = url.rstrip("/")
+        self._model = model_name
+        self._client = httpx.Client(timeout=httpx.Timeout(timeout))
+
+    def __call__(self, input: Documents) -> Embeddings:
+        embeddings = []
+        for text in input:
+            resp = self._client.post(
+                f"{self._url}/api/embeddings",
+                json={"model": self._model, "prompt": text},
+            )
+            resp.raise_for_status()
+            embeddings.append(resp.json()["embedding"])
+        return embeddings
 
 # Collection names
 MEMORIES_COLLECTION = "memories"
@@ -48,8 +81,8 @@ class ChromaStore:
             settings=Settings(anonymized_telemetry=False),
         )
 
-        # Use Ollama for embedding generation
-        embedding_fn = chromadb.utils.embedding_functions.OllamaEmbeddingFunction(
+        # Use Ollama for embedding generation (custom class with 120s timeout)
+        embedding_fn = _OllamaEmbedder(
             url=self.ollama_url,
             model_name=self.embedding_model,
         )
