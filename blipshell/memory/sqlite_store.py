@@ -594,13 +594,28 @@ class SQLiteStore:
 
         Used as a fallback when no sessions are tagged with a project name
         (e.g., imported sessions that predate project creation).
+        Splits hyphenated/underscored names and searches for any component
+        (e.g., "cozmo-explorer" searches for "cozmo-explorer", "cozmo", "explorer").
         """
-        pattern = f"%{keyword}%"
+        import re
+        # Split project name into searchable parts
+        parts = re.split(r'[-_\s]+', keyword)
+        # Search for the full name + each individual word (3+ chars)
+        keywords = [keyword] + [p for p in parts if len(p) >= 3]
+        # Build OR conditions for each keyword
+        conditions = []
+        params = []
+        for kw in keywords:
+            pattern = f"%{kw}%"
+            conditions.append("(title LIKE ? OR summary LIKE ?)")
+            params.extend([pattern, pattern])
+        where = " OR ".join(conditions)
+        params.append(limit)
         cursor = await self._db.execute(
-            "SELECT * FROM sessions WHERE summary IS NOT NULL "
-            "AND (title LIKE ? OR summary LIKE ?) "
-            "ORDER BY created_at ASC LIMIT ?",
-            (pattern, pattern, limit),
+            f"SELECT * FROM sessions WHERE summary IS NOT NULL "
+            f"AND ({where}) "
+            f"ORDER BY created_at ASC LIMIT ?",
+            params,
         )
         rows = await cursor.fetchall()
         return [
