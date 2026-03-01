@@ -32,7 +32,13 @@ def _get_presidio_analyzer():
 
     try:
         from presidio_analyzer import AnalyzerEngine
+        # Suppress noisy warnings about non-English recognizers (es, it credit cards)
+        # being skipped — we only use English, this is expected behavior
+        presidio_logger = logging.getLogger("presidio-analyzer")
+        prev_level = presidio_logger.level
+        presidio_logger.setLevel(logging.ERROR)
         _presidio_analyzer = AnalyzerEngine()
+        presidio_logger.setLevel(prev_level)
         _presidio_available = True
         logger.info("Presidio PII analyzer loaded (spaCy NER + regex)")
         return _presidio_analyzer

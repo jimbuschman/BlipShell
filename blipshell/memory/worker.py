@@ -144,7 +144,7 @@ class MemoryWorker:
                         timeout=60.0,  # per-item safety net
                     )
                 except asyncio.TimeoutError:
-                    logger.warning(
+                    logger.info(
                         "Worker: %s timed out after 60s, skipping",
                         item.work_type.value,
                     )
