@@ -632,6 +632,38 @@ class SQLiteStore:
             for r in rows
         ]
 
+    async def search_memories_by_keyword(
+        self, keyword: str, limit: int = 100,
+    ) -> list[dict]:
+        """Search memory summaries mentioning a keyword.
+
+        Returns dicts with {summary, timestamp, importance} sorted by
+        importance DESC so the most relevant memories come first.
+        Splits hyphenated/underscored names into components.
+        """
+        import re
+        parts = re.split(r'[-_\s]+', keyword)
+        keywords = [keyword] + [p for p in parts if len(p) >= 3]
+        conditions = []
+        params = []
+        for kw in keywords:
+            pattern = f"%{kw}%"
+            conditions.append("summary LIKE ?")
+            params.append(pattern)
+        where = " OR ".join(conditions)
+        params.append(limit)
+        cursor = await self._db.execute(
+            f"SELECT summary, timestamp, importance FROM memories "
+            f"WHERE summary IS NOT NULL AND ({where}) "
+            f"ORDER BY importance DESC, timestamp ASC LIMIT ?",
+            params,
+        )
+        rows = await cursor.fetchall()
+        return [
+            {"summary": r["summary"], "timestamp": r["timestamp"], "importance": r["importance"]}
+            for r in rows
+        ]
+
     async def get_lessons_by_project(self, project: str) -> list[Lesson]:
         """Get all lessons tagged with a project."""
         cursor = await self._db.execute(

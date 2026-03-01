@@ -38,28 +38,45 @@ class ProjectDigestManager:
         return meta.get("digest")
 
     async def bootstrap_digest(self, project_name: str) -> str:
-        """Generate digest from scratch using all session summaries.
+        """Generate digest from scratch using session or memory summaries.
 
-        Processes in batches of 5 chronologically, folding each batch
-        into a running digest to avoid context overflow.
+        Data source priority:
+        1. Sessions tagged with the project name
+        2. Sessions mentioning the project name in title/summary (keyword search)
+        3. Individual memory summaries mentioning the project name
+
+        Processes in batches, folding each into a running digest.
         Returns the final digest (also saved to DB).
-
-        Falls back to keyword search if no sessions are tagged with the
-        project name (common for imported sessions that predate project creation).
         """
+        # --- Try session-based sources first ---
         sessions = await self.sqlite.list_sessions_chronological(project_name)
         if not sessions:
-            # Fallback: search for sessions mentioning the project by name
             sessions = await self.sqlite.search_sessions_by_keyword(project_name)
             if sessions:
                 logger.info(
                     "No tagged sessions for '%s', found %d via keyword search",
                     project_name, len(sessions),
                 )
-        if not sessions:
-            logger.info("No sessions with summaries for project '%s'", project_name)
-            return ""
 
+        if sessions:
+            return await self._bootstrap_from_sessions(project_name, sessions)
+
+        # --- Fallback: use individual memory summaries ---
+        memories = await self.sqlite.search_memories_by_keyword(project_name)
+        if memories:
+            logger.info(
+                "No sessions found for '%s', using %d memory summaries instead",
+                project_name, len(memories),
+            )
+            return await self._bootstrap_from_memories(project_name, memories)
+
+        logger.info("No data found for project '%s' (no sessions or memories)", project_name)
+        return ""
+
+    async def _bootstrap_from_sessions(
+        self, project_name: str, sessions: list,
+    ) -> str:
+        """Build digest from session summaries."""
         session_ids = []
         digest = ""
 
@@ -75,7 +92,6 @@ class ProjectDigestManager:
             session_ids.extend(s.id for s in batch)
 
             if not digest:
-                # First batch — generate initial digest
                 system, user = generate_initial_digest(project_name, batch_summaries)
                 digest = await self.router.generate(
                     TaskType.REASONING, user, system=system,
@@ -85,7 +101,6 @@ class ProjectDigestManager:
                     project_name, len(batch),
                 )
             else:
-                # Subsequent batches — fold into running digest
                 system, user = update_digest_with_sessions(digest, batch_summaries)
                 digest = await self.router.generate(
                     TaskType.REASONING, user, system=system,
@@ -95,7 +110,61 @@ class ProjectDigestManager:
                     project_name, i // BATCH_SIZE + 1, len(batch),
                 )
 
-        # Fold in project-scoped lessons if any
+        digest = await self._fold_lessons(project_name, digest)
+
+        if digest:
+            await self._save_digest(project_name, digest, session_ids)
+            logger.info(
+                "Bootstrap digest for '%s' complete (%d chars, %d sessions)",
+                project_name, len(digest), len(session_ids),
+            )
+        return digest
+
+    async def _bootstrap_from_memories(
+        self, project_name: str, memories: list[dict],
+    ) -> str:
+        """Build digest from individual memory summaries (fallback path)."""
+        digest = ""
+
+        for i in range(0, len(memories), BATCH_SIZE):
+            batch = memories[i:i + BATCH_SIZE]
+            batch_text = "\n".join(
+                f"- {m['summary']}" for m in batch if m.get("summary")
+            )
+            if not batch_text:
+                continue
+
+            if not digest:
+                system, user = generate_initial_digest(project_name, batch_text)
+                digest = await self.router.generate(
+                    TaskType.REASONING, user, system=system,
+                )
+                logger.info(
+                    "Bootstrap digest for '%s': initial memory batch (%d memories)",
+                    project_name, len(batch),
+                )
+            else:
+                system, user = update_digest_with_sessions(digest, batch_text)
+                digest = await self.router.generate(
+                    TaskType.REASONING, user, system=system,
+                )
+                logger.info(
+                    "Bootstrap digest for '%s': folded memory batch %d (%d memories)",
+                    project_name, i // BATCH_SIZE + 1, len(batch),
+                )
+
+        digest = await self._fold_lessons(project_name, digest)
+
+        if digest:
+            await self._save_digest(project_name, digest, [])
+            logger.info(
+                "Bootstrap digest for '%s' complete from memories (%d chars, %d memories)",
+                project_name, len(digest), len(memories),
+            )
+        return digest
+
+    async def _fold_lessons(self, project_name: str, digest: str) -> str:
+        """Fold project-scoped lessons into digest if any exist."""
         lessons = await self.sqlite.get_lessons_by_project(project_name)
         if lessons and digest:
             lesson_text = "\n".join(f"- {l.content}" for l in lessons[:20])
@@ -110,14 +179,6 @@ class ProjectDigestManager:
                 "Bootstrap digest for '%s': folded %d lessons",
                 project_name, len(lessons),
             )
-
-        if digest:
-            await self._save_digest(project_name, digest, session_ids)
-            logger.info(
-                "Bootstrap digest for '%s' complete (%d chars, %d sessions)",
-                project_name, len(digest), len(session_ids),
-            )
-
         return digest
 
     async def update_digest(

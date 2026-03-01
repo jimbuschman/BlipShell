@@ -797,7 +797,7 @@ async def _handle_project_command(agent: Agent, args: list[str]):
             if digest:
                 console.print(Panel(digest, title=f"Project Digest — {project_name} (rebuilt)"))
             else:
-                console.print("[dim]No sessions with summaries found for this project.[/dim]")
+                console.print("[dim]No data found for this project (no sessions or memories mention it).[/dim]")
         else:
             import json
             project = agent.active_project
