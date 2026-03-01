@@ -28,11 +28,18 @@ from rich.table import Table
 from blipshell.core.agent import Agent
 from blipshell.core.config import ConfigManager
 from blipshell.models.session import MessageRole
+from blipshell.ui.input import (
+    APPROVAL_PROMPT, SIMPLE_PROMPT,
+    async_prompt, create_chat_session, create_simple_session, format_chat_prompt,
+)
 
 console = Console()
 
 # Session-level auto-approve set: tools the user has approved for the rest of the session
 _session_approved_tools: set[str] = set()
+
+# prompt_toolkit session for tool approval / ask_user (no history)
+_simple_session = None
 
 
 def _generate_colored_diff(old_lines: list[str], new_lines: list[str],
@@ -120,12 +127,7 @@ async def _tool_approval_prompt(tool_name: str, arguments: dict) -> bool:
         console.print(diff_output)
 
     try:
-        choice = console.input(
-            "[bold yellow](a)[/bold yellow]llow  "
-            "[bold yellow](s)[/bold yellow]ession  "
-            "[bold yellow](d)[/bold yellow]eny  "
-            "[bold yellow]>[/bold yellow] "
-        ).strip().lower()
+        choice = (await async_prompt(_simple_session, APPROVAL_PROMPT)).strip().lower()
     except (EOFError, KeyboardInterrupt):
         return False
 
@@ -143,7 +145,7 @@ async def _ask_user_input(question: str) -> str:
     """Prompt the user with a question from the LLM during execution."""
     console.print(f"\n[bold yellow][LLM Question][/bold yellow] {question}")
     try:
-        answer = console.input("[bold yellow]> [/bold yellow]").strip()
+        answer = (await async_prompt(_simple_session, SIMPLE_PROMPT)).strip()
         return answer if answer else "No answer provided."
     except (EOFError, KeyboardInterrupt):
         return "User cancelled. Proceed with your best judgment."
@@ -269,6 +271,11 @@ async def chat_loop(
     # Wire ask_user callback so the LLM can ask questions during execution
     agent.set_ask_user_callback(_ask_user_input)
 
+    # Create prompt_toolkit sessions for input (history, bracketed paste)
+    global _simple_session
+    chat_session = create_chat_session()
+    _simple_session = create_simple_session()
+
     sid = await agent.start_session(project=project, resume_session_id=resume_id)
 
     # Auto-activate project if specified via --project flag
@@ -299,10 +306,10 @@ async def chat_loop(
             await _check_completed_tasks(agent)
 
             try:
-                proj_prefix = ""
-                if agent.active_project:
-                    proj_prefix = f"[bold cyan]{agent.active_project['name']}[/bold cyan] "
-                user_input = console.input(f"{proj_prefix}[bold green]> [/bold green]").strip()
+                prompt = format_chat_prompt(
+                    agent.active_project["name"] if agent.active_project else None
+                )
+                user_input = (await async_prompt(chat_session, prompt)).strip()
             except (EOFError, KeyboardInterrupt):
                 break
 

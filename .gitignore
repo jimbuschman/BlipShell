@@ -11,3 +11,4 @@ data/blipshell.db
 data/blipshell.db-shm
 data/blipshell.db-wal
 data/chroma/
+data/.blipshell_history
