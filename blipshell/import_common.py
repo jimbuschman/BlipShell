@@ -14,9 +14,12 @@ from typing import Callable, Optional
 
 from blipshell.llm.prompts import (
     ask_importance,
+    generate_session_title,
     rank_and_importance,
     rank_memory,
     summarize_memory,
+    summarize_session_conversation,
+    summarize_session_summaries,
 )
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.chroma_store import ChromaStore
@@ -417,6 +420,48 @@ async def _import_global_batch(
                         "Lesson extraction failed for '%s': %s", conv.title, e,
                     )
 
+            # ── Step 6: Session summary ───────────────────────────────
+            if surviving:
+                call_start = time.monotonic()
+                print(f"{prefix} Generating session summary...", flush=True)
+                try:
+                    texts = [summary for _, _, summary in surviving]
+                    if len(texts) > 20:
+                        chunk_summaries = []
+                        for ci in range(0, len(texts), 20):
+                            chunk_text = "\n".join(texts[ci:ci + 20])
+                            cs = await router.generate(
+                                TaskType.SUMMARIZATION,
+                                summarize_session_summaries(chunk_text),
+                            )
+                            chunk_summaries.append(cs)
+                        sess_summary = await router.generate(
+                            TaskType.SUMMARIZATION,
+                            summarize_session_summaries("\n".join(chunk_summaries)),
+                        )
+                    else:
+                        sess_summary = await router.generate(
+                            TaskType.SUMMARIZATION,
+                            summarize_session_conversation("\n".join(texts)),
+                        )
+                    sess_title = await router.generate(
+                        TaskType.SUMMARIZATION,
+                        generate_session_title(sess_summary),
+                    )
+                    await sqlite.update_session(
+                        session_id,
+                        summary=sess_summary.strip(),
+                        title=sess_title.strip(),
+                    )
+                    elapsed = time.monotonic() - call_start
+                    print(f"{prefix}   -> summary OK ({elapsed:.1f}s)", flush=True)
+                except Exception as e:
+                    elapsed = time.monotonic() - call_start
+                    print(f"{prefix}   -> summary FAILED ({elapsed:.1f}s): {e}", flush=True)
+                    logger.error(
+                        "Session summary failed for '%s': %s", conv.title, e,
+                    )
+
             # ── Progress ─────────────────────────────────────────────
             progress_count = stats.conversations_skipped + stats.conversations_imported
             if on_progress:
@@ -595,6 +640,41 @@ async def _import_single_conversation(
             stats.lessons_extracted += 1
         except Exception as e:
             logger.error("Lesson extraction failed for '%s': %s", conv.title, e)
+
+    # ── Step 8: Session summary ─────────────────────────────────────────
+    if surviving:
+        print(f"  [{title_short}] Generating session summary...")
+        try:
+            texts = [summary for _msg, _tags, summary in surviving]
+            if len(texts) > 20:
+                chunk_summaries = []
+                for ci in range(0, len(texts), 20):
+                    chunk_text = "\n".join(texts[ci:ci + 20])
+                    cs = await router.generate(
+                        TaskType.SUMMARIZATION,
+                        summarize_session_summaries(chunk_text),
+                    )
+                    chunk_summaries.append(cs)
+                sess_summary = await router.generate(
+                    TaskType.SUMMARIZATION,
+                    summarize_session_summaries("\n".join(chunk_summaries)),
+                )
+            else:
+                sess_summary = await router.generate(
+                    TaskType.SUMMARIZATION,
+                    summarize_session_conversation("\n".join(texts)),
+                )
+            sess_title = await router.generate(
+                TaskType.SUMMARIZATION,
+                generate_session_title(sess_summary),
+            )
+            await sqlite.update_session(
+                session_id,
+                summary=sess_summary.strip(),
+                title=sess_title.strip(),
+            )
+        except Exception as e:
+            logger.error("Session summary failed for '%s': %s", conv.title, e)
 
     print(f"  [{title_short}] Done ({msg_count} messages processed)")
 

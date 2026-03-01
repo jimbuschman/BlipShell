@@ -1,13 +1,16 @@
 """Project Digest — auto-maintained summary of project state across sessions.
 
 Generates and updates a structured digest stored in projects.metadata_json["digest"].
-Bootstrap processes all sessions chronologically in batches; incremental updates
-fold a single new session into the existing digest.
+Bootstrap uses semantic search (ChromaDB) + keyword search to find relevant memories,
+then processes them in batches. Incremental updates fold a single new session summary.
 """
+
+from __future__ import annotations
 
 import json
 import logging
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from blipshell.llm.prompts import (
     generate_initial_digest,
@@ -17,17 +20,27 @@ from blipshell.llm.prompts import (
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.sqlite_store import SQLiteStore
 
+if TYPE_CHECKING:
+    from blipshell.memory.chroma_store import ChromaStore
+
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 5  # sessions per batch during bootstrap
+BATCH_SIZE = 5  # memories per batch during bootstrap
+MAX_MEMORIES = 40  # cap total memories to keep LLM cost reasonable
 
 
 class ProjectDigestManager:
     """Manages project digest lifecycle: bootstrap, incremental update, retrieval."""
 
-    def __init__(self, sqlite: SQLiteStore, router: LLMRouter):
+    def __init__(
+        self,
+        sqlite: SQLiteStore,
+        router: LLMRouter,
+        chroma: ChromaStore | None = None,
+    ):
         self.sqlite = sqlite
         self.router = router
+        self.chroma = chroma
 
     async def get_digest(self, project_name: str) -> str | None:
         """Load existing digest from project metadata."""
@@ -38,92 +51,88 @@ class ProjectDigestManager:
         return meta.get("digest")
 
     async def bootstrap_digest(self, project_name: str) -> str:
-        """Generate digest from scratch using session or memory summaries.
+        """Generate digest from scratch using memory search.
 
-        Data source priority:
-        1. Sessions tagged with the project name
-        2. Sessions mentioning the project name in title/summary (keyword search)
-        3. Individual memory summaries mentioning the project name
+        Data source priority (merged, deduplicated):
+        1. ChromaDB semantic search for the project name (finds related memories)
+        2. SQLite keyword search on memory summaries (catches exact matches)
+        3. Session summaries tagged or mentioning the project (bonus)
 
         Processes in batches, folding each into a running digest.
         Returns the final digest (also saved to DB).
         """
-        # --- Try session-based sources first ---
+        memories = await self._gather_memories(project_name)
+
+        if not memories:
+            logger.info("No data found for project '%s'", project_name)
+            return ""
+
+        logger.info(
+            "Bootstrap digest for '%s': gathered %d memories",
+            project_name, len(memories),
+        )
+        return await self._bootstrap_from_memories(project_name, memories)
+
+    async def _gather_memories(self, project_name: str) -> list[dict]:
+        """Gather memory summaries from multiple sources, deduplicated."""
+        import re
+
+        seen_summaries: set[str] = set()
+        results: list[dict] = []
+
+        def _add(summary: str, importance: float = 0.5):
+            key = summary.strip().lower()[:100]
+            if key not in seen_summaries:
+                seen_summaries.add(key)
+                results.append({"summary": summary, "importance": importance})
+
+        # Source 1: ChromaDB semantic search (most powerful — finds related content)
+        if self.chroma:
+            # Split project name for broader search
+            parts = re.split(r'[-_\s]+', project_name)
+            queries = [project_name]
+            # Also search individual meaningful words
+            for p in parts:
+                if len(p) >= 3 and p.lower() not in queries:
+                    queries.append(p)
+
+            for query in queries:
+                try:
+                    chroma_results = self.chroma.search_memories(
+                        query=query, n_results=30,
+                    )
+                    for cr in chroma_results:
+                        doc = cr.get("document", "")
+                        sim = cr.get("similarity", 0.0)
+                        if doc and sim > 0.3:
+                            _add(doc, sim)
+                except Exception as e:
+                    logger.warning("ChromaDB search failed for '%s': %s", query, e)
+
+        # Source 2: SQLite keyword search on memory summaries
+        keyword_results = await self.sqlite.search_memories_by_keyword(
+            project_name, limit=50,
+        )
+        for m in keyword_results:
+            if m.get("summary"):
+                _add(m["summary"], m.get("importance", 0.5))
+
+        # Source 3: Session summaries (bonus — use when available)
         sessions = await self.sqlite.list_sessions_chronological(project_name)
         if not sessions:
             sessions = await self.sqlite.search_sessions_by_keyword(project_name)
-            if sessions:
-                logger.info(
-                    "No tagged sessions for '%s', found %d via keyword search",
-                    project_name, len(sessions),
-                )
+        for s in sessions or []:
+            if s.summary:
+                _add(f"[Session: {s.title or 'Untitled'}] {s.summary}", 0.7)
 
-        if sessions:
-            return await self._bootstrap_from_sessions(project_name, sessions)
-
-        # --- Fallback: use individual memory summaries ---
-        memories = await self.sqlite.search_memories_by_keyword(project_name)
-        if memories:
-            logger.info(
-                "No sessions found for '%s', using %d memory summaries instead",
-                project_name, len(memories),
-            )
-            return await self._bootstrap_from_memories(project_name, memories)
-
-        logger.info("No data found for project '%s' (no sessions or memories)", project_name)
-        return ""
-
-    async def _bootstrap_from_sessions(
-        self, project_name: str, sessions: list,
-    ) -> str:
-        """Build digest from session summaries."""
-        session_ids = []
-        digest = ""
-
-        for i in range(0, len(sessions), BATCH_SIZE):
-            batch = sessions[i:i + BATCH_SIZE]
-            batch_summaries = "\n".join(
-                f"- [{s.title or 'Untitled'}] {s.summary}"
-                for s in batch if s.summary
-            )
-            if not batch_summaries:
-                continue
-
-            session_ids.extend(s.id for s in batch)
-
-            if not digest:
-                system, user = generate_initial_digest(project_name, batch_summaries)
-                digest = await self.router.generate(
-                    TaskType.REASONING, user, system=system,
-                )
-                logger.info(
-                    "Bootstrap digest for '%s': initial batch (%d sessions)",
-                    project_name, len(batch),
-                )
-            else:
-                system, user = update_digest_with_sessions(digest, batch_summaries)
-                digest = await self.router.generate(
-                    TaskType.REASONING, user, system=system,
-                )
-                logger.info(
-                    "Bootstrap digest for '%s': folded batch %d (%d sessions)",
-                    project_name, i // BATCH_SIZE + 1, len(batch),
-                )
-
-        digest = await self._fold_lessons(project_name, digest)
-
-        if digest:
-            await self._save_digest(project_name, digest, session_ids)
-            logger.info(
-                "Bootstrap digest for '%s' complete (%d chars, %d sessions)",
-                project_name, len(digest), len(session_ids),
-            )
-        return digest
+        # Sort by importance descending, cap total
+        results.sort(key=lambda r: r["importance"], reverse=True)
+        return results[:MAX_MEMORIES]
 
     async def _bootstrap_from_memories(
         self, project_name: str, memories: list[dict],
     ) -> str:
-        """Build digest from individual memory summaries (fallback path)."""
+        """Build digest from memory summaries in batches."""
         digest = ""
 
         for i in range(0, len(memories), BATCH_SIZE):
@@ -140,7 +149,7 @@ class ProjectDigestManager:
                     TaskType.REASONING, user, system=system,
                 )
                 logger.info(
-                    "Bootstrap digest for '%s': initial memory batch (%d memories)",
+                    "Bootstrap digest for '%s': initial batch (%d memories)",
                     project_name, len(batch),
                 )
             else:
@@ -149,7 +158,7 @@ class ProjectDigestManager:
                     TaskType.REASONING, user, system=system,
                 )
                 logger.info(
-                    "Bootstrap digest for '%s': folded memory batch %d (%d memories)",
+                    "Bootstrap digest for '%s': folded batch %d (%d memories)",
                     project_name, i // BATCH_SIZE + 1, len(batch),
                 )
 
@@ -158,7 +167,7 @@ class ProjectDigestManager:
         if digest:
             await self._save_digest(project_name, digest, [])
             logger.info(
-                "Bootstrap digest for '%s' complete from memories (%d chars, %d memories)",
+                "Bootstrap digest for '%s' complete (%d chars, %d memories)",
                 project_name, len(digest), len(memories),
             )
         return digest

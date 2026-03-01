@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 JOB_ORDER = [
     "backup",
     "cleanup",
+    "backfill_summaries",
     "centroid_tag",
     "batch_tag",
     "prune",
@@ -152,6 +153,7 @@ class NightlyRunner:
         handlers = {
             "backup": self._job_backup,
             "cleanup": self._job_cleanup,
+            "backfill_summaries": self._job_backfill_summaries,
             "centroid_tag": self._job_centroid_tag,
             "batch_tag": self._job_batch_tag,
             "prune": self._job_prune,
@@ -203,6 +205,33 @@ class NightlyRunner:
                 failed += 1
 
         return {"processed": processed, "failed": failed, "total": len(unprocessed)}
+
+    async def _job_backfill_summaries(self, on_status) -> dict:
+        """Generate summaries for sessions that were imported without them."""
+        from scripts.backfill_session_summaries import summarize_session
+
+        sessions = await self.sqlite.get_sessions_without_summaries(limit=50)
+        if not sessions:
+            return {"processed": 0, "total": 0}
+
+        processed = 0
+        failed = 0
+        for session in sessions:
+            sid = session["id"]
+            try:
+                summary, title = await summarize_session(
+                    self.sqlite, self.router, sid,
+                )
+                if summary:
+                    await self.sqlite.update_session(
+                        sid, summary=summary, title=title,
+                    )
+                    processed += 1
+            except Exception as e:
+                logger.error("Backfill failed for session %d: %s", sid, e)
+                failed += 1
+
+        return {"processed": processed, "failed": failed, "total": len(sessions)}
 
     async def _job_centroid_tag(self, on_status) -> dict:
         """Run centroid-based tag assignment."""
@@ -265,7 +294,7 @@ class NightlyRunner:
         """Rebuild project digests for all active projects."""
         from blipshell.memory.project_digest import ProjectDigestManager
 
-        digest_mgr = ProjectDigestManager(self.sqlite, self.router)
+        digest_mgr = ProjectDigestManager(self.sqlite, self.router, self.chroma)
         projects = await self.sqlite.list_projects()
         rebuilt = 0
         skipped = 0

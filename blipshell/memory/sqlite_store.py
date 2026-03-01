@@ -664,6 +664,26 @@ class SQLiteStore:
             for r in rows
         ]
 
+    async def get_sessions_without_summaries(self, limit: int = 100) -> list[dict]:
+        """Get sessions that have memories but no summary (need backfill).
+
+        Returns dicts with {id, title, message_count} ordered oldest first.
+        """
+        cursor = await self._db.execute(
+            """SELECT s.id, s.title, s.message_count
+               FROM sessions s
+               WHERE s.summary IS NULL
+                 AND s.message_count > 0
+               ORDER BY s.created_at ASC
+               LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [
+            {"id": r["id"], "title": r["title"], "message_count": r["message_count"]}
+            for r in rows
+        ]
+
     async def get_lessons_by_project(self, project: str) -> list[Lesson]:
         """Get all lessons tagged with a project."""
         cursor = await self._db.execute(

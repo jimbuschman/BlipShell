@@ -791,7 +791,7 @@ async def _handle_project_command(agent: Agent, args: list[str]):
         project_name = agent.active_project["name"]
         if len(args) > 1 and args[1].lower() == "rebuild":
             from blipshell.memory.project_digest import ProjectDigestManager
-            digest_mgr = ProjectDigestManager(agent.sqlite, agent.router)
+            digest_mgr = ProjectDigestManager(agent.sqlite, agent.router, agent.chroma)
             with console.status("[dim]Rebuilding project digest...[/dim]", spinner="dots"):
                 digest = await digest_mgr.bootstrap_digest(project_name)
             if digest:
