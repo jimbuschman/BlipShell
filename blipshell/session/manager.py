@@ -36,14 +36,10 @@ class SessionManager:
     - Session resume
     """
 
-    # Per-message timeout for dump_to_memory (each message requires 2-3 LLM calls
-    # plus potential model swaps between summarization/ranking models)
-    PER_MESSAGE_TIMEOUT = 60  # seconds (gate wait + model swap + generation)
-    # Max total time for session-end operations
-    # These must be generous: OllamaGate serializes all local calls, so
-    # session-close tasks queue behind any active background work.
-    SUMMARY_TIMEOUT = 120  # seconds (summarization model + possible gate wait)
-    LESSON_TIMEOUT = 180  # seconds (reasoning model is slowest, gate wait can be 60s+)
+    # No timeouts on session-close operations. OllamaGate serializes all
+    # local Ollama calls, so each step may wait behind background work +
+    # model swaps. Artificial timeouts just lose work. If the user wants
+    # to bail, they Ctrl+C.
 
     def __init__(
         self,
@@ -183,13 +179,10 @@ class SessionManager:
             for idx, msg in undumped:
                 if msg.role in (MessageRole.USER, MessageRole.ASSISTANT):
                     try:
-                        await asyncio.wait_for(
-                            self.processor.process_message(
-                                text=msg.content,
-                                role=msg.role.value,
-                                session_id=self.session_id,
-                            ),
-                            timeout=self.PER_MESSAGE_TIMEOUT,
+                        await self.processor.process_message(
+                            text=msg.content,
+                            role=msg.role.value,
+                            session_id=self.session_id,
                         )
                         self._dumped_indices.add(idx)
                         dumped_count += 1
@@ -200,12 +193,6 @@ class SessionManager:
                                 await self.sqlite.mark_message_processed(db_id)
                             except Exception:
                                 pass  # non-critical
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            "dump_to_memory: message %d timed out after %ds, skipping",
-                            idx, self.PER_MESSAGE_TIMEOUT,
-                        )
-                        skipped_count += 1
                     except Exception as e:
                         logger.error("dump_to_memory: message %d failed: %s", idx, e)
                         skipped_count += 1
@@ -228,10 +215,9 @@ class SessionManager:
     async def end_session(self, on_status=None):
         """End the current session: dump remaining messages, generate summary, extract lessons.
 
-        Each phase has its own timeout. dump_to_memory uses per-message timeouts
-        internally, so even if individual messages are slow, the rest still get
-        processed. Summary and lesson extraction get generous timeouts since they
-        only run once.
+        No artificial timeouts — each step runs to completion. OllamaGate
+        serializes local calls, so waits can be long but work gets done.
+        User can Ctrl+C if they need to bail early.
         """
         if not self.session_id:
             return
@@ -243,36 +229,24 @@ class SessionManager:
 
         undumped_count = len(self._messages) - len(self._dumped_indices)
 
-        # Dump any remaining messages (per-message timeouts handled internally)
+        # Dump any remaining messages
         _status(f"Saving {undumped_count} messages...")
         try:
-            # Overall cap = per-message timeout × undumped count + buffer
-            total_dump_timeout = max(self.PER_MESSAGE_TIMEOUT * undumped_count + 10, 30)
-            await asyncio.wait_for(self.dump_to_memory(), timeout=total_dump_timeout)
-        except asyncio.TimeoutError:
-            logger.warning("dump_to_memory total timeout after %ds", total_dump_timeout)
+            await self.dump_to_memory()
         except Exception as e:
             logger.error("dump_to_memory failed: %s", e)
 
         # Generate session summary
         _status("Generating session summary...")
         try:
-            await asyncio.wait_for(
-                self._create_session_summary(), timeout=self.SUMMARY_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("Session summary timed out after %ds, skipping", self.SUMMARY_TIMEOUT)
+            await self._create_session_summary()
         except Exception as e:
             logger.error("Session summary failed (skipping): %s", e)
 
         # Extract lessons from the conversation
         _status("Extracting lessons...")
         try:
-            await asyncio.wait_for(
-                self._extract_lessons(), timeout=self.LESSON_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("Lesson extraction timed out after %ds, skipping", self.LESSON_TIMEOUT)
+            await self._extract_lessons()
         except Exception as e:
             logger.error("Lesson extraction failed (skipping): %s", e)
 
@@ -280,11 +254,7 @@ class SessionManager:
         if self.project:
             _status("Updating project digest...")
             try:
-                await asyncio.wait_for(
-                    self._update_project_digest(), timeout=45,
-                )
-            except asyncio.TimeoutError:
-                logger.warning("Project digest update timed out, skipping")
+                await self._update_project_digest()
             except Exception as e:
                 logger.error("Project digest update failed: %s", e)
 
