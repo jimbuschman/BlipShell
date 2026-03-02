@@ -165,6 +165,14 @@ class ChatMixin:
             if not self.think_enabled:
                 chat_kwargs["think"] = False
 
+            # Gate local Ollama calls (cloud endpoints bypass)
+            if endpoint.provider == "ollama":
+                from blipshell.llm.ollama_gate import INTERACTIVE, get_gate
+                config.ollama_gate = get_gate()
+                config.gate_priority = INTERACTIVE
+            else:
+                config.ollama_gate = None
+
             endpoint.start_request()
             try:
                 result = await loop.run(

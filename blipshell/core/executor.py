@@ -460,6 +460,11 @@ class TaskExecutor:
             capture_inline_text=True,
             tool_provider=_get_current_tools,
         )
+        # Gate local Ollama calls (cloud endpoints bypass)
+        if endpoint.provider == "ollama":
+            from blipshell.llm.ollama_gate import INTERACTIVE, get_gate
+            config.ollama_gate = get_gate()
+            config.gate_priority = INTERACTIVE
         result = await loop.run(
             client=client,
             messages=messages,
@@ -578,6 +583,11 @@ class TaskExecutor:
         # Run the unified tool-calling loop
         loop = ChatLoop(self.tool_registry, on_token)
         config = LoopConfig(budget=max_iterations)
+        # Gate local Ollama calls (cloud endpoints bypass)
+        if endpoint.provider == "ollama":
+            from blipshell.llm.ollama_gate import INTERACTIVE, get_gate
+            config.ollama_gate = get_gate()
+            config.gate_priority = INTERACTIVE
         result = await loop.run(
             client=client,
             messages=messages,

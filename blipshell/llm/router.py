@@ -100,6 +100,20 @@ class LLMRouter:
         model = endpoint.models.get(task_type) or self.get_model(task_type)
         return model, endpoint.client
 
+    async def _gated_generate(self, endpoint, prompt: str, model: str,
+                              system: Optional[str], gen_kwargs: dict) -> str:
+        """Call client.generate(), gating local Ollama calls via OllamaGate."""
+        if endpoint.provider == "ollama":
+            from blipshell.llm.ollama_gate import get_gate
+            gate = get_gate()
+            async with gate.async_gate(gate.infer_priority()):
+                return await endpoint.client.generate(
+                    prompt=prompt, model=model, system=system, **gen_kwargs,
+                )
+        return await endpoint.client.generate(
+            prompt=prompt, model=model, system=system, **gen_kwargs,
+        )
+
     async def generate(self, task_type: str, prompt: str, system: Optional[str] = None, think: Optional[bool | str] = None) -> str:
         """Route a generate request to the appropriate model/endpoint.
 
@@ -156,7 +170,7 @@ class LLMRouter:
                 gen_kwargs["think"] = think
             if use_fallback and not self._models.fallback_think:
                 gen_kwargs["think"] = False
-            result = await client.generate(prompt=prompt, model=model, system=system, **gen_kwargs)
+            result = await self._gated_generate(endpoint, prompt, model, system, gen_kwargs)
             endpoint.record_success(0)
             return result
         except Exception as primary_err:
@@ -196,9 +210,8 @@ class LLMRouter:
                             fb_kwargs["think"] = False
                         if fallback_ep.context_tokens:
                             fb_kwargs["options"] = {"num_ctx": fallback_ep.context_tokens}
-                        result = await fallback_ep.client.generate(
-                            prompt=fb_prompt, model=fb_model, system=fb_system,
-                            **fb_kwargs,
+                        result = await self._gated_generate(
+                            fallback_ep, fb_prompt, fb_model, fb_system, fb_kwargs,
                         )
                         return result
                 except Exception as fallback_err:

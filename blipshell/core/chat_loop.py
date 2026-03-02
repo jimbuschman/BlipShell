@@ -64,6 +64,12 @@ class LoopConfig:
     max_parallel: int = 8
     """Maximum number of concurrent tool executions per batch."""
 
+    ollama_gate: object | None = None
+    """OllamaGate instance for serializing local Ollama calls. None = no gating."""
+
+    gate_priority: int = 0
+    """Priority for gate acquisition (0=INTERACTIVE, 2=BACKGROUND)."""
+
 
 @dataclass
 class LoopResult:
@@ -380,11 +386,18 @@ class ChatLoop:
             else:
                 iter_tools = tools if (tools and tool_call_count < config.budget) else None
 
-            # ── LLM call ──
-            content, tool_calls = await stream_chat(
-                client, messages, model, iter_tools, chat_kwargs,
-                self.on_token, on_stream_done,
-            )
+            # ── LLM call (gated for local Ollama) ──
+            if config.ollama_gate:
+                async with config.ollama_gate.async_gate(config.gate_priority):
+                    content, tool_calls = await stream_chat(
+                        client, messages, model, iter_tools, chat_kwargs,
+                        self.on_token, on_stream_done,
+                    )
+            else:
+                content, tool_calls = await stream_chat(
+                    client, messages, model, iter_tools, chat_kwargs,
+                    self.on_token, on_stream_done,
+                )
 
             # ── Tool calls ──
             if tool_calls and tool_call_count < config.budget:

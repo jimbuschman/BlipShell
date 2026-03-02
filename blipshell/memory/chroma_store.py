@@ -4,6 +4,7 @@ Replaces the manual OllamaEmbedder + MemoryBlobs + cosine similarity code from C
 ChromaDB handles embedding generation, HNSW indexing, and similarity search.
 """
 
+import functools
 import logging
 from pathlib import Path
 from typing import Optional
@@ -29,6 +30,22 @@ MEMORIES_COLLECTION = "memories"
 CORE_MEMORIES_COLLECTION = "core_memories"
 LESSONS_COLLECTION = "lessons"
 ENTITIES_COLLECTION = "entities"
+
+
+def _ollama_gated(fn):
+    """Wrap a ChromaStore method with OllamaGate for embedding calls.
+
+    ChromaDB's upsert() and query() both hit Ollama's /api/embeddings.
+    This decorator serializes those calls through the shared OllamaGate
+    so they don't compete with interactive LLM calls on a single GPU.
+    """
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        from blipshell.llm.ollama_gate import get_gate
+        gate = get_gate()
+        with gate.gate(gate.infer_priority()):
+            return fn(self, *args, **kwargs)
+    return wrapper
 
 
 class ChromaStore:
@@ -134,6 +151,7 @@ class ChromaStore:
         logger.debug("Truncating text from %d to %d chars for embedding", len(text), MAX_EMBED_CHARS)
         return text[:MAX_EMBED_CHARS]
 
+    @_ollama_gated
     def add_memory(self, memory_id: int, text: str, metadata: Optional[dict] = None):
         """Add a memory embedding to ChromaDB."""
         self._require_collections()
@@ -144,6 +162,7 @@ class ChromaStore:
             metadatas=[meta],
         )
 
+    @_ollama_gated
     def add_memories_batch(
         self,
         memory_ids: list[int],
@@ -163,6 +182,7 @@ class ChromaStore:
             metadatas=safe_metas,
         )
 
+    @_ollama_gated
     def add_core_memory(self, core_memory_id: int, text: str, metadata: Optional[dict] = None):
         """Add a core memory embedding to ChromaDB."""
         self._require_collections()
@@ -173,6 +193,7 @@ class ChromaStore:
             metadatas=[meta],
         )
 
+    @_ollama_gated
     def add_lesson(self, lesson_id: int, text: str, metadata: Optional[dict] = None):
         """Add a lesson embedding to ChromaDB."""
         self._require_collections()
@@ -183,6 +204,7 @@ class ChromaStore:
             metadatas=[meta],
         )
 
+    @_ollama_gated
     def search_memories(
         self,
         query: str,
@@ -208,6 +230,7 @@ class ChromaStore:
 
         return self._format_results(results)
 
+    @_ollama_gated
     def search_core_memories(self, query: str, n_results: int = 10) -> list[dict]:
         """Search core memories by semantic similarity."""
         self._require_collections()
@@ -221,6 +244,7 @@ class ChromaStore:
 
         return self._format_results(results)
 
+    @_ollama_gated
     def search_lessons(self, query: str, n_results: int = 10) -> list[dict]:
         """Search lessons by semantic similarity."""
         self._require_collections()
@@ -264,6 +288,7 @@ class ChromaStore:
 
     # --- Entity Embeddings (Feature 5: Entity Resolution) ---
 
+    @_ollama_gated
     def upsert_entity(self, entity_id: int, name: str, entity_type: str = "concept"):
         """Add or update an entity embedding in ChromaDB."""
         self._require_collections()
@@ -273,6 +298,7 @@ class ChromaStore:
             metadatas=[{"entity_type": entity_type}],
         )
 
+    @_ollama_gated
     def upsert_entities_batch(
         self, entity_ids: list[int], names: list[str],
         entity_types: list[str] | None = None,
@@ -289,6 +315,7 @@ class ChromaStore:
             metadatas=[{"entity_type": et} for et in entity_types],
         )
 
+    @_ollama_gated
     def search_similar_entities(
         self, name: str, n_results: int = 5,
     ) -> list[dict]:
