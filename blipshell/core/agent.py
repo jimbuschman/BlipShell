@@ -307,13 +307,11 @@ class Agent(
     async def night_cleanup(
         self,
         on_status: Callable[[str], None] | None = None,
-        timeout_per_message: int = 120,
     ) -> dict:
-        """Reprocess failed messages with relaxed timeouts.
+        """Reprocess failed messages.
 
-        Unlike the startup sweep (30s, limit 50), this uses 120s per message
-        and processes up to 500 messages. Designed for manual/scheduled runs
-        when the system isn't under interactive load.
+        Processes up to 500 unprocessed messages with no artificial timeouts.
+        Each call runs to completion — the gate serializes Ollama access.
 
         Returns:
             Dict with processed, failed, total counts.
@@ -329,28 +327,19 @@ class Agent(
             _status("No unprocessed messages found.")
             return {"processed": 0, "failed": 0, "total": 0}
 
-        _status(f"Found {len(unprocessed)} unprocessed messages, reprocessing with {timeout_per_message}s timeout...")
+        _status(f"Found {len(unprocessed)} unprocessed messages, reprocessing...")
         processed = 0
         failed = 0
         for i, msg in enumerate(unprocessed):
             _status(f"Processing message {i + 1}/{len(unprocessed)} (id={msg['id']})...")
             try:
-                await asyncio.wait_for(
-                    self.processor.process_message(
-                        text=msg["content"],
-                        role=msg["role"],
-                        session_id=msg["session_id"],
-                    ),
-                    timeout=timeout_per_message,
+                await self.processor.process_message(
+                    text=msg["content"],
+                    role=msg["role"],
+                    session_id=msg["session_id"],
                 )
                 await self.sqlite.mark_message_processed(msg["id"])
                 processed += 1
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "Night cleanup: message %d timed out after %ds",
-                    msg["id"], timeout_per_message,
-                )
-                failed += 1
             except Exception as e:
                 logger.warning("Night cleanup: message %d failed: %s", msg["id"], e)
                 failed += 1

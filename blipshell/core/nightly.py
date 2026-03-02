@@ -193,18 +193,14 @@ class NightlyRunner:
         if not unprocessed:
             return {"processed": 0, "failed": 0, "total": 0}
 
-        import asyncio
         processed = 0
         failed = 0
         for msg in unprocessed:
             try:
-                await asyncio.wait_for(
-                    self.processor.process_message(
-                        text=msg["content"],
-                        role=msg["role"],
-                        session_id=msg["session_id"],
-                    ),
-                    timeout=120,
+                await self.processor.process_message(
+                    text=msg["content"],
+                    role=msg["role"],
+                    session_id=msg["session_id"],
                 )
                 await self.sqlite.mark_message_processed(msg["id"])
                 processed += 1
