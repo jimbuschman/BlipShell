@@ -151,6 +151,7 @@ tools:
   web:
     max_fetch_size: 524288  # 512KB
     timeout: 15
+    tavily_api_key: "${TAVILY_API_KEY}"  # Sign up at tavily.com (1000 free searches/month)
 
 pii:
   enabled: true        # sanitize PII (emails, phones, SSNs, etc.) before cloud calls
