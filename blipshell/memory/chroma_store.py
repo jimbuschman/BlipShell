@@ -9,8 +9,6 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-import httpx
-
 import chromadb
 from chromadb.config import Settings
 
@@ -21,8 +19,9 @@ logger = logging.getLogger(__name__)
 MAX_EMBED_CHARS = 2000
 
 # Timeout for Ollama embedding requests (seconds).
-# The built-in OllamaEmbeddingFunction uses httpx default (~10s) which is
-# too short when Ollama is swapping models on a single GPU (can take 30s+).
+# Default (60s) is too short when Ollama is swapping models on a single GPU
+# (can take 30s+). With the OllamaGate serializing calls, swaps should be
+# rare, but we keep a generous timeout as a safety net.
 EMBED_TIMEOUT = 120.0
 
 # Collection names
@@ -72,16 +71,14 @@ class ChromaStore:
             settings=Settings(anonymized_telemetry=False),
         )
 
-        # Use Ollama for embedding generation
+        # Use Ollama for embedding generation.
+        # OllamaEmbeddingFunction now wraps ollama.Client (not httpx),
+        # so we pass timeout directly via the constructor.
         embedding_fn = chromadb.utils.embedding_functions.OllamaEmbeddingFunction(
             url=self.ollama_url,
             model_name=self.embedding_model,
+            timeout=int(EMBED_TIMEOUT),
         )
-        # Increase httpx timeout from default ~10s to survive GPU model swaps
-        try:
-            embedding_fn._client = httpx.Client(timeout=httpx.Timeout(EMBED_TIMEOUT))
-        except Exception:
-            pass  # If internals change, fall back to default timeout
 
         self._memories = self._client.get_or_create_collection(
             name=MEMORIES_COLLECTION,
