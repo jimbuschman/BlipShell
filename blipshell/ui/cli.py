@@ -279,10 +279,14 @@ async def chat_loop(
             # During cleanup, second Ctrl+C force-quits
             raise KeyboardInterrupt
         _exit_requested = True
-        # Cancel the active chat task (including executor loops in project mode)
-        # so asyncio.wait() returns immediately instead of waiting for completion
         if _active_chat_task is not None and not _active_chat_task.done():
+            # Cancel the active chat task (including executor loops in project mode)
+            # so asyncio.wait() returns immediately instead of waiting for completion
             _active_chat_task.cancel()
+        else:
+            # No active task — we're at the input prompt. Raise KeyboardInterrupt
+            # so prompt_toolkit's prompt_async() breaks out immediately.
+            raise KeyboardInterrupt
 
     signal.signal(signal.SIGINT, _sigint_handler)
 

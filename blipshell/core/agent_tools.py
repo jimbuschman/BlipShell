@@ -57,6 +57,10 @@ class ToolsMixin:
         self.tool_registry.register(EditFileTool(), group="filesystem")
         self.tool_registry.register(ListDirectoryTool(), group="filesystem")
 
+        # Code search group (available in all modes)
+        self.tool_registry.register(GrepTool(), group="coding")
+        self.tool_registry.register(GlobTool(), group="coding")
+
         # Shell group
         self.tool_registry.register(ShellTool(
             timeout=cfg.shell.timeout,
