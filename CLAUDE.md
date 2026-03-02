@@ -529,70 +529,44 @@ Items worth doing eventually but not prioritized:
 
 ## Code Review Fixes (from independent review, 2026-03-02)
 
-### 28. Add Missing Database Indexes — NOT STARTED
-With 31K+ memories, several heavily-filtered columns lack indexes.
-- [ ] `memories.is_archived` — in virtually every WHERE clause
-- [ ] `memories.memory_type`
-- [ ] `entity_mentions.entity_id`
-- [ ] Composite index on `(session_id, is_archived)`
-- Files: `sqlite_store.py` (schema/migration)
+### 28. Add Missing Database Indexes — COMPLETE
+- [x] `memories.is_archived`, `memories.memory_type`, composite `(session_id, is_archived)`
+- Note: `entity_mentions.entity_id` already had an index (`idx_entity_mentions_entity`)
 
-### 29. Path Traversal Fix in Filesystem Tools — NOT STARTED
-`_resolve()` in filesystem.py allows `../../../etc/shadow` to escape project root, and absolute paths bypass root validation entirely.
-- [ ] After `.resolve()`, validate `target.relative_to(root_path)` — reject if outside root
-- [ ] Affects: `read_file`, `write_file`, `edit_file`, `list_directory`
-- Files: `blipshell/core/tools/filesystem_tools.py`
+### 29. Path Traversal Fix in Filesystem Tools — COMPLETE
+- [x] `_validate_within_root()` checks `resolved.relative_to(root_path)` after `.resolve()`
+- [x] Applied to all 4 tools: `read_file`, `write_file`, `edit_file`, `list_directory`
 
-### 30. Symlink Check Before Write — NOT STARTED
-`write_file` doesn't check if target is a symlink. A symlink to a sensitive path could be exploited.
-- [ ] Check `is_symlink()` before writing, reject or resolve accordingly
-- Files: `blipshell/core/tools/filesystem_tools.py`
+### 30. Symlink Check Before Write — COMPLETE
+- [x] `_check_symlink()` rejects symlink targets in `write_file` and `edit_file`
 
-### 31. Initialize Race Condition — NOT STARTED
-`agent_session.py:30-43` — no lock protects the `if self._initialized: return` check. Concurrent calls can double-initialize resources.
-- [ ] Wrap in `asyncio.Lock`
-- Files: `blipshell/core/agent_session.py`
+### 31. Initialize Race Condition — COMPLETE
+- [x] `asyncio.Lock` on `Agent.initialize()` — extracted body to `_do_initialize()`
 
-### 32. Exception Swallowing Sweep — NOT STARTED
-20+ bare `except Exception: pass` blocks across core modules. Silent failures make debugging hard and data integrity issues compound.
-- [ ] `agent_chat.py:522-533` — scratchpad loading
-- [ ] `nightly.py:136-137` — metadata persistence
-- [ ] `nightly.py:265-266` — memory deletion
-- [ ] `processor.py:131-132, 285-286, 342-354` — ChromaDB operations
-- [ ] At minimum: `logger.warning()` with traceback for data operations
-- Files: multiple (agent_chat.py, nightly.py, processor.py, others)
+### 32. Exception Swallowing Sweep — COMPLETE
+- [x] 13 bare `except Exception: pass` blocks replaced with `logger.warning()`/`logger.debug()`
+- [x] Files: agent.py, agent_chat.py, agent_project.py, agent_session.py, executor.py, nightly.py, processor.py
 
 ### 33. SQLite/ChromaDB Sync Drift — NOT STARTED
-Deletes/archives in SQLite and ChromaDB happen as separate calls with no transactional guarantee. Failures silently swallowed. Over time causes permanent drift between stores.
+Deletes/archives in SQLite and ChromaDB happen as separate calls with no transactional guarantee. Over time causes permanent drift between stores.
 - [ ] Queue failed ChromaDB operations for retry
 - [ ] Consider `sync_status` column or reconciliation job (audit_db.py already has a sync check)
 - Files: `processor.py`, `consolidation.py`
 
-### 34. FTS5 Backfill Runs Every Startup — NOT STARTED
-`INSERT OR IGNORE INTO memories_fts(rowid, summary) SELECT id, summary FROM memories WHERE summary IS NOT NULL` scans all 31K+ rows on every launch.
-- [ ] Track backfill status in `app_metadata` — only run once or when new unindexed rows exist
-- Files: `sqlite_store.py`
+### 34. FTS5 Backfill Runs Every Startup — COMPLETE
+- [x] Tracks `fts5_backfill_done` in `app_metadata` — full-table scan only runs once
 
-### 35. WebFetch SSRF Protection — NOT STARTED
-No URL validation — tool can fetch cloud metadata (169.254.169.254), internal services (localhost), or local files (file:///).
-- [ ] Block private IP ranges (10.x, 172.16-31.x, 192.168.x, 169.254.x, 127.x)
-- [ ] Block non-HTTP schemes (file://, ftp://, etc.)
-- Files: `blipshell/core/tools/web.py`
+### 35. WebFetch SSRF Protection — COMPLETE
+- [x] `_is_ssrf_target()` blocks private IPs, cloud metadata, localhost, non-HTTP schemes
 
-### 36. Cache Key Collision Fix — NOT STARTED
-`cache_key = f"{model}:{system or ''}:{prompt}"` — if prompt contains the separator pattern, keys can collide.
-- [ ] Use a proper hash (hashlib.sha256)
-- Files: `blipshell/llm/client.py`
+### 36. Cache Key Collision Fix — COMPLETE
+- [x] SHA-256 hash replaces string concatenation for cache keys
 
-### 37. Rate Limiting Race Condition — NOT STARTED
-`_is_rate_limited()` check and `start_request()` increment are not atomic. Under concurrent load, rate limit can be exceeded.
-- [ ] Use a lock around the check-and-increment
-- Files: `blipshell/llm/endpoints.py`
+### 37. Rate Limiting Race Condition — COMPLETE
+- [x] `start_request_atomic()` on EndpointManager runs under asyncio lock
 
-### 38. Session State Validation — NOT STARTED
-`chat()` calls `self.session_manager.add_message()` without null-checking session_manager. If called before `start_session()`, crashes with AttributeError.
-- [ ] Guard at top of `chat()`
-- Files: `blipshell/core/agent_chat.py`
+### 38. Session State Validation — COMPLETE
+- [x] `chat()` guards with `RuntimeError` if `session_manager` is None
 
 ## Architecture Notes
 - Two-PC setup: Development on one PC, Ollama/benchmarks on another
