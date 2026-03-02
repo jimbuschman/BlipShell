@@ -439,8 +439,8 @@ class TaskExecutor:
                         "chat_history": {"items": len(chat_history or []), "tokens": sum(len(m.get("content", "") or "") // 4 for m in (chat_history or []))},
                     },
                 })
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to log executor flow event: %s", e)
 
         # Dynamic tool provider — switches tools mid-loop when plan mode toggles
         def _get_current_tools():
@@ -495,8 +495,8 @@ class TaskExecutor:
                     "files_created": len(self._step_files_created),
                     "files_edited": len(self._step_files_edited),
                 })
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to log executor completion event: %s", e)
 
         # Save transcript for reference
         if self.active_project:

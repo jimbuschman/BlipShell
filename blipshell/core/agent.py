@@ -112,6 +112,7 @@ class Agent(
         self._memory_worker = None  # MemoryWorker — dedicated thread for background processing
         self._last_endpoint_used: Optional[str] = None
         self._initialized = False
+        self._init_lock = asyncio.Lock()
         self.think_enabled: bool = False  # /think toggle — off for fast simple chat, complex auto-enables
         self.reflect_enabled: bool = False  # /reflect toggle — second-pass self-critique
         self._turn_number: int = 0
@@ -137,8 +138,13 @@ class Agent(
         Args:
             on_status: Optional callback(msg: str) for progress reporting.
         """
-        if self._initialized:
-            return
+        async with self._init_lock:
+            if self._initialized:
+                return
+            await self._do_initialize(on_status)
+
+    async def _do_initialize(self, on_status=None):
+        """Internal initialize — called under _init_lock."""
 
         def _status(msg: str):
             if on_status:
@@ -479,26 +485,26 @@ class Agent(
         if self.job_queue:
             try:
                 await self.job_queue.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Job queue shutdown error: %s", e)
         # 2. Disconnect MCP servers
         if self.mcp_manager:
             try:
                 await self.mcp_manager.disconnect_all()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("MCP disconnect error: %s", e)
         # 3. Close ChromaDB before SQLite (ChromaDB may reference SQLite data)
         if self.chroma:
             try:
                 self.chroma.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("ChromaDB close error: %s", e)
         # 4. Close SQLite last
         if self.sqlite:
             try:
                 await self.sqlite.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("SQLite close error: %s", e)
 
     async def _cancel_background_tasks(self):
         """Cancel all tracked background tasks and wait for them to finish."""

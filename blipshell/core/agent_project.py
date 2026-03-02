@@ -198,8 +198,8 @@ class ProjectMixin:
             )
             if log.returncode == 0 and log.stdout.strip():
                 parts.append(f"\nRecent commits:\n{log.stdout.strip()}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Git info unavailable for project context: %s", e)
 
         # Code map: AST-based structure of Python files (replaces file tree)
         if self._repo_map:
@@ -227,8 +227,8 @@ class ProjectMixin:
                 content = blipshell_md.read_text(encoding="utf-8", errors="replace")
                 parts.append(f"\n=== BLIPSHELL.md (project instructions) ===\n{content}")
                 logger.info("Loaded BLIPSHELL.md from %s (%d chars)", root, len(content))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to load BLIPSHELL.md: %s", e)
 
         # Key files
         key_files = ["README.md", "README.rst", "README.txt", "readme.md",
@@ -245,8 +245,8 @@ class ProjectMixin:
                     if len(content.splitlines()) > 60:
                         truncated += "\n... (truncated)"
                     parts.append(f"\n=== {fname} ===\n{truncated}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to load key file %s: %s", fname, e)
 
         # Project digest — memory of what's been done across sessions
         try:

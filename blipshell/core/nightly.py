@@ -133,8 +133,8 @@ class NightlyRunner:
                 "elapsed_s": round(total_elapsed, 1),
                 "jobs": {k: v.get("status", "unknown") for k, v in results.items()},
             }))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to persist nightly run metadata: %s", e)
 
         _status(f"Nightly run complete in {total_elapsed:.0f}s.")
         return {
@@ -201,7 +201,8 @@ class NightlyRunner:
                 )
                 await self.sqlite.mark_message_processed(msg["id"])
                 processed += 1
-            except Exception:
+            except Exception as e:
+                logger.warning("Failed to reprocess message %d: %s", msg["id"], e)
                 failed += 1
 
         return {"processed": processed, "failed": failed, "total": len(unprocessed)}
@@ -262,8 +263,8 @@ class NightlyRunner:
         for mid in ids_to_archive:
             try:
                 self.chroma.delete_memory(mid)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to delete memory %d from ChromaDB during prune: %s", mid, e)
         return {"pruned": count}
 
     async def _job_consolidate(self, on_status) -> dict:
@@ -317,5 +318,5 @@ class NightlyRunner:
         """Clean up resources."""
         try:
             await self.sqlite.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("NightlyRunner close error: %s", e)

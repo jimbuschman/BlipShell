@@ -191,6 +191,16 @@ class EndpointManager:
             self._last_routed[role] = chosen.name
             return chosen
 
+    async def start_request_atomic(self, endpoint: Endpoint):
+        """Atomically start a request under the manager lock.
+
+        Ensures no race between rate limit check (can_accept_request) and
+        request registration (start_request) when multiple coroutines
+        are concurrently routing requests.
+        """
+        async with self._lock:
+            endpoint.start_request()
+
     async def get_client_for_role(self, role: str) -> Optional[LLMClient]:
         """Get the LLMClient for the best endpoint matching a role."""
         ep = await self.get_endpoint_for_role(role)

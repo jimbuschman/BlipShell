@@ -1,11 +1,42 @@
 """Web tools: search and fetch."""
 
+import ipaddress
 import logging
+from urllib.parse import urlparse
 
 from blipshell.core.tools.base import Tool
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
 
 logger = logging.getLogger(__name__)
+
+
+def _is_ssrf_target(url: str) -> str | None:
+    """Block URLs targeting private/internal resources. Returns error or None."""
+    parsed = urlparse(url)
+
+    # Block non-HTTP schemes
+    if parsed.scheme not in ("http", "https"):
+        return f"Error: Only http/https URLs are allowed (got '{parsed.scheme}')."
+
+    hostname = parsed.hostname or ""
+
+    # Block cloud metadata endpoints
+    if hostname in ("169.254.169.254", "metadata.google.internal"):
+        return "Error: Access to cloud metadata endpoints is blocked."
+
+    # Block localhost variants
+    if hostname in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        return "Error: Access to localhost is blocked."
+
+    # Block private IP ranges
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if addr.is_private or addr.is_loopback or addr.is_link_local:
+            return f"Error: Access to private/internal IP {hostname} is blocked."
+    except ValueError:
+        pass  # hostname is a domain name, not an IP — that's fine
+
+    return None
 
 
 class WebSearchTool(Tool):
@@ -83,6 +114,10 @@ class WebFetchTool(Tool):
         )
 
     async def execute(self, url: str, **kwargs) -> str:
+        err = _is_ssrf_target(url)
+        if err:
+            return err
+
         try:
             import httpx
             from bs4 import BeautifulSoup

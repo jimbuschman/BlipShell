@@ -12,6 +12,24 @@ from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterT
 logger = logging.getLogger(__name__)
 
 
+def _validate_within_root(resolved: Path, root_path: str | None) -> str | None:
+    """Ensure resolved path is within root_path. Returns error message or None."""
+    if root_path is None:
+        return None
+    try:
+        resolved.relative_to(Path(root_path).resolve())
+        return None
+    except ValueError:
+        return f"Error: Path escapes the project root ({root_path}). Access denied."
+
+
+def _check_symlink(resolved: Path) -> str | None:
+    """Reject symlinks to prevent symlink-based path traversal. Returns error or None."""
+    if resolved.is_symlink():
+        return f"Error: '{resolved.name}' is a symlink. Refusing to write through symlinks for safety."
+    return None
+
+
 class ReadFileTool(Tool):
     read_only = True
 
@@ -60,6 +78,10 @@ class ReadFileTool(Tool):
 
     async def execute(self, path: str, start_line: int = 1, max_lines: int = 0, **kwargs) -> str:
         resolved = self._resolve(path)
+
+        err = _validate_within_root(resolved, self.root_path)
+        if err:
+            return err
 
         # Re-read handling: behavior depends on whether a cache is available.
         # With cache (executor/planned path): return cached content (fast, no disk IO)
@@ -183,8 +205,15 @@ class WriteFileTool(Tool):
         if content is None:
             return "Error: 'content' argument is required — provide the file content to write."
         resolved = self._resolve(path)
+
+        err = _validate_within_root(resolved, self.root_path)
+        if err:
+            return err
         if any(blocked in str(resolved) for blocked in self.blocked_paths):
             return f"Error: Access to '{path}' is blocked."
+        err = _check_symlink(resolved)
+        if err:
+            return err
 
         resolved.parent.mkdir(parents=True, exist_ok=True)
         resolved.write_text(content, encoding="utf-8")
@@ -238,6 +267,13 @@ class EditFileTool(Tool):
         if not old_text:
             return "Error: 'old_text' argument is required — specify the text to find and replace."
         resolved = self._resolve(path)
+
+        err = _validate_within_root(resolved, self.root_path)
+        if err:
+            return err
+        err = _check_symlink(resolved)
+        if err:
+            return err
         if not resolved.is_file():
             if resolved.is_dir():
                 return (
@@ -527,6 +563,10 @@ class ListDirectoryTool(Tool):
 
     async def execute(self, path: str = ".", **kwargs) -> str:
         resolved = self._resolve(path)
+
+        err = _validate_within_root(resolved, self.root_path)
+        if err:
+            return err
         if not resolved.is_dir():
             if resolved.is_file():
                 return f"Error: '{path}' is a file, not a directory. Use read_file to read it."

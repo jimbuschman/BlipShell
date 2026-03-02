@@ -5,6 +5,7 @@ streaming, and structured responses.
 """
 
 import asyncio
+import hashlib
 import logging
 from collections import OrderedDict
 from typing import Any, AsyncIterator, Optional
@@ -142,7 +143,7 @@ class LLMClient:
 
         Used for utility tasks like summarization, ranking, etc.
         """
-        cache_key = f"{model}:{system or ''}:{prompt}"
+        cache_key = hashlib.sha256(f"{model}:{system or ''}:{prompt}".encode()).hexdigest()
 
         if use_cache and cache_key in _response_cache:
             _response_cache.move_to_end(cache_key)

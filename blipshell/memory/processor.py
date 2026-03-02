@@ -128,8 +128,8 @@ class MemoryProcessor:
                     await self.sqlite.update_memory(memory_id, is_archived=True)
                     try:
                         self.chroma.delete_memory(memory_id)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Failed to delete deduped memory %d from ChromaDB: %s", memory_id, e)
                     logger.info("Dedup: archived redundant memory %d", memory_id)
                     return None
             except Exception as e:
@@ -282,8 +282,8 @@ class MemoryProcessor:
                 await self.sqlite.deactivate_core_memory(r["id"])
                 try:
                     self.chroma.delete_core_memory(r["id"])
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to delete contradicted core memory %d from ChromaDB: %s", r["id"], e)
                 deactivated += 1
                 logger.info(
                     "Deactivated contradicted core memory %d (superseded by %d)",
@@ -340,8 +340,8 @@ class MemoryProcessor:
             await self.sqlite.update_memory(old_id, is_archived=True)
             try:
                 self.chroma.delete_memory(old_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to delete memory %d from ChromaDB during dedup: %s", old_id, e)
             logger.info("Dedup: UPDATE — archived old memory %d in favor of %d", old_id, new_memory_id)
             return "UPDATE"
 
@@ -350,8 +350,8 @@ class MemoryProcessor:
             await self.sqlite.update_memory(old_id, is_archived=True)
             try:
                 self.chroma.delete_memory(old_id)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to delete memory %d from ChromaDB during dedup: %s", old_id, e)
             logger.info("Dedup: DELETE — archived contradicted memory %d", old_id)
             return "DELETE"
 

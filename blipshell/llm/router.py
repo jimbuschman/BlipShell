@@ -161,7 +161,7 @@ class LLMRouter:
             if system:
                 system = sanitize_text(system)
 
-        endpoint.start_request()
+        await self._endpoint_manager.start_request_atomic(endpoint)
         try:
             gen_kwargs = {}
             if endpoint.context_tokens:

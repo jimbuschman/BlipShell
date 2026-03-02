@@ -99,8 +99,8 @@ class SessionMixin:
             for mid in ids_to_archive:
                 try:
                     self.chroma.delete_memory(mid)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to delete memory %d from ChromaDB: %s", mid, e)
             if count:
                 logger.info("Auto-pruned %d memories", count)
         except Exception as e:

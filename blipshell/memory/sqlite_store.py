@@ -182,6 +182,9 @@ CREATE INDEX IF NOT EXISTS idx_background_tasks_session ON background_tasks(sess
 CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status);
 CREATE INDEX IF NOT EXISTS idx_core_memories_active ON core_memories(is_active);
 CREATE INDEX IF NOT EXISTS idx_tags_name_category ON tags(name, category);
+CREATE INDEX IF NOT EXISTS idx_memories_archived ON memories(is_archived);
+CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(memory_type);
+CREATE INDEX IF NOT EXISTS idx_memories_session_archived ON memories(session_id, is_archived);
 
 CREATE TABLE IF NOT EXISTS discovered_tag_patterns (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -345,11 +348,19 @@ class SQLiteStore:
             "UPDATE entity_relationships SET valid_from = created_at "
             "WHERE valid_from IS NULL"
         )
-        # Backfill FTS5 index with existing summaries
-        await self._db.execute(
-            """INSERT OR IGNORE INTO memories_fts(rowid, summary)
-               SELECT id, summary FROM memories WHERE summary IS NOT NULL"""
+        # Backfill FTS5 index — only run once (tracks completion in app_metadata)
+        cursor = await self._db.execute(
+            "SELECT value FROM app_metadata WHERE key = 'fts5_backfill_done'"
         )
+        row = await cursor.fetchone()
+        if not row:
+            await self._db.execute(
+                """INSERT OR IGNORE INTO memories_fts(rowid, summary)
+                   SELECT id, summary FROM memories WHERE summary IS NOT NULL"""
+            )
+            await self._db.execute(
+                "INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('fts5_backfill_done', '1')"
+            )
         await self._db.commit()
 
     async def close(self):

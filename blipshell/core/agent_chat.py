@@ -46,6 +46,9 @@ class ChatMixin:
         Returns:
             The assistant's complete response
         """
+        if not hasattr(self, 'session_manager') or self.session_manager is None:
+            raise RuntimeError("No active session — call start_session() before chat()")
+
         # Add user message to session
         self.session_manager.add_message(MessageRole.USER, user_message)
 
@@ -519,8 +522,8 @@ class ChatMixin:
                         content = f.read().strip()
                     if content:
                         parts.append(f"[Project: {self.active_project['name']}]\n{content}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("Failed to load project scratchpad %s: %s", proj_path, e)
         # General scratchpad
         general_path = os.path.join("data", "scratchpad.md")
         if os.path.exists(general_path):
@@ -529,8 +532,8 @@ class ChatMixin:
                     content = f.read().strip()
                 if content:
                     parts.append(f"[General]\n{content}")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to load general scratchpad: %s", e)
         return "\n\n".join(parts)
 
     async def _log_event(self, event_type: str, data: dict):
