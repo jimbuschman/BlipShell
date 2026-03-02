@@ -38,10 +38,12 @@ class SessionManager:
 
     # Per-message timeout for dump_to_memory (each message requires 2-3 LLM calls
     # plus potential model swaps between summarization/ranking models)
-    PER_MESSAGE_TIMEOUT = 30  # seconds
+    PER_MESSAGE_TIMEOUT = 60  # seconds (gate wait + model swap + generation)
     # Max total time for session-end operations
-    SUMMARY_TIMEOUT = 60  # seconds (summary can be slow for long sessions)
-    LESSON_TIMEOUT = 90  # seconds (reasoning model can be slow, esp. local)
+    # These must be generous: OllamaGate serializes all local calls, so
+    # session-close tasks queue behind any active background work.
+    SUMMARY_TIMEOUT = 120  # seconds (summarization model + possible gate wait)
+    LESSON_TIMEOUT = 180  # seconds (reasoning model is slowest, gate wait can be 60s+)
 
     def __init__(
         self,
