@@ -52,11 +52,12 @@ class OllamaGate:
         self._total_acquisitions = 0
         self._total_waits = 0
 
-    def acquire(self, priority: int = BACKGROUND, timeout: float = 180.0) -> bool:
+    def acquire(self, priority: int = BACKGROUND) -> bool:
         """Block until the gate is available.
 
-        Returns True if acquired normally, False if timed out (proceeds anyway
-        to avoid permanent stalls — logs a warning).
+        Waits indefinitely — Ollama calls can legitimately take minutes
+        (model loading, long generations, model swaps). The gate's job is
+        to serialize, not to time out and allow concurrent access.
         """
         with self._lock:
             self._total_acquisitions += 1
@@ -73,21 +74,10 @@ class OllamaGate:
 
         # Wait outside the lock — blocks this thread, not the lock
         logger.debug("OllamaGate: waiting (P%d, %d ahead)", priority, len(self._waiters))
-        acquired = event.wait(timeout=timeout)
-
-        if not acquired:
-            # Timed out — clean up our waiter and proceed anyway
-            with self._lock:
-                self._waiters = [w for w in self._waiters if w[2] is not event]
-                heapq.heapify(self._waiters)
-                self._active = True  # Claim ownership to avoid double-proceed
-            logger.warning(
-                "OllamaGate: timed out after %.0fs at P%d — proceeding anyway",
-                timeout, priority,
-            )
+        event.wait()  # No timeout — wait as long as needed
 
         logger.debug("OllamaGate: acquired after wait (P%d)", priority)
-        return acquired
+        return True
 
     def release(self):
         """Release the gate, wake the highest-priority waiter."""
@@ -110,23 +100,23 @@ class OllamaGate:
         return INTERACTIVE
 
     @contextmanager
-    def gate(self, priority: int = BACKGROUND, timeout: float = 180.0):
+    def gate(self, priority: int = BACKGROUND):
         """Sync context manager for gating Ollama calls."""
-        self.acquire(priority, timeout)
+        self.acquire(priority)
         try:
             yield
         finally:
             self.release()
 
-    async def async_acquire(self, priority: int = BACKGROUND, timeout: float = 180.0) -> bool:
+    async def async_acquire(self, priority: int = BACKGROUND) -> bool:
         """Async wrapper — offloads blocking wait to thread pool."""
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self.acquire, priority, timeout)
+        return await loop.run_in_executor(None, self.acquire, priority)
 
     @asynccontextmanager
-    async def async_gate(self, priority: int = BACKGROUND, timeout: float = 180.0):
+    async def async_gate(self, priority: int = BACKGROUND):
         """Async context manager for gating Ollama calls."""
-        await self.async_acquire(priority, timeout)
+        await self.async_acquire(priority)
         try:
             yield
         finally:

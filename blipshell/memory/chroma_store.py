@@ -19,10 +19,11 @@ logger = logging.getLogger(__name__)
 MAX_EMBED_CHARS = 2000
 
 # Timeout for Ollama embedding requests (seconds).
-# Default (60s) is too short when Ollama is swapping models on a single GPU
-# (can take 30s+). With the OllamaGate serializing calls, swaps should be
-# rare, but we keep a generous timeout as a safety net.
-EMBED_TIMEOUT = 120.0
+# Must be generous: model loading from disk can take 30-60s on first use,
+# and OllamaGate may queue this call behind an active LLM generation.
+# The gate prevents concurrent access, but the HTTP timeout must cover
+# the full wait-then-execute window.
+EMBED_TIMEOUT = 300.0
 
 # Collection names
 MEMORIES_COLLECTION = "memories"
