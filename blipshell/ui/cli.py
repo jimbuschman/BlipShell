@@ -2426,6 +2426,104 @@ def test_cmd(ctx, task, project, output, canned, stress, quiet, category):
         console.print("[yellow]Provide a task, or use --canned or --stress[/yellow]")
 
 
+# --- Simulation ---
+
+@main.command("simulate")
+@click.option("--scenario", "-s", default=None, help="Run a single scenario by name")
+@click.option("--category", "-c", default=None, help="Run scenarios in a category (e.g. regression, tool_registration)")
+@click.option("--quiet", "-q", is_flag=True, help="JSON output only")
+@click.option("--output", "-o", default=None, help="Write JSON report to file")
+@click.option("--list", "list_scenarios", is_flag=True, help="List available scenarios")
+@click.pass_context
+def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios):
+    """Run automated user simulation — exercises BlipShell like a real user.
+
+    Boots the real Agent, runs multi-turn scenarios (slash commands, mode
+    transitions, conversations, project workflows, regressions), reports
+    what passed and what didn't.
+
+    By default runs ALL scenarios. Use -s or -c to narrow down.
+    """
+    from blipshell.simulate import (
+        SimRunner,
+        collect_all_scenarios,
+        filter_by_category,
+        filter_by_name,
+    )
+    from blipshell.simulate.reporting import (
+        export_json,
+        print_scenario_result,
+        print_suite_summary,
+    )
+
+    all_scenarios = collect_all_scenarios()
+
+    if list_scenarios:
+        from rich.table import Table
+        table = Table(title=f"Available Scenarios ({len(all_scenarios)})")
+        table.add_column("Name", style="cyan")
+        table.add_column("Category")
+        table.add_column("Steps", justify="right")
+        table.add_column("Description")
+        for s in all_scenarios:
+            table.add_row(
+                s.name, s.category,
+                str(len(s.steps)),
+                s.description[:70],
+            )
+        console.print(table)
+        return
+
+    # Filter scenarios
+    scenarios = all_scenarios
+    if scenario:
+        scenarios = filter_by_name(scenarios, scenario)
+        if not scenarios:
+            console.print(f"[yellow]Scenario '{scenario}' not found[/yellow]")
+            return
+    if category:
+        scenarios = filter_by_category(scenarios, category)
+
+    if not scenarios:
+        console.print("[yellow]No scenarios matched the filters[/yellow]")
+        return
+
+    config_path = ctx.obj.get("config_path")
+
+    async def _run():
+        def on_status(msg: str):
+            if not quiet:
+                console.print(f"[dim]{msg}[/dim]")
+
+        runner = SimRunner(
+            config_path=config_path,
+            quiet=quiet,
+            on_status=on_status,
+        )
+
+        if not quiet:
+            console.print(f"[bold cyan]Running {len(scenarios)} simulation scenarios...[/bold cyan]")
+
+        suite_result = await runner.run_suite(scenarios)
+
+        if not quiet:
+            for sr in suite_result.scenario_results:
+                print_scenario_result(console, sr)
+            print_suite_summary(console, suite_result)
+
+        if output or quiet:
+            json_str = export_json(suite_result)
+            if output:
+                with open(output, "w") as f:
+                    f.write(json_str)
+                if not quiet:
+                    console.print(f"\n[dim]Report written to {output}[/dim]")
+            if quiet:
+                print(json_str)
+
+    asyncio.run(_run())
+
+
 # --- Nightly Jobs ---
 
 @main.command("nightly")

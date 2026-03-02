@@ -119,9 +119,11 @@ class ProjectMixin:
         # Re-register file tools without root
         self._register_tools_with_root(None)
 
-        # Remove coding and git tools
-        self.tool_registry.unregister("grep_files")
-        self.tool_registry.unregister("glob_files")
+        # Re-register coding tools without root_path (available in all modes)
+        self.tool_registry.register(GrepTool(), group="coding")
+        self.tool_registry.register(GlobTool(), group="coding")
+
+        # Remove project-only tools
         self.tool_registry.unregister("git_status")
         self.tool_registry.unregister("git_diff")
         self.tool_registry.unregister("git_add")
