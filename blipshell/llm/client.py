@@ -32,28 +32,17 @@ class LLMClient:
         self._client = ollama.AsyncClient(host=host)
 
     async def _retry_call(self, func, *args, **kwargs):
-        """Retry an async call with exponential backoff and per-call timeout.
+        """Retry an async call with exponential backoff.
 
         Retries up to max_retries times with delays of base*2^attempt seconds.
-        Each attempt is bounded by self.timeout seconds.
+        No per-call timeout — local Ollama calls can legitimately take minutes
+        (model loading, long generations). The OllamaGate serializes access;
+        killing slow calls just wastes the work already done.
         """
         last_error = None
         for attempt in range(self.max_retries + 1):
             try:
-                return await asyncio.wait_for(
-                    func(*args, **kwargs), timeout=self.timeout,
-                )
-            except asyncio.TimeoutError:
-                last_error = TimeoutError(
-                    f"LLM call timed out after {self.timeout}s"
-                )
-                logger.warning(
-                    "LLM call timed out (attempt %d/%d) after %.0fs",
-                    attempt + 1, self.max_retries + 1, self.timeout,
-                )
-                if attempt < self.max_retries:
-                    delay = self.retry_base_delay * (2 ** attempt)
-                    await asyncio.sleep(delay)
+                return await func(*args, **kwargs)
             except Exception as e:
                 last_error = e
                 if attempt < self.max_retries:
