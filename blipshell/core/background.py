@@ -134,14 +134,24 @@ class BackgroundTaskManager:
 
             # Route to specific endpoint or use normal routing
             if target_endpoint:
-                client = self.router._endpoint_manager.get_client_by_name(
-                    target_endpoint,
-                )
-                if not client:
+                # Look up endpoint to check provider for gate
+                ep = None
+                for _ep in self.router._endpoint_manager._endpoints:
+                    if _ep.name == target_endpoint and _ep.enabled:
+                        ep = _ep
+                        break
+                if not ep or not ep.client:
                     raise RuntimeError(
                         f"Endpoint '{target_endpoint}' is not available"
                     )
-                result = await client.generate(prompt=prompt, model=model)
+                # Gate local Ollama calls to avoid concurrent access
+                if ep.provider == "ollama":
+                    from blipshell.llm.ollama_gate import get_gate
+                    gate = get_gate()
+                    async with gate.async_gate(gate.BACKGROUND):
+                        result = await ep.client.generate(prompt=prompt, model=model)
+                else:
+                    result = await ep.client.generate(prompt=prompt, model=model)
             else:
                 result = await self.router.generate(llm_task_type, prompt)
 

@@ -145,13 +145,23 @@ class EntityExtractor:
             system, user = extract_entities(memory.summary)
             if self.model_override:
                 # Bypass router model selection, use specified model directly
-                model, client = await self.router.get_model_and_client(self.task_type)
-                if client is None:
+                # But still respect OllamaGate to avoid concurrent Ollama access
+                endpoint = await self.router._endpoint_manager.get_endpoint_for_role(self.task_type)
+                if endpoint is None or endpoint.client is None:
                     raise RuntimeError(f"No endpoint available for {self.task_type}")
-                response = await client.generate(
-                    prompt=user, model=self.model_override, system=system,
-                    think=False,
-                )
+                if endpoint.provider == "ollama":
+                    from blipshell.llm.ollama_gate import get_gate
+                    gate = get_gate()
+                    async with gate.async_gate(gate.infer_priority()):
+                        response = await endpoint.client.generate(
+                            prompt=user, model=self.model_override, system=system,
+                            think=False,
+                        )
+                else:
+                    response = await endpoint.client.generate(
+                        prompt=user, model=self.model_override, system=system,
+                        think=False,
+                    )
             else:
                 response = await self.router.generate(
                     self.task_type, user, system=system, think=False,
@@ -233,7 +243,12 @@ class EntityExtractor:
                 try:
                     self.chroma.upsert_entity(entity_id, name, entity_type)
                 except Exception as e:
-                    logger.warning("Failed to upsert entity embedding: %s", e)
+                    logger.warning("Failed to upsert entity embedding (queued): %s", e)
+                    from blipshell.memory.chroma_retry import queue_failed_op, OP_UPSERT, COLLECTION_ENTITIES
+                    await queue_failed_op(
+                        self.sqlite, OP_UPSERT, COLLECTION_ENTITIES, entity_id,
+                        document=name, metadata={"entity_type": entity_type}, error=str(e),
+                    )
             self._resolution_cache[name] = entity_id
             return entity_id
 
@@ -280,7 +295,12 @@ class EntityExtractor:
         try:
             self.chroma.upsert_entity(entity_id, name, entity_type)
         except Exception as e:
-            logger.warning("Failed to upsert entity embedding: %s", e)
+            logger.warning("Failed to upsert entity embedding (queued): %s", e)
+            from blipshell.memory.chroma_retry import queue_failed_op, OP_UPSERT, COLLECTION_ENTITIES
+            await queue_failed_op(
+                self.sqlite, OP_UPSERT, COLLECTION_ENTITIES, entity_id,
+                document=name, metadata={"entity_type": entity_type}, error=str(e),
+            )
         self._resolution_cache[name] = entity_id
         return entity_id
 

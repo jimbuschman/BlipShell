@@ -327,6 +327,9 @@ class SQLiteStore:
             "ALTER TABLE projects ADD COLUMN settings_json TEXT",
             # Project-scoped lessons
             "ALTER TABLE lessons ADD COLUMN project TEXT",
+            # Lesson hit tracking
+            "ALTER TABLE lessons ADD COLUMN hit_count INTEGER DEFAULT 0",
+            "ALTER TABLE lessons ADD COLUMN last_accessed DATETIME",
             # Bi-temporal edge tracking (Feature 4)
             "ALTER TABLE entity_relationships ADD COLUMN valid_from DATETIME",
             "ALTER TABLE entity_relationships ADD COLUMN expired_at DATETIME",
@@ -1219,6 +1222,43 @@ class SQLiteStore:
         await self._db.execute("DELETE FROM lesson_tags WHERE lesson_id = ?", (lesson_id,))
         await self._db.execute("DELETE FROM lessons WHERE id = ?", (lesson_id,))
         await self._db.commit()
+
+    async def increment_lesson_hits(self, lesson_ids: list[int]):
+        """Increment hit_count and set last_accessed for used lessons."""
+        if not lesson_ids:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        placeholders = ",".join("?" * len(lesson_ids))
+        await self._db.execute(
+            f"UPDATE lessons SET hit_count = hit_count + 1, last_accessed = ? "
+            f"WHERE id IN ({placeholders})",
+            [now] + lesson_ids,
+        )
+        await self._db.commit()
+
+    async def get_sessions_missing_lessons(self, limit: int = 50) -> list[dict]:
+        """Find sessions with 5+ messages but no lessons extracted."""
+        cursor = await self._db.execute("""
+            SELECT s.id, s.project, COUNT(sm.id) as msg_count
+            FROM sessions s
+            JOIN session_messages sm ON sm.session_id = s.id
+            LEFT JOIN lessons l ON l.session_id = s.id
+            WHERE l.id IS NULL
+              AND s.is_archived = 0
+            GROUP BY s.id
+            HAVING COUNT(sm.id) >= 5
+            ORDER BY s.id DESC
+            LIMIT ?
+        """, (limit,))
+        return [dict(r) for r in await cursor.fetchall()]
+
+    async def get_session_messages_for_lesson(self, session_id: int) -> list[dict]:
+        """Get session messages formatted for lesson extraction."""
+        cursor = await self._db.execute("""
+            SELECT role, content FROM session_messages
+            WHERE session_id = ? ORDER BY id
+        """, (session_id,))
+        return [dict(r) for r in await cursor.fetchall()]
 
     # --- Core Memory Management ---
 

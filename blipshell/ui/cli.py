@@ -302,6 +302,11 @@ async def chat_loop(
         border_style="cyan",
     ))
 
+    # Show nightly report notification if there were warnings/errors
+    if hasattr(agent, '_nightly_notification') and agent._nightly_notification:
+        console.print(f"  {agent._nightly_notification}", style="dim yellow")
+        agent._nightly_notification = None
+
     try:
         while True:
             if _exit_requested:
@@ -439,8 +444,11 @@ async def chat_loop(
                     await _run_cleanup(agent)
                     continue
                 elif cmd[0] == "nightly":
-                    job_name = cmd_args[0] if cmd_args else None
-                    await _run_nightly(agent, job_name)
+                    if cmd_args and cmd_args[0] == "report":
+                        await _print_nightly_report(agent)
+                    else:
+                        job_name = cmd_args[0] if cmd_args else None
+                        await _run_nightly(agent, job_name)
                     continue
                 elif cmd[0] == "mcp":
                     _print_mcp_status(agent, cmd_args)
@@ -660,8 +668,9 @@ async def _delete_core_item(agent: Agent, args: list[str]):
         await agent.sqlite.delete_lesson(item_id)
         try:
             agent.chroma.delete_lesson(item_id)
-        except Exception:
-            pass
+        except Exception as e:
+            from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_LESSONS
+            await queue_failed_op(agent.sqlite, OP_DELETE, COLLECTION_LESSONS, item_id, error=str(e))
         console.print(f"[green]Lesson #{item_id} deleted.[/green]")
     else:
         cm = await agent.sqlite.get_core_memory(item_id)
@@ -671,8 +680,9 @@ async def _delete_core_item(agent: Agent, args: list[str]):
         await agent.sqlite.deactivate_core_memory(item_id)
         try:
             agent.chroma.delete_core_memory(item_id)
-        except Exception:
-            pass
+        except Exception as e:
+            from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_CORE
+            await queue_failed_op(agent.sqlite, OP_DELETE, COLLECTION_CORE, item_id, error=str(e))
         console.print(f"[green]Core memory #{item_id} deactivated.[/green]")
 
 
@@ -701,7 +711,12 @@ async def _save_feedback(agent: Agent, feedback: str):
     try:
         agent.chroma.add_lesson(lesson_id, lesson.content)
     except Exception as e:
-        logging.getLogger(__name__).debug("Feedback embed failed: %s", e)
+        logging.getLogger(__name__).debug("Feedback embed failed (queued): %s", e)
+        from blipshell.memory.chroma_retry import queue_failed_op, OP_UPSERT, COLLECTION_LESSONS
+        await queue_failed_op(
+            agent.sqlite, OP_UPSERT, COLLECTION_LESSONS, lesson_id,
+            document=lesson.content, error=str(e),
+        )
 
     # Tag it
     try:
@@ -1082,10 +1097,14 @@ async def _handle_code_command(agent: Agent, args_str: str):
             console.print("[red]No LLM endpoint available.[/red]")
             return
 
-    # Get context window for the endpoint
+    # Get context window and provider for the endpoint
     ctx_tokens = None
+    endpoint_is_ollama = False
     if agent.endpoint_manager:
         ctx_tokens = agent.endpoint_manager.get_context_tokens_for_role(TaskType.CODING)
+        ep = await agent.endpoint_manager.get_endpoint_for_role(TaskType.CODING)
+        if ep:
+            endpoint_is_ollama = ep.provider == "ollama"
     stream_kwargs = {}
     if ctx_tokens:
         stream_kwargs["options"] = {"num_ctx": ctx_tokens}
@@ -1106,24 +1125,37 @@ async def _handle_code_command(agent: Agent, args_str: str):
     full_response = []
     code_cancelled = False
 
+    # Gate helper — acquire OllamaGate for local Ollama streaming
+    _gate_ctx = None
+    if endpoint_is_ollama:
+        from blipshell.llm.ollama_gate import get_gate
+        _code_gate = get_gate()
+
     async def _stream_code():
         nonlocal thinking_active
-        async for chunk in client.chat_stream(messages=messages, model=model, **stream_kwargs):
-            msg = getattr(chunk, "message", None)
-            if msg:
-                content = getattr(msg, "content", "")
-            elif isinstance(chunk, dict):
-                content = chunk.get("message", {}).get("content", "")
-            else:
-                content = ""
+        # Acquire gate for local Ollama to avoid concurrent access
+        if endpoint_is_ollama:
+            await _code_gate.async_acquire(_code_gate.INTERACTIVE)
+        try:
+            async for chunk in client.chat_stream(messages=messages, model=model, **stream_kwargs):
+                msg = getattr(chunk, "message", None)
+                if msg:
+                    content = getattr(msg, "content", "")
+                elif isinstance(chunk, dict):
+                    content = chunk.get("message", {}).get("content", "")
+                else:
+                    content = ""
 
-            if content:
-                if thinking_active:
-                    thinking_status.stop()
-                    thinking_active = False
-                sys.stdout.write(content)
-                sys.stdout.flush()
-                full_response.append(content)
+                if content:
+                    if thinking_active:
+                        thinking_status.stop()
+                        thinking_active = False
+                    sys.stdout.write(content)
+                    sys.stdout.flush()
+                    full_response.append(content)
+        finally:
+            if endpoint_is_ollama:
+                _code_gate.release()
 
     code_task = asyncio.create_task(_stream_code())
     esc_task = asyncio.create_task(_poll_for_escape())
@@ -1523,6 +1555,71 @@ async def _run_nightly(agent: Agent, job_name: str | None = None):
     console.print()
     console.print(table)
     console.print(f"\n[dim]Total: {result.get('elapsed_s', 0):.0f}s[/dim]")
+
+
+async def _print_nightly_report(agent: Agent):
+    """Display the stored nightly report."""
+    import json
+    from datetime import datetime, timezone
+    from rich.table import Table
+
+    raw = await agent.sqlite.get_metadata("nightly_report")
+    if not raw:
+        console.print("[dim]No nightly report found. Run /nightly first.[/dim]")
+        return
+
+    report = json.loads(raw)
+
+    # Header with timestamp
+    ts = report.get("timestamp")
+    if ts:
+        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+        console.print(f"\n[bold]Last nightly run:[/bold] {dt:%Y-%m-%d %H:%M} UTC ({report.get('elapsed_s', 0):.0f}s)")
+    else:
+        console.print("\n[bold]Last nightly run:[/bold] unknown time")
+
+    # Errors
+    errors = report.get("errors", [])
+    if errors:
+        console.print(f"\n[bold red]Errors ({len(errors)}):[/bold red]")
+        for e in errors:
+            console.print(f"  [red]{e}[/red]")
+
+    # Warnings
+    warnings = report.get("warnings", [])
+    if warnings:
+        console.print(f"\n[bold yellow]Warnings ({len(warnings)}):[/bold yellow]")
+        for w in warnings:
+            console.print(f"  [yellow]{w}[/yellow]")
+
+    if not errors and not warnings:
+        console.print("[green]  All clear — no warnings or errors.[/green]")
+
+    # Job summary table
+    summary = report.get("summary", {})
+    if summary:
+        table = Table(title="Job Summary")
+        table.add_column("Job", style="cyan")
+        table.add_column("Status")
+        table.add_column("Time", justify="right")
+        table.add_column("Details")
+
+        for job, data in summary.items():
+            status = data.get("status", "?")
+            style = "green" if status == "ok" else "red"
+            elapsed = f"{data.get('elapsed_s', 0):.1f}s"
+            detail_parts = [
+                f"{k}={v}" for k, v in data.items()
+                if k not in ("status", "elapsed_s", "error")
+            ]
+            details = ", ".join(detail_parts) if detail_parts else ""
+            if data.get("error"):
+                details = f"[red]{data['error']}[/red]"
+            table.add_row(job, f"[{style}]{status}[/{style}]", elapsed, details)
+
+        console.print()
+        console.print(table)
+    console.print()
 
 
 async def _print_flow(agent: Agent, turn: int | None = None):
@@ -2048,7 +2145,7 @@ def _print_help():
         "[bold]/offload <msg>[/bold]         - Run a task on remote PC in background\n"
         "[bold]/health[/bold] [dim][quick][/dim]          - Database + endpoint health check\n"
         "[bold]/cleanup[/bold]               - Reprocess failed messages (relaxed timeouts)\n"
-        "[bold]/nightly[/bold] [dim][job][/dim]          - Run nightly maintenance (tagging, pruning, etc.)\n"
+        "[bold]/nightly[/bold] [dim][job|report][/dim]    - Run nightly maintenance or show last report\n"
         "[bold]/mcp[/bold] [dim][tools [server]][/dim]  - Show MCP server status and tools\n"
         "[bold]/flow[/bold] [dim][n][/dim]              - Show conversation flow events\n"
         "[bold]/plan[/bold]                  - Show current active plan\n"

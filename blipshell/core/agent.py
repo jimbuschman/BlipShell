@@ -18,6 +18,7 @@ Modularized via mixins:
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Callable, Optional
 
@@ -108,8 +109,10 @@ class Agent(
         self.mcp_manager = None
 
         self._health_check_task: Optional[asyncio.Task] = None
+        self._nightly_scheduler_task: Optional[asyncio.Task] = None
         self._background_tasks: set[asyncio.Task] = set()
         self._memory_worker = None  # MemoryWorker — dedicated thread for background processing
+        self._last_user_activity: float = time.time()
         self._last_endpoint_used: Optional[str] = None
         self._initialized = False
         self._init_lock = asyncio.Lock()
@@ -262,6 +265,11 @@ class Agent(
             interval=60, on_check=self.router.clear_failed_models,
         )
 
+        # Start nightly auto-scheduler (checks every 30 min)
+        self._nightly_scheduler_task = asyncio.create_task(
+            self._nightly_scheduler_loop()
+        )
+
         # Queue background tasks instead of blocking startup
         await self._enqueue_startup_background_tasks()
 
@@ -363,6 +371,55 @@ class Agent(
         jobs = [job] if job else None
         return await runner.run(on_status=on_status, jobs=jobs)
 
+    async def _nightly_scheduler_loop(self):
+        """Background task: auto-run nightly at the configured hour if idle.
+
+        Checks every 15 minutes. Runs nightly only if:
+        - Current hour matches target (default 2 AM)
+        - No nightly run completed today
+        - User has been idle for 5+ minutes
+        """
+        import json
+        check_interval = 15 * 60  # 15 minutes
+        target_hour = 2  # 2 AM local time
+        idle_threshold = 5 * 60  # 5 minutes
+
+        # Wait a bit after startup before first check
+        await asyncio.sleep(60)
+
+        while True:
+            try:
+                await asyncio.sleep(check_interval)
+
+                now = datetime.now()
+                if now.hour != target_hour:
+                    continue
+
+                # Check idle
+                idle_seconds = time.time() - self._last_user_activity
+                if idle_seconds < idle_threshold:
+                    continue
+
+                # Check if already ran today
+                try:
+                    raw = await self.sqlite.get_metadata("nightly_last_run")
+                    if raw:
+                        data = json.loads(raw)
+                        last_run = datetime.fromtimestamp(data["completed_at"])
+                        if last_run.date() == now.date():
+                            continue  # already ran today
+                except Exception:
+                    pass  # no metadata = hasn't run, proceed
+
+                logger.info("Auto-nightly: starting (idle %.0fs, hour=%d)", idle_seconds, now.hour)
+                await self.run_nightly()
+                logger.info("Auto-nightly: completed")
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning("Nightly scheduler error: %s", e)
+
     def _record_token_usage_from_chunk(self, chunk):
         """Extract and accumulate token usage from an Ollama response/chunk.
 
@@ -423,6 +480,9 @@ class Agent(
 
         # Cancel asyncio background tasks (lightweight, main-loop only)
         await self._cancel_background_tasks()
+        if self._nightly_scheduler_task:
+            self._nightly_scheduler_task.cancel()
+            self._nightly_scheduler_task = None
         if self._health_check_task:
             self._health_check_task.cancel()
             self._health_check_task = None
@@ -468,6 +528,9 @@ class Agent(
         if self._memory_worker:
             self._memory_worker.shutdown(timeout=5.0)
 
+        if self._nightly_scheduler_task:
+            self._nightly_scheduler_task.cancel()
+            self._nightly_scheduler_task = None
         if self._health_check_task:
             self._health_check_task.cancel()
             self._health_check_task = None

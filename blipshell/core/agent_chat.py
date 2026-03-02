@@ -49,6 +49,10 @@ class ChatMixin:
         if not hasattr(self, 'session_manager') or self.session_manager is None:
             raise RuntimeError("No active session — call start_session() before chat()")
 
+        # Track user activity for nightly scheduler
+        import time
+        self._last_user_activity = time.time()
+
         # Add user message to session
         self.session_manager.add_message(MessageRole.USER, user_message)
 

@@ -56,6 +56,9 @@ class SessionMixin:
         # Load recent session summaries into RecentHistory
         await self._load_recent_sessions()
 
+        # Check for nightly report warnings/errors
+        self._nightly_notification = await self._check_nightly_report()
+
         return session_id
 
     async def _retry_chroma_queue(self):
@@ -236,7 +239,16 @@ class SessionMixin:
                 ids = [r["id"] for r in chunk]
                 names = [r["name"] for r in chunk]
                 types = [r["entity_type"] for r in chunk]
-                self.chroma.upsert_entities_batch(ids, names, types)
+                try:
+                    self.chroma.upsert_entities_batch(ids, names, types)
+                except Exception as e:
+                    logger.warning("Entity backfill batch failed (queueing individually): %s", e)
+                    from blipshell.memory.chroma_retry import queue_failed_op, OP_UPSERT, COLLECTION_ENTITIES
+                    for eid, ename, etype in zip(ids, names, types):
+                        await queue_failed_op(
+                            self.sqlite, OP_UPSERT, COLLECTION_ENTITIES, eid,
+                            document=ename, metadata={"entity_type": etype}, error=str(e),
+                        )
 
             await self.sqlite.set_metadata("entity_embeddings_backfilled", "1")
             logger.info("Backfilled %d entity embeddings into ChromaDB", total)
@@ -256,3 +268,24 @@ class SessionMixin:
                 priority_score=2.0,
                 session_id=s.id,
             ))
+
+    async def _check_nightly_report(self) -> str | None:
+        """Check if the last nightly run had warnings/errors. Returns notification or None."""
+        try:
+            import json
+            raw = await self.sqlite.get_metadata("nightly_report")
+            if not raw:
+                return None
+            report = json.loads(raw)
+            warnings = report.get("warnings", [])
+            errors = report.get("errors", [])
+            if not warnings and not errors:
+                return None
+            parts = []
+            if errors:
+                parts.append(f"{len(errors)} error(s)")
+            if warnings:
+                parts.append(f"{len(warnings)} warning(s)")
+            return f"Nightly run: {', '.join(parts)}. Use /nightly report for details."
+        except Exception:
+            return None

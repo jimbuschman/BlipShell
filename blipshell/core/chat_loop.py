@@ -578,10 +578,18 @@ class ChatLoop:
                 ),
             })
             try:
-                content, _ = await stream_chat(
-                    client, messages, model, None, chat_kwargs,
-                    self.on_token, on_stream_done,
-                )
+                # Gate this call too — same as the main loop LLM calls
+                if config.ollama_gate:
+                    async with config.ollama_gate.async_gate(config.gate_priority):
+                        content, _ = await stream_chat(
+                            client, messages, model, None, chat_kwargs,
+                            self.on_token, on_stream_done,
+                        )
+                else:
+                    content, _ = await stream_chat(
+                        client, messages, model, None, chat_kwargs,
+                        self.on_token, on_stream_done,
+                    )
                 final_response = content or f"[Hit tool limit after {len(tool_call_names)} calls]"
                 completion_method = "nudge"
             except Exception as e:

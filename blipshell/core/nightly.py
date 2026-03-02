@@ -26,12 +26,15 @@ JOB_ORDER = [
     "chroma_retry",
     "cleanup",
     "backfill_summaries",
+    "backfill_lessons",
+    "entity_extraction",
     "centroid_tag",
     "batch_tag",
     "prune",
     "consolidate",
     "tag_discovery",
     "rebuild_digests",
+    "health_check",
 ]
 
 
@@ -138,12 +141,21 @@ class NightlyRunner:
             logger.warning("Failed to persist nightly run metadata: %s", e)
 
         _status(f"Nightly run complete in {total_elapsed:.0f}s.")
-        return {
+
+        full_results = {
             "started_at": started_at,
             "completed_at": completed_at,
             "elapsed_s": round(total_elapsed, 1),
             "jobs": results,
         }
+
+        # Build and store structured report for startup notification
+        try:
+            await self._build_and_store_report(full_results)
+        except Exception as e:
+            logger.warning("Failed to build nightly report: %s", e)
+
+        return full_results
 
     async def run_job(
         self,
@@ -156,12 +168,15 @@ class NightlyRunner:
             "chroma_retry": self._job_chroma_retry,
             "cleanup": self._job_cleanup,
             "backfill_summaries": self._job_backfill_summaries,
+            "backfill_lessons": self._job_backfill_lessons,
+            "entity_extraction": self._job_entity_extraction,
             "centroid_tag": self._job_centroid_tag,
             "batch_tag": self._job_batch_tag,
             "prune": self._job_prune,
             "consolidate": self._job_consolidate,
             "tag_discovery": self._job_tag_discovery,
             "rebuild_digests": self._job_rebuild_digests,
+            "health_check": self._job_health_check,
         }
         handler = handlers.get(job_name)
         if not handler:
@@ -298,6 +313,99 @@ class NightlyRunner:
             new_patterns = await self.sqlite.get_discovered_tag_patterns()
             register_topic_patterns(new_patterns)
         return stats
+
+    async def _job_backfill_lessons(self, on_status) -> dict:
+        """Re-extract lessons from sessions with messages but no lessons."""
+        sessions = await self.sqlite.get_sessions_missing_lessons(limit=50)
+        if not sessions:
+            return {"processed": 0, "total": 0}
+
+        processed = 0
+        failed = 0
+        for session in sessions:
+            sid = session["id"]
+            project = session.get("project")
+            try:
+                messages = await self.sqlite.get_session_messages_for_lesson(sid)
+                conversation_lines = [f"{m['role']}: {m['content']}" for m in messages]
+                conversation_text = "\n".join(conversation_lines)
+                await self.processor.process_lesson(
+                    conversation_text, sid, project=project,
+                )
+                processed += 1
+            except Exception as e:
+                logger.error("Lesson backfill failed for session %d: %s", sid, e)
+                failed += 1
+
+        return {"processed": processed, "failed": failed, "total": len(sessions)}
+
+    async def _job_entity_extraction(self, on_status) -> dict:
+        """Catch up on unextracted memories."""
+        from blipshell.memory.entity_extractor import EntityExtractor
+
+        extractor = EntityExtractor(
+            self.sqlite, self.router, self.chroma,
+            batch_size=100,
+            entity_resolution_enabled=getattr(
+                self.config.memory, "entity_resolution_enabled", False,
+            ),
+        )
+        return await extractor.extract_batch(concurrency=1)
+
+    async def _job_health_check(self, on_status) -> dict:
+        """Run audit_db checks and return structured findings."""
+        from scripts.audit_db import run_audit
+
+        result = run_audit(
+            db_path=self.config.database.path,
+            chroma_path=self.config.database.chroma_path,
+            skip_chroma=False,
+            skip_endpoints=True,  # endpoints may not be available during nightly
+        )
+        warnings = [f for f in result.findings if f["severity"] == "WARNING"]
+        errors = [f for f in result.findings if f["severity"] == "ERROR"]
+        return {
+            "total_findings": len(result.findings),
+            "warnings": len(warnings),
+            "errors": len(errors),
+            "findings": result.findings,
+        }
+
+    async def _build_and_store_report(self, results: dict):
+        """Build a structured nightly report and store in app_metadata."""
+        warnings = []
+        errors = []
+
+        for job_name, job_result in results.get("jobs", {}).items():
+            if job_result.get("status") == "error":
+                errors.append(f"{job_name}: {job_result.get('error', 'unknown')}")
+            # Collect health check findings
+            if job_name == "health_check" and job_result.get("status") == "ok":
+                for finding in job_result.get("findings", []):
+                    if finding["severity"] == "ERROR":
+                        errors.append(
+                            f"[health] {finding['check']}: {finding['message']}"
+                        )
+                    elif finding["severity"] == "WARNING":
+                        warnings.append(
+                            f"[health] {finding['check']}: {finding['message']}"
+                        )
+            # Flag jobs with failures
+            if job_result.get("failed", 0) > 0:
+                warnings.append(f"{job_name}: {job_result['failed']} failures")
+
+        report = {
+            "timestamp": results.get("completed_at"),
+            "elapsed_s": results.get("elapsed_s"),
+            "warnings": warnings,
+            "errors": errors,
+            "summary": {
+                job: {k: v for k, v in data.items() if k != "findings"}
+                for job, data in results.get("jobs", {}).items()
+            },
+        }
+
+        await self.sqlite.set_metadata("nightly_report", json.dumps(report))
 
     async def _job_rebuild_digests(self, on_status) -> dict:
         """Rebuild project digests for all active projects."""

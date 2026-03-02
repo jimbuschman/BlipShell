@@ -246,8 +246,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
         await _agent.sqlite.update_memory(memory_id, is_archived=True)
         try:
             _agent.chroma.delete_memory(memory_id)
-        except Exception:
-            pass
+        except Exception as e:
+            from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_MEMORIES
+            await queue_failed_op(_agent.sqlite, OP_DELETE, COLLECTION_MEMORIES, memory_id, error=str(e))
         return {"status": "archived"}
 
     # --- Core Memories ---
@@ -271,8 +272,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
         await _agent.sqlite.deactivate_core_memory(core_memory_id)
         try:
             _agent.chroma.delete_core_memory(core_memory_id)
-        except Exception:
-            pass
+        except Exception as e:
+            from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_CORE
+            await queue_failed_op(_agent.sqlite, OP_DELETE, COLLECTION_CORE, core_memory_id, error=str(e))
         return {"status": "deactivated"}
 
     # --- Lessons ---
@@ -287,8 +289,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
         await _agent.sqlite.delete_lesson(lesson_id)
         try:
             _agent.chroma.delete_lesson(lesson_id)
-        except Exception:
-            pass
+        except Exception as e:
+            from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_LESSONS
+            await queue_failed_op(_agent.sqlite, OP_DELETE, COLLECTION_LESSONS, lesson_id, error=str(e))
         return {"status": "deleted"}
 
     # --- Config ---

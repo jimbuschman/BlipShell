@@ -445,4 +445,13 @@ class MemorySearch:
                 meta = r.get("metadata", {})
                 if meta.get("project") == active_project:
                     r["similarity"] = r.get("similarity", 0.0) + self.project_boost
+
+        # Track lesson usage for staleness analysis
+        lesson_ids = [r["id"] for r in results if r.get("id")]
+        if lesson_ids:
+            try:
+                await self.sqlite.increment_lesson_hits(lesson_ids)
+            except Exception:
+                pass  # non-critical
+
         return results
