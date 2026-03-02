@@ -44,6 +44,9 @@ class SessionMixin:
         # Register task/workflow tools
         self._register_task_tools()
 
+        # Retry any failed ChromaDB operations from previous sessions
+        await self._retry_chroma_queue()
+
         # Load core memories into Core pool
         await self._load_core_memories()
 
@@ -54,6 +57,19 @@ class SessionMixin:
         await self._load_recent_sessions()
 
         return session_id
+
+    async def _retry_chroma_queue(self):
+        """Retry failed ChromaDB operations queued from previous sessions."""
+        try:
+            from blipshell.memory.chroma_retry import process_retry_queue
+            stats = await process_retry_queue(self.sqlite, self.chroma, limit=100)
+            if stats["processed"] > 0:
+                logger.info(
+                    "ChromaDB retry queue: %d processed, %d succeeded, %d still failing",
+                    stats["processed"], stats["succeeded"], stats["failed"],
+                )
+        except Exception as e:
+            logger.debug("ChromaDB retry queue processing failed: %s", e)
 
     async def _load_core_memories(self):
         """Load active core memories into the Core pool."""
@@ -100,7 +116,12 @@ class SessionMixin:
                 try:
                     self.chroma.delete_memory(mid)
                 except Exception as e:
-                    logger.warning("Failed to delete memory %d from ChromaDB: %s", mid, e)
+                    logger.warning("Failed to delete memory %d from ChromaDB (queued): %s", mid, e)
+                    from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_MEMORIES
+                    await queue_failed_op(
+                        self.sqlite, OP_DELETE, COLLECTION_MEMORIES,
+                        mid, error=str(e),
+                    )
             if count:
                 logger.info("Auto-pruned %d memories", count)
         except Exception as e:

@@ -20,6 +20,11 @@ from blipshell.llm.prompts import (
     summarize_memory,
 )
 from blipshell.llm.router import LLMRouter, TaskType
+from blipshell.memory.chroma_retry import (
+    OP_DELETE, OP_UPSERT,
+    COLLECTION_CORE, COLLECTION_LESSONS, COLLECTION_MEMORIES,
+    queue_failed_op,
+)
 from blipshell.memory.noise import should_skip_memory
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.memory.tagger import tag_message
@@ -108,13 +113,15 @@ class MemoryProcessor:
 
         # Step 4: ChromaDB embed (use summary for better semantic matching)
         t0 = _time.monotonic()
+        embed_meta = {"session_id": str(session_id), "role": role}
         try:
-            self.chroma.add_memory(memory_id, summary, {
-                "session_id": str(session_id),
-                "role": role,
-            })
+            self.chroma.add_memory(memory_id, summary, embed_meta)
         except Exception as e:
-            logger.error("ChromaDB embed failed: %s", e)
+            logger.error("ChromaDB embed failed (queued for retry): %s", e)
+            await queue_failed_op(
+                self.sqlite, OP_UPSERT, COLLECTION_MEMORIES,
+                memory_id, summary, embed_meta, str(e),
+            )
         t_embed = _time.monotonic() - t0
 
         # Step 4b: Dedup check — find similar memories, ask LLM what to do
@@ -129,7 +136,11 @@ class MemoryProcessor:
                     try:
                         self.chroma.delete_memory(memory_id)
                     except Exception as e:
-                        logger.warning("Failed to delete deduped memory %d from ChromaDB: %s", memory_id, e)
+                        logger.warning("Failed to delete deduped memory %d from ChromaDB (queued): %s", memory_id, e)
+                        await queue_failed_op(
+                            self.sqlite, OP_DELETE, COLLECTION_MEMORIES,
+                            memory_id, error=str(e),
+                        )
                     logger.info("Dedup: archived redundant memory %d", memory_id)
                     return None
             except Exception as e:
@@ -191,7 +202,11 @@ class MemoryProcessor:
         try:
             self.chroma.add_core_memory(mem_id, text)
         except Exception as e:
-            logger.error("Core memory embed failed: %s", e)
+            logger.error("Core memory embed failed (queued for retry): %s", e)
+            await queue_failed_op(
+                self.sqlite, OP_UPSERT, COLLECTION_CORE,
+                mem_id, text, error=str(e),
+            )
 
         # Tag
         try:
@@ -242,7 +257,11 @@ class MemoryProcessor:
             meta = {"project": project} if project else None
             self.chroma.add_lesson(lesson_id, lesson_text, metadata=meta)
         except Exception as e:
-            logger.error("Lesson embed failed: %s", e)
+            logger.error("Lesson embed failed (queued for retry): %s", e)
+            await queue_failed_op(
+                self.sqlite, OP_UPSERT, COLLECTION_LESSONS,
+                lesson_id, lesson_text, meta, str(e),
+            )
 
         # Tag
         try:
@@ -283,7 +302,11 @@ class MemoryProcessor:
                 try:
                     self.chroma.delete_core_memory(r["id"])
                 except Exception as e:
-                    logger.warning("Failed to delete contradicted core memory %d from ChromaDB: %s", r["id"], e)
+                    logger.warning("Failed to delete contradicted core memory %d from ChromaDB (queued): %s", r["id"], e)
+                    await queue_failed_op(
+                        self.sqlite, OP_DELETE, COLLECTION_CORE,
+                        r["id"], error=str(e),
+                    )
                 deactivated += 1
                 logger.info(
                     "Deactivated contradicted core memory %d (superseded by %d)",
@@ -341,7 +364,11 @@ class MemoryProcessor:
             try:
                 self.chroma.delete_memory(old_id)
             except Exception as e:
-                logger.warning("Failed to delete memory %d from ChromaDB during dedup: %s", old_id, e)
+                logger.warning("Failed to delete memory %d from ChromaDB during dedup (queued): %s", old_id, e)
+                await queue_failed_op(
+                    self.sqlite, OP_DELETE, COLLECTION_MEMORIES,
+                    old_id, error=str(e),
+                )
             logger.info("Dedup: UPDATE — archived old memory %d in favor of %d", old_id, new_memory_id)
             return "UPDATE"
 
@@ -351,7 +378,11 @@ class MemoryProcessor:
             try:
                 self.chroma.delete_memory(old_id)
             except Exception as e:
-                logger.warning("Failed to delete memory %d from ChromaDB during dedup: %s", old_id, e)
+                logger.warning("Failed to delete memory %d from ChromaDB during dedup (queued): %s", old_id, e)
+                await queue_failed_op(
+                    self.sqlite, OP_DELETE, COLLECTION_MEMORIES,
+                    old_id, error=str(e),
+                )
             logger.info("Dedup: DELETE — archived contradicted memory %d", old_id)
             return "DELETE"
 

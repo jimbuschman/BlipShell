@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # Jobs run in this order. Each is isolated — one failure doesn't abort the rest.
 JOB_ORDER = [
     "backup",
+    "chroma_retry",
     "cleanup",
     "backfill_summaries",
     "centroid_tag",
@@ -152,6 +153,7 @@ class NightlyRunner:
         """Run a single job by name. Returns job-specific stats dict."""
         handlers = {
             "backup": self._job_backup,
+            "chroma_retry": self._job_chroma_retry,
             "cleanup": self._job_cleanup,
             "backfill_summaries": self._job_backfill_summaries,
             "centroid_tag": self._job_centroid_tag,
@@ -179,6 +181,11 @@ class NightlyRunner:
         except Exception as e:
             logger.warning("Backup failed (non-fatal): %s", e)
             return {"backup_path": None, "warning": str(e)}
+
+    async def _job_chroma_retry(self, on_status) -> dict:
+        """Retry failed ChromaDB operations."""
+        from blipshell.memory.chroma_retry import process_retry_queue
+        return await process_retry_queue(self.sqlite, self.chroma)
 
     async def _job_cleanup(self, on_status) -> dict:
         """Reprocess failed messages."""
@@ -264,7 +271,12 @@ class NightlyRunner:
             try:
                 self.chroma.delete_memory(mid)
             except Exception as e:
-                logger.warning("Failed to delete memory %d from ChromaDB during prune: %s", mid, e)
+                logger.warning("Failed to delete memory %d from ChromaDB during prune (queued): %s", mid, e)
+                from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_MEMORIES
+                await queue_failed_op(
+                    self.sqlite, OP_DELETE, COLLECTION_MEMORIES,
+                    mid, error=str(e),
+                )
         return {"pruned": count}
 
     async def _job_consolidate(self, on_status) -> dict:

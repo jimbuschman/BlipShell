@@ -182,4 +182,9 @@ class MemoryConsolidator:
         try:
             self.chroma.delete_memory(loser_id)
         except Exception as e:
-            logger.warning("Failed to delete memory %d from ChromaDB: %s", loser_id, e)
+            logger.warning("Failed to delete memory %d from ChromaDB (queued): %s", loser_id, e)
+            from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_MEMORIES
+            await queue_failed_op(
+                self.sqlite, OP_DELETE, COLLECTION_MEMORIES,
+                loser_id, error=str(e),
+            )
