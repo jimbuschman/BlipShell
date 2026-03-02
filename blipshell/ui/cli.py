@@ -232,13 +232,18 @@ async def chat_loop(
     # loop cleanly; during cleanup it's suppressed; second press force-quits.
     _exit_requested = False
     _in_cleanup = False
+    _active_chat_task: asyncio.Task | None = None
 
     def _sigint_handler(sig, frame):
-        nonlocal _exit_requested
+        nonlocal _exit_requested, _active_chat_task
         if _in_cleanup:
             # During cleanup, second Ctrl+C force-quits
             raise KeyboardInterrupt
         _exit_requested = True
+        # Cancel the active chat task (including executor loops in project mode)
+        # so asyncio.wait() returns immediately instead of waiting for completion
+        if _active_chat_task is not None and not _active_chat_task.done():
+            _active_chat_task.cancel()
 
     signal.signal(signal.SIGINT, _sigint_handler)
 
@@ -491,9 +496,10 @@ async def chat_loop(
             console.print()  # blank line before response
             thinking_status.start()
 
-            chat_task = asyncio.create_task(
+            _active_chat_task = asyncio.create_task(
                 agent.chat(message, on_token=on_token, force_plan=force_plan)
             )
+            chat_task = _active_chat_task
             esc_task = asyncio.create_task(_poll_for_escape())
 
             try:
@@ -517,9 +523,13 @@ async def chat_loop(
                 else:
                     cancelled = True
                     response = "".join(response_parts)
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                cancelled = True
+                response = "".join(response_parts)
             except Exception as e:
                 response = f"Error: {e}"
             finally:
+                _active_chat_task = None
                 if thinking_active:
                     thinking_status.stop()
                 _drain_keyboard()
