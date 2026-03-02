@@ -202,6 +202,8 @@ class TaskExecutor:
         self._step_files_edited: list[str] = []
         # Last execute_dynamic messages — available for narrative building after execution
         self.last_messages: list[dict] = []
+        # Interactive callbacks (wired from Agent)
+        self.pause_check_callback: Optional[Callable] = None
         # Phase 2 test override flags (set by TestOverrides.apply())
         self._disable_winddown: bool = False
         self._disable_state_block: bool = False
@@ -459,6 +461,7 @@ class TaskExecutor:
             completion_tool="task_complete",
             capture_inline_text=True,
             tool_provider=_get_current_tools,
+            on_pause_check=self.pause_check_callback,
         )
         # Gate local Ollama calls (cloud endpoints bypass)
         if endpoint.provider == "ollama":

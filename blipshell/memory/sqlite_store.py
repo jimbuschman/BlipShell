@@ -359,6 +359,18 @@ class SQLiteStore:
             "CREATE INDEX IF NOT EXISTS idx_entity_relationships_valid "
             "ON entity_relationships(expired_at)"
         )
+        # Tool approval audit trail
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS tool_approvals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER,
+                tool_name TEXT NOT NULL,
+                arguments_json TEXT,
+                approved BOOLEAN NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            )
+        """)
         # Backfill valid_from from created_at for existing relationships
         await self._db.execute(
             "UPDATE entity_relationships SET valid_from = created_at "
@@ -2041,6 +2053,20 @@ class SQLiteStore:
         await self._db.execute(
             "INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)",
             (key, value),
+        )
+        await self._db.commit()
+
+    # --- Tool Approval Audit Trail ---
+
+    async def log_tool_approval(self, session_id: int | None, tool_name: str,
+                                arguments: dict, approved: bool):
+        """Record a tool approval/denial decision."""
+        import json as _json
+        args_str = _json.dumps(arguments, default=str)[:2000]
+        await self._db.execute(
+            "INSERT INTO tool_approvals (session_id, tool_name, arguments_json, approved) "
+            "VALUES (?, ?, ?, ?)",
+            (session_id, tool_name, args_str, approved),
         )
         await self._db.commit()
 

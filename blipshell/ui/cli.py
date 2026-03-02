@@ -12,7 +12,6 @@ Usage:
 """
 
 import asyncio
-import difflib
 import logging
 import os
 import sys
@@ -28,6 +27,8 @@ from rich.table import Table
 from blipshell.core.agent import Agent
 from blipshell.core.config import ConfigManager
 from blipshell.models.session import MessageRole
+from prompt_toolkit.formatted_text import ANSI
+
 from blipshell.ui.input import (
     APPROVAL_PROMPT, SIMPLE_PROMPT,
     async_prompt, create_chat_session, create_simple_session, format_chat_prompt,
@@ -42,41 +43,19 @@ _session_approved_tools: set[str] = set()
 _simple_session = None
 
 
-def _generate_colored_diff(old_lines: list[str], new_lines: list[str],
-                           filename: str, max_lines: int = 50) -> str:
-    """Generate a colored unified diff string using ANSI codes."""
-    diff = list(difflib.unified_diff(old_lines, new_lines,
-                                     fromfile=f"a/{filename}", tofile=f"b/{filename}",
-                                     lineterm=""))
-    if not diff:
-        return ""
-
-    colored = []
-    for i, line in enumerate(diff):
-        if i >= max_lines:
-            colored.append(f"\x1b[2m  ... ({len(diff) - max_lines} more lines)\x1b[0m")
-            break
-        if line.startswith("---") or line.startswith("+++"):
-            colored.append(f"\x1b[1m{line}\x1b[0m")
-        elif line.startswith("@@"):
-            colored.append(f"\x1b[36m{line}\x1b[0m")
-        elif line.startswith("-"):
-            colored.append(f"\x1b[31m{line}\x1b[0m")
-        elif line.startswith("+"):
-            colored.append(f"\x1b[32m{line}\x1b[0m")
-        else:
-            colored.append(line)
-    return "\n".join(colored)
+from blipshell.ui.diff import generate_colored_diff as _generate_colored_diff
 
 
-async def _tool_approval_prompt(tool_name: str, arguments: dict) -> bool:
+async def _tool_approval_prompt(tool_name: str, arguments: dict, force: bool = False) -> bool:
     """Prompt the user before executing a dangerous tool.
 
     Shows a colored diff for file edit/write operations.
+    When force=True, bypasses session auto-approve (used for destructive commands).
     Returns True to allow, False to deny.
     """
     # If user already approved this tool for the session, skip the prompt
-    if tool_name in _session_approved_tools:
+    # UNLESS force=True (destructive command detected — always ask)
+    if tool_name in _session_approved_tools and not force:
         return True
 
     # Build a readable summary of what the tool wants to do
@@ -119,10 +98,21 @@ async def _tool_approval_prompt(tool_name: str, arguments: dict) -> bool:
             arg_summary = str(v)[:80]
             break
 
-    console.print(
-        f"\n\x1b[33m[Approval required]\x1b[0m "
-        f"\x1b[1m{tool_name}\x1b[0m: {arg_summary}"
-    )
+    # Show destructive command warning in bold red
+    destructive_warning = arguments.get("_destructive_warning")
+    if destructive_warning:
+        console.print(
+            f"\n\x1b[1;31m⚠ DESTRUCTIVE: {destructive_warning}\x1b[0m"
+        )
+        console.print(
+            f"\x1b[33m[Approval required]\x1b[0m "
+            f"\x1b[1m{tool_name}\x1b[0m: {arg_summary}"
+        )
+    else:
+        console.print(
+            f"\n\x1b[33m[Approval required]\x1b[0m "
+            f"\x1b[1m{tool_name}\x1b[0m: {arg_summary}"
+        )
     if diff_output:
         console.print(diff_output)
 
@@ -179,6 +169,55 @@ def _drain_keyboard():
             msvcrt.getch()
     except ImportError:
         pass
+
+
+async def _pause_check() -> "PauseResult | None":
+    """Non-blocking check for Space/p keypress to pause executor.
+
+    Called between tool batches. If Space/p detected, shows interactive
+    pause menu. Returns PauseResult or None (no pause requested).
+    """
+    from blipshell.core.chat_loop import PauseAction, PauseResult
+
+    try:
+        import msvcrt
+    except ImportError:
+        return None
+
+    # Non-blocking peek — check if Space or 'p' was pressed
+    paused = False
+    while msvcrt.kbhit():
+        key = msvcrt.getch()
+        if key in (b' ', b'p', b'P'):
+            paused = True
+        # Drain other buffered keys
+    if not paused:
+        return None
+
+    # Show pause menu
+    console.print("\n\x1b[1;33m--- PAUSED ---\x1b[0m")
+    console.print("  (c) Continue   (r) Redirect   (s) Stop")
+
+    try:
+        choice = (await async_prompt(_simple_session, "  > ")).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return PauseResult(action=PauseAction.STOP)
+
+    if choice in ("c", "continue", ""):
+        return PauseResult(action=PauseAction.CONTINUE)
+    elif choice in ("s", "stop"):
+        return PauseResult(action=PauseAction.STOP)
+    elif choice in ("r", "redirect"):
+        try:
+            redirect = (await async_prompt(_simple_session, "  New instructions: ")).strip()
+        except (EOFError, KeyboardInterrupt):
+            return PauseResult(action=PauseAction.CONTINUE)
+        if redirect:
+            return PauseResult(action=PauseAction.REDIRECT, message=redirect)
+        return PauseResult(action=PauseAction.CONTINUE)
+    else:
+        # Treat unknown input as redirect instructions
+        return PauseResult(action=PauseAction.REDIRECT, message=choice)
 
 
 def setup_logging(verbose: bool = False):
@@ -273,12 +312,40 @@ async def chat_loop(
             tools_requiring_approval=set(config.agent.tools_requiring_approval),
         )
 
+    # Wire audit callback for tool approval logging
+    async def _audit_tool_approval(tool_name: str, arguments: dict, approved: bool):
+        sid = agent.session_manager.session_id if agent.session_manager else None
+        await agent.sqlite.log_tool_approval(sid, tool_name, arguments, approved)
+
+    agent.tool_registry.set_audit_callback(_audit_tool_approval)
+
     # Wire ask_user callback so the LLM can ask questions during execution
     agent.set_ask_user_callback(_ask_user_input)
 
+    # Wire pause check callback for mid-task steering
+    agent.set_pause_check_callback(_pause_check)
+
     # Create prompt_toolkit sessions for input (history, bracketed paste)
     global _simple_session
-    chat_session = create_chat_session()
+
+    def _build_toolbar():
+        """Dynamic bottom toolbar showing session state."""
+        parts = []
+        if agent.session_manager and agent.session_manager.session_id:
+            parts.append(f"Session #{agent.session_manager.session_id}")
+        if agent.active_project:
+            parts.append(f"Project: {agent.active_project['name']}")
+        ep = agent._last_endpoint_used
+        if ep:
+            parts.append(f"Endpoint: {ep}")
+        if agent._last_context_stats:
+            pct = agent._last_context_stats.get("usage_pct", 0)
+            parts.append(f"Context: {pct:.0f}%")
+        if agent.think_enabled:
+            parts.append("Think: ON")
+        return ANSI(f"\x1b[2m {' | '.join(parts)} \x1b[0m") if parts else ""
+
+    chat_session = create_chat_session(bottom_toolbar=_build_toolbar)
     _simple_session = create_simple_session()
 
     sid = await agent.start_session(project=project, resume_session_id=resume_id)

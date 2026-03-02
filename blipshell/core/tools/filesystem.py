@@ -287,6 +287,18 @@ class EditFileTool(Tool):
 
         content = resolved.read_text(encoding="utf-8")
 
+        def _edit_diff(msg: str) -> str:
+            """Append colored diff to edit success message."""
+            try:
+                from blipshell.ui.diff import generate_colored_diff
+                diff = generate_colored_diff(
+                    old_text.splitlines(), new_text.splitlines(),
+                    resolved.name, max_lines=20,
+                )
+                return f"{msg}\n{diff}" if diff else msg
+            except Exception:
+                return msg
+
         # Layer 1: Exact match
         if old_text in content:
             new_content = content.replace(old_text, new_text, 1)
@@ -294,7 +306,7 @@ class EditFileTool(Tool):
             if lint_err:
                 return lint_err
             resolved.write_text(new_content, encoding="utf-8")
-            return f"Successfully edited {path}"
+            return _edit_diff(f"Successfully edited {path}")
 
         # Layer 2: Whitespace-normalized match
         ws_result = self._try_whitespace_match(content, old_text, new_text)
@@ -304,7 +316,7 @@ class EditFileTool(Tool):
                 return lint_err
             resolved.write_text(ws_result, encoding="utf-8")
             logger.info("edit_file used whitespace-normalized match for %s", path)
-            return f"Successfully edited {path} (whitespace-normalized match)"
+            return _edit_diff(f"Successfully edited {path} (whitespace-normalized match)")
 
         # Layer 3: Fuzzy match
         fuzzy_result, ratio = self._try_fuzzy_match(content, old_text, new_text)
@@ -314,7 +326,7 @@ class EditFileTool(Tool):
                 return lint_err
             resolved.write_text(fuzzy_result, encoding="utf-8")
             logger.info("edit_file used fuzzy match (%.0f%%) for %s", ratio * 100, path)
-            return f"Successfully edited {path} (fuzzy match, {ratio:.0%} similarity)"
+            return _edit_diff(f"Successfully edited {path} (fuzzy match, {ratio:.0%} similarity)")
 
         # All layers failed — provide helpful error with closest match
         total_lines = len(content.splitlines())

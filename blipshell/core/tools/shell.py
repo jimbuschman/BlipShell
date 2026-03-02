@@ -2,11 +2,37 @@
 
 import asyncio
 import platform
+import re
 import shlex
 import sys
 
 from blipshell.core.tools.base import Tool
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
+
+# Patterns that indicate destructive or dangerous commands.
+# When matched, approval is forced even if session-auto-approved.
+DESTRUCTIVE_PATTERNS = [
+    (r'\brm\s+(-[rf]+\s+)*/', "rm with absolute path"),
+    (r'\brm\s+-[rf]*r', "recursive delete"),
+    (r'\bgit\s+reset\s+--hard\b', "git reset --hard (discards changes)"),
+    (r'\bgit\s+push\s+.*--force\b', "git force push"),
+    (r'\bgit\s+push\s+.*-f\b', "git force push"),
+    (r'\bgit\s+clean\s+-[fd]', "git clean (removes untracked files)"),
+    (r'\bgit\s+checkout\s+\.\s*$', "git checkout . (discards all changes)"),
+    (r'\bdrop\s+table\b', "SQL drop table"),
+    (r'\btruncate\s+table\b', "SQL truncate table"),
+    (r'\brmdir\s+/s\b', "recursive directory delete"),
+    (r'\bdel\s+/[sq]\b', "recursive file delete"),
+    (r'\bformat\s+[a-z]:', "format drive"),
+]
+
+
+def check_destructive(command: str) -> str | None:
+    """Return warning if command matches a destructive pattern, else None."""
+    for pattern, description in DESTRUCTIVE_PATTERNS:
+        if re.search(pattern, command, re.IGNORECASE):
+            return description
+    return None
 
 
 class ShellTool(Tool):

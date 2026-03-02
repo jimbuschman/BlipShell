@@ -143,6 +143,7 @@ class ChatMixin:
             enable_dedup=True,
             auto_continue_on_exhaustion=True,
             tool_provider=_get_current_tools,
+            on_pause_check=self._pause_check_callback,
         )
 
         # Try primary, then fallback on error
@@ -287,6 +288,8 @@ class ChatMixin:
                 on_token(f"\n[Iteration {step_num} complete]\n")
 
         try:
+            # Forward pause callback to executor
+            self.task_executor.pause_check_callback = self._pause_check_callback
             result = await self.task_executor.execute_dynamic(
                 user_message,
                 on_step_complete=on_step_complete,

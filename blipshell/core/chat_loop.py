@@ -7,6 +7,7 @@ Callers configure behavior via LoopConfig; results returned via LoopResult.
 from __future__ import annotations
 
 import asyncio
+import enum
 import json
 import logging
 from dataclasses import dataclass, field
@@ -19,6 +20,23 @@ if TYPE_CHECKING:
     from blipshell.llm.client import LLMClient
 
 logger = logging.getLogger(__name__)
+
+
+# ── Pause / Redirect ─────────────────────────────────────────────────────────
+
+
+class PauseAction(enum.Enum):
+    """Result from a pause check callback."""
+    CONTINUE = "continue"
+    REDIRECT = "redirect"
+    STOP = "stop"
+
+
+@dataclass
+class PauseResult:
+    """Details from a pause check."""
+    action: PauseAction = PauseAction.CONTINUE
+    message: str = ""  # redirect instructions from the user
 
 
 # ── Configuration & Result ───────────────────────────────────────────────────
@@ -63,6 +81,10 @@ class LoopConfig:
 
     max_parallel: int = 8
     """Maximum number of concurrent tool executions per batch."""
+
+    on_pause_check: Optional[Callable[[], "asyncio.coroutine"]] = None
+    """Async callback checked between tool batches. Returns PauseResult.
+    If None, no pause checking occurs."""
 
     ollama_gate: object | None = None
     """OllamaGate instance for serializing local Ollama calls. None = no gating."""
@@ -434,11 +456,19 @@ class ChatLoop:
                         else:
                             batch_seen.add(call_key)
 
-                # Phase 4: Display tool headers
-                for i, (name, arguments, _) in enumerate(parsed_calls):
-                    if self.on_token:
-                        arg_hint = format_tool_arg_hint(name, arguments)
-                        self.on_token(f"\n\x1b[36m\x1b[1m[Tool: {name}{arg_hint}]\x1b[0m\n")
+                # Phase 4: Display tool call summary (compact)
+                if self.on_token and parsed_calls:
+                    active_calls = [
+                        (name, args) for i, (name, args, _) in enumerate(parsed_calls)
+                        if i not in dedup_blocked
+                    ]
+                    if len(active_calls) == 1:
+                        name, args = active_calls[0]
+                        hint = format_tool_arg_hint(name, args)
+                        self.on_token(f"\n\x1b[2m  \u25b8 {name}{hint}\x1b[0m\n")
+                    elif active_calls:
+                        names = ", ".join(n for n, _ in active_calls)
+                        self.on_token(f"\n\x1b[2m  \u25b8 Running {len(active_calls)} tools: {names}\x1b[0m\n")
 
                 # Phase 5: Partition into sequential (approval/ask_user) and parallel
                 results: list[ToolResult | None] = [None] * len(parsed_calls)
@@ -521,16 +551,26 @@ class ChatLoop:
 
                     messages.append(result.to_ollama_message())
 
-                    # Display result preview
+                    # Display result preview (compact, one line per tool)
                     if self.on_token:
                         if i in dedup_blocked:
-                            self.on_token("  [Duplicate call blocked]\n")
+                            self.on_token(f"\x1b[2m    \u2502 {name}: [duplicate blocked]\x1b[0m\n")
+                        elif not result.success:
+                            err = result.result[:100].replace("\n", " ")
+                            self.on_token(f"\x1b[31m    \u2718 {name}: {err}\x1b[0m\n")
+                        elif name == "edit_file" and "\x1b[" in result.result:
+                            # Show first line (success msg) + colored diff
+                            lines = result.result.split("\n", 1)
+                            self.on_token(f"\x1b[2m    \u2502 {lines[0]}\x1b[0m\n")
+                            if len(lines) > 1 and lines[1].strip():
+                                self.on_token(lines[1] + "\n")
                         else:
-                            preview = result.result[:120].replace("\n", " ")
-                            if result.success:
-                                self.on_token(f"\x1b[2m[{preview}]\x1b[0m\n\n")
-                            else:
-                                self.on_token(f"\x1b[31m[{preview}]\x1b[0m\n\n")
+                            preview = result.result[:80].replace("\n", " ")
+                            self.on_token(f"\x1b[2m    \u2502 {name}: {preview}\x1b[0m\n")
+
+                # Blank line after tool results block
+                if self.on_token and parsed_calls:
+                    self.on_token("\n")
 
                 # Update last_tool_call for next batch dedup
                 if parsed_calls:
@@ -549,6 +589,25 @@ class ChatLoop:
                 # ── Capture substantial inline text as fallback ──
                 if config.capture_inline_text and content and len(content) >= 200:
                     last_inline_text = content
+
+                # ── Pause check between tool batches ──
+                if config.on_pause_check:
+                    try:
+                        pause_result = await config.on_pause_check()
+                        if pause_result and pause_result.action == PauseAction.STOP:
+                            if self.on_token:
+                                self.on_token("\x1b[33m  [Stopped by user]\x1b[0m\n")
+                            completion_method = "stopped"
+                            break
+                        elif pause_result and pause_result.action == PauseAction.REDIRECT:
+                            if self.on_token:
+                                self.on_token(f"\x1b[33m  [Redirected: {pause_result.message[:60]}]\x1b[0m\n")
+                            messages.append({
+                                "role": "user",
+                                "content": pause_result.message,
+                            })
+                    except Exception as e:
+                        logger.debug("Pause check error: %s", e)
 
                 continue
 

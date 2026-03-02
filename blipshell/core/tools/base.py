@@ -7,8 +7,11 @@ from typing import Any, Callable, Awaitable, Optional
 
 from blipshell.models.tools import ToolCall, ToolDefinition, ToolParameter, ToolParameterType, ToolResult
 
-# Type for the approval callback: (tool_name, arguments) -> approved?
+# Type for the approval callback: (tool_name, arguments, force) -> approved?
 ApprovalCallback = Callable[[str, dict[str, Any]], Awaitable[bool]]
+
+# Type for the audit callback: (tool_name, arguments, approved) -> None
+AuditCallback = Callable[[str, dict[str, Any], bool], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,7 @@ class ToolRegistry:
         self._tools: dict[str, Tool] = {}
         self._tool_groups: dict[str, str] = {}  # tool_name -> group
         self._approval_callback: Optional[ApprovalCallback] = None
+        self._audit_callback: Optional[AuditCallback] = None
         self._tools_requiring_approval: set[str] = set()
         self._plan_mode: bool = False
 
@@ -72,6 +76,10 @@ class ToolRegistry:
         """
         self._approval_callback = callback
         self._tools_requiring_approval = tools_requiring_approval
+
+    def set_audit_callback(self, callback: AuditCallback):
+        """Set callback to log tool approval decisions."""
+        self._audit_callback = callback
 
     def get_tool(self, name: str) -> Tool | None:
         """Get a tool by name."""
@@ -151,18 +159,38 @@ class ToolRegistry:
                 success=False,
             )
 
+        # Check for destructive shell commands (forces approval even if session-approved)
+        force_approval = False
+        if tool_call.name == "run_command" and tool_call.arguments.get("command"):
+            from blipshell.core.tools.shell import check_destructive
+            warning = check_destructive(tool_call.arguments["command"])
+            if warning:
+                tool_call.arguments["_destructive_warning"] = warning
+                force_approval = True
+
         # Check approval for dangerous tools
         if (
             self._approval_callback
-            and tool_call.name in self._tools_requiring_approval
+            and (tool_call.name in self._tools_requiring_approval or force_approval)
         ):
             try:
                 approved = await self._approval_callback(
                     tool_call.name, tool_call.arguments,
+                    force=force_approval,
                 )
             except Exception as e:
                 logger.error("Approval callback error: %s", e)
                 approved = False
+
+            # Clean up transient key before execution
+            tool_call.arguments.pop("_destructive_warning", None)
+
+            # Log the approval decision
+            if self._audit_callback:
+                try:
+                    await self._audit_callback(tool_call.name, tool_call.arguments, approved)
+                except Exception as e:
+                    logger.debug("Audit callback error: %s", e)
 
             if not approved:
                 return ToolResult(

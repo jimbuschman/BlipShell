@@ -127,6 +127,7 @@ class Agent(
 
         # Interactive callbacks (wired by CLI)
         self._ask_user_callback: Optional[Callable] = None
+        self._pause_check_callback: Optional[Callable] = None
 
         # Project (BlipCode)
         self.active_project: Optional[dict] = None

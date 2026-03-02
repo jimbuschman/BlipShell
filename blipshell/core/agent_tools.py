@@ -148,3 +148,7 @@ class ToolsMixin:
     def set_ask_user_callback(self, callback):
         """Set the callback for ask_user tool (wired by CLI)."""
         self._ask_user_callback = callback
+
+    def set_pause_check_callback(self, callback):
+        """Set the callback for mid-task pause checking (wired by CLI)."""
+        self._pause_check_callback = callback

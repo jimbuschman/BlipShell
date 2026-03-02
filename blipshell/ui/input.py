@@ -26,8 +26,11 @@ _DATA_DIR = Path(__file__).parent.parent.parent / "data"
 _HISTORY_FILE = _DATA_DIR / ".blipshell_history"
 
 
-def create_chat_session() -> Optional[PromptSession]:
+def create_chat_session(bottom_toolbar=None) -> Optional[PromptSession]:
     """Create the main chat PromptSession with persistent history.
+
+    Args:
+        bottom_toolbar: Optional callable returning toolbar text (ANSI string or plain).
 
     Returns None if prompt_toolkit can't initialize (non-console environment).
     """
@@ -38,6 +41,7 @@ def create_chat_session() -> Optional[PromptSession]:
             enable_history_search=True,
             mouse_support=False,
             multiline=False,
+            bottom_toolbar=bottom_toolbar,
         )
     except Exception as e:
         logger.warning("prompt_toolkit unavailable, falling back to basic input: %s", e)
