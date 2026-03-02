@@ -31,18 +31,38 @@ class LLMClient:
         self.timeout = timeout
         self._client = ollama.AsyncClient(host=host)
 
+    # Safety timeout for detecting genuinely dead Ollama connections.
+    # Not meant to limit slow-but-valid work — model loading + long
+    # generations can legitimately take 5+ minutes. This only fires
+    # if the connection is truly hung (process crash, socket stuck).
+    SAFETY_TIMEOUT = 600.0  # 10 minutes
+
     async def _retry_call(self, func, *args, **kwargs):
         """Retry an async call with exponential backoff.
 
         Retries up to max_retries times with delays of base*2^attempt seconds.
-        No per-call timeout — local Ollama calls can legitimately take minutes
-        (model loading, long generations). The OllamaGate serializes access;
-        killing slow calls just wastes the work already done.
+        Each attempt has a generous 10-minute safety timeout to catch dead
+        connections without killing slow-but-valid work.
         """
         last_error = None
         for attempt in range(self.max_retries + 1):
             try:
-                return await func(*args, **kwargs)
+                return await asyncio.wait_for(
+                    func(*args, **kwargs), timeout=self.SAFETY_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                last_error = TimeoutError(
+                    f"Ollama call timed out after {self.SAFETY_TIMEOUT:.0f}s — "
+                    "connection may be dead"
+                )
+                logger.error(
+                    "Ollama call timed out (attempt %d/%d) after %.0fs — "
+                    "this likely means Ollama is hung or crashed",
+                    attempt + 1, self.max_retries + 1, self.SAFETY_TIMEOUT,
+                )
+                if attempt < self.max_retries:
+                    delay = self.retry_base_delay * (2 ** attempt)
+                    await asyncio.sleep(delay)
             except Exception as e:
                 last_error = e
                 if attempt < self.max_retries:
