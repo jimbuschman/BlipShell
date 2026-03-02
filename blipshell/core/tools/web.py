@@ -42,11 +42,14 @@ def _is_ssrf_target(url: str) -> str | None:
 class WebSearchTool(Tool):
     read_only = True
 
+    def __init__(self, tavily_api_key: str | None = None):
+        self._tavily_api_key = tavily_api_key
+
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="web_search",
             description=(
-                "Search the web using DuckDuckGo and return results.\n\n"
+                "Search the web and return results.\n\n"
                 "When to use:\n"
                 "- User asks a factual question you're not confident about\n"
                 "- User explicitly asks you to search or look something up\n"
@@ -68,6 +71,47 @@ class WebSearchTool(Tool):
         )
 
     async def execute(self, query: str, max_results: int = 5, **kwargs) -> str:
+        # Try Tavily first (higher quality, AI-optimized results)
+        if self._tavily_api_key:
+            result = await self._search_tavily(query, max_results)
+            if result is not None:
+                return result
+            # Tavily failed — fall through to DuckDuckGo
+
+        return self._search_ddg(query, max_results)
+
+    async def _search_tavily(self, query: str, max_results: int) -> str | None:
+        """Search via Tavily API. Returns formatted results or None on failure."""
+        try:
+            from tavily import AsyncTavilyClient
+
+            client = AsyncTavilyClient(api_key=self._tavily_api_key)
+            response = await client.search(
+                query=query,
+                max_results=max_results,
+                search_depth="basic",
+            )
+
+            results = []
+            for r in response.get("results", []):
+                score = r.get("score", 0)
+                line = f"**{r['title']}** (relevance: {score:.2f})\n{r['url']}\n{r['content']}\n"
+                results.append(line)
+
+            if not results:
+                return f"No results found for: {query}"
+            return "\n---\n".join(results)
+
+        except ImportError:
+            logger.warning("tavily-python not installed, falling back to DuckDuckGo")
+            return None
+        except Exception as e:
+            logger.warning("Tavily search failed, falling back to DuckDuckGo: %s", e)
+            return None
+
+    @staticmethod
+    def _search_ddg(query: str, max_results: int) -> str:
+        """Search via DuckDuckGo (fallback). Always returns a string."""
         try:
             from ddgs import DDGS
 
@@ -80,7 +124,7 @@ class WebSearchTool(Tool):
                 return f"No results found for: {query}"
             return "\n---\n".join(results)
         except ImportError:
-            return "Error: ddgs package not installed. Run: pip install ddgs"
+            return "Error: No search backend available. Install tavily-python or ddgs."
         except Exception as e:
             return f"Search error: {e}"
 

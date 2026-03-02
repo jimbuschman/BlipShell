@@ -64,7 +64,9 @@ class ToolsMixin:
         ), group="shell")
 
         # Web group
-        self.tool_registry.register(WebSearchTool(), group="web")
+        from blipshell.models.config import resolve_env_vars
+        tavily_key = resolve_env_vars(cfg.web.tavily_api_key) if cfg.web.tavily_api_key else None
+        self.tool_registry.register(WebSearchTool(tavily_api_key=tavily_key), group="web")
         self.tool_registry.register(WebFetchTool(
             max_size=cfg.web.max_fetch_size,
             timeout=cfg.web.timeout,

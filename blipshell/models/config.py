@@ -184,6 +184,7 @@ class WebToolConfig(BaseModel):
     """Web tool configuration."""
     max_fetch_size: int = 524288
     timeout: int = 15
+    tavily_api_key: Optional[str] = None  # Tavily search API key, supports ${ENV_VAR}
 
 
 class ToolsConfig(BaseModel):
