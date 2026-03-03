@@ -205,6 +205,8 @@ class TaskExecutor:
         self.last_messages: list[dict] = []
         # Interactive callbacks (wired from Agent)
         self.pause_check_callback: Optional[Callable] = None
+        # Shared chat loop runner — set by Agent to reuse endpoint/fallback logic
+        self.chat_loop_runner: Optional[Callable] = None
         # Phase 2 test override flags (set by TestOverrides.apply())
         self._disable_winddown: bool = False
         self._disable_state_block: bool = False
@@ -390,18 +392,6 @@ class TaskExecutor:
         if self.active_project and self.project_context:
             sys_prompt += "\n\n" + self.project_context
 
-        # Route to coding model when project is active
-        task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
-        endpoint = await self.router._endpoint_manager.get_endpoint_for_role(task_type)
-        if not endpoint:
-            raise RuntimeError("No available LLM endpoint")
-        model = endpoint.models.get(task_type) or self.router.get_model(task_type)
-        client = endpoint.client
-
-        chat_kwargs: dict = {}
-        if endpoint.context_tokens:
-            chat_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
-
         tools = self.tool_registry.get_all_ollama_tools() or None
 
         # Tool call budget — bump for project mode
@@ -431,10 +421,11 @@ class TaskExecutor:
         if log_event:
             try:
                 memory_count = memory_context.count("\n- ") if memory_context else 0
+                msg_tokens = estimate_messages_tokens(messages)
                 await log_event("context_built", {
                     "query_profile": "executor",
-                    "context_limit": endpoint.context_tokens or 65536,
-                    "available_tokens": (endpoint.context_tokens or 65536) - estimate_messages_tokens(messages),
+                    "context_limit": 65536,
+                    "available_tokens": 65536 - msg_tokens,
                     "total_context_items": memory_count + len(chat_history or []),
                     "pool_budgets": {"memory": memory_count, "chat_history": len(chat_history or [])},
                     "pool_usage": {
@@ -451,33 +442,66 @@ class TaskExecutor:
                 return self.tool_registry.get_plan_mode_tools() or None
             return tools
 
-        # Run the unified tool-calling loop
-        loop = ChatLoop(self.tool_registry, on_token)
+        # Build executor-specific loop config
         config = LoopConfig(
             budget=budget,
             enable_dedup=True,
             enable_compaction=True,
             compaction_threshold=0.85,
-            context_limit=endpoint.context_tokens or 65536,
+            context_limit=65536,  # will be updated by _run_chat_loop with endpoint value
             completion_tool="task_complete",
             capture_inline_text=True,
             tool_provider=_get_current_tools,
             on_pause_check=self.pause_check_callback,
         )
-        # Gate local Ollama calls (cloud endpoints bypass)
-        if endpoint.provider == "ollama":
-            from blipshell.llm.ollama_gate import INTERACTIVE, get_gate
-            config.ollama_gate = get_gate()
-            config.gate_priority = INTERACTIVE
-        result = await loop.run(
-            client=client,
-            messages=messages,
-            model=model,
-            tools=tools,
-            chat_kwargs=chat_kwargs,
-            config=config,
-            on_tool_executed=self._on_tool_executed,
-        )
+
+        # Use shared chat loop runner (from Agent) if available — gives us
+        # endpoint fallback, gate setup, and model selection in one place.
+        # Falls back to direct execution if runner not wired (e.g. in tests).
+        if self.chat_loop_runner:
+            result, endpoint_name, model, using_fallback = await self.chat_loop_runner(
+                messages=messages,
+                config=config,
+                on_token=on_token,
+                on_tool_executed=self._on_tool_executed,
+            )
+            if result is None:
+                raise RuntimeError("No available LLM endpoint")
+        else:
+            # Legacy direct path (kept for backwards compatibility with tests)
+            task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
+            endpoint = await self.router._endpoint_manager.get_endpoint_for_role(task_type)
+            if not endpoint:
+                raise RuntimeError("No available LLM endpoint")
+            model = endpoint.models.get(task_type) or self.router.get_model(task_type)
+            endpoint_name = endpoint.name
+
+            chat_kwargs: dict = {}
+            if endpoint.context_tokens:
+                chat_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
+                config.context_limit = endpoint.context_tokens
+
+            if endpoint.provider == "ollama":
+                from blipshell.llm.ollama_gate import INTERACTIVE, get_gate
+                config.ollama_gate = get_gate()
+                config.gate_priority = INTERACTIVE
+
+            loop = ChatLoop(self.tool_registry, on_token)
+            endpoint.start_request()
+            try:
+                result = await loop.run(
+                    client=endpoint.client,
+                    messages=messages,
+                    model=model,
+                    tools=tools,
+                    chat_kwargs=chat_kwargs,
+                    config=config,
+                    on_tool_executed=self._on_tool_executed,
+                )
+                endpoint.record_success(0)
+            finally:
+                endpoint.complete_request()
+            using_fallback = False
 
         final_response = result.response
 
@@ -488,9 +512,9 @@ class TaskExecutor:
         if log_event:
             try:
                 await log_event("llm_complete", {
-                    "endpoint": endpoint.name,
+                    "endpoint": endpoint_name,
                     "model": model,
-                    "fallback": False,
+                    "fallback": using_fallback,
                     "tool_calls": result.tool_call_names,
                     "response_length": len(final_response or ""),
                     "total_tool_calls": result.tool_call_count,

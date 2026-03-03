@@ -96,25 +96,26 @@ class ChatMixin:
 
         return response
 
-    async def _chat_simple(
+    async def _run_chat_loop(
         self,
-        user_message: str,
+        messages: list[dict],
+        config,  # LoopConfig
         on_token: Optional[Callable[[str], None]] = None,
-    ) -> str:
-        """Simple chat path — uses unified ChatLoop with endpoint fallback."""
-        from blipshell.core.chat_loop import ChatLoop, LoopConfig, LoopResult
+        on_tool_executed=None,
+        on_stream_done=None,
+        extra_chat_kwargs: Optional[dict] = None,
+    ):
+        """Shared chat loop with endpoint selection, fallback, and gate setup.
 
-        # Search relevant memories for recall
-        await self._search_relevant_memories(user_message)
+        Both _chat_simple and executor.execute_dynamic use this to avoid
+        duplicating endpoint/model/gate/fallback logic.
 
-        # Build message list
-        messages = self._build_messages(user_message)
+        Returns:
+            (LoopResult, endpoint_name, model, using_fallback) tuple.
+            LoopResult is None if all endpoints failed.
+        """
+        from blipshell.core.chat_loop import ChatLoop
 
-        # Event: context_built (stats computed in _build_messages)
-        if self._last_context_stats:
-            await self._log_event("context_built", self._last_context_stats)
-
-        # Route to coding model when a project is active, otherwise tool_calling
         task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
 
         # Get model (with fallback if primary is known to be down)
@@ -128,28 +129,9 @@ class ChatMixin:
                 model = fallback
                 using_fallback = True
 
-        # Always pass all tools — let the model decide what to use.
         tools = self.tool_registry.get_all_ollama_tools() or None
-        max_iterations = self.config.agent.max_tool_iterations if tools else 0
-        logger.info("Passing %d tools (max_iterations=%d)",
-                     len(tools) if tools else 0, max_iterations)
-
-        # Dynamic tool provider — switches tools mid-loop when plan mode toggles
-        def _get_current_tools():
-            if self.tool_registry.in_plan_mode:
-                return self.tool_registry.get_plan_mode_tools() or None
-            return tools
 
         loop = ChatLoop(self.tool_registry, on_token)
-        config = LoopConfig(
-            budget=max_iterations,
-            enable_dedup=True,
-            auto_continue_on_exhaustion=True,
-            tool_provider=_get_current_tools,
-            on_pause_check=self._pause_check_callback,
-        )
-
-        # Try primary, then fallback on error
         result = None
         endpoint_name = ""
         full_response = ""
@@ -168,13 +150,21 @@ class ChatMixin:
 
             self._last_endpoint_used = endpoint.name
             endpoint_name = endpoint.name
-            client = endpoint.client
+
+            # Per-endpoint model override
+            ep_model = endpoint.models.get(task_type) or model
 
             chat_kwargs: dict = {}
             if endpoint.context_tokens:
                 chat_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
             if not self.think_enabled:
                 chat_kwargs["think"] = False
+            if extra_chat_kwargs:
+                chat_kwargs.update(extra_chat_kwargs)
+
+            # Update config with endpoint-specific context limit (for compaction)
+            if endpoint.context_tokens and hasattr(config, 'context_limit'):
+                config.context_limit = endpoint.context_tokens
 
             # Gate local Ollama calls (cloud endpoints bypass)
             if endpoint.provider == "ollama":
@@ -187,14 +177,14 @@ class ChatMixin:
             endpoint.start_request()
             try:
                 result = await loop.run(
-                    client=client,
+                    client=endpoint.client,
                     messages=messages,
-                    model=model,
+                    model=ep_model,
                     tools=tools,
                     chat_kwargs=chat_kwargs,
                     config=config,
-                    on_tool_executed=self._on_tool_executed,
-                    on_stream_done=self._record_token_usage_from_chunk,
+                    on_tool_executed=on_tool_executed or self._on_tool_executed,
+                    on_stream_done=on_stream_done,
                 )
                 endpoint.record_success(0)
                 full_response = result.response
@@ -205,14 +195,14 @@ class ChatMixin:
                         "Model-level error on endpoint '%s' (not penalizing): %s",
                         endpoint.name, e,
                     )
-                    self.router.mark_model_failed(model)
+                    self.router.mark_model_failed(ep_model)
                 else:
                     endpoint.record_failure()
 
                 if attempt == 0 and not using_fallback:
                     fallback = self.router.get_fallback_model(task_type)
-                    if fallback and fallback != model:
-                        logger.warning("Primary model '%s' failed, falling back to '%s'", model, fallback)
+                    if fallback and fallback != ep_model:
+                        logger.warning("Primary model '%s' failed, falling back to '%s'", ep_model, fallback)
                         model = fallback
                         using_fallback = True
                         if on_token:
@@ -224,6 +214,54 @@ class ChatMixin:
                 break
             finally:
                 endpoint.complete_request()
+
+        return result, endpoint_name, model, using_fallback
+
+    async def _chat_simple(
+        self,
+        user_message: str,
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """Simple chat path — uses unified ChatLoop with endpoint fallback."""
+        from blipshell.core.chat_loop import LoopConfig
+
+        # Search relevant memories for recall
+        await self._search_relevant_memories(user_message)
+
+        # Build message list
+        messages = self._build_messages(user_message)
+
+        # Event: context_built (stats computed in _build_messages)
+        if self._last_context_stats:
+            await self._log_event("context_built", self._last_context_stats)
+
+        tools = self.tool_registry.get_all_ollama_tools() or None
+        max_iterations = self.config.agent.max_tool_iterations if tools else 0
+        logger.info("Passing %d tools (max_iterations=%d)",
+                     len(tools) if tools else 0, max_iterations)
+
+        # Dynamic tool provider — switches tools mid-loop when plan mode toggles
+        def _get_current_tools():
+            if self.tool_registry.in_plan_mode:
+                return self.tool_registry.get_plan_mode_tools() or None
+            return tools
+
+        config = LoopConfig(
+            budget=max_iterations,
+            enable_dedup=True,
+            auto_continue_on_exhaustion=True,
+            tool_provider=_get_current_tools,
+            on_pause_check=self._pause_check_callback,
+        )
+
+        result, endpoint_name, model, using_fallback = await self._run_chat_loop(
+            messages=messages,
+            config=config,
+            on_token=on_token,
+            on_stream_done=self._record_token_usage_from_chunk,
+        )
+
+        full_response = result.response if result else "Error: No available LLM endpoint."
 
         # Store tool call info for programmatic access (used by simulation runner)
         self._last_tool_calls = [

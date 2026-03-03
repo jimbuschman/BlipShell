@@ -130,6 +130,9 @@ async def import_conversations(
                     conv.title,
                 )
                 try:
+                    from blipshell.memory.chroma_retry import (
+                        COLLECTION_LESSONS, COLLECTION_MEMORIES, OP_DELETE, queue_failed_op,
+                    )
                     cursor = await sqlite._db.execute(
                         "SELECT id FROM memories WHERE session_id = ?",
                         (session_id,),
@@ -138,8 +141,10 @@ async def import_conversations(
                     for mid in old_ids:
                         try:
                             chroma.delete_memory(mid)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            await queue_failed_op(
+                                sqlite, OP_DELETE, COLLECTION_MEMORIES, mid, error=str(e),
+                            )
                     cursor = await sqlite._db.execute(
                         "SELECT id FROM lessons WHERE source_session_id = ?",
                         (session_id,),
@@ -148,8 +153,10 @@ async def import_conversations(
                     for lid in old_lesson_ids:
                         try:
                             chroma.delete_lesson(lid)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            await queue_failed_op(
+                                sqlite, OP_DELETE, COLLECTION_LESSONS, lid, error=str(e),
+                            )
                     await sqlite.delete_session_cascade(session_id, old_ids)
                     stats.conversations_reimported += 1
                 except Exception as e:
@@ -185,6 +192,9 @@ async def _cleanup_incomplete_session(
     sqlite: SQLiteStore, chroma: ChromaStore, session_id: int,
 ):
     """Clean up an incomplete session (0 messages saved) for re-import."""
+    from blipshell.memory.chroma_retry import (
+        COLLECTION_LESSONS, COLLECTION_MEMORIES, OP_DELETE, queue_failed_op,
+    )
     cursor = await sqlite._db.execute(
         "SELECT id FROM memories WHERE session_id = ?",
         (session_id,),
@@ -193,8 +203,10 @@ async def _cleanup_incomplete_session(
     for mid in old_ids:
         try:
             chroma.delete_memory(mid)
-        except Exception:
-            pass
+        except Exception as e:
+            await queue_failed_op(
+                sqlite, OP_DELETE, COLLECTION_MEMORIES, mid, error=str(e),
+            )
     cursor = await sqlite._db.execute(
         "SELECT id FROM lessons WHERE source_session_id = ?",
         (session_id,),
@@ -203,8 +215,10 @@ async def _cleanup_incomplete_session(
     for lid in old_lesson_ids:
         try:
             chroma.delete_lesson(lid)
-        except Exception:
-            pass
+        except Exception as e:
+            await queue_failed_op(
+                sqlite, OP_DELETE, COLLECTION_LESSONS, lid, error=str(e),
+            )
     await sqlite.delete_session_cascade(session_id, old_ids)
 
 

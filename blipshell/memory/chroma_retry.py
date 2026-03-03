@@ -170,3 +170,164 @@ def _do_delete(chroma, collection: str, item_id: int):
         chroma.delete_lesson(item_id)
     else:
         raise ValueError(f"Unknown collection for delete: {collection}")
+
+
+async def reconcile_stores(
+    sqlite, chroma, max_actions: int = 500,
+) -> dict:
+    """Compare SQLite and ChromaDB, queue operations to fix drift.
+
+    Checks three collections: memories, core_memories, lessons.
+    - ChromaDB IDs not in SQLite → queue delete (orphaned embeddings)
+    - SQLite IDs not in ChromaDB → queue upsert (missing embeddings)
+
+    Args:
+        sqlite: SQLiteStore instance.
+        chroma: ChromaStore instance.
+        max_actions: Safety cap — don't queue more than this many operations per run.
+
+    Returns:
+        Stats dict with orphans_found, missing_found, actions_queued per collection.
+    """
+    stats = {
+        "orphans_deleted": 0,
+        "missing_queued": 0,
+        "collections_checked": 0,
+        "errors": 0,
+    }
+
+    # --- Memories ---
+    try:
+        chroma_ids = chroma.get_all_ids("memories")
+        cursor = await sqlite._db.execute(
+            "SELECT id FROM memories WHERE is_archived = 0"
+        )
+        sqlite_ids = {row[0] for row in await cursor.fetchall()}
+        stats["collections_checked"] += 1
+
+        # Orphans: in ChromaDB but not in SQLite
+        orphans = chroma_ids - sqlite_ids
+        for oid in list(orphans)[:max_actions]:
+            try:
+                chroma.delete_memory(oid)
+                stats["orphans_deleted"] += 1
+            except Exception as e:
+                logger.warning("Reconcile: failed to delete orphan memory %d: %s", oid, e)
+                stats["errors"] += 1
+
+        # Missing: in SQLite but not in ChromaDB
+        missing = sqlite_ids - chroma_ids
+        for mid in list(missing)[:max_actions - stats["orphans_deleted"]]:
+            try:
+                cursor = await sqlite._db.execute(
+                    "SELECT summary, session_id, role FROM memories WHERE id = ?",
+                    (mid,),
+                )
+                row = await cursor.fetchone()
+                if row and row[0]:
+                    await queue_failed_op(
+                        sqlite, OP_UPSERT, COLLECTION_MEMORIES, mid,
+                        document=row[0],
+                        metadata={"session_id": str(row[1] or ""), "role": row[2] or ""},
+                        error="reconcile: missing from ChromaDB",
+                    )
+                    stats["missing_queued"] += 1
+            except Exception as e:
+                logger.warning("Reconcile: failed to queue missing memory %d: %s", mid, e)
+                stats["errors"] += 1
+
+        if orphans or missing:
+            logger.info(
+                "Reconcile memories: %d orphans deleted, %d missing queued (of %d/%d)",
+                min(len(orphans), max_actions), stats["missing_queued"],
+                len(orphans), len(missing),
+            )
+    except Exception as e:
+        logger.error("Reconcile memories failed: %s", e)
+        stats["errors"] += 1
+
+    # --- Core memories ---
+    try:
+        chroma_ids = chroma.get_all_ids("core_memories")
+        cursor = await sqlite._db.execute(
+            "SELECT id FROM core_memories WHERE is_active = 1"
+        )
+        sqlite_ids = {row[0] for row in await cursor.fetchall()}
+        stats["collections_checked"] += 1
+
+        orphans = chroma_ids - sqlite_ids
+        for oid in list(orphans)[:max_actions]:
+            try:
+                chroma.delete_core_memory(oid)
+                stats["orphans_deleted"] += 1
+            except Exception as e:
+                stats["errors"] += 1
+
+        missing = sqlite_ids - chroma_ids
+        for mid in list(missing)[:max_actions]:
+            try:
+                cursor = await sqlite._db.execute(
+                    "SELECT content FROM core_memories WHERE id = ?", (mid,),
+                )
+                row = await cursor.fetchone()
+                if row and row[0]:
+                    await queue_failed_op(
+                        sqlite, OP_UPSERT, COLLECTION_CORE, mid,
+                        document=row[0],
+                        error="reconcile: missing from ChromaDB",
+                    )
+                    stats["missing_queued"] += 1
+            except Exception as e:
+                stats["errors"] += 1
+
+        if orphans or missing:
+            logger.info(
+                "Reconcile core_memories: %d orphans, %d missing",
+                len(orphans), len(missing),
+            )
+    except Exception as e:
+        logger.error("Reconcile core_memories failed: %s", e)
+        stats["errors"] += 1
+
+    # --- Lessons ---
+    try:
+        chroma_ids = chroma.get_all_ids("lessons")
+        cursor = await sqlite._db.execute("SELECT id FROM lessons")
+        sqlite_ids = {row[0] for row in await cursor.fetchall()}
+        stats["collections_checked"] += 1
+
+        orphans = chroma_ids - sqlite_ids
+        for oid in list(orphans)[:max_actions]:
+            try:
+                chroma.delete_lesson(oid)
+                stats["orphans_deleted"] += 1
+            except Exception as e:
+                stats["errors"] += 1
+
+        missing = sqlite_ids - chroma_ids
+        for mid in list(missing)[:max_actions]:
+            try:
+                cursor = await sqlite._db.execute(
+                    "SELECT content FROM lessons WHERE id = ?", (mid,),
+                )
+                row = await cursor.fetchone()
+                if row and row[0]:
+                    await queue_failed_op(
+                        sqlite, OP_UPSERT, COLLECTION_LESSONS, mid,
+                        document=row[0],
+                        error="reconcile: missing from ChromaDB",
+                    )
+                    stats["missing_queued"] += 1
+            except Exception as e:
+                stats["errors"] += 1
+
+        if orphans or missing:
+            logger.info(
+                "Reconcile lessons: %d orphans, %d missing",
+                len(orphans), len(missing),
+            )
+    except Exception as e:
+        logger.error("Reconcile lessons failed: %s", e)
+        stats["errors"] += 1
+
+    return stats

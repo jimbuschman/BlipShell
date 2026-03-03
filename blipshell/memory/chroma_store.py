@@ -273,16 +273,52 @@ class ChromaStore:
         return formatted
 
     def delete_memory(self, memory_id: int):
-        """Remove a memory from ChromaDB."""
-        self._memories.delete(ids=[str(memory_id)])
+        """Remove a memory from ChromaDB. Raises on failure for caller to handle."""
+        try:
+            self._memories.delete(ids=[str(memory_id)])
+        except Exception:
+            logger.warning("ChromaDB delete_memory failed for id=%d", memory_id)
+            raise
 
     def delete_core_memory(self, core_memory_id: int):
-        """Remove a core memory from ChromaDB."""
-        self._core_memories.delete(ids=[str(core_memory_id)])
+        """Remove a core memory from ChromaDB. Raises on failure for caller to handle."""
+        try:
+            self._core_memories.delete(ids=[str(core_memory_id)])
+        except Exception:
+            logger.warning("ChromaDB delete_core_memory failed for id=%d", core_memory_id)
+            raise
 
     def delete_lesson(self, lesson_id: int):
-        """Remove a lesson from ChromaDB."""
-        self._lessons.delete(ids=[str(lesson_id)])
+        """Remove a lesson from ChromaDB. Raises on failure for caller to handle."""
+        try:
+            self._lessons.delete(ids=[str(lesson_id)])
+        except Exception:
+            logger.warning("ChromaDB delete_lesson failed for id=%d", lesson_id)
+            raise
+
+    def get_all_ids(self, collection: str = "memories") -> set[int]:
+        """Get all document IDs from a ChromaDB collection.
+
+        Args:
+            collection: "memories", "core_memories", or "lessons"
+
+        Returns:
+            Set of integer IDs present in the collection.
+        """
+        coll_map = {
+            "memories": self._memories,
+            "core_memories": self._core_memories,
+            "lessons": self._lessons,
+        }
+        coll = coll_map.get(collection)
+        if not coll:
+            return set()
+        try:
+            result = coll.get(include=[])  # only IDs, no documents/embeddings
+            return {int(id_str) for id_str in (result.get("ids") or [])}
+        except Exception as e:
+            logger.error("Failed to get all IDs from ChromaDB '%s': %s", collection, e)
+            return set()
 
     # --- Entity Embeddings (Feature 5: Entity Resolution) ---
 

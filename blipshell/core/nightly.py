@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 JOB_ORDER = [
     "backup",
     "chroma_retry",
+    "reconcile",
     "cleanup",
     "backfill_summaries",
     "backfill_lessons",
@@ -166,6 +167,7 @@ class NightlyRunner:
         handlers = {
             "backup": self._job_backup,
             "chroma_retry": self._job_chroma_retry,
+            "reconcile": self._job_reconcile,
             "cleanup": self._job_cleanup,
             "backfill_summaries": self._job_backfill_summaries,
             "backfill_lessons": self._job_backfill_lessons,
@@ -201,6 +203,18 @@ class NightlyRunner:
         """Retry failed ChromaDB operations."""
         from blipshell.memory.chroma_retry import process_retry_queue
         return await process_retry_queue(self.sqlite, self.chroma)
+
+    async def _job_reconcile(self, on_status) -> dict:
+        """Reconcile SQLite and ChromaDB — find and fix drift."""
+        from blipshell.memory.chroma_retry import reconcile_stores
+        on_status("Comparing SQLite and ChromaDB collections...")
+        stats = await reconcile_stores(self.sqlite, self.chroma)
+        on_status(
+            f"Reconcile: {stats['orphans_deleted']} orphans deleted, "
+            f"{stats['missing_queued']} missing queued, "
+            f"{stats['errors']} errors"
+        )
+        return stats
 
     async def _job_cleanup(self, on_status) -> dict:
         """Reprocess failed messages."""

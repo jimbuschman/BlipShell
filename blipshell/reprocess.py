@@ -152,11 +152,16 @@ async def reprocess_lessons(
     old_lessons = await sqlite.get_all_lessons()
     stats["old_lessons_deleted"] = len(old_lessons)
 
+    from blipshell.memory.chroma_retry import (
+        COLLECTION_LESSONS, OP_DELETE, queue_failed_op,
+    )
     for lesson in old_lessons:
         try:
             chroma.delete_lesson(lesson.id)
-        except Exception:
-            pass
+        except Exception as e:
+            await queue_failed_op(
+                sqlite, OP_DELETE, COLLECTION_LESSONS, lesson.id, error=str(e),
+            )
         await sqlite.delete_lesson(lesson.id)
 
     # Get distinct session IDs from memories

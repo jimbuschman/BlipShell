@@ -220,6 +220,8 @@ class Agent(
             max_tool_iterations=self.config.agent.max_tool_iterations,
             processor=self.processor,
         )
+        # Wire shared chat loop runner so executor uses same endpoint/fallback logic
+        self.task_executor.chat_loop_runner = self._run_chat_loop
 
         # Background task manager (Phase 2)
         self.background_manager = BackgroundTaskManager(
