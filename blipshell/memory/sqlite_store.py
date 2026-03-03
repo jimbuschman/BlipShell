@@ -1369,20 +1369,24 @@ class SQLiteStore:
     async def get_sessions_missing_reflections(self, limit: int = 20) -> list[dict]:
         """Find sessions eligible for reflection.
 
-        Criteria: has a summary, not archived, 5+ messages, no existing reflection.
+        Criteria: has a summary, not archived, no existing reflection.
+        Counts messages from session_messages (newer sessions) OR memories
+        (imported/older sessions) — whichever has more.
         """
         cursor = await self._db.execute("""
             SELECT s.id, s.summary, s.project, s.title,
-                   COUNT(sm.id) as msg_count
+                   MAX(
+                       COALESCE((SELECT COUNT(*) FROM session_messages sm WHERE sm.session_id = s.id), 0),
+                       COALESCE((SELECT COUNT(*) FROM memories m WHERE m.session_id = s.id AND m.is_archived = 0), 0)
+                   ) as msg_count
             FROM sessions s
-            JOIN session_messages sm ON sm.session_id = s.id
             LEFT JOIN session_reflections sr ON sr.session_id = s.id
             WHERE sr.id IS NULL
               AND s.summary IS NOT NULL
               AND s.summary != ''
               AND s.is_archived = 0
             GROUP BY s.id
-            HAVING COUNT(sm.id) >= 5
+            HAVING msg_count >= 5
             ORDER BY s.id DESC
             LIMIT ?
         """, (limit,))

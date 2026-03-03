@@ -181,6 +181,7 @@ class TestPrepareConversation:
     async def test_empty_session(self, processor, mock_sqlite):
         """Empty sessions return just the summary."""
         mock_sqlite.get_session_messages_for_lesson.return_value = []
+        mock_sqlite.get_memories_by_session.return_value = []
         text = await processor.prepare_conversation_for_reflection(1, "Summary text")
         assert text == "Summary text"
 

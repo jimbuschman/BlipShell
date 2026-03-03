@@ -533,8 +533,13 @@ class MemoryProcessor:
         """
         messages = await self.sqlite.get_session_messages_for_lesson(session_id)
 
+        # Fallback for imported/older sessions: use memory summaries
         if not messages:
-            return session_summary
+            memories = await self.sqlite.get_memories_by_session(session_id)
+            if not memories:
+                return session_summary
+            lines = [f"{m.role}: {m.summary or m.content}" for m in memories]
+            return "\n".join(lines)
 
         if len(messages) <= 30:
             lines = [f"{m['role']}: {m['content']}" for m in messages]
