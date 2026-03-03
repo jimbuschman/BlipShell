@@ -18,6 +18,29 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _parse_triples(response: str) -> list[tuple[str, str, str]]:
+    """Parse 'subject | predicate | object' lines from entity extraction."""
+    response = response.strip()
+    if not response or response.upper() == "NONE":
+        return []
+    triples = []
+    for line in response.splitlines():
+        line = line.strip()
+        if not line or line.upper() == "NONE":
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 3:
+            continue
+        subj, pred, obj = parts[0], parts[1], parts[2]
+        if not subj or not pred or not obj:
+            continue
+        if subj.lower() in ("something", "it", "this", "that"):
+            continue
+        triples.append((subj, pred, obj))
+    return triples
+
+
 # ---------------------------------------------------------------------------
 # Hardcoded test data
 # ---------------------------------------------------------------------------
@@ -226,7 +249,6 @@ class PromptsSuite(BenchmarkSuite):
     ) -> TaskScore:
         from blipshell.llm.prompts import extract_entities
         from blipshell.llm.router import TaskType
-        from blipshell.memory.processor import MemoryProcessor
 
         times = []
         hit_count = 0
@@ -243,7 +265,7 @@ class PromptsSuite(BenchmarkSuite):
                 elapsed = time.monotonic() - start
                 times.append(elapsed)
 
-                triples = MemoryProcessor._parse_triples(raw)
+                triples = _parse_triples(raw)
                 found_entities = {t[0].lower() for t in triples} | {t[2].lower() for t in triples}
 
                 if not expected_entities:

@@ -89,13 +89,19 @@ async def run_benchmark(
     # Router factory
     def router_factory(model_name: str):
         ctx_tokens = get_context_tokens(model_name)
-        # Check if it's a cloud model — try to find matching endpoint
+        # Cloud models via OpenAI-compatible providers (groq, gemini)
+        # need make_cloud_router. But Ollama-proxied cloud models
+        # (e.g. glm-5:cloud) go through regular Ollama endpoint.
         if model_name.endswith(":cloud") or "cloud" in model_name:
             for ep in config.endpoints:
-                if ep.enabled:
+                if not ep.enabled:
+                    continue
+                # Only use OpenAI-provider endpoints for cloud routing
+                if getattr(ep, "provider", None) == "openai":
                     cloud_router = make_cloud_router(ep.name, model_name, config)
                     if cloud_router:
                         return cloud_router
+        # Local models + Ollama-proxied cloud models use regular Ollama
         kwargs = {}
         if ctx_tokens:
             kwargs["context_tokens"] = ctx_tokens
