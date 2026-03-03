@@ -173,8 +173,8 @@ def get_config_and_db(
 
     Returns (config, db_path, ollama_url).
     """
-    config_mgr = ConfigManager()
-    config = config_mgr.load(config_path)
+    config_mgr = ConfigManager(config_path)
+    config = config_mgr.load()
     resolved_db = db_path or config.database.path
     ollama_url = get_ollama_url(config.endpoints)
     return config, resolved_db, ollama_url
