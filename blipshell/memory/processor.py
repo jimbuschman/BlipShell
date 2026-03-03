@@ -17,6 +17,7 @@ from blipshell.llm.prompts import (
     extract_lesson,
     rank_and_importance,
     rank_importance_and_classify,
+    reflect_on_session,
     summarize_memory,
 )
 from blipshell.llm.router import LLMRouter, TaskType
@@ -461,6 +462,186 @@ class MemoryProcessor:
                         break
 
         return rank, importance, memory_type
+
+    # --- Session Reflection ---
+
+    async def process_reflection(
+        self,
+        session_id: int,
+        session_summary: str,
+        conversation_text: str,
+        project: str | None = None,
+    ) -> dict | None:
+        """Generate and store a session reflection.
+
+        Returns the parsed reflection dict, or None if the session was SKIP-ped.
+        """
+        system, user_prompt = reflect_on_session(
+            session_summary, conversation_text, project,
+        )
+        try:
+            raw = await self.router.generate(
+                TaskType.REASONING, user_prompt, system=system,
+            )
+        except Exception as e:
+            logger.error("Session reflection LLM call failed: %s", e)
+            raise
+
+        # Check for SKIP
+        if raw.strip().upper() == "SKIP":
+            return None
+
+        parsed = self._parse_reflection(raw)
+
+        # Store in SQLite
+        reflection_id = await self.sqlite.create_session_reflection(
+            session_id=session_id,
+            effectiveness=parsed["effectiveness"],
+            reflection_text=raw.strip(),
+            technical_insights=parsed.get("technical_insights"),
+            process_insights=parsed.get("process_insights"),
+            what_worked=parsed.get("what_worked"),
+            what_didnt_work=parsed.get("what_didnt_work"),
+        )
+
+        # Embed in ChromaDB lessons collection for search
+        embed_text = self._build_reflection_embed_text(parsed)
+        try:
+            meta = {
+                "type": "reflection",
+                "session_id": str(session_id),
+            }
+            if project:
+                meta["project"] = project
+            self.chroma.add_lesson(reflection_id + 100000, embed_text, metadata=meta)
+        except Exception as e:
+            logger.error("Reflection embed failed (queued for retry): %s", e)
+            await queue_failed_op(
+                self.sqlite, OP_UPSERT, COLLECTION_LESSONS,
+                reflection_id + 100000, embed_text, meta, str(e),
+            )
+
+        return parsed
+
+    async def prepare_conversation_for_reflection(
+        self, session_id: int, session_summary: str,
+    ) -> str:
+        """Build conversation text for reflection, with smart truncation.
+
+        Sessions <= 30 messages: full conversation text.
+        Sessions > 30 messages: summary + first 5 + last 5 + up to 10 key messages.
+        """
+        messages = await self.sqlite.get_session_messages_for_lesson(session_id)
+
+        if not messages:
+            return session_summary
+
+        if len(messages) <= 30:
+            lines = [f"{m['role']}: {m['content']}" for m in messages]
+            return "\n".join(lines)
+
+        # Long session — smart truncation
+        key_terms = {
+            "error", "fixed", "decided", "problem", "solution",
+            "breakthrough", "failed", "issue", "resolved", "workaround",
+            "bug", "crash", "works", "figured",
+        }
+
+        first_5 = messages[:5]
+        last_5 = messages[-5:]
+        middle = messages[5:-5]
+
+        # Score middle messages by relevance
+        scored = []
+        for msg in middle:
+            content_lower = msg["content"].lower()
+            score = sum(1 for term in key_terms if term in content_lower)
+            if score > 0:
+                scored.append((score, msg))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        key_msgs = [msg for _, msg in scored[:10]]
+
+        parts = [f"[Session summary: {session_summary}]\n"]
+        parts.append("[First messages:]")
+        for m in first_5:
+            parts.append(f"{m['role']}: {m['content']}")
+
+        if key_msgs:
+            parts.append(f"\n[Key messages ({len(key_msgs)} of {len(middle)} middle messages):]")
+            for m in key_msgs:
+                parts.append(f"{m['role']}: {m['content']}")
+
+        parts.append("\n[Last messages:]")
+        for m in last_5:
+            parts.append(f"{m['role']}: {m['content']}")
+
+        return "\n".join(parts)
+
+    @staticmethod
+    def _parse_reflection(text: str) -> dict:
+        """Parse structured reflection output from LLM.
+
+        Tolerant parser — extracts sections by label, handles missing sections.
+        """
+        result = {
+            "effectiveness": "unclear",
+            "what_worked": None,
+            "what_didnt_work": None,
+            "technical_insights": None,
+            "process_insights": None,
+        }
+
+        # Map of section label → dict key
+        sections = {
+            "EFFECTIVENESS": "effectiveness",
+            "WHAT_WORKED": "what_worked",
+            "WHAT_DIDNT_WORK": "what_didnt_work",
+            "TECHNICAL_INSIGHTS": "technical_insights",
+            "PROCESS_INSIGHTS": "process_insights",
+        }
+
+        # Find section positions
+        positions = []
+        for label in sections:
+            pattern = rf"^{label}\s*:?\s*"
+            for match in re.finditer(pattern, text, re.MULTILINE | re.IGNORECASE):
+                positions.append((match.start(), match.end(), label))
+
+        positions.sort(key=lambda x: x[0])
+
+        # Extract content between positions
+        for i, (start, content_start, label) in enumerate(positions):
+            end = positions[i + 1][0] if i + 1 < len(positions) else len(text)
+            content = text[content_start:end].strip()
+
+            key = sections[label]
+            if key == "effectiveness":
+                # Extract just the keyword — check longer matches first
+                # to avoid "effective" matching inside "ineffective"
+                normalized = content.lower().replace(" ", "_")
+                for val in ("partially_effective", "ineffective", "effective", "unclear"):
+                    if val in normalized:
+                        result["effectiveness"] = val
+                        break
+            else:
+                result[key] = content if content else None
+
+        return result
+
+    @staticmethod
+    def _build_reflection_embed_text(parsed: dict) -> str:
+        """Build text for ChromaDB embedding from parsed reflection."""
+        parts = []
+        if parsed.get("what_worked"):
+            parts.append(f"What worked: {parsed['what_worked']}")
+        if parsed.get("what_didnt_work"):
+            parts.append(f"What didn't work: {parsed['what_didnt_work']}")
+        if parsed.get("technical_insights"):
+            parts.append(f"Technical insights: {parsed['technical_insights']}")
+        if parsed.get("process_insights"):
+            parts.append(f"Process insights: {parsed['process_insights']}")
+        return "\n".join(parts) if parts else "Session reflection"
 
     @staticmethod
     def _parse_rank(text: str) -> int:

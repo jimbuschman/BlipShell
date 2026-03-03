@@ -697,3 +697,52 @@ def summarize_plan_results(user_request: str, step_results: list[str]) -> str:
         f"{results_text}\n"
         "Provide a clear summary that addresses the original request."
     )
+
+
+def reflect_on_session(
+    session_summary: str,
+    conversation_text: str,
+    project: str | None = None,
+) -> tuple[str, str]:
+    """Prompt for holistic session reflection.
+
+    Reviews the entire session and produces a structured assessment of
+    effectiveness, what worked/didn't, technical insights, and process insights.
+
+    Returns (system_prompt, user_prompt).
+    """
+    project_ctx = f" The session was in project '{project}'." if project else ""
+
+    system = (
+        "You are a session analyst. Your job is to review a completed conversation "
+        "session and extract useful lessons about WHAT HAPPENED, not about how to "
+        "interact with the user (that's handled separately).\n\n"
+        "Produce exactly 5 labeled sections:\n\n"
+        "EFFECTIVENESS: One word — effective / partially_effective / ineffective / unclear\n\n"
+        "WHAT_WORKED:\n"
+        "1-3 bullet points. Concrete approaches, tools, or strategies that led to progress.\n"
+        "Example: '- Breaking the migration into per-table scripts avoided timeout issues'\n\n"
+        "WHAT_DIDNT_WORK:\n"
+        "1-3 bullet points. Dead ends, wasted effort, wrong approaches.\n"
+        "Example: '- Regex-based parsing failed on nested structures; AST parsing was needed'\n\n"
+        "TECHNICAL_INSIGHTS:\n"
+        "1-5 bullet points. Reusable technical facts, patterns, or gotchas discovered.\n"
+        "Example: '- ChromaDB PersistentClient has no close() method; clear references instead'\n\n"
+        "PROCESS_INSIGHTS:\n"
+        "1-3 bullet points. Generalizable advice about HOW to approach similar work.\n"
+        "Example: '- Test schema changes on a copy before running migrations on production DB'\n\n"
+        "Rules:\n"
+        "- Be SPECIFIC. No generic statements like 'good progress was made' or 'worked well together'.\n"
+        "- Each bullet must contain a concrete detail from the session.\n"
+        "- Do NOT include behavioral/interaction advice (how to talk to the user).\n"
+        "- Do NOT include markdown formatting, headers, or bold text.\n"
+        "- If the session was trivial (simple questions, no real work), respond with: SKIP"
+    )
+
+    user = (
+        f"Review this session and provide your analysis.{project_ctx}\n\n"
+        f"Session summary:\n{session_summary}\n\n"
+        f"Conversation:\n{conversation_text}"
+    )
+
+    return system, user

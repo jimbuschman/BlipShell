@@ -301,6 +301,21 @@ CREATE TRIGGER IF NOT EXISTS memories_fts_delete AFTER DELETE ON memories
 WHEN OLD.summary IS NOT NULL BEGIN
     INSERT INTO memories_fts(memories_fts, rowid, summary) VALUES('delete', OLD.id, OLD.summary);
 END;
+
+CREATE TABLE IF NOT EXISTS session_reflections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL UNIQUE,
+    effectiveness TEXT,
+    reflection_text TEXT NOT NULL,
+    technical_insights TEXT,
+    process_insights TEXT,
+    what_worked TEXT,
+    what_didnt_work TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_reflections_session ON session_reflections(session_id);
 """
 
 
@@ -1312,6 +1327,88 @@ class SQLiteStore:
             SELECT role, content FROM session_messages
             WHERE session_id = ? ORDER BY id
         """, (session_id,))
+        return [dict(r) for r in await cursor.fetchall()]
+
+    # --- Session Reflections ---
+
+    async def create_session_reflection(
+        self,
+        session_id: int,
+        effectiveness: str,
+        reflection_text: str,
+        technical_insights: str | None = None,
+        process_insights: str | None = None,
+        what_worked: str | None = None,
+        what_didnt_work: str | None = None,
+    ) -> int:
+        """Store a session reflection. Returns the reflection ID.
+
+        UNIQUE constraint on session_id makes this resume-safe — re-running
+        on an already-reflected session raises IntegrityError.
+        """
+        cursor = await self._db.execute(
+            """INSERT INTO session_reflections
+               (session_id, effectiveness, reflection_text,
+                technical_insights, process_insights, what_worked, what_didnt_work)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (session_id, effectiveness, reflection_text,
+             technical_insights, process_insights, what_worked, what_didnt_work),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_session_reflection(self, session_id: int) -> dict | None:
+        """Get a session reflection by session ID."""
+        cursor = await self._db.execute(
+            "SELECT * FROM session_reflections WHERE session_id = ?",
+            (session_id,),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_sessions_missing_reflections(self, limit: int = 20) -> list[dict]:
+        """Find sessions eligible for reflection.
+
+        Criteria: has a summary, not archived, 5+ messages, no existing reflection.
+        """
+        cursor = await self._db.execute("""
+            SELECT s.id, s.summary, s.project, s.title,
+                   COUNT(sm.id) as msg_count
+            FROM sessions s
+            JOIN session_messages sm ON sm.session_id = s.id
+            LEFT JOIN session_reflections sr ON sr.session_id = s.id
+            WHERE sr.id IS NULL
+              AND s.summary IS NOT NULL
+              AND s.summary != ''
+              AND s.is_archived = 0
+            GROUP BY s.id
+            HAVING COUNT(sm.id) >= 5
+            ORDER BY s.id DESC
+            LIMIT ?
+        """, (limit,))
+        return [dict(r) for r in await cursor.fetchall()]
+
+    async def get_recent_reflections(
+        self, limit: int = 10, project: str | None = None,
+    ) -> list[dict]:
+        """Get recent session reflections, optionally filtered by project."""
+        if project:
+            cursor = await self._db.execute("""
+                SELECT sr.*, s.title, s.project
+                FROM session_reflections sr
+                JOIN sessions s ON s.id = sr.session_id
+                WHERE s.project = ?
+                ORDER BY sr.created_at DESC
+                LIMIT ?
+            """, (project, limit))
+        else:
+            cursor = await self._db.execute("""
+                SELECT sr.*, s.title, s.project
+                FROM session_reflections sr
+                JOIN sessions s ON s.id = sr.session_id
+                ORDER BY sr.created_at DESC
+                LIMIT ?
+            """, (limit,))
         return [dict(r) for r in await cursor.fetchall()]
 
     # --- Core Memory Management ---

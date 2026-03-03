@@ -28,6 +28,7 @@ JOB_ORDER = [
     "cleanup",
     "backfill_summaries",
     "backfill_lessons",
+    "session_reflections",
     "entity_extraction",
     "centroid_tag",
     "batch_tag",
@@ -171,6 +172,7 @@ class NightlyRunner:
             "cleanup": self._job_cleanup,
             "backfill_summaries": self._job_backfill_summaries,
             "backfill_lessons": self._job_backfill_lessons,
+            "session_reflections": self._job_session_reflections,
             "entity_extraction": self._job_entity_extraction,
             "centroid_tag": self._job_centroid_tag,
             "batch_tag": self._job_batch_tag,
@@ -352,6 +354,44 @@ class NightlyRunner:
                 failed += 1
 
         return {"processed": processed, "failed": failed, "total": len(sessions)}
+
+    async def _job_session_reflections(self, on_status) -> dict:
+        """Generate holistic reflections for unreflected sessions."""
+        sessions = await self.sqlite.get_sessions_missing_reflections(limit=20)
+        if not sessions:
+            return {"processed": 0, "skipped": 0, "total": 0}
+
+        processed = 0
+        skipped = 0
+        failed = 0
+        for session in sessions:
+            sid = session["id"]
+            summary = session["summary"]
+            project = session.get("project")
+            try:
+                conversation = await self.processor.prepare_conversation_for_reflection(
+                    sid, summary,
+                )
+                result = await self.processor.process_reflection(
+                    session_id=sid,
+                    session_summary=summary,
+                    conversation_text=conversation,
+                    project=project,
+                )
+                if result is None:
+                    skipped += 1
+                else:
+                    processed += 1
+            except Exception as e:
+                logger.error("Session reflection failed for session %d: %s", sid, e)
+                failed += 1
+
+        return {
+            "processed": processed,
+            "skipped": skipped,
+            "failed": failed,
+            "total": len(sessions),
+        }
 
     async def _job_entity_extraction(self, on_status) -> dict:
         """Catch up on unextracted memories."""
