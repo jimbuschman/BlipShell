@@ -422,7 +422,7 @@ class NightlyRunner:
         await self.sqlite.set_metadata("nightly_report", json.dumps(report))
 
     async def _job_rebuild_digests(self, on_status) -> dict:
-        """Rebuild project digests for all active projects."""
+        """Rebuild project digests only for projects missing one."""
         from blipshell.memory.project_digest import ProjectDigestManager
 
         digest_mgr = ProjectDigestManager(self.sqlite, self.router, self.chroma)
@@ -432,6 +432,12 @@ class NightlyRunner:
         for project in projects:
             name = project.get("name")
             if not name:
+                continue
+            # Skip projects that already have a digest — they update incrementally
+            # on session close. Only rebuild missing ones.
+            existing = await digest_mgr.get_digest(name)
+            if existing:
+                skipped += 1
                 continue
             try:
                 digest = await digest_mgr.bootstrap_digest(name)

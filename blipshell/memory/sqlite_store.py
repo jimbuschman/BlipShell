@@ -1296,7 +1296,7 @@ class SQLiteStore:
             SELECT s.id, s.project, COUNT(sm.id) as msg_count
             FROM sessions s
             JOIN session_messages sm ON sm.session_id = s.id
-            LEFT JOIN lessons l ON l.session_id = s.id
+            LEFT JOIN lessons l ON l.source_session_id = s.id
             WHERE l.id IS NULL
               AND s.is_archived = 0
             GROUP BY s.id
