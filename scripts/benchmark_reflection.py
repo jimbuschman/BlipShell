@@ -32,8 +32,8 @@ from blipshell.models.config import EndpointConfig, LLMConfig, ModelsConfig, get
 
 console = Console()
 
-DEFAULT_LOCAL_MODELS = ["qwen3:14b", "qwen3:4b", "qwen2.5:7b", "qwen2.5:14b"]
-CLOUD_MODELS = ["glm-5:cloud"]
+DEFAULT_LOCAL_MODELS = ["qwen3.5:4b", "qwen3.5:9b", "qwen3:14b", "qwen3:4b"]
+CLOUD_MODELS = ["glm-5:cloud", "qwen3.5:cloud"]
 
 
 def make_router(model_name: str, ollama_url: str, context_tokens: int = 32768):
@@ -291,13 +291,22 @@ async def main(args):
 
     # Context tokens per model (known values)
     context_map = {
-        "qwen3:4b": 40960,   # 40K
-        "qwen3:14b": 32768,  # 32K (as configured)
+        # qwen3.5 — all have 256K context
+        "qwen3.5:0.8b": 262144,
+        "qwen3.5:2b": 262144,
+        "qwen3.5:4b": 262144,
+        "qwen3.5:9b": 262144,
+        "qwen3.5:27b": 262144,
+        "qwen3.5:cloud": 262144,
+        # qwen3
+        "qwen3:4b": 40960,
+        "qwen3:14b": 32768,
+        # older models
         "qwen2.5:7b": 32768,
         "qwen2.5:14b": 32768,
         "glm4:latest": 32768,
         "gpt-oss:latest": 32768,
-        "glm-5:cloud": 196608,  # 192K
+        "glm-5:cloud": 196608,
     }
 
     all_results = []
