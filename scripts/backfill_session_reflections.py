@@ -89,16 +89,16 @@ async def backfill(
         try:
             call_start = time.monotonic()
 
-            # Prepare conversation text with smart truncation
-            conversation = await processor.prepare_conversation_for_reflection(
+            # Prepare full conversation (chunked if too large for context)
+            chunks = await processor.prepare_conversation_for_reflection(
                 sid, summary,
             )
 
-            # Generate reflection
+            # Generate reflection (auto-merges if multiple chunks)
             result = await processor.process_reflection(
                 session_id=sid,
                 session_summary=summary,
-                conversation_text=conversation,
+                conversation_chunks=chunks,
                 project=proj,
             )
             elapsed = time.monotonic() - call_start

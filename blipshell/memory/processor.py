@@ -15,6 +15,7 @@ from blipshell.llm.prompts import (
     decide_memory_action,
     detect_contradiction,
     extract_lesson,
+    merge_chunk_reflections,
     rank_and_importance,
     rank_importance_and_classify,
     reflect_on_session,
@@ -26,6 +27,7 @@ from blipshell.memory.chroma_retry import (
     COLLECTION_CORE, COLLECTION_LESSONS, COLLECTION_MEMORIES,
     queue_failed_op,
 )
+from blipshell.memory.manager import estimate_tokens
 from blipshell.memory.noise import should_skip_memory
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.memory.tagger import tag_message
@@ -469,23 +471,49 @@ class MemoryProcessor:
         self,
         session_id: int,
         session_summary: str,
-        conversation_text: str,
+        conversation_chunks: list[str],
         project: str | None = None,
     ) -> dict | None:
         """Generate and store a session reflection.
 
+        Accepts a list of conversation chunks (from prepare_conversation_for_reflection).
+        Single chunk: reflect directly. Multiple chunks: reflect on each, then merge.
+
         Returns the parsed reflection dict, or None if the session was SKIP-ped.
         """
-        system, user_prompt = reflect_on_session(
-            session_summary, conversation_text, project,
-        )
-        try:
-            raw = await self.router.generate(
-                TaskType.REASONING, user_prompt, system=system,
+        if len(conversation_chunks) == 1:
+            # Single chunk — reflect directly
+            raw = await self._reflect_on_text(
+                session_summary, conversation_chunks[0], project,
             )
-        except Exception as e:
-            logger.error("Session reflection LLM call failed: %s", e)
-            raise
+        else:
+            # Multiple chunks — reflect on each, then merge
+            chunk_reflections = []
+            for i, chunk in enumerate(conversation_chunks):
+                logger.info(
+                    "Reflecting on chunk %d/%d for session %d",
+                    i + 1, len(conversation_chunks), session_id,
+                )
+                chunk_raw = await self._reflect_on_text(
+                    session_summary, chunk, project,
+                )
+                if chunk_raw.strip().upper() != "SKIP":
+                    chunk_reflections.append(chunk_raw)
+
+            if not chunk_reflections:
+                return None  # All chunks were trivial
+
+            # Merge chunk reflections
+            system, user_prompt = merge_chunk_reflections(
+                session_summary, chunk_reflections, project,
+            )
+            try:
+                raw = await self.router.generate(
+                    TaskType.REASONING, user_prompt, system=system,
+                )
+            except Exception as e:
+                logger.error("Reflection merge failed: %s", e)
+                raise
 
         # Check for SKIP
         if raw.strip().upper() == "SKIP":
@@ -523,65 +551,80 @@ class MemoryProcessor:
 
         return parsed
 
+    async def _reflect_on_text(
+        self, session_summary: str, conversation_text: str, project: str | None,
+    ) -> str:
+        """Run the reflection LLM call on a single text. Returns raw output."""
+        system, user_prompt = reflect_on_session(
+            session_summary, conversation_text, project,
+        )
+        try:
+            return await self.router.generate(
+                TaskType.REASONING, user_prompt, system=system,
+            )
+        except Exception as e:
+            logger.error("Session reflection LLM call failed: %s", e)
+            raise
+
     async def prepare_conversation_for_reflection(
         self, session_id: int, session_summary: str,
-    ) -> str:
-        """Build conversation text for reflection, with smart truncation.
+    ) -> list[str]:
+        """Build full conversation text for reflection, chunked if needed.
 
-        Sessions <= 30 messages: full conversation text.
-        Sessions > 30 messages: summary + first 5 + last 5 + up to 10 key messages.
+        Returns a list of conversation chunks. Most sessions produce a single
+        chunk. Large sessions that would exceed context are split into chunks
+        so the LLM sees everything without information loss.
         """
         messages = await self.sqlite.get_session_messages_for_lesson(session_id)
 
-        # Fallback for imported/older sessions: use memory summaries
+        # Fallback for imported/older sessions: use raw content from memories
         if not messages:
             memories = await self.sqlite.get_memories_by_session(session_id)
             if not memories:
-                return session_summary
-            lines = [f"{m.role}: {m.summary or m.content}" for m in memories]
-            return "\n".join(lines)
+                return [session_summary]
+            messages = [{"role": m.role, "content": m.content} for m in memories]
 
-        if len(messages) <= 30:
-            lines = [f"{m['role']}: {m['content']}" for m in messages]
-            return "\n".join(lines)
+        # Get actual context window from the endpoint that will handle this
+        context_tokens = await self.router.get_context_tokens(TaskType.REASONING)
+        # Reserve ~4K for system prompt + response
+        max_tokens = max(context_tokens - 4096, context_tokens // 2)
 
-        # Long session — smart truncation
-        key_terms = {
-            "error", "fixed", "decided", "problem", "solution",
-            "breakthrough", "failed", "issue", "resolved", "workaround",
-            "bug", "crash", "works", "figured",
-        }
+        lines = [f"{m['role']}: {m['content']}" for m in messages]
+        full_text = "\n".join(lines)
+        total_tokens = estimate_tokens(full_text)
 
-        first_5 = messages[:5]
-        last_5 = messages[-5:]
-        middle = messages[5:-5]
+        if total_tokens <= max_tokens:
+            return [full_text]
 
-        # Score middle messages by relevance
-        scored = []
-        for msg in middle:
-            content_lower = msg["content"].lower()
-            score = sum(1 for term in key_terms if term in content_lower)
-            if score > 0:
-                scored.append((score, msg))
+        # Chunk by tokens — accumulate messages until we approach the limit
+        chunks = []
+        current_batch = []
+        current_tokens = 0
+        msg_idx = 0
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        key_msgs = [msg for _, msg in scored[:10]]
+        for msg in messages:
+            line = f"{msg['role']}: {msg['content']}"
+            line_tokens = estimate_tokens(line)
 
-        parts = [f"[Session summary: {session_summary}]\n"]
-        parts.append("[First messages:]")
-        for m in first_5:
-            parts.append(f"{m['role']}: {m['content']}")
+            if current_tokens + line_tokens > max_tokens and current_batch:
+                # Flush current batch as a chunk
+                chunk_text = f"[Part {len(chunks) + 1}, messages {msg_idx - len(current_batch) + 1}-{msg_idx}]\n"
+                chunk_text += "\n".join(current_batch)
+                chunks.append(chunk_text)
+                current_batch = []
+                current_tokens = 0
 
-        if key_msgs:
-            parts.append(f"\n[Key messages ({len(key_msgs)} of {len(middle)} middle messages):]")
-            for m in key_msgs:
-                parts.append(f"{m['role']}: {m['content']}")
+            current_batch.append(line)
+            current_tokens += line_tokens
+            msg_idx += 1
 
-        parts.append("\n[Last messages:]")
-        for m in last_5:
-            parts.append(f"{m['role']}: {m['content']}")
+        # Flush remaining
+        if current_batch:
+            chunk_text = f"[Part {len(chunks) + 1}, messages {msg_idx - len(current_batch) + 1}-{msg_idx}]\n"
+            chunk_text += "\n".join(current_batch)
+            chunks.append(chunk_text)
 
-        return "\n".join(parts)
+        return chunks
 
     @staticmethod
     def _parse_reflection(text: str) -> dict:

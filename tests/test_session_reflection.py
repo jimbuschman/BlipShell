@@ -161,59 +161,51 @@ class TestPrepareConversation:
     def processor(self, mock_sqlite):
         mock_chroma = MagicMock()
         mock_router = MagicMock()
+        # get_context_tokens is async and returns context window size
+        mock_router.get_context_tokens = AsyncMock(return_value=32768)
         return MemoryProcessor(mock_sqlite, mock_chroma, mock_router)
 
     @pytest.mark.asyncio
     async def test_short_session(self, processor, mock_sqlite):
-        """Sessions <= 30 messages return full text."""
+        """Sessions <= 30 messages return single chunk with full text."""
         messages = [
             {"role": "user", "content": f"Message {i}"}
             for i in range(10)
         ]
         mock_sqlite.get_session_messages_for_lesson.return_value = messages
 
-        text = await processor.prepare_conversation_for_reflection(1, "Summary")
-        assert "Message 0" in text
-        assert "Message 9" in text
-        assert "[Session summary" not in text  # no truncation header
+        chunks = await processor.prepare_conversation_for_reflection(1, "Summary")
+        assert len(chunks) == 1
+        assert "Message 0" in chunks[0]
+        assert "Message 9" in chunks[0]
 
     @pytest.mark.asyncio
     async def test_empty_session(self, processor, mock_sqlite):
-        """Empty sessions return just the summary."""
+        """Empty sessions return single chunk with just the summary."""
         mock_sqlite.get_session_messages_for_lesson.return_value = []
         mock_sqlite.get_memories_by_session.return_value = []
-        text = await processor.prepare_conversation_for_reflection(1, "Summary text")
-        assert text == "Summary text"
+        chunks = await processor.prepare_conversation_for_reflection(1, "Summary text")
+        assert len(chunks) == 1
+        assert chunks[0] == "Summary text"
 
     @pytest.mark.asyncio
-    async def test_long_session_truncation(self, processor, mock_sqlite):
-        """Sessions > 30 messages get smart truncation."""
+    async def test_large_session_chunks(self, processor, mock_sqlite):
+        """Sessions exceeding context window are split into multiple chunks."""
+        # Use realistic varied text to defeat tiktoken compression.
+        # 600 messages × ~1000 chars each ≈ 600K chars ≈ 150K tokens (len//4)
         messages = [
-            {"role": "user", "content": f"Normal message {i}"}
-            for i in range(40)
+            {"role": "user", "content": f"Message {i}: " + f"word{j} " * 150}
+            for i in range(600)
+            for j in [i]  # unique words per message
         ]
-        # Add key-term messages in the middle
-        messages[15] = {"role": "assistant", "content": "I found the error in line 42"}
-        messages[20] = {"role": "user", "content": "That fixed the problem!"}
-        messages[25] = {"role": "assistant", "content": "The solution was to use AST"}
-
         mock_sqlite.get_session_messages_for_lesson.return_value = messages
 
-        text = await processor.prepare_conversation_for_reflection(1, "Test summary")
-
-        # Should have summary
-        assert "[Session summary: Test summary]" in text
-        # Should have first messages
-        assert "Normal message 0" in text
-        assert "Normal message 4" in text
-        # Should have last messages
-        assert "Normal message 39" in text
-        # Should have key messages (contain "error", "fixed", "solution")
-        assert "found the error" in text
-        assert "fixed the problem" in text
-        assert "solution was to use" in text
-        # Should NOT have all middle messages
-        assert "Normal message 10" not in text
+        chunks = await processor.prepare_conversation_for_reflection(1, "Summary")
+        assert len(chunks) > 1
+        # All messages should be represented across chunks
+        all_text = "\n".join(chunks)
+        assert "Message 0" in all_text
+        assert "Message 599" in all_text
 
 
 # --- SQLite query tests ---

@@ -746,3 +746,53 @@ def reflect_on_session(
     )
 
     return system, user
+
+
+def merge_chunk_reflections(
+    session_summary: str,
+    chunk_reflections: list[str],
+    project: str | None = None,
+) -> tuple[str, str]:
+    """Merge multiple chunk reflections into a single unified reflection.
+
+    When a session is too large for one context window, each chunk gets
+    reflected on separately. This prompt merges those partial reflections
+    into a single coherent reflection with no information loss.
+
+    Returns (system_prompt, user_prompt).
+    """
+    project_ctx = f" The session was in project '{project}'." if project else ""
+
+    system = (
+        "You are a session analyst. You are given partial reflections from different "
+        "parts of the same session. Merge them into a single unified reflection.\n\n"
+        "Produce exactly 5 labeled sections:\n\n"
+        "EFFECTIVENESS: One word — effective / partially_effective / ineffective / unclear\n"
+        "(Consider the session as a whole across all parts.)\n\n"
+        "WHAT_WORKED:\n"
+        "1-3 bullet points. Deduplicate and keep the most concrete items.\n\n"
+        "WHAT_DIDNT_WORK:\n"
+        "1-3 bullet points. Deduplicate and keep the most concrete items.\n\n"
+        "TECHNICAL_INSIGHTS:\n"
+        "1-5 bullet points. Combine and deduplicate across all parts.\n\n"
+        "PROCESS_INSIGHTS:\n"
+        "1-3 bullet points. Combine and deduplicate across all parts.\n\n"
+        "Rules:\n"
+        "- Preserve ALL concrete details — do not generalize or drop specifics.\n"
+        "- Deduplicate items that say the same thing differently.\n"
+        "- If parts contradict (e.g. one says effective, another ineffective), "
+        "weigh by the overall trajectory.\n"
+        "- If all parts are trivial, respond with: SKIP"
+    )
+
+    parts_text = "\n\n---\n\n".join(
+        f"[Chunk {i + 1} reflection:]\n{r}" for i, r in enumerate(chunk_reflections)
+    )
+
+    user = (
+        f"Merge these partial reflections into one unified reflection.{project_ctx}\n\n"
+        f"Session summary:\n{session_summary}\n\n"
+        f"Partial reflections:\n{parts_text}"
+    )
+
+    return system, user

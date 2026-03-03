@@ -100,6 +100,13 @@ class LLMRouter:
         model = endpoint.models.get(task_type) or self.get_model(task_type)
         return model, endpoint.client
 
+    async def get_context_tokens(self, task_type: str) -> int:
+        """Get context window size for the endpoint that would handle this task type."""
+        endpoint = await self._endpoint_manager.get_endpoint_for_role(task_type)
+        if endpoint and endpoint.context_tokens:
+            return endpoint.context_tokens
+        return 32768  # safe default
+
     @staticmethod
     def _estimate_request_tokens(prompt: str, system: str | None = None) -> int:
         """Estimate total tokens for a request (prompt + system)."""

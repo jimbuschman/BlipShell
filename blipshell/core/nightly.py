@@ -369,13 +369,13 @@ class NightlyRunner:
             summary = session["summary"]
             project = session.get("project")
             try:
-                conversation = await self.processor.prepare_conversation_for_reflection(
+                chunks = await self.processor.prepare_conversation_for_reflection(
                     sid, summary,
                 )
                 result = await self.processor.process_reflection(
                     session_id=sid,
                     session_summary=summary,
-                    conversation_text=conversation,
+                    conversation_chunks=chunks,
                     project=project,
                 )
                 if result is None:
