@@ -2609,6 +2609,76 @@ def nightly_cmd(ctx, job, quiet):
     asyncio.run(_run())
 
 
+# --- Unified Benchmark ---
+
+@main.command("benchmark")
+@click.option("--models", "-m", default=None, help="Comma-separated model names")
+@click.option("--suite", "-s", "suite_names", default=None, help="Comma-separated suite names")
+@click.option("--thorough", is_flag=True, help="Use larger sample sizes")
+@click.option("--cloud", is_flag=True, help="Include cloud models")
+@click.option("--list", "list_only", is_flag=True, help="List available suites and exit")
+@click.option("--db", default=None, help="Path to blipshell.db")
+@click.option("--output", "-o", default=None, help="Path for JSON results")
+@click.option("--quiet", "-q", is_flag=True, help="JSON output only")
+@click.pass_context
+def benchmark_cmd(ctx, models, suite_names, thorough, cloud, list_only, db, output, quiet):
+    """Run unified model benchmarks across all task types."""
+    import json as _json
+
+    if list_only:
+        from blipshell.benchmark.suites import list_suites
+
+        from rich.table import Table
+        table = Table(title="Available Benchmark Suites")
+        table.add_column("Name", style="cyan")
+        table.add_column("Description")
+        for name, desc in list_suites():
+            table.add_row(name, desc)
+        console.print(table)
+        return
+
+    async def _run():
+        from blipshell.benchmark.runner import run_benchmark
+
+        model_list = [m.strip() for m in models.split(",")] if models else None
+        suite_list = [s.strip() for s in suite_names.split(",")] if suite_names else None
+
+        result = await run_benchmark(
+            models=model_list,
+            suite_names=suite_list,
+            thorough=thorough,
+            cloud=cloud,
+            config_path=ctx.obj.get("config_path"),
+            db_path=db,
+            output_path=output,
+            quiet=quiet,
+        )
+
+        if quiet:
+            from blipshell.benchmark.output import save_results
+            import json as _json2
+            # Also print to stdout for piping
+            data = {
+                "models": result.models,
+                "suites": result.suites,
+                "elapsed_s": result.elapsed_s,
+                "suite_results": [
+                    {
+                        "model": sr.model,
+                        "suite": sr.suite_name,
+                        "scores": [
+                            {"task": s.task_name, "quality": s.quality, "speed_s": s.speed_s}
+                            for s in sr.scores
+                        ],
+                    }
+                    for sr in result.suite_results
+                ],
+            }
+            print(_json2.dumps(data, indent=2))
+
+    asyncio.run(_run())
+
+
 # --- ChatGPT Import ---
 
 @main.group("import-chatgpt")
