@@ -260,10 +260,19 @@ class SessionMixin:
         sessions = await self.sqlite.list_sessions(limit=3)
         current_id = self.session_manager.session_id
         for s in sessions:
-            if s.id == current_id or not s.summary:
+            if s.id == current_id:
                 continue
+            text = s.summary
+            if not text:
+                # Fallback: build summary from memories for sessions missing summaries
+                memories = await self.sqlite.get_memories_by_session(s.id)
+                if not memories:
+                    continue
+                text = "; ".join(
+                    m.summary or m.content for m in memories[:10]
+                )
             self.memory_manager.add_memory("RecentHistory", PoolItem(
-                text=s.summary,
+                text=text,
                 session_role="system",
                 priority_score=2.0,
                 session_id=s.id,

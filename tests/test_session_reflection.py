@@ -284,7 +284,7 @@ class TestGetSessionsMissingReflections:
         await store.close()
 
     @pytest.mark.asyncio
-    async def test_excludes_sessions_with_few_messages(self, db_path):
+    async def test_excludes_sessions_with_single_message(self, db_path):
         from blipshell.memory.sqlite_store import SQLiteStore
 
         store = SQLiteStore(db_path)
@@ -292,8 +292,7 @@ class TestGetSessionsMissingReflections:
 
         sid = await store.create_session(title="Short")
         await store.update_session(sid, summary="Brief chat")
-        for i in range(3):  # < 5 messages
-            await store.save_session_message(sid, "user", f"msg {i}")
+        await store.save_session_message(sid, "user", "single msg")  # < 2 messages
 
         sessions = await store.get_sessions_missing_reflections(limit=10)
         assert len(sessions) == 0

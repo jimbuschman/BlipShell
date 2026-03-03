@@ -43,15 +43,20 @@ SUMMARY_CHUNK_SIZE = 20
 async def summarize_session(
     sqlite: SQLiteStore, router: LLMRouter, session_id: int,
 ) -> tuple[str, str]:
-    """Generate summary and title for a session from its memories.
+    """Generate summary and title for a session from its data.
 
+    Checks memories first, falls back to session_messages.
     Returns (summary, title).
     """
     memories = await sqlite.get_memories_by_session(session_id)
-    if not memories:
-        return "", ""
-
-    texts = [m.summary or m.content for m in memories]
+    if memories:
+        texts = [m.summary or m.content for m in memories]
+    else:
+        # Fallback: use session_messages for newer sessions without memories
+        messages = await sqlite.get_session_messages_for_lesson(session_id)
+        if not messages:
+            return "", ""
+        texts = [f"{m['role']}: {m['content']}" for m in messages]
 
     if len(texts) > SUMMARY_CHUNK_SIZE:
         chunk_summaries = []

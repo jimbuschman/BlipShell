@@ -762,15 +762,23 @@ class SQLiteStore:
         ]
 
     async def get_sessions_without_summaries(self, limit: int = 100) -> list[dict]:
-        """Get sessions that have memories but no summary (need backfill).
+        """Get sessions that have data but no summary (need backfill).
 
+        Checks both session_messages and memories tables — not just message_count
+        column, which may be stale for imported sessions.
         Returns dicts with {id, title, message_count} ordered oldest first.
         """
         cursor = await self._db.execute(
-            """SELECT s.id, s.title, s.message_count
+            """SELECT s.id, s.title,
+                      MAX(
+                          COALESCE((SELECT COUNT(*) FROM session_messages sm WHERE sm.session_id = s.id), 0),
+                          COALESCE((SELECT COUNT(*) FROM memories m WHERE m.session_id = s.id AND m.is_archived = 0), 0)
+                      ) as message_count
                FROM sessions s
-               WHERE s.summary IS NULL
-                 AND s.message_count > 0
+               WHERE (s.summary IS NULL OR s.summary = '')
+                 AND s.is_archived = 0
+               GROUP BY s.id
+               HAVING message_count > 0
                ORDER BY s.created_at ASC
                LIMIT ?""",
             (limit,),
@@ -1386,7 +1394,7 @@ class SQLiteStore:
               AND s.summary != ''
               AND s.is_archived = 0
             GROUP BY s.id
-            HAVING msg_count >= 5
+            HAVING msg_count >= 2
             ORDER BY s.id DESC
             LIMIT ?
         """, (limit,))
