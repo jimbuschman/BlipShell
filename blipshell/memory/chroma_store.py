@@ -14,9 +14,9 @@ from chromadb.config import Settings
 
 logger = logging.getLogger(__name__)
 
-# nomic-embed-text has 8192 token context but Ollama may default lower.
-# 2000 chars (~500 tokens) is safe for any model and plenty for quality.
-MAX_EMBED_CHARS = 2000
+# nomic-embed-text has 8192 token context (~16K chars).
+# 6000 chars preserves most memory content while staying well within limits.
+MAX_EMBED_CHARS = 6000
 
 # Timeout for Ollama embedding requests (seconds).
 # Must be generous: model loading from disk can take 30-60s on first use,

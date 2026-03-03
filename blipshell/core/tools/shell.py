@@ -32,6 +32,13 @@ DESTRUCTIVE_PATTERNS = [
     (r'\bformat\s+[a-z]:', "format drive"),
 ]
 
+# Shell metacharacters that chain or nest commands.
+# Splitting on these ensures ALL commands in a chain are validated.
+_CHAIN_OPERATORS_RE = re.compile(r'\s*(?:;|&&|\|\||&)\s*')
+_PIPE_RE = re.compile(r'\s*\|\s*')
+# Subshell / command substitution patterns
+_SUBSHELL_RE = re.compile(r'\$\(|`')
+
 
 def check_destructive(command: str) -> str | None:
     """Return warning if command matches a destructive pattern, else None."""
@@ -91,23 +98,11 @@ class ShellTool(Tool):
             timeout = self.timeout
         timeout = min(timeout, 600)  # hard cap at 10 minutes
 
-        # Validate command against allowlist
+        # Validate command against allowlist — checks ALL commands in chains
         if self.allowed_commands:
-            base_cmd = self._extract_base_command(command)
-            if base_cmd not in self.allowed_commands:
-                # Guide model to the right tool instead of another shell command
-                alt = {
-                    "ls": "Use list_directory tool instead.",
-                    "cat": "Use read_file tool instead.",
-                    "head": "Use read_file with max_lines parameter instead.",
-                    "tail": "Use read_file with start_line parameter instead.",
-                    "grep": "Use grep_files tool instead.",
-                    "find": "Use glob_files tool instead.",
-                    "wc": "Use read_file to check file contents.",
-                    "findstr": "Use grep_files tool instead.",
-                }
-                hint = alt.get(base_cmd, f"Allowed: {', '.join(self.allowed_commands)}")
-                return f"Error: '{base_cmd}' is not allowed. {hint}"
+            error = self._validate_full_command(command)
+            if error:
+                return error
 
         try:
             process = await asyncio.create_subprocess_shell(
@@ -159,9 +154,59 @@ class ShellTool(Tool):
         except Exception as e:
             return f"Error executing command: {e}"
 
+    def _validate_full_command(self, command: str) -> str | None:
+        """Validate ALL commands in a chain against the allowlist.
+
+        Splits on shell chain operators (;, &&, ||, &) and pipes (|),
+        checks each segment's base command. Also rejects subshell escapes.
+
+        Returns error message string, or None if valid.
+        """
+        # Block command substitution — $(cmd) and `cmd` can hide arbitrary commands
+        if _SUBSHELL_RE.search(command):
+            return (
+                "Error: Command substitution ($(...) or backticks) is not allowed. "
+                "Run each command separately."
+            )
+
+        # Tool-redirect hints for common disallowed commands
+        alt = {
+            "ls": "Use list_directory tool instead.",
+            "cat": "Use read_file tool instead.",
+            "head": "Use read_file with max_lines parameter instead.",
+            "tail": "Use read_file with start_line parameter instead.",
+            "grep": "Use grep_files tool instead.",
+            "find": "Use glob_files tool instead.",
+            "wc": "Use read_file to check file contents.",
+            "findstr": "Use grep_files tool instead.",
+        }
+
+        # Split on chain operators (;, &&, ||, &) first
+        segments = _CHAIN_OPERATORS_RE.split(command)
+
+        for segment in segments:
+            segment = segment.strip()
+            if not segment:
+                continue
+            # Each segment may contain pipes — validate each pipe stage
+            pipe_parts = _PIPE_RE.split(segment)
+            for part in pipe_parts:
+                part = part.strip()
+                if not part:
+                    continue
+                base_cmd = self._extract_base_command(part)
+                if base_cmd and base_cmd not in self.allowed_commands:
+                    hint = alt.get(base_cmd, f"Allowed: {', '.join(sorted(self.allowed_commands))}")
+                    return f"Error: '{base_cmd}' is not allowed. {hint}"
+        return None
+
     @staticmethod
     def _extract_base_command(command: str) -> str:
-        """Extract the base command name from a full command string."""
+        """Extract the base command name from a command string.
+
+        Strips path prefixes (both Unix / and Windows \\) so that
+        /usr/bin/python and python are treated identically.
+        """
         try:
             parts = shlex.split(command)
             if parts:

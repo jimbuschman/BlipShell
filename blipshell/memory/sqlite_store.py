@@ -2,11 +2,16 @@
 
 import json
 import logging
+import re
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 import aiosqlite
+
+# Regex for valid SQL column identifiers — prevents injection via dynamic column names.
+_VALID_COLUMN_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 from blipshell.models.memory import CoreMemory, Lesson, Memory, MemoryType
 from blipshell.models.session import Session, SessionMessage
@@ -299,6 +304,20 @@ END;
 """
 
 
+def _safe_set_clause(fields: dict, allowed: set[str]) -> tuple[str, list]:
+    """Build a parameterized SET clause from validated column names.
+
+    Filters to allowed columns and validates each name matches [a-z][a-z0-9_]*.
+    Returns (set_clause_str, values_list).
+    """
+    safe = {k: v for k, v in fields.items() if k in allowed}
+    for col in safe:
+        if not _VALID_COLUMN_RE.match(col):
+            raise ValueError(f"Invalid column name: {col!r}")
+    clause = ", ".join(f"{k} = ?" for k in safe)
+    return clause, list(safe.values())
+
+
 class SQLiteStore:
     """Async SQLite storage for structured data."""
 
@@ -306,10 +325,31 @@ class SQLiteStore:
         self.db_path = db_path
         self._db: Optional[aiosqlite.Connection] = None
 
+    @asynccontextmanager
+    async def transaction(self):
+        """Explicit transaction context manager for multi-step atomic operations.
+
+        Usage:
+            async with sqlite.transaction():
+                await sqlite.update_memory(mid, is_archived=True)
+                await sqlite.delete_lesson(lid)
+                # Both committed atomically, or both rolled back on error.
+
+        Under normal operation, each store method commits its own work.
+        Use this only when multiple methods must succeed or fail together.
+        """
+        await self._db.execute("BEGIN")
+        try:
+            yield
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
+
     async def initialize(self):
         """Open connection and create schema."""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(self.db_path, isolation_level=None)
+        self._db = await aiosqlite.connect(self.db_path, isolation_level="DEFERRED")
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA foreign_keys = ON")
         await self._db.execute("PRAGMA journal_mode = WAL")
@@ -394,6 +434,10 @@ class SQLiteStore:
     async def close(self):
         """Close the database connection."""
         if self._db:
+            try:
+                await self._db.execute("PRAGMA optimize")
+            except Exception:
+                pass  # best-effort — don't block shutdown
             await self._db.close()
             self._db = None
 
@@ -413,11 +457,10 @@ class SQLiteStore:
     async def update_session(self, session_id: int, **kwargs):
         """Update session fields."""
         allowed = {"title", "summary", "project", "last_active", "is_archived", "message_count"}
-        fields = {k: v for k, v in kwargs.items() if k in allowed}
-        if not fields:
+        set_clause, values = _safe_set_clause(kwargs, allowed)
+        if not set_clause:
             return
-        set_clause = ", ".join(f"{k} = ?" for k in fields)
-        values = list(fields.values()) + [session_id]
+        values.append(session_id)
         await self._db.execute(f"UPDATE sessions SET {set_clause} WHERE id = ?", values)
         await self._db.commit()
 
@@ -771,11 +814,10 @@ class SQLiteStore:
     async def update_memory(self, memory_id: int, **kwargs):
         """Update memory fields."""
         allowed = {"summary", "rank", "importance", "is_archived", "metadata_json", "memory_type"}
-        fields = {k: v for k, v in kwargs.items() if k in allowed}
-        if not fields:
+        set_clause, values = _safe_set_clause(kwargs, allowed)
+        if not set_clause:
             return
-        set_clause = ", ".join(f"{k} = ?" for k in fields)
-        values = list(fields.values()) + [memory_id]
+        values.append(memory_id)
         await self._db.execute(f"UPDATE memories SET {set_clause} WHERE id = ?", values)
         await self._db.commit()
 
@@ -1294,11 +1336,10 @@ class SQLiteStore:
     async def update_core_memory(self, core_memory_id: int, **kwargs):
         """Update core memory fields."""
         allowed = {"content", "category", "importance", "is_active"}
-        fields = {k: v for k, v in kwargs.items() if k in allowed}
-        if not fields:
+        set_clause, values = _safe_set_clause(kwargs, allowed)
+        if not set_clause:
             return
-        set_clause = ", ".join(f"{k} = ?" for k in fields)
-        values = list(fields.values()) + [core_memory_id]
+        values.append(core_memory_id)
         await self._db.execute(
             f"UPDATE core_memories SET {set_clause} WHERE id = ?", values
         )
@@ -1336,11 +1377,10 @@ class SQLiteStore:
     async def update_project(self, name: str, **fields) -> None:
         """Update project fields by name."""
         allowed = {"description", "root_path", "git_url", "language", "settings_json", "metadata_json"}
-        updates = {k: v for k, v in fields.items() if k in allowed}
-        if not updates:
+        set_clause, values = _safe_set_clause(fields, allowed)
+        if not set_clause:
             return
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
-        values = list(updates.values()) + [name]
+        values.append(name)
         await self._db.execute(
             f"UPDATE projects SET {set_clause} WHERE name = ?", values,
         )
@@ -1409,16 +1449,15 @@ class SQLiteStore:
     async def update_plan(self, plan_id: int, **kwargs):
         """Update task plan fields."""
         allowed = {"status", "result_summary", "updated_at"}
-        fields = {k: v for k, v in kwargs.items() if k in allowed}
-        if not fields:
-            return
         # Convert enums to their values
-        for k, v in fields.items():
+        for k, v in list(kwargs.items()):
             if hasattr(v, "value"):
-                fields[k] = v.value
-        fields["updated_at"] = datetime.now(timezone.utc).isoformat()
-        set_clause = ", ".join(f"{k} = ?" for k in fields)
-        values = list(fields.values()) + [plan_id]
+                kwargs[k] = v.value
+        kwargs["updated_at"] = datetime.now(timezone.utc).isoformat()
+        set_clause, values = _safe_set_clause(kwargs, allowed)
+        if not set_clause:
+            return
+        values.append(plan_id)
         await self._db.execute(f"UPDATE task_plans SET {set_clause} WHERE id = ?", values)
         await self._db.commit()
 
@@ -1520,15 +1559,14 @@ class SQLiteStore:
     async def update_step(self, step_id: int, **kwargs):
         """Update task step fields."""
         allowed = {"status", "output_result", "error_message", "retry_count", "updated_at"}
-        fields = {k: v for k, v in kwargs.items() if k in allowed}
-        if not fields:
-            return
-        for k, v in fields.items():
+        for k, v in list(kwargs.items()):
             if hasattr(v, "value"):
-                fields[k] = v.value
-        fields["updated_at"] = datetime.now(timezone.utc).isoformat()
-        set_clause = ", ".join(f"{k} = ?" for k in fields)
-        values = list(fields.values()) + [step_id]
+                kwargs[k] = v.value
+        kwargs["updated_at"] = datetime.now(timezone.utc).isoformat()
+        set_clause, values = _safe_set_clause(kwargs, allowed)
+        if not set_clause:
+            return
+        values.append(step_id)
         await self._db.execute(f"UPDATE task_steps SET {set_clause} WHERE id = ?", values)
         await self._db.commit()
 
@@ -1575,15 +1613,14 @@ class SQLiteStore:
             "status", "progress_pct", "progress_message", "result",
             "error_message", "target_endpoint", "updated_at",
         }
-        fields = {k: v for k, v in kwargs.items() if k in allowed}
-        if not fields:
-            return
-        for k, v in fields.items():
+        for k, v in list(kwargs.items()):
             if hasattr(v, "value"):
-                fields[k] = v.value
-        fields["updated_at"] = datetime.now(timezone.utc).isoformat()
-        set_clause = ", ".join(f"{k} = ?" for k in fields)
-        values = list(fields.values()) + [task_id]
+                kwargs[k] = v.value
+        kwargs["updated_at"] = datetime.now(timezone.utc).isoformat()
+        set_clause, values = _safe_set_clause(kwargs, allowed)
+        if not set_clause:
+            return
+        values.append(task_id)
         await self._db.execute(
             f"UPDATE background_tasks SET {set_clause} WHERE id = ?", values
         )
