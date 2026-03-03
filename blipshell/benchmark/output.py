@@ -87,18 +87,22 @@ def print_suite_detail(suite_name: str, results: list[SuiteResult]) -> None:
 
 
 def save_results(result: BenchmarkResult, output_path: str | None = None) -> str:
-    """Save full results to JSON. Returns the path used."""
+    """Merge this run's results into the accumulated JSON file. Returns the path."""
     path = output_path or DEFAULT_OUTPUT_PATH
     Path(path).parent.mkdir(parents=True, exist_ok=True)
 
-    data = {
-        "timestamp": result.timestamp or datetime.now(timezone.utc).isoformat(),
-        "elapsed_s": result.elapsed_s,
-        "models": result.models,
-        "suites_run": result.suites,
-        "results": {},
-    }
+    # Load existing accumulated data
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        data = {}
 
+    # Update metadata
+    data["last_updated"] = result.timestamp or datetime.now(timezone.utc).isoformat()
+    data.setdefault("results", {})
+
+    # Merge: new results overwrite per model+suite, but prior model+suite combos are kept
     for sr in result.suite_results:
         if sr.model not in data["results"]:
             data["results"][sr.model] = {}
@@ -113,10 +117,56 @@ def save_results(result: BenchmarkResult, output_path: str | None = None) -> str
             }
         data["results"][sr.model][sr.suite_name] = suite_data
 
+    # Rebuild models/suites lists from accumulated data
+    data["models"] = sorted(data["results"].keys())
+    all_suites: set[str] = set()
+    for model_data in data["results"].values():
+        all_suites.update(model_data.keys())
+    data["suites"] = sorted(all_suites)
+
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
     return path
+
+
+def load_accumulated(output_path: str | None = None) -> BenchmarkResult:
+    """Load all accumulated results from JSON into a BenchmarkResult."""
+    path = output_path or DEFAULT_OUTPUT_PATH
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return BenchmarkResult()
+
+    results = data.get("results", {})
+    all_models = sorted(results.keys())
+    all_suites: set[str] = set()
+    suite_results: list[SuiteResult] = []
+
+    for model, suites in results.items():
+        for suite_name, tasks in suites.items():
+            all_suites.add(suite_name)
+            scores = []
+            for task_name, task_data in tasks.items():
+                scores.append(TaskScore(
+                    task_name=task_name,
+                    quality=task_data.get("quality", 0),
+                    speed_s=task_data.get("speed_s", 0),
+                    samples=task_data.get("samples", 0),
+                    errors=task_data.get("errors", 0),
+                    detail=task_data.get("detail", {}),
+                ))
+            suite_results.append(SuiteResult(
+                suite_name=suite_name, model=model, scores=scores,
+            ))
+
+    return BenchmarkResult(
+        suite_results=suite_results,
+        models=all_models,
+        suites=sorted(all_suites),
+        timestamp=data.get("last_updated", ""),
+    )
 
 
 def save_incremental(

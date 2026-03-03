@@ -10,6 +10,7 @@ from typing import Callable
 from blipshell.benchmark.models import BenchmarkResult, SuiteResult
 from blipshell.benchmark.output import (
     console,
+    load_accumulated,
     print_comparison_table,
     print_suite_detail,
     save_incremental,
@@ -149,14 +150,19 @@ async def run_benchmark(
 
     result.elapsed_s = round(time.monotonic() - total_start, 1)
 
-    # Final comparison table
-    if not quiet:
-        print_comparison_table(result)
-        console.print(f"\n[dim]Total time: {result.elapsed_s:.0f}s[/dim]")
-
-    # Save full results
+    # Save (merges with existing)
     path = save_results(result, output_path)
+
+    # Load full accumulated results for the comparison table
+    accumulated = load_accumulated(output_path)
+
     if not quiet:
+        console.print(f"\n{'=' * 60}")
+        console.print("[bold]Accumulated Results (all runs)[/bold]")
+        print_comparison_table(accumulated)
+        console.print(f"\n[dim]This run: {result.elapsed_s:.0f}s | "
+                      f"{len(accumulated.models)} models across "
+                      f"{len(accumulated.suites)} suites[/dim]")
         console.print(f"[dim]Results saved to {path}[/dim]")
 
     return result
