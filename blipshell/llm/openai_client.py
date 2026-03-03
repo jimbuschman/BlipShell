@@ -83,7 +83,18 @@ class OpenAICompatClient:
                         endpoint_name=self.base_url,
                         message=f"Rate limit retries exhausted after {max_rate_limit_retries} attempts: {e}",
                     ) from e
-                delay = 5.0 * rate_limit_retries
+                # Use Retry-After header if available, otherwise exponential backoff
+                delay = None
+                if hasattr(e, "response") and e.response is not None:
+                    retry_after = e.response.headers.get("retry-after")
+                    if retry_after:
+                        try:
+                            delay = min(float(retry_after), 120.0)
+                        except (ValueError, TypeError):
+                            pass
+                if delay is None:
+                    # Exponential: 10s, 30s — long enough for TPM recovery
+                    delay = 10.0 * (3 ** (rate_limit_retries - 1))
                 logger.warning(
                     "Rate limited (%d/%d), waiting %.0fs...",
                     rate_limit_retries, max_rate_limit_retries, delay,

@@ -48,6 +48,7 @@ class EndpointConfig(BaseModel):
     context_tokens: Optional[int] = None  # per-endpoint context window override
     rate_limit_rpm: Optional[int] = None  # max requests per minute
     rate_limit_rpd: Optional[int] = None  # max requests per day
+    rate_limit_tpm: Optional[int] = None  # max tokens per minute (prevents TPM 429s)
     models: dict[str, str] = Field(default_factory=dict)  # per-endpoint model overrides
     pii_sanitize: Optional[bool] = None  # None = auto (true for openai, false for ollama)
     cost_per_1m_prompt: float = 0.0  # $/million prompt tokens (0 = free/local)

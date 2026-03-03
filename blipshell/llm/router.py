@@ -100,6 +100,15 @@ class LLMRouter:
         model = endpoint.models.get(task_type) or self.get_model(task_type)
         return model, endpoint.client
 
+    @staticmethod
+    def _estimate_request_tokens(prompt: str, system: str | None = None) -> int:
+        """Estimate total tokens for a request (prompt + system)."""
+        from blipshell.memory.manager import estimate_tokens
+        total = estimate_tokens(prompt)
+        if system:
+            total += estimate_tokens(system)
+        return total
+
     async def _gated_generate(self, endpoint, prompt: str, model: str,
                               system: Optional[str], gen_kwargs: dict) -> str:
         """Call client.generate(), gating local Ollama calls via OllamaGate."""
@@ -128,6 +137,23 @@ class LLMRouter:
         model = endpoint.models.get(task_type) or self.get_model(task_type)
         client = endpoint.client
         use_fallback = False
+
+        # Pre-flight token check: skip cloud endpoint if request would exceed TPM
+        estimated_tokens = self._estimate_request_tokens(prompt, system)
+        if endpoint.would_exceed_tpm(estimated_tokens):
+            fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
+                task_type, exclude=endpoint.name,
+            )
+            if fallback_ep:
+                fb_model = fallback_ep.models.get(task_type) or self.get_fallback_model(task_type) or self.get_model(task_type)
+                logger.info(
+                    "Request ~%dK tokens would exceed %s TPM budget, routing to %s",
+                    estimated_tokens // 1000, endpoint.name, fallback_ep.name,
+                )
+                endpoint = fallback_ep
+                model = fb_model
+                client = fallback_ep.client
+                use_fallback = True
 
         # Skip straight to fallback if primary model is known to be down
         if self.is_model_failed(model):
@@ -161,7 +187,7 @@ class LLMRouter:
             if system:
                 system = sanitize_text(system)
 
-        await self._endpoint_manager.start_request_atomic(endpoint)
+        await self._endpoint_manager.start_request_atomic(endpoint, token_count=estimated_tokens)
         try:
             gen_kwargs = {}
             if endpoint.context_tokens:

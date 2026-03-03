@@ -33,6 +33,7 @@ endpoints:
     max_concurrent: 3
     rate_limit_rpm: 30
     rate_limit_rpd: 1000
+    rate_limit_tpm: 6000                 # free tier TPM limit — large requests skip to local
     enabled: true
     models:
       summarization: "openai/gpt-oss-120b"

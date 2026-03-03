@@ -36,7 +36,9 @@ class Endpoint:
     pii_sanitize: Optional[bool] = None  # None = auto (true for openai, false for ollama)
     rate_limit_rpm: Optional[int] = None
     rate_limit_rpd: Optional[int] = None
+    rate_limit_tpm: Optional[int] = None
     _minute_requests: list[float] = field(default_factory=list, repr=False)
+    _minute_tokens: list[tuple[float, int]] = field(default_factory=list, repr=False)
     _day_requests: int = field(default=0, repr=False)
     _day_reset: float = field(default_factory=lambda: time.time() + 86400, repr=False)
     client: Optional[LLMClient] = field(default=None, repr=False)
@@ -51,6 +53,12 @@ class Endpoint:
             if len(self._minute_requests) >= self.rate_limit_rpm:
                 return True
 
+        if self.rate_limit_tpm is not None:
+            self._minute_tokens = [(t, n) for t, n in self._minute_tokens if now - t < 60]
+            used = sum(n for _, n in self._minute_tokens)
+            if used >= self.rate_limit_tpm:
+                return True
+
         if self.rate_limit_rpd is not None:
             if now >= self._day_reset:
                 self._day_requests = 0
@@ -59,6 +67,18 @@ class Endpoint:
                 return True
 
         return False
+
+    def would_exceed_tpm(self, estimated_tokens: int) -> bool:
+        """Check if a request of this size would exceed the TPM budget.
+
+        Returns False if no TPM limit is configured.
+        """
+        if self.rate_limit_tpm is None:
+            return False
+        now = time.time()
+        self._minute_tokens = [(t, n) for t, n in self._minute_tokens if now - t < 60]
+        used = sum(n for _, n in self._minute_tokens)
+        return (used + estimated_tokens) > self.rate_limit_tpm
 
     @property
     def should_sanitize_pii(self) -> bool:
@@ -77,12 +97,15 @@ class Endpoint:
                 and self.active_requests < self.max_concurrent
                 and not self._is_rate_limited())
 
-    def start_request(self):
+    def start_request(self, token_count: int = 0):
         self.active_requests += 1
-        self.last_used = time.time()
+        now = time.time()
+        self.last_used = now
         # Track for rate limiting
-        self._minute_requests.append(time.time())
+        self._minute_requests.append(now)
         self._day_requests += 1
+        if token_count > 0 and self.rate_limit_tpm is not None:
+            self._minute_tokens.append((now, token_count))
 
     def complete_request(self):
         self.active_requests = max(0, self.active_requests - 1)
@@ -126,6 +149,7 @@ class EndpointManager:
                 pii_sanitize=cfg.pii_sanitize,
                 rate_limit_rpm=cfg.rate_limit_rpm,
                 rate_limit_rpd=cfg.rate_limit_rpd,
+                rate_limit_tpm=cfg.rate_limit_tpm,
                 client=client,
             )
             self._endpoints.append(ep)
@@ -191,7 +215,7 @@ class EndpointManager:
             self._last_routed[role] = chosen.name
             return chosen
 
-    async def start_request_atomic(self, endpoint: Endpoint):
+    async def start_request_atomic(self, endpoint: Endpoint, token_count: int = 0):
         """Atomically start a request under the manager lock.
 
         Ensures no race between rate limit check (can_accept_request) and
@@ -199,7 +223,7 @@ class EndpointManager:
         are concurrently routing requests.
         """
         async with self._lock:
-            endpoint.start_request()
+            endpoint.start_request(token_count=token_count)
 
     async def get_client_for_role(self, role: str) -> Optional[LLMClient]:
         """Get the LLMClient for the best endpoint matching a role."""

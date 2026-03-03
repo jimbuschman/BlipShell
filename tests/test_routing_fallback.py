@@ -93,6 +93,7 @@ def _make_endpoint(name="ep1", context_tokens=65536, models=None):
     ep.complete_request = MagicMock()
     ep.record_success = MagicMock()
     ep.record_failure = MagicMock()
+    ep.would_exceed_tpm = MagicMock(return_value=False)  # no TPM limit by default
     return ep
 
 

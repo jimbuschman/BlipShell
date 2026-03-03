@@ -214,8 +214,11 @@ class WebFetchTool(Tool):
         try:
             from blipshell.llm.router import TaskType
 
-            # Cap input to avoid overwhelming the summarization model
-            max_input = 50000  # ~12.5K tokens
+            # Generous truncation — Claude Code allows ~100KB.
+            # We cap at 100K chars (~25K tokens). The router's pre-flight
+            # TPM check will route large requests to local (131K context)
+            # instead of Groq, so no need to be aggressive here.
+            max_input = 100000
             if len(text) > max_input:
                 text = text[:max_input] + "\n\n[Content truncated for processing]"
 
