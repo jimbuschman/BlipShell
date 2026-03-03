@@ -6,11 +6,12 @@ Returns (hard_failures, soft_failures) — hard = deterministic, soft = LLM-depe
 
 from __future__ import annotations
 
+import difflib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from blipshell.simulate.models import SimStep, SimStepResult
+    from blipshell.simulate.models import SimStep, SimStepResult, StepAction
 
 
 class AssertionChecker:
@@ -71,7 +72,9 @@ class AssertionChecker:
             registered = set(agent.tool_registry.get_tool_names())
             for tool_name in step.expect_tools_registered:
                 if tool_name not in registered:
-                    hard.append(f"Tool not registered: {tool_name}")
+                    close = difflib.get_close_matches(tool_name, registered, n=3, cutoff=0.6)
+                    hint = f" (did you mean: {', '.join(close)}?)" if close else ""
+                    hard.append(f"Tool not registered: {tool_name}{hint}")
 
         if step.expect_tools_not_registered:
             registered = set(agent.tool_registry.get_tool_names())

@@ -117,16 +117,21 @@ class LoopResult:
 
 
 def estimate_messages_tokens(messages: list[dict]) -> int:
-    """Estimate total tokens in a message list (len/4 heuristic)."""
+    """Estimate total tokens in a message list.
+
+    Uses tiktoken via estimate_tokens() when available, falls back to len//4.
+    """
+    from blipshell.memory.manager import estimate_tokens
+
     total = 0
     for msg in messages:
         content = msg.get("content", "") or ""
-        total += len(content) // 4
+        total += estimate_tokens(content)
         if "tool_calls" in msg:
             try:
-                total += len(json.dumps(msg["tool_calls"], default=str)) // 4
+                total += estimate_tokens(json.dumps(msg["tool_calls"], default=str))
             except (TypeError, ValueError):
-                total += len(str(msg["tool_calls"])) // 4
+                total += estimate_tokens(str(msg["tool_calls"]))
     return total
 
 

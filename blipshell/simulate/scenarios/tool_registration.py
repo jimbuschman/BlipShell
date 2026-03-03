@@ -13,8 +13,9 @@ SIMPLE_CHAT_TOOLS = [
     "run_command", "grep_files", "glob_files",
     "web_search", "web_fetch",
     "enter_plan_mode", "exit_plan_mode",
-    "search_memories", "save_core_memory", "promote_to_core",
+    "search_memories", "save_core_memory", "promote_to_core_memory",
     "list_sessions", "create_project",
+    "check_process",
 ]
 
 # Tools added when a project is activated

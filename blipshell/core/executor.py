@@ -9,6 +9,7 @@ import logging
 from typing import Callable, Optional
 
 from blipshell.core.chat_loop import ChatLoop, LoopConfig, estimate_messages_tokens
+from blipshell.memory.manager import estimate_tokens
 from blipshell.core.tools.base import ToolRegistry
 from blipshell.llm.prompts import dynamic_execution_prompt, executor_system_prompt, execute_step, summarize_plan_results, UTILITY_SYSTEM_PROMPT
 from blipshell.llm.router import LLMRouter, TaskType
@@ -437,8 +438,8 @@ class TaskExecutor:
                     "total_context_items": memory_count + len(chat_history or []),
                     "pool_budgets": {"memory": memory_count, "chat_history": len(chat_history or [])},
                     "pool_usage": {
-                        "memory": {"items": memory_count, "tokens": len(memory_context) // 4},
-                        "chat_history": {"items": len(chat_history or []), "tokens": sum(len(m.get("content", "") or "") // 4 for m in (chat_history or []))},
+                        "memory": {"items": memory_count, "tokens": estimate_tokens(memory_context)},
+                        "chat_history": {"items": len(chat_history or []), "tokens": sum(estimate_tokens(m.get("content", "") or "") for m in (chat_history or []))},
                     },
                 })
             except Exception as e:

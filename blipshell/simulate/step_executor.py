@@ -116,17 +116,28 @@ class SimStepExecutor:
             force_plan=step.force_plan,
         )
 
-        # Extract tool calls from streaming output
-        raw_output = "".join(tokens)
-        tools_called = re.findall(r"\[Tool: (\w+)", raw_output)
-        tool_call_count = len(tools_called)
+        # Primary: read tool calls from Agent's structured tracking
+        # (set by _chat_simple/_chat_planned after each chat call)
+        tools_called: list[str] = []
+        agent_tools = getattr(ctx.agent, '_last_tool_calls', [])
+        if agent_tools:
+            tools_called = [t.get("name", "") for t in agent_tools if t.get("name")]
 
-        # Also check agent's internal tracking
-        if hasattr(ctx.agent, '_last_tool_calls'):
-            agent_tools = getattr(ctx.agent, '_last_tool_calls', [])
-            if agent_tools and not tools_called:
-                tools_called = [t.get("name", "") for t in agent_tools]
-                tool_call_count = len(tools_called)
+        # Fallback: parse streaming output (catches edge cases)
+        if not tools_called:
+            raw_output = "".join(tokens)
+            # Match both formats: "▸ tool_name" and "Running N tools: tool1, tool2"
+            single = re.findall(r"\u25b8 (\w+)", raw_output)
+            multi = re.findall(r"Running \d+ tools: (.+?)(?:\x1b|$)", raw_output)
+            if single:
+                tools_called = single
+            elif multi:
+                for group in multi:
+                    tools_called.extend(
+                        name.strip() for name in group.split(",") if name.strip()
+                    )
+
+        tool_call_count = len(tools_called)
 
         ctx.responses.append(response)
         ctx.all_tool_calls.extend(

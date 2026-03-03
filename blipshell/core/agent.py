@@ -479,6 +479,10 @@ class Agent(
             if on_status:
                 on_status(msg)
 
+        # Kill any background shell processes
+        from blipshell.core.tools.shell import cleanup_background_processes
+        await cleanup_background_processes()
+
         # Cancel asyncio background tasks (lightweight, main-loop only)
         await self._cancel_background_tasks()
         if self._nightly_scheduler_task:
@@ -522,6 +526,10 @@ class Agent(
 
         Order matters: cancel in-flight writes → stop worker → close ChromaDB → close SQLite.
         """
+        # 0. Kill background shell processes
+        from blipshell.core.tools.shell import cleanup_background_processes
+        await cleanup_background_processes()
+
         # 1. Cancel background memory processing tasks (prevents mid-write corruption)
         await self._cancel_background_tasks()
 

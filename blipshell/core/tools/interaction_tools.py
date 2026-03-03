@@ -78,6 +78,10 @@ class AskUserTool(Tool):
 
     In interactive mode (CLI), prompts the user and returns their answer.
     In non-interactive mode (benchmarks), returns a canned response.
+
+    Supports structured options: pass comma-separated options and the user
+    sees a numbered selection list. Free-text input is always allowed unless
+    allow_free_text is set to false.
     """
 
     def __init__(self, callback: Optional[AskUserCallback] = None):
@@ -91,7 +95,8 @@ class AskUserTool(Tool):
                 "- The task description is ambiguous or could be interpreted multiple ways\n"
                 "- You need to choose between multiple valid approaches\n"
                 "- Something has failed twice and you're unsure how to proceed\n"
-                "- The task would delete or significantly modify existing code\n"
+                "- The task would delete or significantly modify existing code\n\n"
+                "For multiple-choice questions, provide options as a comma-separated list.\n"
                 "Do not ask trivial questions — only ask when user input would change your approach."
             ),
             parameters=[
@@ -100,18 +105,70 @@ class AskUserTool(Tool):
                     type=ToolParameterType.STRING,
                     description="The question to ask the user",
                 ),
+                ToolParameter(
+                    name="options",
+                    type=ToolParameterType.STRING,
+                    description="Comma-separated list of options (e.g. 'Option A, Option B, Option C'). User can pick by number or type a custom answer.",
+                    required=False,
+                ),
+                ToolParameter(
+                    name="allow_free_text",
+                    type=ToolParameterType.BOOLEAN,
+                    description="Allow user to type a custom answer beyond the options (default: true)",
+                    required=False,
+                ),
             ],
         )
 
-    async def execute(self, question: str = "", **kwargs) -> str:
+    async def execute(self, question: str = "", options: str = "",
+                      allow_free_text: bool = True, **kwargs) -> str:
         if not question:
             return "Error: 'question' argument is required."
+
+        # Format the question with options if provided
+        formatted = self._format_question(question, options, allow_free_text)
+
         if self.callback:
             try:
-                answer = await self.callback(question)
+                answer = await self.callback(formatted)
+                # If user answered with a number and we have options, resolve it
+                if options:
+                    answer = self._resolve_option(answer, options)
                 return f"User's answer: {answer}"
             except Exception as e:
                 logger.error("ask_user callback failed: %s", e)
                 return "User did not respond. Make your best judgment and proceed."
         # Non-interactive fallback (benchmarks)
         return "No user available. Make your best judgment and proceed."
+
+    @staticmethod
+    def _format_question(question: str, options: str, allow_free_text: bool) -> str:
+        """Format question with numbered options."""
+        if not options:
+            return question
+
+        option_list = [o.strip() for o in options.split(",") if o.strip()]
+        if not option_list:
+            return question
+
+        lines = [question, ""]
+        for i, opt in enumerate(option_list, 1):
+            lines.append(f"  {i}. {opt}")
+        if allow_free_text:
+            lines.append(f"\nEnter a number (1-{len(option_list)}) or type your own answer:")
+        else:
+            lines.append(f"\nEnter a number (1-{len(option_list)}):")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _resolve_option(answer: str, options: str) -> str:
+        """If the answer is a number, resolve it to the corresponding option."""
+        answer = answer.strip()
+        option_list = [o.strip() for o in options.split(",") if o.strip()]
+        try:
+            idx = int(answer)
+            if 1 <= idx <= len(option_list):
+                return option_list[idx - 1]
+        except ValueError:
+            pass
+        return answer

@@ -2150,11 +2150,19 @@ def _print_context(agent: Agent):
 
 
 def _print_tokens(agent: Agent):
-    """Print token usage per endpoint for this session."""
+    """Print token usage per endpoint for this session, with cost if configured."""
     usage = agent.get_token_usage()
     if not usage:
         console.print("[dim]No token usage recorded this session.[/dim]")
         return
+
+    # Build endpoint cost rates from config
+    cost_rates = {}
+    for ep in agent.config.endpoints:
+        if ep.cost_per_1m_prompt > 0 or ep.cost_per_1m_completion > 0:
+            cost_rates[ep.name] = (ep.cost_per_1m_prompt, ep.cost_per_1m_completion)
+
+    has_costs = bool(cost_rates)
 
     table = Table(title="Token Usage (this session)")
     table.add_column("Endpoint", style="cyan")
@@ -2162,10 +2170,13 @@ def _print_tokens(agent: Agent):
     table.add_column("Prompt Tokens", justify="right")
     table.add_column("Completion Tokens", justify="right")
     table.add_column("Total", justify="right", style="bold")
+    if has_costs:
+        table.add_column("Cost", justify="right", style="green")
 
     grand_prompt = 0
     grand_completion = 0
     grand_requests = 0
+    grand_cost = 0.0
 
     for endpoint, stats in sorted(usage.items()):
         prompt = stats.get("prompt_tokens", 0)
@@ -2175,23 +2186,38 @@ def _print_tokens(agent: Agent):
         grand_prompt += prompt
         grand_completion += completion
         grand_requests += requests
-        table.add_row(
+
+        row = [
             endpoint,
             str(requests),
             f"{prompt:,}",
             f"{completion:,}",
             f"{total:,}",
-        )
+        ]
+
+        if has_costs:
+            rates = cost_rates.get(endpoint)
+            if rates:
+                cost = (prompt / 1_000_000 * rates[0]) + (completion / 1_000_000 * rates[1])
+                grand_cost += cost
+                row.append(f"${cost:.4f}")
+            else:
+                row.append("free")
+
+        table.add_row(*row)
 
     # Totals row
     if len(usage) > 1:
-        table.add_row(
+        row = [
             "[bold]Total[/bold]",
             f"[bold]{grand_requests}[/bold]",
             f"[bold]{grand_prompt:,}[/bold]",
             f"[bold]{grand_completion:,}[/bold]",
             f"[bold]{grand_prompt + grand_completion:,}[/bold]",
-        )
+        ]
+        if has_costs:
+            row.append(f"[bold]${grand_cost:.4f}[/bold]")
+        table.add_row(*row)
 
     console.print(table)
 

@@ -26,7 +26,7 @@ from blipshell.core.tools.memory_tools import (
     SearchMemoriesTool,
 )
 from blipshell.core.tools.project_tools import CreateProjectTool
-from blipshell.core.tools.shell import ShellTool
+from blipshell.core.tools.shell import CheckProcessTool, ShellTool
 from blipshell.core.tools.task_tools import (
     CheckBackgroundTaskTool,
     ListBackgroundTasksTool,
@@ -66,6 +66,7 @@ class ToolsMixin:
             timeout=cfg.shell.timeout,
             allowed_commands=cfg.shell.allowed_commands,
         ), group="shell")
+        self.tool_registry.register(CheckProcessTool(), group="shell")
 
         # Web group
         from blipshell.models.config import resolve_env_vars
@@ -74,6 +75,7 @@ class ToolsMixin:
         self.tool_registry.register(WebFetchTool(
             max_size=cfg.web.max_fetch_size,
             timeout=cfg.web.timeout,
+            router=self.router,
         ), group="web")
 
         # Plan mode tools

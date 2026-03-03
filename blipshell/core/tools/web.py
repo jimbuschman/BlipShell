@@ -131,21 +131,27 @@ class WebSearchTool(Tool):
 
 class WebFetchTool(Tool):
     read_only = True
-    def __init__(self, max_size: int = 524288, timeout: int = 15):
+    def __init__(self, max_size: int = 524288, timeout: int = 15, router=None):
         self.max_size = max_size
         self.timeout = timeout
+        self.router = router
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="web_fetch",
             description=(
-                "Fetch and extract text content from a web URL.\n\n"
+                "Fetch and extract content from a web URL.\n\n"
                 "When to use:\n"
                 "- User gives you a specific URL to read\n"
                 "- You found a useful link in web_search results and need the full content\n\n"
                 "When NOT to use:\n"
                 "- To browse or explore — use web_search to find pages first\n"
                 "- For very large pages (documentation indexes, wikis) — content is truncated at 512KB\n\n"
+                "Features:\n"
+                "- Use the 'prompt' parameter to extract specific information from the page "
+                "(e.g. 'What are the API endpoints?' or 'Extract the installation instructions'). "
+                "This processes the page through an LLM and returns a concise answer instead of raw text.\n"
+                "- Without a prompt, returns the full extracted text.\n\n"
                 "Notes:\n"
                 "- HTML is converted to plain text (scripts/nav/footers stripped)\n"
                 "- Times out after 15 seconds — some sites may be too slow\n"
@@ -154,10 +160,13 @@ class WebFetchTool(Tool):
             parameters=[
                 ToolParameter(name="url", type=ToolParameterType.STRING,
                               description="URL to fetch"),
+                ToolParameter(name="prompt", type=ToolParameterType.STRING,
+                              description="What information to extract from the page. When provided, the content is processed by an LLM and a concise answer is returned instead of raw text.",
+                              required=False),
             ],
         )
 
-    async def execute(self, url: str, **kwargs) -> str:
+    async def execute(self, url: str, prompt: str = "", **kwargs) -> str:
         err = _is_ssrf_target(url)
         if err:
             return err
@@ -189,9 +198,40 @@ class WebFetchTool(Tool):
                 if len(text) > self.max_size:
                     text = text[:self.max_size] + "\n\n[Content truncated]"
 
+                # If prompt provided and router available, process through LLM
+                if prompt and self.router:
+                    return await self._extract_with_llm(text, prompt, url)
+
                 return text
 
         except ImportError:
             return "Error: httpx and/or beautifulsoup4 packages not installed."
         except Exception as e:
             return f"Fetch error: {e}"
+
+    async def _extract_with_llm(self, text: str, prompt: str, url: str) -> str:
+        """Process fetched content through an LLM with the given prompt."""
+        try:
+            from blipshell.llm.router import TaskType
+
+            # Cap input to avoid overwhelming the summarization model
+            max_input = 50000  # ~12.5K tokens
+            if len(text) > max_input:
+                text = text[:max_input] + "\n\n[Content truncated for processing]"
+
+            extract_prompt = (
+                f"Web page content from {url}:\n\n"
+                f"{text}\n\n"
+                f"---\n\n"
+                f"Based on the web page above, answer the following:\n{prompt}"
+            )
+
+            result = await self.router.generate(
+                TaskType.SUMMARIZATION,
+                extract_prompt,
+                system="Extract the requested information from the web page content. Be concise and accurate. If the information is not found, say so.",
+            )
+            return result
+        except Exception as e:
+            logger.warning("LLM extraction failed, returning raw text: %s", e)
+            return text

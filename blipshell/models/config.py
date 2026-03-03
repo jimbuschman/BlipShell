@@ -50,6 +50,8 @@ class EndpointConfig(BaseModel):
     rate_limit_rpd: Optional[int] = None  # max requests per day
     models: dict[str, str] = Field(default_factory=dict)  # per-endpoint model overrides
     pii_sanitize: Optional[bool] = None  # None = auto (true for openai, false for ollama)
+    cost_per_1m_prompt: float = 0.0  # $/million prompt tokens (0 = free/local)
+    cost_per_1m_completion: float = 0.0  # $/million completion tokens (0 = free/local)
 
 
 class PoolConfig(BaseModel):

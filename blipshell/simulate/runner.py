@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import logging
 import shutil
 import time
@@ -69,6 +70,23 @@ class SimRunner:
         """Run a list of scenarios and return aggregated results."""
         suite_result = SimSuiteResult()
         t0 = time.monotonic()
+
+        # Pre-flight: validate scenario tool names against actual registry
+        preflight_errors = await self._preflight_validate(scenarios)
+        if preflight_errors:
+            for err in preflight_errors:
+                self.on_status(f"  PREFLIGHT ERROR: {err}")
+            # Abort — these are scenario definition bugs, not LLM issues
+            suite_result.elapsed_seconds = round(time.monotonic() - t0, 2)
+            # Add a synthetic failed result so the report clearly shows what happened
+            suite_result.scenario_results.append(SimScenarioResult(
+                name="__preflight_validation__",
+                category="preflight",
+                status=ResultStatus.FAIL,
+                error=f"Scenario definition errors ({len(preflight_errors)}): "
+                      + "; ".join(preflight_errors),
+            ))
+            return suite_result
 
         for scenario in scenarios:
             self.on_status(f"Running: {scenario.name}")
@@ -158,6 +176,70 @@ class SimRunner:
             result.elapsed_seconds = round(time.monotonic() - t0, 2)
 
         return result
+
+    async def _preflight_validate(
+        self,
+        scenarios: list[SimScenario],
+    ) -> list[str]:
+        """Validate all scenario tool name expectations against the actual registry.
+
+        Bootstraps a throwaway agent, collects all expected tool names from all
+        scenarios, and checks them against what's actually registered. Returns
+        a list of error messages (empty = all good).
+        """
+        errors: list[str] = []
+        self.on_status("Pre-flight: validating scenario definitions...")
+
+        try:
+            agent, config, _ = await self._bootstrap_agent()
+            await agent.start_session()
+        except Exception as e:
+            errors.append(f"Could not bootstrap agent for pre-flight: {e}")
+            return errors
+
+        registered = set(agent.tool_registry.get_tool_names())
+
+        # Also get project-mode tools by temporarily activating a project
+        project_tools: set[str] = set()
+        try:
+            # Try to find any existing project for validation
+            projects = await agent.sqlite.list_projects()
+            if projects:
+                await agent.activate_project(projects[0]["name"])
+                project_tools = set(agent.tool_registry.get_tool_names())
+                await agent.deactivate_project()
+        except Exception:
+            pass  # No projects available — can only validate base tools
+
+        all_known = registered | project_tools
+
+        # Collect all expected tool names from all scenarios
+        for scenario in scenarios:
+            for step in scenario.steps:
+                names_to_check: list[str] = []
+                if step.expect_tools_registered:
+                    names_to_check.extend(step.expect_tools_registered)
+                if step.expect_tools:
+                    names_to_check.extend(step.expect_tools)
+
+                for name in names_to_check:
+                    if name not in all_known:
+                        # Find close matches
+                        close = difflib.get_close_matches(name, all_known, n=3, cutoff=0.6)
+                        suggestion = f" (did you mean: {', '.join(close)}?)" if close else ""
+                        errors.append(
+                            f"Scenario '{scenario.name}': unknown tool '{name}'{suggestion}"
+                        )
+
+        # Cleanup
+        try:
+            await agent.end_session()
+        except Exception:
+            pass
+
+        if not errors:
+            self.on_status(f"  Pre-flight OK: {len(all_known)} tools validated")
+        return errors
 
     async def _bootstrap_agent(self) -> tuple[Agent, BlipShellConfig, ConfigManager]:
         """Bootstrap a real Agent instance (same pattern as test_executor.py)."""

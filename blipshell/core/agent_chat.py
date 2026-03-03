@@ -53,6 +53,9 @@ class ChatMixin:
         import time
         self._last_user_activity = time.time()
 
+        # Reset tool call tracking (populated by _chat_simple/_chat_planned)
+        self._last_tool_calls = []
+
         # Add user message to session
         self.session_manager.add_message(MessageRole.USER, user_message)
 
@@ -222,6 +225,11 @@ class ChatMixin:
             finally:
                 endpoint.complete_request()
 
+        # Store tool call info for programmatic access (used by simulation runner)
+        self._last_tool_calls = [
+            {"name": n} for n in (result.tool_call_names if result else [])
+        ]
+
         # Event: llm_complete
         await self._log_event("llm_complete", {
             "endpoint": endpoint_name,
@@ -304,6 +312,16 @@ class ChatMixin:
             if on_token:
                 on_token("[Execution failed, falling back to direct chat]\n")
             return await self._chat_simple(user_message, on_token=on_token)
+
+        # Extract tool call names from executor transcript for programmatic access
+        tool_names = []
+        for msg in self.task_executor.last_messages:
+            for tc in (msg.get("tool_calls") or []):
+                fn = tc.get("function", {})
+                name = fn.get("name", "")
+                if name:
+                    tool_names.append(name)
+        self._last_tool_calls = [{"name": n} for n in tool_names]
 
         # Build a clean narrative from the executor transcript and feed through memory
         try:

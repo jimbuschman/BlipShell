@@ -14,10 +14,32 @@ from blipshell.models.config import MemoryConfig
 logger = logging.getLogger(__name__)
 
 
+_tokenizer = None
+_tokenizer_loaded = False
+
+
 def estimate_tokens(text: str) -> int:
-    """Rough token estimate (text.length / 4). Port of TokenEstimator.cs."""
+    """Estimate token count for text.
+
+    Uses tiktoken (cl100k_base encoding) when available for ~10-15% accuracy
+    on Ollama models. Falls back to len/4 heuristic if tiktoken is not installed.
+    """
     if not text:
         return 0
+
+    global _tokenizer, _tokenizer_loaded
+    if not _tokenizer_loaded:
+        _tokenizer_loaded = True
+        try:
+            import tiktoken
+            _tokenizer = tiktoken.get_encoding("cl100k_base")
+        except ImportError:
+            logger.debug("tiktoken not installed, using len//4 fallback for token estimation")
+        except Exception as e:
+            logger.debug("tiktoken init failed, using len//4 fallback: %s", e)
+
+    if _tokenizer is not None:
+        return len(_tokenizer.encode(text))
     return len(text) // 4
 
 

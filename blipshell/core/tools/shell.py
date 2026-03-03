@@ -1,6 +1,7 @@
-"""Shell command execution tool with timeout and allowlist."""
+"""Shell command execution tool with timeout, allowlist, and background support."""
 
 import asyncio
+import logging
 import platform
 import re
 import shlex
@@ -8,6 +9,11 @@ import sys
 
 from blipshell.core.tools.base import Tool
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
+
+logger = logging.getLogger(__name__)
+
+# Track background processes across all ShellTool instances
+_background_processes: dict[int, asyncio.subprocess.Process] = {}
 
 # Patterns that indicate destructive or dangerous commands.
 # When matched, approval is forced even if session-auto-approved.
@@ -62,20 +68,28 @@ class ShellTool(Tool):
                 "IMPORTANT:\n"
                 "- Do NOT use this for file searching — use grep_files or glob_files instead.\n"
                 "- Do NOT use this for reading files — use read_file instead.\n"
-                "- Commands time out after 30 seconds. Do NOT run interactive programs or servers.\n"
+                "- Foreground commands time out after 30 seconds. Do NOT run interactive programs.\n"
+                "- Use run_in_background=true for long-running processes (tests, servers, builds). "
+                "This returns a PID immediately — use check_process to see output later.\n"
                 "- Use this for: syntax validation, pip install, git, python -c '...', pytest, etc."
             ),
             parameters=[
                 ToolParameter(name="command", type=ToolParameterType.STRING,
                               description="The shell command to execute"),
                 ToolParameter(name="timeout", type=ToolParameterType.INTEGER,
-                              description="Timeout in seconds (default 30)", required=False),
+                              description="Timeout in seconds for foreground commands (default 30, max 600)",
+                              required=False),
+                ToolParameter(name="run_in_background", type=ToolParameterType.BOOLEAN,
+                              description="Start the process in background and return immediately with a PID (default: false)",
+                              required=False),
             ],
         )
 
-    async def execute(self, command: str, timeout: int | None = None, **kwargs) -> str:
+    async def execute(self, command: str, timeout: int | None = None,
+                      run_in_background: bool = False, **kwargs) -> str:
         if timeout is None:
             timeout = self.timeout
+        timeout = min(timeout, 600)  # hard cap at 10 minutes
 
         # Validate command against allowlist
         if self.allowed_commands:
@@ -103,6 +117,13 @@ class ShellTool(Tool):
                 cwd=self.cwd,
             )
 
+            if run_in_background:
+                _background_processes[process.pid] = process
+                return (
+                    f"Started in background (PID: {process.pid}).\n"
+                    f"Use check_process(pid={process.pid}) to see output and status."
+                )
+
             try:
                 stdout, stderr = await asyncio.wait_for(
                     process.communicate(), timeout=timeout
@@ -112,7 +133,7 @@ class ShellTool(Tool):
                 return (
                     f"Error: Command timed out after {timeout} seconds. "
                     "The command likely started an interactive process or server. "
-                    "Do NOT retry — use a non-interactive alternative or skip this step."
+                    "Consider using run_in_background=true for long-running commands."
                 )
 
             output = stdout.decode("utf-8", errors="replace").strip()
@@ -149,3 +170,75 @@ class ShellTool(Tool):
             pass
         # Fallback: split on spaces
         return command.strip().split()[0].split("/")[-1].split("\\")[-1] if command.strip() else ""
+
+
+class CheckProcessTool(Tool):
+    """Check the status and output of a background process."""
+    read_only = True
+
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="check_process",
+            description=(
+                "Check the status and output of a background process started with run_command.\n\n"
+                "Returns the process status (running/finished/failed) and any available output.\n"
+                "Use this after starting a process with run_in_background=true."
+            ),
+            parameters=[
+                ToolParameter(name="pid", type=ToolParameterType.INTEGER,
+                              description="Process ID returned by run_command with run_in_background=true"),
+            ],
+        )
+
+    async def execute(self, pid: int, **kwargs) -> str:
+        process = _background_processes.get(pid)
+        if process is None:
+            active = list(_background_processes.keys())
+            if active:
+                return f"Error: No background process with PID {pid}. Active PIDs: {active}"
+            return f"Error: No background process with PID {pid}. No background processes are running."
+
+        if process.returncode is None:
+            # Still running — try to read available output without blocking
+            return f"Process {pid} is still running."
+
+        # Process has finished — collect output and clean up
+        try:
+            stdout = await process.stdout.read() if process.stdout else b""
+            stderr = await process.stderr.read() if process.stderr else b""
+        except Exception:
+            stdout = stderr = b""
+
+        output = stdout.decode("utf-8", errors="replace").strip()
+        errors = stderr.decode("utf-8", errors="replace").strip()
+
+        result_parts = []
+        status = "finished" if process.returncode == 0 else "failed"
+        result_parts.append(f"Process {pid} {status} (exit code: {process.returncode})")
+        if output:
+            result_parts.append(f"\nOutput:\n{output}")
+        if errors:
+            result_parts.append(f"\nSTDERR:\n{errors}")
+
+        result = "\n".join(result_parts)
+
+        # Cap output
+        max_chars = 8000
+        if len(result) > max_chars:
+            result = result[:max_chars] + f"\n... [truncated — {len(result)} total chars]"
+
+        # Clean up
+        del _background_processes[pid]
+        return result
+
+
+async def cleanup_background_processes():
+    """Kill all remaining background processes. Called on agent shutdown."""
+    for pid, process in list(_background_processes.items()):
+        try:
+            if process.returncode is None:
+                process.kill()
+                logger.info("Killed background process PID %d", pid)
+        except Exception:
+            pass
+    _background_processes.clear()

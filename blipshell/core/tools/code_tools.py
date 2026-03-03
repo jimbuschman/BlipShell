@@ -25,6 +25,23 @@ class GrepTool(Tool):
     """Search file contents with a regex pattern across a directory tree."""
     read_only = True
 
+    # Shorthand type → glob mapping (matches ripgrep --type conventions)
+    TYPE_MAP = {
+        "py": "*.py", "python": "*.py",
+        "js": "*.js", "javascript": "*.js",
+        "ts": "*.ts", "typescript": "*.ts",
+        "tsx": "*.tsx", "jsx": "*.jsx",
+        "java": "*.java", "go": "*.go", "rust": "*.rs", "rs": "*.rs",
+        "c": "*.c", "cpp": "*.cpp", "h": "*.h", "hpp": "*.hpp",
+        "rb": "*.rb", "ruby": "*.rb",
+        "php": "*.php", "swift": "*.swift", "kt": "*.kt", "kotlin": "*.kt",
+        "css": "*.css", "html": "*.html", "xml": "*.xml",
+        "json": "*.json", "yaml": "*.yaml", "yml": "*.yml", "toml": "*.toml",
+        "md": "*.md", "markdown": "*.md", "txt": "*.txt",
+        "sh": "*.sh", "bash": "*.sh", "ps1": "*.ps1",
+        "sql": "*.sql", "graphql": "*.graphql",
+    }
+
     def __init__(self, root_path: str | None = None):
         self.root_path = root_path
 
@@ -32,16 +49,20 @@ class GrepTool(Tool):
         return ToolDefinition(
             name="grep_files",
             description=(
-                "Search for a regex pattern across files in a directory tree. "
-                "Returns matching lines as 'file:line_number: content'.\n\n"
-                "When to use:\n"
-                "- To find where a function, class, or variable is defined or used\n"
-                "- To find all files that import a specific module\n"
-                "- To locate specific strings or patterns across the codebase\n\n"
+                "Search for a regex pattern across files in a directory tree.\n\n"
+                "Output modes:\n"
+                "- 'content' (default): matching lines as 'file:line_number: content'\n"
+                "- 'files_with_matches': only unique file paths that contain a match\n"
+                "- 'count': match count per file as 'file: N'\n\n"
+                "Features:\n"
+                "- Context lines: show N lines before/after each match\n"
+                "- Multiline: match patterns across line boundaries\n"
+                "- Case insensitive: ignore case when matching\n"
+                "- Type filter: shorthand for file type (e.g. 'py' instead of '*.py')\n\n"
                 "IMPORTANT:\n"
                 "- The path must be a DIRECTORY, not a file. To search within a single file, "
                 "use read_file instead.\n"
-                "- Use the 'include' parameter to filter by file type (e.g. '*.py').\n"
+                "- Use 'include' for glob patterns or 'type_filter' for common extensions.\n"
                 "- Results are capped at max_results (default 50)."
             ),
             parameters=[
@@ -51,10 +72,31 @@ class GrepTool(Tool):
                               description="Directory to search in (default: project root). Must be a directory, not a file path.",
                               required=False),
                 ToolParameter(name="include", type=ToolParameterType.STRING,
-                              description="Glob filter for files to include (e.g. '*.py', '*.ts')",
+                              description="Glob filter for files to include (e.g. '*.py', '*.{ts,tsx}')",
+                              required=False),
+                ToolParameter(name="type_filter", type=ToolParameterType.STRING,
+                              description="File type shorthand (e.g. 'py', 'js', 'ts', 'rust'). Alternative to include.",
                               required=False),
                 ToolParameter(name="max_results", type=ToolParameterType.INTEGER,
-                              description="Maximum number of matching lines to return (default: 50)",
+                              description="Maximum number of results to return (default: 50)",
+                              required=False),
+                ToolParameter(name="output_mode", type=ToolParameterType.STRING,
+                              description="Output format: 'content' (matching lines, default), 'files_with_matches' (file paths only), 'count' (match count per file)",
+                              required=False),
+                ToolParameter(name="context_lines", type=ToolParameterType.INTEGER,
+                              description="Number of lines to show before AND after each match (default: 0)",
+                              required=False),
+                ToolParameter(name="before_context", type=ToolParameterType.INTEGER,
+                              description="Lines to show before each match (overrides context_lines for before)",
+                              required=False),
+                ToolParameter(name="after_context", type=ToolParameterType.INTEGER,
+                              description="Lines to show after each match (overrides context_lines for after)",
+                              required=False),
+                ToolParameter(name="multiline", type=ToolParameterType.BOOLEAN,
+                              description="Match pattern across line boundaries (default: false)",
+                              required=False),
+                ToolParameter(name="case_insensitive", type=ToolParameterType.BOOLEAN,
+                              description="Ignore case when matching (default: false)",
                               required=False),
             ],
         )
@@ -64,7 +106,14 @@ class GrepTool(Tool):
         pattern: str,
         path: str = ".",
         include: str = "",
+        type_filter: str = "",
         max_results: int = 50,
+        output_mode: str = "content",
+        context_lines: int = 0,
+        before_context: int = 0,
+        after_context: int = 0,
+        multiline: bool = False,
+        case_insensitive: bool = False,
         **kwargs,
     ) -> str:
         search_root = self._resolve(path)
@@ -77,11 +126,43 @@ class GrepTool(Tool):
                 )
             return f"Error: '{path}' does not exist. Use list_directory to see available paths."
 
+        if output_mode not in ("content", "files_with_matches", "count"):
+            return f"Error: output_mode must be 'content', 'files_with_matches', or 'count'. Got '{output_mode}'."
+
+        # Resolve type_filter to include glob
+        effective_include = include
+        if type_filter and not include:
+            mapped = self.TYPE_MAP.get(type_filter.lower())
+            if mapped:
+                effective_include = mapped
+            else:
+                return f"Error: Unknown type_filter '{type_filter}'. Known types: {', '.join(sorted(set(self.TYPE_MAP.keys())))}"
+
+        # Compile regex
+        flags = re.IGNORECASE if case_insensitive else 0
+        if multiline:
+            flags |= re.DOTALL
         try:
-            regex = re.compile(pattern)
+            regex = re.compile(pattern, flags)
         except re.error as e:
             return f"Error: Invalid regex '{pattern}': {e}. Use a valid Python regex."
 
+        # Compute effective before/after context
+        ctx_before = before_context if before_context else context_lines
+        ctx_after = after_context if after_context else context_lines
+
+        if output_mode == "files_with_matches":
+            return self._search_files_only(regex, search_root, effective_include, max_results, multiline)
+        elif output_mode == "count":
+            return self._search_count(regex, search_root, effective_include, max_results, multiline)
+        else:
+            return self._search_content(regex, search_root, effective_include, max_results, multiline, ctx_before, ctx_after)
+
+    def _search_content(
+        self, regex, search_root: Path, include: str, max_results: int,
+        multiline: bool, ctx_before: int, ctx_after: int,
+    ) -> str:
+        """Return matching lines with optional context."""
         matches = []
         for file_path in self._walk_files(search_root, include):
             try:
@@ -89,20 +170,141 @@ class GrepTool(Tool):
             except (OSError, PermissionError):
                 continue
 
-            for line_num, line in enumerate(text.splitlines(), 1):
-                if regex.search(line):
-                    rel = self._rel_path(file_path)
-                    # Cap individual lines to prevent huge matches from blowing up context
-                    line_text = line.rstrip()
-                    if len(line_text) > 200:
-                        line_text = line_text[:200] + "..."
-                    matches.append(f"{rel}:{line_num}: {line_text}")
-                    if len(matches) >= max_results:
-                        return "\n".join(matches) + f"\n... (truncated at {max_results} results)"
+            rel = self._rel_path(file_path)
+            lines = text.splitlines()
+
+            if multiline:
+                # Find all match positions and map to line numbers
+                match_lines = set()
+                for m in regex.finditer(text):
+                    start_line = text[:m.start()].count("\n") + 1
+                    end_line = text[:m.end()].count("\n") + 1
+                    for ln in range(start_line, end_line + 1):
+                        match_lines.add(ln)
+
+                for ln in sorted(match_lines):
+                    if ln <= len(lines):
+                        line_text = self._cap_line(lines[ln - 1])
+                        matches.append(f"{rel}:{ln}: {line_text}")
+                        if len(matches) >= max_results:
+                            return "\n".join(matches) + f"\n... (truncated at {max_results} results)"
+            elif ctx_before > 0 or ctx_after > 0:
+                # Context mode: track which lines to output
+                match_line_nums = []
+                for line_num, line in enumerate(lines, 1):
+                    if regex.search(line):
+                        match_line_nums.append(line_num)
+
+                if not match_line_nums:
+                    continue
+
+                # Build output with context windows
+                output_ranges = []
+                for ln in match_line_nums:
+                    start = max(1, ln - ctx_before)
+                    end = min(len(lines), ln + ctx_after)
+                    output_ranges.append((start, end, ln))
+
+                # Merge overlapping ranges
+                merged = [output_ranges[0]]
+                for start, end, match_ln in output_ranges[1:]:
+                    prev_start, prev_end, _ = merged[-1]
+                    if start <= prev_end + 1:
+                        merged[-1] = (prev_start, max(prev_end, end), merged[-1][2])
+                    else:
+                        merged.append((start, end, match_ln))
+
+                last_end = 0
+                for start, end, _ in merged:
+                    if last_end > 0 and start > last_end + 1:
+                        matches.append("--")
+                    for ln in range(start, end + 1):
+                        line_text = self._cap_line(lines[ln - 1])
+                        prefix = ">" if ln in match_line_nums else " "
+                        matches.append(f"{rel}:{ln}:{prefix} {line_text}")
+                        if len(matches) >= max_results:
+                            return "\n".join(matches) + f"\n... (truncated at {max_results} results)"
+                    last_end = end
+            else:
+                # Simple line-by-line matching (original behavior)
+                for line_num, line in enumerate(lines, 1):
+                    if regex.search(line):
+                        line_text = self._cap_line(line)
+                        matches.append(f"{rel}:{line_num}: {line_text}")
+                        if len(matches) >= max_results:
+                            return "\n".join(matches) + f"\n... (truncated at {max_results} results)"
 
         if not matches:
-            return f"No matches found for pattern '{pattern}' in {path}"
+            return f"No matches found for pattern '{regex.pattern}' in {search_root}"
         return "\n".join(matches)
+
+    def _search_files_only(
+        self, regex, search_root: Path, include: str, max_results: int, multiline: bool,
+    ) -> str:
+        """Return only file paths that contain at least one match."""
+        matched_files = []
+        for file_path in self._walk_files(search_root, include):
+            try:
+                text = file_path.read_text(encoding="utf-8", errors="replace")
+            except (OSError, PermissionError):
+                continue
+
+            if multiline:
+                if regex.search(text):
+                    matched_files.append(self._rel_path(file_path))
+            else:
+                for line in text.splitlines():
+                    if regex.search(line):
+                        matched_files.append(self._rel_path(file_path))
+                        break
+
+            if len(matched_files) >= max_results:
+                return "\n".join(matched_files) + f"\n... (truncated at {max_results} files)"
+
+        if not matched_files:
+            return f"No files match pattern '{regex.pattern}' in {search_root}"
+        return "\n".join(matched_files)
+
+    def _search_count(
+        self, regex, search_root: Path, include: str, max_results: int, multiline: bool,
+    ) -> str:
+        """Return match count per file."""
+        file_counts = []
+        for file_path in self._walk_files(search_root, include):
+            try:
+                text = file_path.read_text(encoding="utf-8", errors="replace")
+            except (OSError, PermissionError):
+                continue
+
+            if multiline:
+                count = len(regex.findall(text))
+            else:
+                count = sum(1 for line in text.splitlines() if regex.search(line))
+
+            if count > 0:
+                file_counts.append((self._rel_path(file_path), count))
+                if len(file_counts) >= max_results:
+                    break
+
+        if not file_counts:
+            return f"No matches found for pattern '{regex.pattern}' in {search_root}"
+
+        # Sort by count descending
+        file_counts.sort(key=lambda x: x[1], reverse=True)
+        total = sum(c for _, c in file_counts)
+        lines = [f"{path}: {count}" for path, count in file_counts]
+        lines.append(f"\nTotal: {total} matches in {len(file_counts)} files")
+        if len(file_counts) >= max_results:
+            lines.append(f"... (truncated at {max_results} files)")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _cap_line(line: str) -> str:
+        """Cap a single line to prevent huge matches from blowing up context."""
+        text = line.rstrip()
+        if len(text) > 200:
+            return text[:200] + "..."
+        return text
 
     def _resolve(self, path: str) -> Path:
         p = Path(path)
