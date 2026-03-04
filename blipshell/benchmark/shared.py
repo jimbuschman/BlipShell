@@ -165,6 +165,164 @@ def load_dedup_pairs(db_path: str, n: int = 10) -> list[tuple[dict, list[str]]]:
     return pairs
 
 
+def load_entity_ground_truth(db_path: str, n: int = 20) -> list[dict]:
+    """Load memories with known entity mentions as ground truth.
+
+    Returns list of {id, summary, entities: [{name, type}]}.
+    Only includes memories that have been through entity extraction.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    rows = conn.execute(
+        """SELECT m.id, m.summary,
+                  GROUP_CONCAT(e.name || '::' || e.entity_type) as entity_info
+           FROM memories m
+           INNER JOIN entity_mentions em ON em.memory_id = m.id
+           INNER JOIN entities e ON e.id = em.entity_id
+           WHERE m.entities_extracted_at IS NOT NULL
+             AND m.summary IS NOT NULL
+             AND m.is_archived = 0
+             AND length(m.summary) > 20
+           GROUP BY m.id
+           HAVING COUNT(em.id) >= 2
+           ORDER BY RANDOM()
+           LIMIT ?""",
+        (n,),
+    ).fetchall()
+    conn.close()
+
+    results = []
+    for r in rows:
+        entities = []
+        for pair in r["entity_info"].split(","):
+            parts = pair.split("::")
+            if len(parts) == 2:
+                entities.append({"name": parts[0], "type": parts[1]})
+        results.append({
+            "id": r["id"],
+            "summary": r["summary"],
+            "entities": entities,
+        })
+    return results
+
+
+def load_contradiction_pairs(db_path: str, n: int = 10) -> list[tuple[str, str, bool]]:
+    """Load core memory pairs for contradiction testing.
+
+    Returns (content_a, content_b, same_category) tuples.
+    Same-category pairs are more likely to contradict.
+    """
+    import random as _random
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    rows = conn.execute(
+        """SELECT id, content, category
+           FROM core_memories
+           WHERE is_active = 1 AND length(content) > 10
+           ORDER BY category, RANDOM()""",
+    ).fetchall()
+    conn.close()
+
+    by_category: dict[str, list[str]] = {}
+    for r in rows:
+        by_category.setdefault(r["category"], []).append(r["content"])
+
+    pairs: list[tuple[str, str, bool]] = []
+    # Same-category pairs (potential contradictions)
+    target_same = n * 2 // 3
+    for contents in by_category.values():
+        for i in range(0, len(contents) - 1, 2):
+            if len(pairs) >= target_same:
+                break
+            pairs.append((contents[i], contents[i + 1], True))
+
+    # Cross-category pairs (likely non-contradictions)
+    all_contents = [r["content"] for r in rows]
+    _random.shuffle(all_contents)
+    for i in range(0, len(all_contents) - 1, 2):
+        if len(pairs) >= n:
+            break
+        pairs.append((all_contents[i], all_contents[i + 1], False))
+
+    return pairs[:n]
+
+
+def load_real_user_queries(db_path: str, n: int = 20) -> list[str]:
+    """Load real user messages as search queries for embedding benchmark."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    rows = conn.execute(
+        """SELECT DISTINCT content FROM session_messages
+           WHERE role = 'user'
+             AND length(content) BETWEEN 10 AND 500
+             AND content NOT LIKE '/%%'
+           ORDER BY RANDOM()
+           LIMIT ?""",
+        (n,),
+    ).fetchall()
+
+    if len(rows) < n:
+        # Fallback to memories table
+        extra = conn.execute(
+            """SELECT content FROM memories
+               WHERE role = 'user'
+                 AND length(content) BETWEEN 10 AND 500
+                 AND content NOT LIKE '/%%'
+               ORDER BY RANDOM()
+               LIMIT ?""",
+            (n - len(rows),),
+        ).fetchall()
+        rows = list(rows) + list(extra)
+
+    conn.close()
+    return [r["content"] for r in rows]
+
+
+def load_diverse_memories(db_path: str, n: int = 20) -> list[dict]:
+    """Load a diverse sample balanced across memory_type for summarization."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    messages = []
+    seen: set[int] = set()
+    for mtype in ["fact", "event", "preference", "skill", "conversation"]:
+        per_type = max(n // 5, 2)
+        rows = conn.execute(
+            """SELECT id, content, summary, role, rank, importance, memory_type
+               FROM memories
+               WHERE memory_type = ? AND content IS NOT NULL
+                 AND length(content) > 20 AND is_archived = 0
+               ORDER BY RANDOM() LIMIT ?""",
+            (mtype, per_type),
+        ).fetchall()
+        for row in rows:
+            if row["id"] not in seen:
+                messages.append(dict(row))
+                seen.add(row["id"])
+
+    # Fill remainder with random
+    if len(messages) < n:
+        remaining = n - len(messages)
+        rows = conn.execute(
+            """SELECT id, content, summary, role, rank, importance, memory_type
+               FROM memories
+               WHERE content IS NOT NULL AND length(content) > 20 AND is_archived = 0
+               ORDER BY RANDOM() LIMIT ?""",
+            (remaining * 2,),
+        ).fetchall()
+        for row in rows:
+            if row["id"] not in seen and len(messages) < n:
+                messages.append(dict(row))
+                seen.add(row["id"])
+
+    conn.close()
+    return messages[:n]
+
+
 def get_config_and_db(
     config_path: str | None = None,
     db_path: str | None = None,

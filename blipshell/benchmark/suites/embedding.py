@@ -12,6 +12,7 @@ import time
 from typing import TYPE_CHECKING, Callable
 
 from blipshell.benchmark.models import SuiteResult, TaskScore
+from blipshell.benchmark.shared import load_real_user_queries
 from blipshell.benchmark.suites.base import BenchmarkSuite
 
 if TYPE_CHECKING:
@@ -19,20 +20,6 @@ if TYPE_CHECKING:
     from blipshell.models.config import BlipShellConfig
 
 logger = logging.getLogger(__name__)
-
-# Hardcoded queries for search quality
-TEST_QUERIES = [
-    "desk robot design decisions",
-    "Python performance optimization",
-    "Ollama configuration and GPU",
-    "database migration strategy",
-    "ESP32 audio problems",
-    "session management and memory",
-    "LLM model comparison results",
-    "user preferences and settings",
-    "error handling and debugging",
-    "project architecture decisions",
-]
 
 DEFAULT_EMBED_MODELS = ["nomic-embed-text", "mxbai-embed-large", "snowflake-arctic-embed:335m"]
 
@@ -67,8 +54,15 @@ class EmbeddingSuite(BenchmarkSuite):
             logger.warning("No memories found for embedding benchmark")
             return []
 
+        # Load real user queries instead of hardcoded ones
+        query_n = 50 if thorough else 20
+        queries = load_real_user_queries(db_path, query_n)
+        if not queries:
+            logger.warning("No user queries found for search quality test")
+            queries = ["test query"]  # minimal fallback
+
         if on_status:
-            on_status(f"[embedding] Loaded {len(memories)} memories")
+            on_status(f"[embedding] Loaded {len(memories)} memories, {len(queries)} queries")
 
         # For embedding, model names are embedding model names, not LLM names
         embed_models = models if models else DEFAULT_EMBED_MODELS
@@ -77,7 +71,7 @@ class EmbeddingSuite(BenchmarkSuite):
         for model in embed_models:
             if on_status:
                 on_status(f"[embedding] Testing {model}")
-            sr = self._benchmark_model(model, memories, ollama_url, on_status)
+            sr = self._benchmark_model(model, memories, queries, ollama_url, on_status)
             results.append(sr)
         return results
 
@@ -97,7 +91,7 @@ class EmbeddingSuite(BenchmarkSuite):
         return [dict(r) for r in rows]
 
     def _benchmark_model(
-        self, model: str, memories: list[dict],
+        self, model: str, memories: list[dict], queries: list[str],
         ollama_url: str, on_status: Callable | None,
     ) -> SuiteResult:
         """Run embedding benchmark (synchronous — ChromaDB API is sync)."""
@@ -144,7 +138,7 @@ class EmbeddingSuite(BenchmarkSuite):
             hits_03 = 0
             total_hits = 0
 
-            for query in TEST_QUERIES:
+            for query in queries:
                 qstart = time.monotonic()
                 results = collection.query(query_texts=[query], n_results=5)
                 qelapsed = time.monotonic() - qstart
@@ -184,7 +178,7 @@ class EmbeddingSuite(BenchmarkSuite):
                 task_name="search_quality",
                 quality=round(avg_top1, 3),
                 speed_s=round(avg_query_time, 3),
-                samples=len(TEST_QUERIES),
+                samples=len(queries),
                 detail={
                     "avg_top1_sim": round(avg_top1, 3),
                     "avg_top5_sim": round(avg_top5, 3),

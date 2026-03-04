@@ -9,12 +9,10 @@ if TYPE_CHECKING:
 
 # Lazy imports to avoid circular deps and heavy startup cost
 _SUITE_CLASSES: dict[str, str] = {
-    "prompts": "blipshell.benchmark.suites.prompts:PromptsSuite",
     "pipeline": "blipshell.benchmark.suites.pipeline:PipelineSuite",
     "tagging": "blipshell.benchmark.suites.tagging:TaggingSuite",
     "reflection": "blipshell.benchmark.suites.reflection:ReflectionSuite",
     "embedding": "blipshell.benchmark.suites.embedding:EmbeddingSuite",
-    "coding": "blipshell.benchmark.suites.coding:CodingSuite",
 }
 
 

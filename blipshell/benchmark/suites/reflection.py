@@ -60,8 +60,8 @@ class ReflectionSuite(BenchmarkSuite):
     task_types = ["reasoning"]
     needs_db = True
     needs_router = True
-    quick_samples = 3
-    thorough_samples = 8
+    quick_samples = 5
+    thorough_samples = 12
 
     async def run(
         self,

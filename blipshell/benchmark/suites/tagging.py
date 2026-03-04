@@ -45,8 +45,8 @@ class TaggingSuite(BenchmarkSuite):
     task_types = ["reasoning"]
     needs_db = True
     needs_router = True
-    quick_samples = 10
-    thorough_samples = 30
+    quick_samples = 15
+    thorough_samples = 50
 
     async def run(
         self,
