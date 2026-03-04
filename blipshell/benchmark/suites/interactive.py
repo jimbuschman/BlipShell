@@ -96,8 +96,18 @@ async def _bootstrap_agent(config_path: str, model: str):
     config.models.coding = model
     config.models.reasoning = model  # some tools trigger reasoning
 
+    # Disable fallback models — benchmark must test the specified model only.
+    # Without this, models that don't support tools (e.g. glm4) silently
+    # fall back to gpt-oss and get credited with gpt-oss's scores.
+    config.models.tool_calling_fallback = None
+    config.models.coding_fallback = None
+    config.models.reasoning_fallback = None
+
     agent = Agent(config, config_manager)
     await agent.initialize()
+
+    # Disable the router's endpoint-level fallback too
+    agent.router._disable_fallback = True
 
     # Kill the memory worker immediately — benchmark doesn't need it.
     # This prevents "database is locked" from concurrent writes and
