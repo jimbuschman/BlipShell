@@ -201,6 +201,137 @@ def save_incremental(
         json.dump(data, f, indent=2)
 
 
+# ---------------------------------------------------------------------------
+# Per-role table (Section 4.5 of benchmark-spec.md)
+# ---------------------------------------------------------------------------
+
+# Ordered list of (column_header, task_name, suite_name) for the role table.
+# Column headers are short labels matching the spec's terminal table format.
+ROLE_COLUMNS: list[tuple[str, str, str]] = [
+    ("summ",  "summarization",      "pipeline"),
+    ("score", "scoring",            "pipeline"),
+    ("dedup", "dedup",              "pipeline"),
+    ("contr", "contradiction",      "pipeline"),
+    ("lssn",  "lesson",             "pipeline"),
+    ("ent",   "entity_extraction",  "extraction"),
+    ("e_res", "entity_resolution",  "extraction"),
+    ("tag_d", "tag_discovery",      "extraction"),
+    ("b_tag", "batch_tags",         "extraction"),
+    ("refl",  "reflection",         "synthesis"),
+    ("title", "titling",            "synthesis"),
+    ("dgst",  "digest",             "synthesis"),
+    ("s_rfl", "self_reflection",    "synthesis"),
+    ("plan",  "plan_gen",           "synthesis"),
+    ("chat",  "tool_calling",       "interactive"),
+    ("code",  "coding",             "interactive"),
+]
+
+
+def print_role_table(
+    result: BenchmarkResult,
+    *,
+    suites_filter: list[str] | None = None,
+) -> None:
+    """Print per-role comparison table matching benchmark-spec.md Section 4.5.
+
+    Each column is one LLM role. Rows are models. Final columns are AVG and avg_s.
+    If suites_filter is set, only show roles from those suites.
+    """
+    # Filter columns to requested suites
+    if suites_filter:
+        cols = [c for c in ROLE_COLUMNS if c[2] in suites_filter]
+    else:
+        cols = list(ROLE_COLUMNS)
+
+    if not cols:
+        return
+
+    table = Table(title="Unified LLM Benchmark — Per-Role Scores")
+    table.add_column("Model", style="bold", min_width=14)
+
+    for header, _, _ in cols:
+        table.add_column(header, justify="right", style="cyan", min_width=5)
+
+    table.add_column("AVG", justify="right", style="bold green", min_width=5)
+    table.add_column("avg_s", justify="right", style="dim", min_width=5)
+
+    # Build a lookup: (model, task_name) -> TaskScore
+    score_map: dict[tuple[str, str], TaskScore] = {}
+    for sr in result.suite_results:
+        for sc in sr.scores:
+            score_map[(sr.model, sc.task_name)] = sc
+
+    for model in result.models:
+        row = [model]
+        qualities = []
+        speeds = []
+
+        for _, task_name, _ in cols:
+            sc = score_map.get((model, task_name))
+            if sc is not None and sc.samples > 0:
+                row.append(f"{sc.quality:.2f}")
+                qualities.append(sc.quality)
+                speeds.append(sc.speed_s)
+            elif sc is not None:
+                # Stub (0 samples) — show the score but dimmed
+                row.append(f"[dim]{sc.quality:.2f}[/dim]")
+                qualities.append(sc.quality)
+                speeds.append(sc.speed_s)
+            else:
+                row.append("—")
+
+        # AVG and avg_s
+        if qualities:
+            avg_q = sum(qualities) / len(qualities)
+            avg_s = sum(speeds) / len(speeds)
+            row.append(f"{avg_q:.2f}")
+            row.append(f"{avg_s:.1f}")
+        else:
+            row.append("—")
+            row.append("—")
+
+        table.add_row(*row)
+
+    console.print()
+    console.print(table)
+
+
+def save_role_results(
+    result: BenchmarkResult,
+    output_path: str = "data/benchmark_unified.json",
+) -> str:
+    """Save results in the Section 4.6 JSON format: model -> role -> {score, avg_time, ...}."""
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+    data: dict = {
+        "meta": {
+            "timestamp": result.timestamp or datetime.now(timezone.utc).isoformat(),
+            "suites": result.suites,
+        },
+        "models": {},
+    }
+
+    for model in result.models:
+        model_data: dict = {}
+        for sr in result.suite_results:
+            if sr.model != model:
+                continue
+            for sc in sr.scores:
+                model_data[sc.task_name] = {
+                    "score": round(sc.quality, 3),
+                    "avg_time": round(sc.speed_s, 2),
+                    "cases": sc.samples,
+                    "errors": sc.errors,
+                    "detail": sc.detail,
+                }
+        data["models"][model] = model_data
+
+    with open(output_path, "w") as f:
+        json.dump(data, f, indent=2)
+
+    return output_path
+
+
 def _find_suite_result(
     result: BenchmarkResult, model: str, suite_name: str,
 ) -> SuiteResult | None:
