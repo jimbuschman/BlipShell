@@ -79,7 +79,11 @@ class _StreamCollector:
 async def _bootstrap_agent(config_path: str, model: str):
     """Create and initialize an Agent with overridden model for tool_calling/coding.
 
-    Returns (agent, session_id). Caller must clean up via agent.end_session().
+    Kills the memory worker immediately after init to avoid "database is locked"
+    errors and the 270s shutdown timeout.  The benchmark doesn't need background
+    memory processing.
+
+    Returns (agent, session_id). Caller must clean up via _cleanup_agent().
     """
     from blipshell.core.agent import Agent
     from blipshell.core.config import ConfigManager
@@ -95,6 +99,13 @@ async def _bootstrap_agent(config_path: str, model: str):
     agent = Agent(config, config_manager)
     await agent.initialize()
 
+    # Kill the memory worker immediately — benchmark doesn't need it.
+    # This prevents "database is locked" from concurrent writes and
+    # eliminates the 270s shutdown timeout.
+    if agent._memory_worker:
+        agent._memory_worker.shutdown(timeout=5.0)
+        agent._memory_worker = None
+
     # Headless ask_user callback
     async def _headless_ask_user(question: str) -> str:
         return "Make your best judgment."
@@ -106,16 +117,15 @@ async def _bootstrap_agent(config_path: str, model: str):
 
 
 async def _cleanup_agent(agent):
-    """Safely clean up an Agent after testing."""
+    """Safely clean up an Agent after benchmark testing.
+
+    Uses force_cleanup() instead of end_session() to avoid the full
+    session-close pipeline (summaries, lessons, worker drain).
+    """
     try:
-        await agent.end_session()
+        await agent.force_cleanup()
     except Exception:
-        pass
-    try:
-        if agent.sqlite:
-            await agent.sqlite.close()
-    except Exception:
-        pass
+        logger.debug("force_cleanup error", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

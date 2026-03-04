@@ -352,4 +352,31 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Suppress httpx/httpcore "Event loop is closed" RuntimeErrors from
+    # ollama AsyncClient GC — harmless noise that clutters benchmark output.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+    # Override asyncio's exception handler to silence "Event loop is closed"
+    # from orphaned httpx futures during interpreter shutdown.
+    _orig_handler = None
+
+    def _quiet_exception_handler(loop, context):
+        msg = context.get("message", "")
+        exc = context.get("exception")
+        if exc and "Event loop is closed" in str(exc):
+            return  # suppress
+        if "Event loop is closed" in msg:
+            return  # suppress
+        if _orig_handler:
+            _orig_handler(loop, context)
+        else:
+            loop.default_exception_handler(context)
+
+    loop = asyncio.new_event_loop()
+    _orig_handler = loop.get_exception_handler()
+    loop.set_exception_handler(_quiet_exception_handler)
+    try:
+        loop.run_until_complete(main())
+    finally:
+        loop.close()
