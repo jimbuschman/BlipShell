@@ -48,7 +48,7 @@ def make_router(
         ep_kwargs["context_tokens"] = context_tokens
 
     ep = EndpointConfig(**ep_kwargs)
-    return LLMRouter(models, EndpointManager([ep], LLMConfig()))
+    return LLMRouter(models, EndpointManager([ep], LLMConfig()), disable_fallback=True)
 
 
 def make_cloud_router(
@@ -74,7 +74,7 @@ def make_cloud_router(
 
     model_kwargs = {t: model_name for t in types}
     models = ModelsConfig(**model_kwargs)
-    return LLMRouter(models, EndpointManager([ep_copy], config.llm))
+    return LLMRouter(models, EndpointManager([ep_copy], config.llm), disable_fallback=True)
 
 
 async def check_model_availability(

@@ -20,7 +20,6 @@ from blipshell.benchmark.shared import (
     check_model_availability,
     get_config_and_db,
     get_context_tokens,
-    make_cloud_router,
     make_router,
 )
 from blipshell.benchmark.suites import SUITES, get_suite
@@ -86,24 +85,11 @@ async def run_benchmark(
             console.print("[red]No models available![/red]")
         return BenchmarkResult()
 
-    # Router factory
+    # Router factory — ALL models go through Ollama (including :cloud proxied models).
+    # Never route to Groq/Gemini from benchmarks.
     def router_factory(model_name: str):
         ctx_tokens = get_context_tokens(model_name)
-        # Cloud models via OpenAI-compatible providers (groq, gemini)
-        # need make_cloud_router. But Ollama-proxied cloud models
-        # (e.g. glm-5:cloud) go through regular Ollama endpoint.
-        if model_name.endswith(":cloud") or "cloud" in model_name:
-            for ep in config.endpoints:
-                if not ep.enabled:
-                    continue
-                # Only use OpenAI-provider endpoints for cloud routing
-                if getattr(ep, "provider", None) == "openai":
-                    cloud_router = make_cloud_router(ep.name, model_name, config)
-                    if cloud_router:
-                        return cloud_router
-        # Local models + Ollama-proxied cloud models use regular Ollama
         # Cap context at 32K for benchmarks — avoids GPU OOM on 256K models
-        # The full context window is only needed for reflection/long-context tests
         kwargs = {}
         if ctx_tokens:
             kwargs["context_tokens"] = min(ctx_tokens, 32768)

@@ -35,11 +35,12 @@ class LLMRouter:
     and EndpointManager to select the best endpoint for the role.
     """
 
-    def __init__(self, models_config: ModelsConfig, endpoint_manager: EndpointManager, *, pii_enabled: bool = True):
+    def __init__(self, models_config: ModelsConfig, endpoint_manager: EndpointManager, *, pii_enabled: bool = True, disable_fallback: bool = False):
         self._models = models_config
         self._endpoint_manager = endpoint_manager
         self._failed_models: dict[str, float] = {}  # model_name → failure timestamp
         self._pii_enabled = pii_enabled
+        self._disable_fallback = disable_fallback
 
     def get_model(self, task_type: str) -> str:
         """Get the configured model name for a task type."""
@@ -147,7 +148,7 @@ class LLMRouter:
 
         # Pre-flight token check: skip cloud endpoint if request would exceed TPM
         estimated_tokens = self._estimate_request_tokens(prompt, system)
-        if endpoint.would_exceed_tpm(estimated_tokens):
+        if not self._disable_fallback and endpoint.would_exceed_tpm(estimated_tokens):
             fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
                 task_type, exclude=endpoint.name,
             )
@@ -163,7 +164,7 @@ class LLMRouter:
                 use_fallback = True
 
         # Skip straight to fallback if primary model is known to be down
-        if self.is_model_failed(model):
+        if not self._disable_fallback and self.is_model_failed(model):
             # Must also switch endpoint — can't send a local model name to a cloud API
             fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
                 task_type, exclude=endpoint.name,
@@ -216,7 +217,7 @@ class LLMRouter:
             else:
                 endpoint.record_failure()
             # Try fallback: get next endpoint (excluding failed one), use its model
-            if not use_fallback:
+            if not use_fallback and not self._disable_fallback:
                 try:
                     fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
                         task_type, exclude=endpoint.name,
