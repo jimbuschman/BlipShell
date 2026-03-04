@@ -104,17 +104,23 @@ async def _bootstrap_agent(config_path: str, model: str):
     config.models.reasoning_fallback = None
 
     agent = Agent(config, config_manager)
-    await agent.initialize()
+
+    # Prevent the memory worker from ever starting — benchmark doesn't need
+    # background processing.  Previous approach (shutdown after init) left
+    # in-flight work items that hit "ChromaStore is closed" errors.
+    from blipshell.memory.worker import MemoryWorker
+    _orig_start = MemoryWorker.start
+    MemoryWorker.start = lambda self: None  # no-op
+    try:
+        await agent.initialize()
+    finally:
+        MemoryWorker.start = _orig_start  # restore for other code
+
+    # The worker was created but never started — null it out
+    agent._memory_worker = None
 
     # Disable the router's endpoint-level fallback too
     agent.router._disable_fallback = True
-
-    # Kill the memory worker immediately — benchmark doesn't need it.
-    # This prevents "database is locked" from concurrent writes and
-    # eliminates the 270s shutdown timeout.
-    if agent._memory_worker:
-        agent._memory_worker.shutdown(timeout=5.0)
-        agent._memory_worker = None
 
     # Headless ask_user callback
     async def _headless_ask_user(question: str) -> str:
