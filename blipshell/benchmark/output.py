@@ -11,7 +11,7 @@ from rich.table import Table
 
 from blipshell.benchmark.models import BenchmarkResult, SuiteResult, TaskScore
 
-console = Console()
+console = Console(width=200)
 
 DEFAULT_OUTPUT_PATH = "data/benchmark_results.json"
 

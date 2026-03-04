@@ -155,6 +155,7 @@ async def _mock_run(models: list[str], suites: list[str]) -> BenchmarkResult:
                 db_path=None,  # no DB in mock mode
                 thorough=False,
                 on_status=on_status,
+                config_path=None,
             )
             result.suite_results.extend(suite_results)
         except Exception as e:
@@ -236,6 +237,7 @@ async def _live_run(
                 ollama_url=ollama_url,
                 thorough=thorough,
                 on_status=on_status,
+                config_path=config_path,
             )
             result.suite_results.extend(suite_results)
         except Exception as e:

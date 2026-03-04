@@ -190,6 +190,7 @@ class UnifiedPipelineSuite(BenchmarkSuite):
         ollama_url: str = "http://localhost:11434",
         thorough: bool = False,
         on_status: Callable[[str], None] | None = None,
+        config_path: str | None = None,
     ) -> list[SuiteResult]:
         results = []
         for model in models:

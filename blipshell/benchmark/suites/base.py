@@ -33,6 +33,7 @@ class BenchmarkSuite(ABC):
         ollama_url: str = "http://localhost:11434",
         thorough: bool = False,
         on_status: Callable[[str], None] | None = None,
+        config_path: str | None = None,
     ) -> list[SuiteResult]:
         """Run the suite across all models.
 
@@ -44,6 +45,7 @@ class BenchmarkSuite(ABC):
             ollama_url: Ollama server URL.
             thorough: If True, use thorough_samples; else quick_samples.
             on_status: Callback for progress updates.
+            config_path: Path to config.yaml (for interactive suite agent bootstrap).
 
         Returns:
             One SuiteResult per model.
