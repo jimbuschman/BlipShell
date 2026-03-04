@@ -102,9 +102,11 @@ async def run_benchmark(
                     if cloud_router:
                         return cloud_router
         # Local models + Ollama-proxied cloud models use regular Ollama
+        # Cap context at 32K for benchmarks — avoids GPU OOM on 256K models
+        # The full context window is only needed for reflection/long-context tests
         kwargs = {}
         if ctx_tokens:
-            kwargs["context_tokens"] = ctx_tokens
+            kwargs["context_tokens"] = min(ctx_tokens, 32768)
         return make_router(model_name, ollama_url, **kwargs)
 
     # Run suites
