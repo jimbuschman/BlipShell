@@ -102,6 +102,13 @@ async def _bootstrap_agent(config_path: str, model: str):
     config.models.tool_calling_fallback = None
     config.models.coding_fallback = None
     config.models.reasoning_fallback = None
+    config.models.summarization_fallback = None
+    config.models.ranking_importance_fallback = None
+
+    # Strip cloud endpoints — benchmark must only use local Ollama.
+    # Without this, the Agent's router may route sub-calls (e.g. summarization
+    # during memory processing) to Groq/Gemini endpoints from config.yaml.
+    config.endpoints = [ep for ep in config.endpoints if ep.provider == "ollama"]
 
     agent = Agent(config, config_manager)
 
