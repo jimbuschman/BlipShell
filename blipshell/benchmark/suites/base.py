@@ -34,6 +34,7 @@ class BenchmarkSuite(ABC):
         thorough: bool = False,
         on_status: Callable[[str], None] | None = None,
         config_path: str | None = None,
+        on_model_done: Callable | None = None,
     ) -> list[SuiteResult]:
         """Run the suite across all models.
 

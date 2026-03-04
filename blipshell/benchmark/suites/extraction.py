@@ -101,6 +101,7 @@ class ExtractionSuite(BenchmarkSuite):
         thorough: bool = False,
         on_status: Callable[[str], None] | None = None,
         config_path: str | None = None,
+        on_model_done: Callable | None = None,
     ) -> list[SuiteResult]:
         results = []
         for model in models:

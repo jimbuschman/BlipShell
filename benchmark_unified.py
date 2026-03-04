@@ -122,7 +122,11 @@ def _dry_run(models: list[str], suites: list[str]) -> BenchmarkResult:
 # Mock run: canned LLM responses, exercises scoring logic without Ollama
 # ---------------------------------------------------------------------------
 
-async def _mock_run(models: list[str], suites: list[str]) -> BenchmarkResult:
+async def _mock_run(
+    models: list[str],
+    suites: list[str],
+    output_path: str = "data/benchmark_unified.json",
+) -> BenchmarkResult:
     """Run suites with a mock router that returns canned responses."""
     from blipshell.benchmark.mock import MockRouter
 
@@ -159,6 +163,9 @@ async def _mock_run(models: list[str], suites: list[str]) -> BenchmarkResult:
                 config_path=None,
             )
             result.suite_results.extend(suite_results)
+
+            # Incremental save after each suite
+            save_role_results(result, output_path)
         except Exception as e:
             logger.exception("Suite %s failed", suite_name)
             console.print(f"[red]Suite {suite_name} failed: {e}[/red]")
@@ -179,7 +186,10 @@ async def _live_run(
     sample: int | None = None,
     output_path: str = "data/benchmark_unified.json",
 ) -> BenchmarkResult:
-    """Run suites with real model calls."""
+    """Run suites with real model calls.
+
+    Saves incrementally after each suite so Ctrl+C preserves completed work.
+    """
     from blipshell.benchmark.shared import (
         check_model_availability,
         get_config_and_db,
@@ -229,6 +239,12 @@ async def _live_run(
         console.print(f"[bold cyan]Suite: {suite.name}[/bold cyan] — {suite.description}")
         console.print(f"{'-' * 60}")
 
+        # Per-model incremental save callback (for slow suites like interactive)
+        def _on_model_done(sr):
+            result.suite_results.append(sr)
+            save_role_results(result, output_path)
+            console.print(f"  [dim green]Saved {sr.model}/{suite_name} → {output_path}[/dim green]")
+
         try:
             suite_results = await suite.run(
                 available,
@@ -239,8 +255,16 @@ async def _live_run(
                 thorough=thorough,
                 on_status=on_status,
                 config_path=config_path,
+                on_model_done=_on_model_done,
             )
-            result.suite_results.extend(suite_results)
+            # Add any results not already added by on_model_done
+            for sr in suite_results:
+                if sr not in result.suite_results:
+                    result.suite_results.append(sr)
+
+            # Save after full suite completes
+            save_role_results(result, output_path)
+            console.print(f"  [dim green]Saved {suite_name} results → {output_path}[/dim green]")
         except Exception as e:
             logger.exception("Suite %s failed", suite_name)
             console.print(f"[red]Suite {suite_name} failed: {e}[/red]")
@@ -323,7 +347,7 @@ async def main():
     if args.dry_run:
         result = _dry_run(models, suites)
     elif args.mock:
-        result = await _mock_run(models, suites)
+        result = await _mock_run(models, suites, output_path=args.output)
     else:
         result = await _live_run(
             models, suites,
