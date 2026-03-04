@@ -28,6 +28,7 @@ from rich.console import Console
 from blipshell.benchmark.models import BenchmarkResult, SuiteResult, TaskScore
 from blipshell.benchmark.output import (
     console,
+    load_role_results,
     print_role_detail,
     print_role_table,
     save_role_results,
@@ -331,18 +332,22 @@ async def main():
             output_path=args.output,
         )
 
-    # Print per-role table
-    print_role_table(result, suites_filter=suites)
+    # Save JSON (merges with prior runs)
+    path = save_role_results(result, args.output)
 
-    # Print per-case detail if requested
+    # Reload accumulated results so table shows ALL models from all runs
+    accumulated = load_role_results(args.output)
+
+    # Print per-role table (all accumulated models)
+    print_role_table(accumulated)
+
+    # Print per-case detail if requested (current run only — has detail data)
     if args.detail:
         print_role_detail(result, args.detail)
 
-    # Save JSON
-    path = save_role_results(result, args.output)
-
     console.print(f"\n[dim]Time: {result.elapsed_s:.0f}s | "
-                  f"{len(result.models)} models × {len(suites)} suites[/dim]")
+                  f"{len(result.models)} models this run | "
+                  f"{len(accumulated.models)} models total[/dim]")
     console.print(f"[dim]Results: {path}[/dim]")
 
 

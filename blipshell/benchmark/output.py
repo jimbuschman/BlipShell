@@ -384,36 +384,103 @@ def save_role_results(
     result: BenchmarkResult,
     output_path: str = "data/benchmark_unified.json",
 ) -> str:
-    """Save results in the Section 4.6 JSON format: model -> role -> {score, avg_time, ...}."""
+    """Merge results into the accumulated JSON file.
+
+    New model+role data overwrites existing entries for the same model+role,
+    but prior models/roles from earlier runs are preserved. This allows
+    running models in batches and building up one complete results file.
+    """
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
-    data: dict = {
-        "meta": {
-            "timestamp": result.timestamp or datetime.now(timezone.utc).isoformat(),
-            "suites": result.suites,
-        },
-        "models": {},
-    }
+    # Load existing accumulated data
+    try:
+        with open(output_path) as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        data = {}
 
+    # Ensure structure
+    data.setdefault("meta", {})
+    data.setdefault("models", {})
+
+    # Update metadata
+    data["meta"]["timestamp"] = result.timestamp or datetime.now(timezone.utc).isoformat()
+    # Merge suites list (keep prior suites + add new)
+    existing_suites = set(data["meta"].get("suites", []))
+    existing_suites.update(result.suites)
+    data["meta"]["suites"] = sorted(existing_suites)
+
+    # Merge model results: new data overwrites per model+role, prior data preserved
     for model in result.models:
-        model_data: dict = {}
+        if model not in data["models"]:
+            data["models"][model] = {}
         for sr in result.suite_results:
             if sr.model != model:
                 continue
             for sc in sr.scores:
-                model_data[sc.task_name] = {
+                data["models"][model][sc.task_name] = {
                     "score": round(sc.quality, 3),
                     "avg_time": round(sc.speed_s, 2),
                     "cases": sc.samples,
                     "errors": sc.errors,
                     "detail": sc.detail,
                 }
-        data["models"][model] = model_data
 
     with open(output_path, "w") as f:
         json.dump(data, f, indent=2)
 
     return output_path
+
+
+def load_role_results(output_path: str = "data/benchmark_unified.json") -> BenchmarkResult:
+    """Load accumulated results from the merged JSON file into a BenchmarkResult.
+
+    Reconstructs SuiteResults by mapping each task_name back to its suite
+    via the ROLE_COLUMNS registry. Models and suites are derived from the data.
+    """
+    try:
+        with open(output_path) as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return BenchmarkResult()
+
+    models_data = data.get("models", {})
+    all_models = sorted(models_data.keys())
+
+    # Build reverse lookup: task_name -> suite_name
+    task_to_suite = {task_name: suite_name for _, task_name, suite_name in ROLE_COLUMNS}
+
+    # Group scores by (model, suite_name)
+    grouped: dict[tuple[str, str], list[TaskScore]] = {}
+    all_suites: set[str] = set()
+
+    for model, tasks in models_data.items():
+        for task_name, task_data in tasks.items():
+            suite_name = task_to_suite.get(task_name, "unknown")
+            all_suites.add(suite_name)
+            key = (model, suite_name)
+            if key not in grouped:
+                grouped[key] = []
+            grouped[key].append(TaskScore(
+                task_name=task_name,
+                quality=task_data.get("score", 0),
+                speed_s=task_data.get("avg_time", 0),
+                samples=task_data.get("cases", 0),
+                errors=task_data.get("errors", 0),
+                detail=task_data.get("detail") or {},
+            ))
+
+    suite_results = [
+        SuiteResult(suite_name=suite_name, model=model, scores=scores)
+        for (model, suite_name), scores in grouped.items()
+    ]
+
+    return BenchmarkResult(
+        suite_results=suite_results,
+        models=all_models,
+        suites=sorted(all_suites),
+        timestamp=data.get("meta", {}).get("timestamp", ""),
+    )
 
 
 def _find_suite_result(
