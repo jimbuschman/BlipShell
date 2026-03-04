@@ -215,6 +215,8 @@ class PipelineSuite(BenchmarkSuite):
 
         times = []
         good = 0
+        keyword_hits = 0
+        keyword_checks = 0
         skip_appropriate = 0  # SKIP on rank<=2 (correct)
         skip_inappropriate = 0  # SKIP on rank>=4 (wrong)
         errors = 0
@@ -245,12 +247,30 @@ class PipelineSuite(BenchmarkSuite):
                     # rank 3 SKIP is ambiguous, don't count either way
                 elif 5 < len(text) and len(text.split()) <= 40:
                     good += 1
+                    # Keyword overlap: check new summary covers same content
+                    existing = msg.get("summary", "")
+                    if existing and len(existing) > 10:
+                        keyword_checks += 1
+                        existing_words = {
+                            w.lower() for w in existing.split()
+                            if len(w) > 3  # skip short words
+                        }
+                        new_words = {
+                            w.lower() for w in text.split()
+                            if len(w) > 3
+                        }
+                        overlap = existing_words & new_words
+                        if existing_words and len(overlap) / len(existing_words) >= 0.3:
+                            keyword_hits += 1
             except Exception as e:
                 logger.debug("summarize error: %s", e)
                 errors += 1
 
         avg_speed = sum(times) / len(times) if times else 0
-        quality = good / total if total else 0
+        # Quality: format correctness weighted with keyword overlap
+        format_score = good / total if total else 0
+        keyword_score = keyword_hits / keyword_checks if keyword_checks else 0
+        quality = format_score * 0.6 + keyword_score * 0.4
 
         return TaskScore(
             task_name="summarization",
@@ -260,6 +280,7 @@ class PipelineSuite(BenchmarkSuite):
             errors=errors,
             detail={
                 "good": good,
+                "keyword_overlap": f"{keyword_hits}/{keyword_checks}",
                 "skip_appropriate": skip_appropriate,
                 "skip_inappropriate": skip_inappropriate,
                 "total": total,
