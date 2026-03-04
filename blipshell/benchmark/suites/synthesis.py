@@ -41,8 +41,40 @@ REFLECTION_CURATED = [
         "expect_skip": False,
     },
     {
+        "session_summary": "Migrated SQLite database schema and rebuilt indexes",
+        "conversation_text": (
+            "User: I need to add a 'tags' column to the memories table without losing data.\n"
+            "Assistant: Use ALTER TABLE to add the column, then backfill from the tags table.\n"
+            "User: The backfill query is slow on 30K rows.\n"
+            "Assistant: Add a WHERE clause to skip rows that already have tags. "
+            "Also run VACUUM after to reclaim space from the old schema.\n"
+            "User: Done — migration took 4 seconds. Much better than the 90s full rebuild."
+        ),
+        "expect_skip": False,
+    },
+    {
+        "session_summary": "Configured Nginx reverse proxy with SSL termination",
+        "conversation_text": (
+            "User: My Node app is on port 3000 but I need HTTPS on port 443.\n"
+            "Assistant: Set up Nginx as a reverse proxy with Let's Encrypt certs.\n"
+            "User: Getting 502 Bad Gateway after the proxy config.\n"
+            "Assistant: Check that proxy_pass points to http://localhost:3000 "
+            "and the Node app is actually running. Also add proxy_set_header Host $host.\n"
+            "User: That was it — the Host header was missing. Works now with SSL."
+        ),
+        "expect_skip": False,
+    },
+    {
         "session_summary": "Quick hello, no real work done",
         "conversation_text": "User: hey\nAssistant: Hello! How can I help?\nUser: nothing, bye",
+        "expect_skip": True,
+    },
+    {
+        "session_summary": "User asked one factual question",
+        "conversation_text": (
+            "User: What port does Redis use by default?\n"
+            "Assistant: Redis uses port 6379 by default."
+        ),
         "expect_skip": True,
     },
 ]

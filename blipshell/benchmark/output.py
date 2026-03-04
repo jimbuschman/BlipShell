@@ -296,6 +296,90 @@ def print_role_table(
     console.print(table)
 
 
+def print_role_detail(
+    result: BenchmarkResult,
+    role: str,
+) -> None:
+    """Print per-case breakdown for a single role across all models.
+
+    The role arg can be a task_name (e.g. 'lesson') or a column header
+    (e.g. 'lssn'). Prints each case's checks and score.
+    """
+    # Resolve role: accept either column header or task_name
+    task_name = role
+    for header, tname, _ in ROLE_COLUMNS:
+        if role == header:
+            task_name = tname
+            break
+
+    # Find matching TaskScores across models
+    found_any = False
+    for model in result.models:
+        # Find the TaskScore for this model + task_name
+        sc = None
+        for sr in result.suite_results:
+            if sr.model != model:
+                continue
+            for s in sr.scores:
+                if s.task_name == task_name:
+                    sc = s
+                    break
+            if sc:
+                break
+
+        if not sc or "cases" not in sc.detail:
+            continue
+
+        cases = sc.detail["cases"]
+        if not cases:
+            continue
+
+        found_any = True
+
+        table = Table(title=f"Detail: {task_name} ({model}) - {len(cases)} cases, "
+                      f"avg={sc.quality:.2f}")
+        table.add_column("#", style="dim", width=3)
+        table.add_column("Case", style="bold", max_width=45, overflow="fold")
+        table.add_column("Output", max_width=50, overflow="fold")
+        table.add_column("Checks", style="cyan", max_width=40, overflow="fold")
+        table.add_column("Score", justify="right", style="green", width=5)
+
+        for i, case in enumerate(cases, 1):
+            # Case identifier: use id, summary, or project — whatever is available
+            case_id = (case.get("id") or case.get("summary")
+                       or case.get("project") or f"case_{i}")
+            if isinstance(case_id, str) and len(case_id) > 45:
+                case_id = case_id[:42] + "..."
+
+            # Output snippet
+            output = case.get("output") or case.get("title") or ""
+            if len(output) > 50:
+                output = output[:47] + "..."
+
+            # Checks: format as key=val pairs
+            checks = case.get("checks", {})
+            checks_str = " ".join(f"{k}={v}" for k, v in checks.items())
+
+            score = case.get("score", 0)
+
+            # Color score red if 0, yellow if partial, green if perfect
+            if score >= 1.0:
+                score_str = f"[green]{score:.2f}[/green]"
+            elif score > 0:
+                score_str = f"[yellow]{score:.2f}[/yellow]"
+            else:
+                score_str = f"[red]{score:.2f}[/red]"
+
+            table.add_row(str(i), str(case_id), output, checks_str, score_str)
+
+        console.print()
+        console.print(table)
+
+    if not found_any:
+        console.print(f"[yellow]No detail data found for role '{role}'. "
+                      f"Valid roles: {', '.join(h for h, _, _ in ROLE_COLUMNS)}[/yellow]")
+
+
 def save_role_results(
     result: BenchmarkResult,
     output_path: str = "data/benchmark_unified.json",

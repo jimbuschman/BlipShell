@@ -216,8 +216,34 @@ register_mock("reasoning", r"Review this session.*Session summary:.*(asyncio|mem
               "- asyncio.gather() with return_exceptions=True isolates failures\n\n"
               "PROCESS_INSIGHTS:\n"
               "- Test schema changes on a copy before production")
+# Substantive session reflection — SQLite migration
+register_mock("reasoning", r"Review this session.*Session summary:.*(SQLite|ALTER TABLE|migration)",
+              "EFFECTIVENESS: effective\n\n"
+              "WHAT_WORKED:\n"
+              "- Incremental ALTER TABLE preserved existing data\n"
+              "- WHERE clause skipped already-processed rows\n\n"
+              "WHAT_DIDNT_WORK:\n"
+              "- Full rebuild was initially considered but too slow (90s)\n\n"
+              "TECHNICAL_INSIGHTS:\n"
+              "- VACUUM after schema changes reclaims space efficiently\n\n"
+              "PROCESS_INSIGHTS:\n"
+              "- Always benchmark migration time on production-size data")
+# Substantive session reflection — Nginx proxy
+register_mock("reasoning", r"Review this session.*Session summary:.*(Nginx|reverse proxy|SSL termination)",
+              "EFFECTIVENESS: effective\n\n"
+              "WHAT_WORKED:\n"
+              "- Systematic debugging of proxy_pass configuration\n"
+              "- Checking Host header resolved the 502 error\n\n"
+              "WHAT_DIDNT_WORK:\n"
+              "- Initially missed the proxy_set_header requirement\n\n"
+              "TECHNICAL_INSIGHTS:\n"
+              "- Nginx requires explicit Host header for upstream proxying\n\n"
+              "PROCESS_INSIGHTS:\n"
+              "- Check error logs first when debugging reverse proxy issues")
 # Trivial session → SKIP
 register_mock("reasoning", r"Review this session.*nothing, bye", "SKIP")
+# Trivial session — factual question
+register_mock("reasoning", r"Review this session.*Redis", "SKIP")
 
 # ---------------------------------------------------------------------------
 # Role 11: Session titling mock responses

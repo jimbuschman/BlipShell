@@ -28,6 +28,7 @@ from rich.console import Console
 from blipshell.benchmark.models import BenchmarkResult, SuiteResult, TaskScore
 from blipshell.benchmark.output import (
     console,
+    print_role_detail,
     print_role_table,
     save_role_results,
 )
@@ -290,6 +291,10 @@ def parse_args() -> argparse.Namespace:
         "--mock", action="store_true",
         help="Use canned LLM responses (exercises scoring logic without Ollama)",
     )
+    parser.add_argument(
+        "--detail",
+        help="Show per-case breakdown for a role (e.g. --detail lesson, --detail lssn)",
+    )
     return parser.parse_args()
 
 
@@ -326,6 +331,10 @@ async def main():
 
     # Print per-role table
     print_role_table(result, suites_filter=suites)
+
+    # Print per-case detail if requested
+    if args.detail:
+        print_role_detail(result, args.detail)
 
     # Save JSON
     path = save_role_results(result, args.output)
