@@ -173,6 +173,24 @@ class LLMClient:
 
         try:
             response = await self._retry_call(_do_generate)
+        except Exception as e:
+            # Some cloud models reject think=False as reasoning_effort: none.
+            # Retry without the think parameter.
+            if "reasoning_effort" in str(e) and "think" in kwargs:
+                logger.info("Model rejected reasoning_effort, retrying without think param")
+                kwargs_no_think = {k: v for k, v in kwargs.items() if k != "think"}
+
+                async def _do_generate_no_think():
+                    return await self._client.chat(
+                        model=model,
+                        messages=messages,
+                        stream=False,
+                        **kwargs_no_think,
+                    )
+
+                response = await self._retry_call(_do_generate_no_think)
+            else:
+                raise
             # Handle both object (ollama 0.4+) and dict responses
             msg = getattr(response, "message", None)
             if msg is not None:
