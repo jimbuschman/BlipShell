@@ -222,6 +222,8 @@ class Agent(
         )
         # Wire shared chat loop runner so executor uses same endpoint/fallback logic
         self.task_executor.chat_loop_runner = self._run_chat_loop
+        # Wire guardrails config so executor can create GuardrailsEngine per-execution
+        self.task_executor.guardrails_config = self.config.guardrails
 
         # Background task manager (Phase 2)
         self.background_manager = BackgroundTaskManager(
@@ -332,27 +334,27 @@ class Agent(
                 on_status(msg)
             logger.info("Night cleanup: %s", msg)
 
-        _status("Fetching unprocessed messages...")
-        unprocessed = await self.sqlite.get_unprocessed_messages(limit=500)
+        _status("Fetching unprocessed memories...")
+        unprocessed = await self.sqlite.get_unprocessed_memories(limit=500)
         if not unprocessed:
-            _status("No unprocessed messages found.")
+            _status("No unprocessed memories found.")
             return {"processed": 0, "failed": 0, "total": 0}
 
-        _status(f"Found {len(unprocessed)} unprocessed messages, reprocessing...")
+        _status(f"Found {len(unprocessed)} unprocessed memories, reprocessing...")
         processed = 0
         failed = 0
         for i, msg in enumerate(unprocessed):
-            _status(f"Processing message {i + 1}/{len(unprocessed)} (id={msg['id']})...")
+            _status(f"Processing memory {i + 1}/{len(unprocessed)} (id={msg['id']})...")
             try:
                 await self.processor.process_message(
                     text=msg["content"],
                     role=msg["role"],
                     session_id=msg["session_id"],
+                    memory_id=msg["id"],
                 )
-                await self.sqlite.mark_message_processed(msg["id"])
                 processed += 1
             except Exception as e:
-                logger.warning("Night cleanup: message %d failed: %s", msg["id"], e)
+                logger.warning("Night cleanup: memory %d failed: %s", msg["id"], e)
                 failed += 1
 
         result = {"processed": processed, "failed": failed, "total": len(unprocessed)}

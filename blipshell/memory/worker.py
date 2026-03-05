@@ -43,7 +43,7 @@ class WorkItem:
     session_id: int = 0
     metadata: str = "{}"
     project: Optional[str] = None  # for process_lesson
-    message_db_id: Optional[int] = None  # session_messages row ID
+    memory_id: Optional[int] = None  # existing memories row ID (live sessions)
 
 
 class MemoryWorker:
@@ -157,17 +157,13 @@ class MemoryWorker:
 
         try:
             if item.work_type == WorkType.PROCESS_MESSAGE:
-                result = await processor.process_message(
+                await processor.process_message(
                     text=item.text,
                     role=item.role,
                     session_id=item.session_id,
                     metadata=item.metadata,
+                    memory_id=item.memory_id,
                 )
-                if item.message_db_id and result is not None:
-                    try:
-                        await sqlite.mark_message_processed(item.message_db_id)
-                    except Exception:
-                        pass
 
             elif item.work_type == WorkType.PROCESS_LESSON:
                 await processor.process_lesson(

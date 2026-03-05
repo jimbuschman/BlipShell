@@ -220,8 +220,8 @@ class NightlyRunner:
         return stats
 
     async def _job_cleanup(self, on_status) -> dict:
-        """Reprocess failed messages."""
-        unprocessed = await self.sqlite.get_unprocessed_messages(limit=500)
+        """Reprocess failed memories."""
+        unprocessed = await self.sqlite.get_unprocessed_memories(limit=500)
         if not unprocessed:
             return {"processed": 0, "failed": 0, "total": 0}
 
@@ -233,11 +233,11 @@ class NightlyRunner:
                     text=msg["content"],
                     role=msg["role"],
                     session_id=msg["session_id"],
+                    memory_id=msg["id"],
                 )
-                await self.sqlite.mark_message_processed(msg["id"])
                 processed += 1
             except Exception as e:
-                logger.warning("Failed to reprocess message %d: %s", msg["id"], e)
+                logger.warning("Failed to reprocess memory %d: %s", msg["id"], e)
                 failed += 1
 
         return {"processed": processed, "failed": failed, "total": len(unprocessed)}

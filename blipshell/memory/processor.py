@@ -72,16 +72,23 @@ class MemoryProcessor:
         session_id: int,
         metadata: str = "{}",
         timestamp: datetime | None = None,
+        memory_id: int | None = None,
     ) -> int | None:
         """Full pipeline for processing a conversation message into memory.
 
-        Returns the memory ID, or None if filtered as noise.
+        If memory_id is provided, updates an existing raw memory row
+        (created by save_raw_memory during live sessions).
+        Otherwise creates a new row (import path, crash recovery).
+
+        Returns the memory ID, or None if filtered as noise/skip.
         """
         import time as _time
 
         # Step 1: Noise check
         if should_skip_memory(text):
             logger.debug("Skipping noise: %s", text[:50])
+            if memory_id:
+                await self.sqlite.update_memory(memory_id, is_archived=True, is_processed=True)
             return None
 
         # Step 2: Summarize
@@ -96,6 +103,8 @@ class MemoryProcessor:
             # LLM signals this is self-referential / meta content
             if summary.strip().upper() == "SKIP":
                 logger.debug("Memory skipped (meta/self-referential): %s", text[:50])
+                if memory_id:
+                    await self.sqlite.update_memory(memory_id, is_archived=True, is_processed=True)
                 return None
         except Exception as e:
             logger.error("Summarization failed, using raw text: %s", e)
@@ -103,16 +112,21 @@ class MemoryProcessor:
         t_summarize = _time.monotonic() - t0
         logger.info("process_message: summarize=%.1fs", t_summarize)
 
-        # Step 3: SQLite insert
-        memory = Memory(
-            session_id=session_id,
-            role=role,
-            content=text,
-            summary=summary,
-            timestamp=timestamp or datetime.now(timezone.utc),
-            memory_type=MemoryType.CONVERSATION,
-        )
-        memory_id = await self.sqlite.create_memory(memory)
+        # Step 3: SQLite insert or update
+        if memory_id:
+            # Update existing raw memory row with processed data
+            await self.sqlite.update_memory(memory_id, summary=summary)
+        else:
+            # Create new row (import path, crash recovery reprocess)
+            memory = Memory(
+                session_id=session_id,
+                role=role,
+                content=text,
+                summary=summary,
+                timestamp=timestamp or datetime.now(timezone.utc),
+                memory_type=MemoryType.CONVERSATION,
+            )
+            memory_id = await self.sqlite.create_memory(memory)
 
         # Step 4: ChromaDB embed (use summary for better semantic matching)
         t0 = _time.monotonic()
@@ -183,6 +197,9 @@ class MemoryProcessor:
         except Exception as e:
             logger.error("Rank+importance+classify failed: %s", e)
         t_rank = _time.monotonic() - t0
+
+        # Mark as fully processed
+        await self.sqlite.mark_memory_processed(memory_id)
 
         logger.info(
             "process_message: summarize=%.1fs embed=%.1fs dedup=%.1fs rank=%.1fs total=%.1fs",
@@ -486,8 +503,13 @@ class MemoryProcessor:
             min_context_tokens: If set, prefer endpoints with at least this context window.
                 Passed through to router so large sessions route to cloud endpoints.
 
-        Returns the parsed reflection dict, or None if the session was SKIP-ped.
+        Returns the parsed reflection dict, or None if the session was SKIP-ped
+        or had no conversation data.
         """
+        if not conversation_chunks:
+            logger.warning("No conversation chunks for session %d — skipping", session_id)
+            return None
+
         if len(conversation_chunks) == 1:
             # Single chunk — reflect directly
             raw = await self._reflect_on_text(
@@ -586,14 +608,9 @@ class MemoryProcessor:
         bigger-context endpoint; if still too big, they're chunked.
         """
         messages = await self.sqlite.get_session_messages_for_lesson(session_id)
-
-        # Fallback for imported/older sessions: use raw content from memories
         if not messages:
-            memories = await self.sqlite.get_memories_by_session(session_id)
-            if not memories:
-                total = estimate_tokens(session_summary)
-                return [session_summary], total
-            messages = [{"role": m.role, "content": m.content} for m in memories]
+            logger.warning("Session %d has no conversation data — skipping reflection", session_id)
+            return [], 0
 
         lines = [f"{m['role']}: {m['content']}" for m in messages]
         full_text = "\n".join(lines)

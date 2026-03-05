@@ -182,12 +182,11 @@ class TestPrepareConversation:
 
     @pytest.mark.asyncio
     async def test_empty_session(self, processor, mock_sqlite):
-        """Empty sessions return single chunk with just the summary."""
+        """Empty sessions return empty chunks (skip)."""
         mock_sqlite.get_session_messages_for_lesson.return_value = []
-        mock_sqlite.get_memories_by_session.return_value = []
         chunks, total_tokens = await processor.prepare_conversation_for_reflection(1, "Summary text")
-        assert len(chunks) == 1
-        assert chunks[0] == "Summary text"
+        assert len(chunks) == 0
+        assert total_tokens == 0
 
     @pytest.mark.asyncio
     async def test_large_session_chunks(self, processor, mock_sqlite):
@@ -229,7 +228,7 @@ class TestGetSessionsMissingReflections:
         sid = await store.create_session(title="Test Session")
         await store.update_session(sid, summary="A productive session")
         for i in range(6):
-            await store.save_session_message(sid, "user" if i % 2 == 0 else "assistant", f"msg {i}")
+            await store.save_raw_memory(sid, "user" if i % 2 == 0 else "assistant", f"msg {i}")
 
         sessions = await store.get_sessions_missing_reflections(limit=10)
         assert len(sessions) == 1
@@ -247,7 +246,7 @@ class TestGetSessionsMissingReflections:
         sid = await store.create_session(title="Test Session")
         await store.update_session(sid, summary="Done")
         for i in range(6):
-            await store.save_session_message(sid, "user", f"msg {i}")
+            await store.save_raw_memory(sid, "user", f"msg {i}")
 
         # Add a reflection
         await store.create_session_reflection(
@@ -270,7 +269,7 @@ class TestGetSessionsMissingReflections:
 
         sid = await store.create_session(title="No Summary")
         for i in range(6):
-            await store.save_session_message(sid, "user", f"msg {i}")
+            await store.save_raw_memory(sid, "user", f"msg {i}")
 
         sessions = await store.get_sessions_missing_reflections(limit=10)
         assert len(sessions) == 0
@@ -286,7 +285,7 @@ class TestGetSessionsMissingReflections:
 
         sid = await store.create_session(title="Short")
         await store.update_session(sid, summary="Brief chat")
-        await store.save_session_message(sid, "user", "single msg")  # < 2 messages
+        await store.save_raw_memory(sid, "user", "single msg")  # < 2 messages
 
         sessions = await store.get_sessions_missing_reflections(limit=10)
         assert len(sessions) == 0

@@ -62,12 +62,8 @@ async def run_bulk_review(
                 try:
                     messages = await sqlite.get_session_messages_for_lesson(sid)
                     if not messages:
-                        # Fallback to memories for imported sessions
-                        memories = await sqlite.get_memories_by_session(sid)
-                        if not memories:
-                            skipped += 1
-                            continue
-                        messages = [{"role": m.role, "content": m.content} for m in memories]
+                        skipped += 1
+                        continue
 
                     conversation_lines = [f"{m['role']}: {m['content']}" for m in messages]
                     conversation_text = "\n".join(conversation_lines)

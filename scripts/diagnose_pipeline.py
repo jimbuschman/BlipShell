@@ -550,7 +550,7 @@ async def diagnose_concurrent_with_llm(config):
                     message_count=i,
                 )
                 # Also simulate message persistence
-                await sqlite1.save_session_message(
+                await sqlite1.save_raw_memory(
                     session_id, "user", f"Test message {i}", "2026-01-01T00:00:00",
                 )
             except Exception as e:

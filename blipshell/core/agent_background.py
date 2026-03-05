@@ -43,13 +43,13 @@ class BackgroundMixin:
         ]
         for idx, msg in undumped:
             if msg.role in (MessageRole.USER, MessageRole.ASSISTANT):
-                db_id = self.session_manager._message_db_ids.get(idx)
+                mem_id = self.session_manager._memory_db_ids.get(idx)
                 self._memory_worker.enqueue(WorkItem(
                     work_type=WorkType.PROCESS_MESSAGE,
                     text=msg.content,
                     role=msg.role.value,
                     session_id=self.session_manager.session_id,
-                    message_db_id=db_id,
+                    memory_id=mem_id,
                 ))
                 self.session_manager._dumped_indices.add(idx)
 

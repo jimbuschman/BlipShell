@@ -193,12 +193,12 @@ class SessionMixin:
             WorkItem(work_type=WorkType.EXTRACT_ENTITIES, text="startup")
         )
 
-        # Unprocessed message sweep — enqueue each as PROCESS_MESSAGE
+        # Unprocessed memory sweep — enqueue each as PROCESS_MESSAGE
         try:
-            unprocessed = await self.sqlite.get_unprocessed_messages(limit=50)
+            unprocessed = await self.sqlite.get_unprocessed_memories(limit=50)
             if unprocessed:
                 logger.info(
-                    "Enqueueing %d unprocessed messages for background processing",
+                    "Enqueueing %d unprocessed memories for background processing",
                     len(unprocessed),
                 )
                 for msg in unprocessed:
@@ -207,10 +207,10 @@ class SessionMixin:
                         text=msg["content"],
                         role=msg["role"],
                         session_id=msg["session_id"],
-                        message_db_id=msg["id"],
+                        memory_id=msg["id"],
                     ))
         except Exception as e:
-            logger.warning("Failed to enqueue unprocessed messages: %s", e)
+            logger.warning("Failed to enqueue unprocessed memories: %s", e)
 
     async def _backfill_entity_embeddings(self):
         """One-time backfill: embed all existing entities into ChromaDB for resolution.

@@ -59,7 +59,7 @@ class SessionManager:
         self.project: Optional[str] = None
         self._messages: list[SessionMessage] = []
         self._dumped_indices: set[int] = set()
-        self._message_db_ids: dict[int, int] = {}  # message index → session_messages row ID
+        self._memory_db_ids: dict[int, int] = {}  # message index → memories row ID
         self._currently_saving = False
 
     async def start_session(
@@ -91,16 +91,16 @@ class SessionManager:
         )
         self._messages.clear()
         self._dumped_indices.clear()
-        self._message_db_ids.clear()
+        self._memory_db_ids.clear()
         logger.info("Started new session %d (project=%s)", self.session_id, project)
         return self.session_id
 
     def add_message(self, role: MessageRole, content: str, tool_calls: list[dict] | None = None):
         """Add a message to the current session.
 
-        Persists to session_messages table immediately so messages survive
-        crashes and timeouts. The is_processed flag is set later when the
-        message is successfully run through the memory pipeline.
+        Persists to memories table immediately (is_processed=0) so messages
+        survive crashes. The memory pipeline later updates the row with
+        summary, rank, importance, and sets is_processed=1.
         """
         cleaned = self._clean_text(content)
         if not cleaned:
@@ -130,16 +130,16 @@ class SessionManager:
         ))
 
     async def _persist_message(self, session_id: int, role: str, content: str, timestamp: str):
-        """Persist a message to session_messages table."""
+        """Persist a raw message to memories table (is_processed=0)."""
         try:
-            msg_id = await self.sqlite.save_session_message(
+            mem_id = await self.sqlite.save_raw_memory(
                 session_id, role, content, timestamp,
             )
-            # Store the DB row ID so we can mark it processed later
+            # Store the memory ID so the pipeline can update it later
             idx = len(self._messages) - 1
-            self._message_db_ids[idx] = msg_id
+            self._memory_db_ids[idx] = mem_id
         except Exception as e:
-            logger.error("Failed to persist session message: %s", e)
+            logger.error("Failed to persist raw memory: %s", e)
 
     def get_messages(self) -> list[SessionMessage]:
         """Get all messages in the current session."""
@@ -179,20 +179,15 @@ class SessionManager:
             for idx, msg in undumped:
                 if msg.role in (MessageRole.USER, MessageRole.ASSISTANT):
                     try:
+                        mem_id = self._memory_db_ids.get(idx)
                         await self.processor.process_message(
                             text=msg.content,
                             role=msg.role.value,
                             session_id=self.session_id,
+                            memory_id=mem_id,
                         )
                         self._dumped_indices.add(idx)
                         dumped_count += 1
-                        # Mark as processed in session_messages table
-                        db_id = self._message_db_ids.get(idx)
-                        if db_id:
-                            try:
-                                await self.sqlite.mark_message_processed(db_id)
-                            except Exception:
-                                pass  # non-critical
                     except Exception as e:
                         logger.error("dump_to_memory: message %d failed: %s", idx, e)
                         skipped_count += 1

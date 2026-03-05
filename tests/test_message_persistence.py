@@ -1,10 +1,10 @@
-"""Tests for message persistence and startup sweep (CLAUDE.md item 13).
+"""Tests for message persistence and crash recovery (CLAUDE.md item 13).
 
 Verifies:
-- Messages persist to session_messages table with is_processed=0
-- mark_message_processed() sets is_processed=1
-- get_unprocessed_messages() returns only unprocessed user/assistant messages
-- Startup sweep reprocesses failed messages
+- Raw memories persist to memories table with is_processed=0
+- mark_memory_processed() sets is_processed=1
+- get_unprocessed_memories() returns only unprocessed user/assistant memories
+- Startup sweep reprocesses failed memories
 - Executor narrative builder extracts reasoning and compresses tool calls
 """
 
@@ -17,73 +17,73 @@ from blipshell.core.executor import build_executor_narrative
 # ── SQLite persistence layer ─────────────────────────────────────────────────
 
 
-class TestSaveSessionMessage:
-    async def test_message_persisted(self, sqlite_store):
+class TestSaveRawMemory:
+    async def test_memory_persisted(self, sqlite_store):
         session_id = await sqlite_store.create_session("Test")
-        msg_id = await sqlite_store.save_session_message(
+        mem_id = await sqlite_store.save_raw_memory(
             session_id, "user", "hello world",
         )
-        assert msg_id is not None
-        assert msg_id > 0
+        assert mem_id is not None
+        assert mem_id > 0
 
-    async def test_message_starts_unprocessed(self, sqlite_store):
+    async def test_memory_starts_unprocessed(self, sqlite_store):
         session_id = await sqlite_store.create_session("Test")
-        await sqlite_store.save_session_message(session_id, "user", "hello")
-        unprocessed = await sqlite_store.get_unprocessed_messages()
+        await sqlite_store.save_raw_memory(session_id, "user", "hello")
+        unprocessed = await sqlite_store.get_unprocessed_memories()
         assert len(unprocessed) == 1
         assert unprocessed[0]["content"] == "hello"
         assert unprocessed[0]["role"] == "user"
 
-    async def test_multiple_messages_ordered_by_id(self, sqlite_store):
+    async def test_multiple_memories_ordered_by_id(self, sqlite_store):
         session_id = await sqlite_store.create_session("Test")
-        await sqlite_store.save_session_message(session_id, "user", "first")
-        await sqlite_store.save_session_message(session_id, "assistant", "second")
-        await sqlite_store.save_session_message(session_id, "user", "third")
-        unprocessed = await sqlite_store.get_unprocessed_messages()
+        await sqlite_store.save_raw_memory(session_id, "user", "first")
+        await sqlite_store.save_raw_memory(session_id, "assistant", "second")
+        await sqlite_store.save_raw_memory(session_id, "user", "third")
+        unprocessed = await sqlite_store.get_unprocessed_memories()
         assert len(unprocessed) == 3
         assert [m["content"] for m in unprocessed] == ["first", "second", "third"]
 
 
-class TestMarkMessageProcessed:
+class TestMarkMemoryProcessed:
     async def test_marking_removes_from_unprocessed(self, sqlite_store):
         session_id = await sqlite_store.create_session("Test")
-        msg_id = await sqlite_store.save_session_message(
+        mem_id = await sqlite_store.save_raw_memory(
             session_id, "user", "process me",
         )
-        await sqlite_store.mark_message_processed(msg_id)
-        unprocessed = await sqlite_store.get_unprocessed_messages()
+        await sqlite_store.mark_memory_processed(mem_id)
+        unprocessed = await sqlite_store.get_unprocessed_memories()
         assert len(unprocessed) == 0
 
     async def test_partial_marking(self, sqlite_store):
         session_id = await sqlite_store.create_session("Test")
-        id1 = await sqlite_store.save_session_message(session_id, "user", "msg1")
-        id2 = await sqlite_store.save_session_message(session_id, "user", "msg2")
-        id3 = await sqlite_store.save_session_message(session_id, "user", "msg3")
+        id1 = await sqlite_store.save_raw_memory(session_id, "user", "msg1")
+        id2 = await sqlite_store.save_raw_memory(session_id, "user", "msg2")
+        id3 = await sqlite_store.save_raw_memory(session_id, "user", "msg3")
         # Only mark first and third
-        await sqlite_store.mark_message_processed(id1)
-        await sqlite_store.mark_message_processed(id3)
-        unprocessed = await sqlite_store.get_unprocessed_messages()
+        await sqlite_store.mark_memory_processed(id1)
+        await sqlite_store.mark_memory_processed(id3)
+        unprocessed = await sqlite_store.get_unprocessed_memories()
         assert len(unprocessed) == 1
         assert unprocessed[0]["content"] == "msg2"
 
 
-class TestGetUnprocessedMessages:
+class TestGetUnprocessedMemories:
     async def test_limit_respected(self, sqlite_store):
         session_id = await sqlite_store.create_session("Test")
         for i in range(10):
-            await sqlite_store.save_session_message(session_id, "user", f"msg{i}")
-        unprocessed = await sqlite_store.get_unprocessed_messages(limit=3)
+            await sqlite_store.save_raw_memory(session_id, "user", f"msg{i}")
+        unprocessed = await sqlite_store.get_unprocessed_memories(limit=3)
         assert len(unprocessed) == 3
         # Should be first 3 (FIFO order)
         assert unprocessed[0]["content"] == "msg0"
 
     async def test_excludes_system_and_tool_roles(self, sqlite_store):
         session_id = await sqlite_store.create_session("Test")
-        await sqlite_store.save_session_message(session_id, "user", "user msg")
-        await sqlite_store.save_session_message(session_id, "system", "sys msg")
-        await sqlite_store.save_session_message(session_id, "tool", "tool msg")
-        await sqlite_store.save_session_message(session_id, "assistant", "asst msg")
-        unprocessed = await sqlite_store.get_unprocessed_messages()
+        await sqlite_store.save_raw_memory(session_id, "user", "user msg")
+        await sqlite_store.save_raw_memory(session_id, "system", "sys msg")
+        await sqlite_store.save_raw_memory(session_id, "tool", "tool msg")
+        await sqlite_store.save_raw_memory(session_id, "assistant", "asst msg")
+        unprocessed = await sqlite_store.get_unprocessed_memories()
         roles = [m["role"] for m in unprocessed]
         assert "system" not in roles
         assert "tool" not in roles
@@ -91,23 +91,23 @@ class TestGetUnprocessedMessages:
 
     async def test_empty_when_all_processed(self, sqlite_store):
         session_id = await sqlite_store.create_session("Test")
-        msg_id = await sqlite_store.save_session_message(
+        mem_id = await sqlite_store.save_raw_memory(
             session_id, "user", "done",
         )
-        await sqlite_store.mark_message_processed(msg_id)
-        unprocessed = await sqlite_store.get_unprocessed_messages()
+        await sqlite_store.mark_memory_processed(mem_id)
+        unprocessed = await sqlite_store.get_unprocessed_memories()
         assert unprocessed == []
 
-    async def test_empty_when_no_messages(self, sqlite_store):
-        unprocessed = await sqlite_store.get_unprocessed_messages()
+    async def test_empty_when_no_memories(self, sqlite_store):
+        unprocessed = await sqlite_store.get_unprocessed_memories()
         assert unprocessed == []
 
     async def test_includes_session_id(self, sqlite_store):
         s1 = await sqlite_store.create_session("Session1")
         s2 = await sqlite_store.create_session("Session2")
-        await sqlite_store.save_session_message(s1, "user", "from s1")
-        await sqlite_store.save_session_message(s2, "user", "from s2")
-        unprocessed = await sqlite_store.get_unprocessed_messages()
+        await sqlite_store.save_raw_memory(s1, "user", "from s1")
+        await sqlite_store.save_raw_memory(s2, "user", "from s2")
+        unprocessed = await sqlite_store.get_unprocessed_memories()
         session_ids = {m["session_id"] for m in unprocessed}
         assert s1 in session_ids
         assert s2 in session_ids

@@ -45,14 +45,14 @@ async def summarize_session(
 ) -> tuple[str, str]:
     """Generate summary and title for a session from its data.
 
-    Checks memories first, falls back to session_messages.
+    Prefers processed memory summaries, falls back to raw content.
     Returns (summary, title).
     """
     memories = await sqlite.get_memories_by_session(session_id)
     if memories:
         texts = [m.summary or m.content for m in memories]
     else:
-        # Fallback: use session_messages for newer sessions without memories
+        # Fallback: use raw conversation content from memories table
         messages = await sqlite.get_session_messages_for_lesson(session_id)
         if not messages:
             return "", ""

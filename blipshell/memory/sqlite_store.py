@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS memories (
     memory_type TEXT DEFAULT 'conversation',
     is_archived BOOLEAN DEFAULT 0,
     metadata_json TEXT,
+    is_processed BOOLEAN DEFAULT 1,
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
@@ -389,6 +390,8 @@ class SQLiteStore:
             "ALTER TABLE entity_relationships ADD COLUMN valid_from DATETIME",
             "ALTER TABLE entity_relationships ADD COLUMN expired_at DATETIME",
             "ALTER TABLE entity_relationships ADD COLUMN expired_by INTEGER",
+            # Unify crash recovery — memories.is_processed replaces session_messages
+            "ALTER TABLE memories ADD COLUMN is_processed BOOLEAN DEFAULT 1",
         ):
             try:
                 await self._db.execute(col_sql)
@@ -413,6 +416,10 @@ class SQLiteStore:
         await self._db.execute(
             "CREATE INDEX IF NOT EXISTS idx_entity_relationships_valid "
             "ON entity_relationships(expired_at)"
+        )
+        await self._db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_unprocessed "
+            "ON memories(is_processed) WHERE is_processed = 0"
         )
         # Tool approval audit trail
         await self._db.execute("""
@@ -551,53 +558,49 @@ class SQLiteStore:
             return row[0], row[1] or 0
         return None, 0
 
-    async def save_session_message(
+    async def save_raw_memory(
         self, session_id: int, role: str, content: str,
         timestamp: str | None = None,
     ) -> int:
-        """Persist a session message. Returns the row ID."""
+        """Persist a raw message as an unprocessed memory. Returns the memory ID.
+
+        Creates a memories row with is_processed=0 and summary=NULL.
+        The memory pipeline will later update this row with summary, rank,
+        importance, and set is_processed=1.  If the app crashes before
+        processing, get_unprocessed_memories() finds these on next startup.
+        """
         cursor = await self._db.execute(
-            """INSERT INTO session_messages (session_id, role, content, timestamp)
-               VALUES (?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))""",
+            """INSERT INTO memories
+               (session_id, role, content, summary, timestamp, is_processed)
+               VALUES (?, ?, ?, NULL, COALESCE(?, CURRENT_TIMESTAMP), 0)""",
             (session_id, role, content, timestamp),
         )
         await self._db.commit()
         return cursor.lastrowid
 
-    async def mark_message_processed(self, message_id: int):
-        """Mark a session message as successfully processed into memory."""
+    async def mark_memory_processed(self, memory_id: int):
+        """Mark a memory as successfully processed through the pipeline."""
         await self._db.execute(
-            "UPDATE session_messages SET is_processed = 1 WHERE id = ?",
-            (message_id,),
+            "UPDATE memories SET is_processed = 1 WHERE id = ?",
+            (memory_id,),
         )
         await self._db.commit()
 
-    async def get_unprocessed_messages(
+    async def get_unprocessed_memories(
         self, limit: int = 100,
     ) -> list[dict]:
-        """Get session messages that failed to process (for startup sweep).
+        """Get memories that failed to process (for startup sweep).
 
-        Returns dicts with id, session_id, role, content, timestamp.
-        Only returns user/assistant messages (not system/tool).
+        Only returns user/assistant messages (skips system messages).
         """
         cursor = await self._db.execute(
             """SELECT id, session_id, role, content, timestamp
-               FROM session_messages
+               FROM memories
                WHERE is_processed = 0 AND role IN ('user', 'assistant')
                ORDER BY id ASC LIMIT ?""",
             (limit,),
         )
-        rows = await cursor.fetchall()
-        return [
-            {
-                "id": r["id"],
-                "session_id": r["session_id"],
-                "role": r["role"],
-                "content": r["content"],
-                "timestamp": r["timestamp"],
-            }
-            for r in rows
-        ]
+        return [dict(r) for r in await cursor.fetchall()]
 
     async def delete_session_cascade(
         self, session_id: int, memory_ids: list[int] | None = None,
@@ -764,16 +767,12 @@ class SQLiteStore:
     async def get_sessions_without_summaries(self, limit: int = 100) -> list[dict]:
         """Get sessions that have data but no summary (need backfill).
 
-        Checks both session_messages and memories tables — not just message_count
-        column, which may be stale for imported sessions.
         Returns dicts with {id, title, message_count} ordered oldest first.
         """
         cursor = await self._db.execute(
             """SELECT s.id, s.title,
-                      MAX(
-                          COALESCE((SELECT COUNT(*) FROM session_messages sm WHERE sm.session_id = s.id), 0),
-                          COALESCE((SELECT COUNT(*) FROM memories m WHERE m.session_id = s.id AND m.is_archived = 0), 0)
-                      ) as message_count
+                      (SELECT COUNT(*) FROM memories m
+                       WHERE m.session_id = s.id AND m.is_archived = 0) as message_count
                FROM sessions s
                WHERE (s.summary IS NULL OR s.summary = '')
                  AND s.is_archived = 0
@@ -836,7 +835,7 @@ class SQLiteStore:
 
     async def update_memory(self, memory_id: int, **kwargs):
         """Update memory fields."""
-        allowed = {"summary", "rank", "importance", "is_archived", "metadata_json", "memory_type"}
+        allowed = {"summary", "rank", "importance", "is_archived", "metadata_json", "memory_type", "is_processed"}
         set_clause, values = _safe_set_clause(kwargs, allowed)
         if not set_clause:
             return
@@ -1316,24 +1315,30 @@ class SQLiteStore:
     async def get_sessions_missing_lessons(self, limit: int = 50) -> list[dict]:
         """Find sessions with 5+ messages but no lessons extracted."""
         cursor = await self._db.execute("""
-            SELECT s.id, s.project, COUNT(sm.id) as msg_count
+            SELECT s.id, s.project, COUNT(m.id) as msg_count
             FROM sessions s
-            JOIN session_messages sm ON sm.session_id = s.id
+            JOIN memories m ON m.session_id = s.id AND m.is_archived = 0
             LEFT JOIN lessons l ON l.source_session_id = s.id
             WHERE l.id IS NULL
               AND s.is_archived = 0
             GROUP BY s.id
-            HAVING COUNT(sm.id) >= 5
+            HAVING COUNT(m.id) >= 5
             ORDER BY s.id DESC
             LIMIT ?
         """, (limit,))
         return [dict(r) for r in await cursor.fetchall()]
 
     async def get_session_messages_for_lesson(self, session_id: int) -> list[dict]:
-        """Get session messages formatted for lesson extraction."""
+        """Get conversation messages for lesson/reflection extraction.
+
+        Reads from the memories table (which stores raw content for all sessions,
+        both live and imported) rather than session_messages (which is only for
+        crash recovery and may not exist for imported sessions).
+        """
         cursor = await self._db.execute("""
-            SELECT role, content FROM session_messages
-            WHERE session_id = ? ORDER BY id
+            SELECT role, content FROM memories
+            WHERE session_id = ? AND is_archived = 0
+            ORDER BY id
         """, (session_id,))
         return [dict(r) for r in await cursor.fetchall()]
 
@@ -1377,16 +1382,13 @@ class SQLiteStore:
     async def get_sessions_missing_reflections(self, limit: int = 20) -> list[dict]:
         """Find sessions eligible for reflection.
 
-        Criteria: has a summary, not archived, no existing reflection.
-        Counts messages from session_messages (newer sessions) OR memories
-        (imported/older sessions) — whichever has more.
+        Criteria: has a summary, not archived, no existing reflection,
+        at least 2 memories (conversation data).
         """
         cursor = await self._db.execute("""
             SELECT s.id, s.summary, s.project, s.title,
-                   MAX(
-                       COALESCE((SELECT COUNT(*) FROM session_messages sm WHERE sm.session_id = s.id), 0),
-                       COALESCE((SELECT COUNT(*) FROM memories m WHERE m.session_id = s.id AND m.is_archived = 0), 0)
-                   ) as msg_count
+                   (SELECT COUNT(*) FROM memories m
+                    WHERE m.session_id = s.id AND m.is_archived = 0) as msg_count
             FROM sessions s
             LEFT JOIN session_reflections sr ON sr.session_id = s.id
             WHERE sr.id IS NULL
