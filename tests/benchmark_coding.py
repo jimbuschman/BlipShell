@@ -402,6 +402,95 @@ CODING_TASKS = [
              "rt.reset(); assert rt.get_rate() == 0"),
         ],
     },
+    {
+        "name": "fix_shell_output_truncation",
+        "description": "Fix shell tool to truncate long output (bug fix task)",
+        "request": (
+            "The ShellTool in blipshell/core/tools/shell.py has a problem: when a "
+            "command produces very long output (e.g. 50,000+ characters), the entire "
+            "output is returned to the LLM, wasting context window budget.\n\n"
+            "Fix this by adding output truncation to the tool's execute method:\n"
+            "- If stdout exceeds 5,000 characters, truncate to the first 2,000 chars "
+            "+ a marker line '[... N characters truncated ...]' + the last 2,000 chars.\n"
+            "- Apply the same truncation to stderr.\n"
+            "- Do NOT truncate if the output is 5,000 characters or fewer.\n\n"
+            "Also write a test in tests/test_shell_truncation.py that:\n"
+            "1. Creates a ShellTool instance\n"
+            "2. Runs a command that produces long output (e.g. python -c \"print('x' * 10000)\")\n"
+            "3. Asserts the result contains the truncation marker\n"
+            "4. Asserts the result length is less than the original output length\n"
+            "5. Also tests that short output is NOT truncated\n"
+            "Keep the test simple and self-contained."
+        ),
+        "verify_checks": [
+            # Model added truncation logic
+            ("diff_contains", ("blipshell/core/tools/shell.py", r"\+.*truncat")),
+            # Model preserved the marker format
+            ("diff_contains", ("blipshell/core/tools/shell.py", r"\+.*characters truncated")),
+            # Modified file still compiles
+            ("syntax_check", "blipshell/core/tools/shell.py"),
+            # Test file exists and compiles
+            ("file_exists", "tests/test_shell_truncation.py"),
+            ("syntax_check", "tests/test_shell_truncation.py"),
+            # Test has assertions
+            ("grep_in_sandbox", ("tests/test_shell_truncation.py", r"assert")),
+            # Test passes
+            ("pytest_in_sandbox", "tests/test_shell_truncation.py"),
+            # No junk files
+            ("no_unwanted_files", None),
+        ],
+    },
+    {
+        "name": "multi_file_text_analyzer",
+        "description": "Create a utility package with module, __init__ re-export, and tests (multi-file coordination)",
+        "request": (
+            "Create a text analysis utility package with three coordinated files:\n\n"
+            "1. blipshell/utils/text_analyzer.py — a class TextAnalyzer with:\n"
+            "   - word_count(text: str) -> int — count words (split on whitespace)\n"
+            "   - extract_urls(text: str) -> list[str] — extract all http/https URLs using regex\n"
+            "   - estimate_tokens(text: str) -> int — approximate token count (word_count * 1.3, rounded to int)\n\n"
+            "2. blipshell/utils/__init__.py — import and re-export TextAnalyzer so it can be "
+            "imported as 'from blipshell.utils import TextAnalyzer'\n\n"
+            "3. tests/test_text_analyzer.py — tests for all three methods:\n"
+            "   - word_count: empty string returns 0, normal sentence returns correct count\n"
+            "   - extract_urls: text with URLs returns them, text without URLs returns empty list\n"
+            "   - estimate_tokens: returns approximately word_count * 1.3\n"
+            "   - The test MUST import from blipshell.utils (not blipshell.utils.text_analyzer)\n\n"
+            "Note: blipshell/utils/ directory may not exist yet — create it if needed."
+        ),
+        "verify_checks": [
+            # All three files exist
+            ("file_exists", "blipshell/utils/text_analyzer.py"),
+            ("file_exists", "blipshell/utils/__init__.py"),
+            ("file_exists", "tests/test_text_analyzer.py"),
+            # All compile
+            ("syntax_check", "blipshell/utils/text_analyzer.py"),
+            ("syntax_check", "blipshell/utils/__init__.py"),
+            ("syntax_check", "tests/test_text_analyzer.py"),
+            # Module has the class and methods
+            ("grep_in_sandbox", ("blipshell/utils/text_analyzer.py", r"class TextAnalyzer")),
+            ("grep_in_sandbox", ("blipshell/utils/text_analyzer.py", r"def word_count")),
+            ("grep_in_sandbox", ("blipshell/utils/text_analyzer.py", r"def extract_urls")),
+            ("grep_in_sandbox", ("blipshell/utils/text_analyzer.py", r"def estimate_tokens")),
+            # __init__.py re-exports TextAnalyzer
+            ("grep_in_sandbox", ("blipshell/utils/__init__.py", r"TextAnalyzer")),
+            # Test imports from blipshell.utils (not blipshell.utils.text_analyzer)
+            ("grep_in_sandbox", ("tests/test_text_analyzer.py", r"from blipshell\.utils import")),
+            # Tests pass
+            ("pytest_in_sandbox", "tests/test_text_analyzer.py"),
+            # Functional: re-export actually works
+            ("functional_test",
+             "from blipshell.utils import TextAnalyzer; "
+             "t = TextAnalyzer(); "
+             "assert t.word_count('hello world') == 2; "
+             "assert t.word_count('') == 0; "
+             "urls = t.extract_urls('visit https://example.com today'); "
+             "assert 'https://example.com' in urls; "
+             "assert t.estimate_tokens('one two three') == 4"),
+            # Created enough files
+            ("files_changed", 3),
+        ],
+    },
 ]
 
 

@@ -153,9 +153,6 @@ async def benchmark_model(
 ) -> dict:
     """Benchmark a single model on all sample sessions."""
     router = make_router(model_name, ollama_url, context_tokens)
-    processor = MemoryProcessor.__new__(MemoryProcessor)
-    processor.router = router
-    processor.sqlite = sqlite
 
     results = []
     total_time = 0
@@ -199,7 +196,17 @@ async def benchmark_model(
             elapsed = time.monotonic() - start
             total_time += elapsed
 
-            parsed = processor._parse_reflection(raw)
+            try:
+                parsed = MemoryProcessor._parse_reflection(raw)
+            except Exception as parse_err:
+                console.print(f"{prefix} Session {sid}: PARSE ERROR — {parse_err}")
+                errors += 1
+                results.append({
+                    "session_id": sid,
+                    "msg_count": msg_count,
+                    "error": f"parse: {parse_err}",
+                })
+                continue
             scores = score_reflection(raw, parsed)
 
             status = "SKIP" if scores["is_skip"] else "OK"
