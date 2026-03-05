@@ -65,6 +65,11 @@ class LLMClient:
                     await asyncio.sleep(delay)
             except Exception as e:
                 last_error = e
+                # Don't retry 400 errors — they're deterministic (bad params,
+                # invalid model, reasoning_effort rejection, etc.)
+                status = getattr(e, "status_code", None)
+                if status == 400:
+                    raise
                 if attempt < self.max_retries:
                     delay = self.retry_base_delay * (2 ** attempt)
                     logger.warning(
@@ -175,7 +180,7 @@ class LLMClient:
             response = await self._retry_call(_do_generate)
         except Exception as e:
             # Some cloud models reject think=False as reasoning_effort: none.
-            # Retry without the think parameter.
+            # Retry once without the think parameter.
             if "reasoning_effort" in str(e) and "think" in kwargs:
                 logger.info("Model rejected reasoning_effort, retrying without think param")
                 kwargs_no_think = {k: v for k, v in kwargs.items() if k != "think"}
@@ -190,25 +195,24 @@ class LLMClient:
 
                 response = await self._retry_call(_do_generate_no_think)
             else:
+                logger.error("Generate request failed after retries: %s", e)
                 raise
-            # Handle both object (ollama 0.4+) and dict responses
-            msg = getattr(response, "message", None)
-            if msg is not None:
-                result = getattr(msg, "content", "") or ""
-            elif isinstance(response, dict):
-                result = response.get("message", {}).get("content", "")
-            else:
-                result = ""
 
-            if use_cache:
-                _response_cache[cache_key] = result
-                if len(_response_cache) > _CACHE_MAX_SIZE:
-                    _response_cache.popitem(last=False)
+        # Handle both object (ollama 0.4+) and dict responses
+        msg = getattr(response, "message", None)
+        if msg is not None:
+            result = getattr(msg, "content", "") or ""
+        elif isinstance(response, dict):
+            result = response.get("message", {}).get("content", "")
+        else:
+            result = ""
 
-            return result.strip()
-        except Exception as e:
-            logger.error("Generate request failed after retries: %s", e)
-            raise
+        if use_cache:
+            _response_cache[cache_key] = result
+            if len(_response_cache) > _CACHE_MAX_SIZE:
+                _response_cache.popitem(last=False)
+
+        return result.strip()
 
     async def check_health(self) -> bool:
         """Check if the Ollama server is reachable."""
