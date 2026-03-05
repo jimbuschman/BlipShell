@@ -48,17 +48,15 @@ class LLMClient:
         for attempt in range(self.max_retries + 1):
             try:
                 return await asyncio.wait_for(
-                    func(*args, **kwargs), timeout=self.SAFETY_TIMEOUT,
+                    func(*args, **kwargs), timeout=self.timeout,
                 )
             except asyncio.TimeoutError:
                 last_error = TimeoutError(
-                    f"Ollama call timed out after {self.SAFETY_TIMEOUT:.0f}s — "
-                    "connection may be dead"
+                    f"Ollama call timed out after {self.timeout:.0f}s"
                 )
                 logger.error(
-                    "Ollama call timed out (attempt %d/%d) after %.0fs — "
-                    "this likely means Ollama is hung or crashed",
-                    attempt + 1, self.max_retries + 1, self.SAFETY_TIMEOUT,
+                    "Ollama call timed out (attempt %d/%d) after %.0fs",
+                    attempt + 1, self.max_retries + 1, self.timeout,
                 )
                 if attempt < self.max_retries:
                     delay = self.retry_base_delay * (2 ** attempt)

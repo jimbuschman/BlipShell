@@ -542,7 +542,7 @@ DEDUP_TESTS = [
 # ROUTER SETUP
 # ============================================================================
 
-def make_router(model_name: str, ollama_url: str = OLLAMA_URL) -> LLMRouter:
+def make_router(model_name: str, ollama_url: str = OLLAMA_URL, timeout: float = 120.0) -> LLMRouter:
     """Create a router that sends all task types to a specific model."""
     models = ModelsConfig(
         reasoning=model_name,
@@ -558,7 +558,7 @@ def make_router(model_name: str, ollama_url: str = OLLAMA_URL) -> LLMRouter:
         priority=1,
         max_concurrent=1,
     )
-    return LLMRouter(models, EndpointManager([ep], LLMConfig()), pii_enabled=False)
+    return LLMRouter(models, EndpointManager([ep], LLMConfig(timeout=timeout)), pii_enabled=False)
 
 
 async def list_available_models(ollama_url: str = OLLAMA_URL) -> list[str]:
@@ -1224,7 +1224,7 @@ async def main():
         for i, model_name in enumerate(models_to_test, 1):
             console.rule(f"[bold cyan]{model_name}[/bold cyan] ({i}/{len(models_to_test)})")
 
-            router = make_router(model_name, args.url)
+            router = make_router(model_name, args.url, timeout=args.timeout)
 
             # Warmup
             console.print("  Warming up...", end=" ")
