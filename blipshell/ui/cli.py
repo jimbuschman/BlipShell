@@ -14,6 +14,7 @@ Usage:
 import asyncio
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 
 from blipshell.core.agent import Agent
 from blipshell.core.config import ConfigManager
@@ -41,6 +43,10 @@ _session_approved_tools: set[str] = set()
 
 # prompt_toolkit session for tool approval / ask_user (no history)
 _simple_session = None
+
+# Tool display settings
+_verbose_tools: bool = False  # When True, show full tool results (like /verbose toggle)
+_tool_batch_history: list = []  # Stores recent tool batches for /expand
 
 
 from blipshell.ui.diff import generate_colored_diff as _generate_colored_diff
@@ -145,6 +151,8 @@ async def _poll_for_escape():
     """Poll for Esc keypress. Returns when Esc is detected.
 
     Uses msvcrt on Windows. On other platforms, blocks forever (no-op).
+    Mouse clicks produce VT escape sequences (e.g. \\x1b[M... or \\x1b[<...)
+    that must be consumed entirely to prevent character bleed-through.
     """
     try:
         import msvcrt
@@ -156,9 +164,53 @@ async def _poll_for_escape():
         if msvcrt.kbhit():
             key = msvcrt.getch()
             if key == b'\x1b':
-                return
+                # Could be bare Esc or start of a VT sequence — peek ahead
+                await asyncio.sleep(0.01)  # brief wait for rest of sequence
+                if msvcrt.kbhit():
+                    _consume_vt_sequence(msvcrt)
+                    continue  # was a mouse/VT sequence, not Esc
+                return  # bare Esc keypress
             # Discard other keypresses so they don't bleed into next input
         await asyncio.sleep(0.05)
+
+
+def _consume_vt_sequence(msvcrt_mod):
+    """Consume a VT/CSI escape sequence from the keyboard buffer.
+
+    Called after \\x1b has been read and at least one more byte is available.
+    Handles: CSI sequences (\\x1b[...), SS2/SS3 (\\x1b N/O ...), and
+    mouse sequences (\\x1b[M + 3 bytes, \\x1b[< + SGR until M/m).
+    """
+    next_byte = msvcrt_mod.getch()
+    if next_byte != b'[':
+        # SS2/SS3 or unknown — consume one more byte and done
+        return
+
+    # CSI sequence: \x1b[ ... (ends at 0x40-0x7E)
+    # Check for mouse protocols first
+    if msvcrt_mod.kbhit():
+        param = msvcrt_mod.getch()
+        if param == b'M':
+            # Basic mouse: \x1b[M + 3 raw bytes (button, x, y)
+            for _ in range(3):
+                if msvcrt_mod.kbhit():
+                    msvcrt_mod.getch()
+            return
+        if param == b'<':
+            # SGR mouse: \x1b[< params ; params ; params M/m
+            while msvcrt_mod.kbhit():
+                ch = msvcrt_mod.getch()
+                if ch in (b'M', b'm'):
+                    return
+            return
+        # Regular CSI: consume until final byte (0x40-0x7E)
+        if 0x40 <= ord(param) <= 0x7E:
+            return  # single-char CSI (e.g. \x1b[A for arrow keys)
+        # Multi-byte CSI params — keep consuming
+        while msvcrt_mod.kbhit():
+            ch = msvcrt_mod.getch()
+            if 0x40 <= ord(ch) <= 0x7E:
+                return
 
 
 def _drain_keyboard():
@@ -166,9 +218,175 @@ def _drain_keyboard():
     try:
         import msvcrt
         while msvcrt.kbhit():
-            msvcrt.getch()
+            ch = msvcrt.getch()
+            if ch == b'\x1b' and msvcrt.kbhit():
+                _consume_vt_sequence(msvcrt)
     except ImportError:
         pass
+
+
+# Strong research signals — explicit intent to research/explore
+_RESEARCH_STRONG = [
+    re.compile(r'\b(investigate|explore|research|deep dive|dig into|look into)\b', re.I),
+    re.compile(r'\b(compare|difference between|pros and cons|tradeoffs?)\b', re.I),
+    re.compile(r'\b(best practice|state of the art|alternatives to)\b', re.I),
+    re.compile(r'\b(find out|figure out|understand)\b.*\b(how|why|what)\b', re.I),
+]
+
+# Weak research signals — questions that MIGHT want research but could be conversational
+_RESEARCH_WEAK = [
+    re.compile(r'\b(how does|how do|how is|how are|how can|how would)\b', re.I),
+    re.compile(r'\b(what is|what are|what\'s the|whats the)\b', re.I),
+    re.compile(r'\b(why does|why do|why is|why are|why would)\b', re.I),
+    re.compile(r'\bexplain\b', re.I),
+]
+
+# Patterns that indicate the user wants action or a quick answer, not research
+_ACTION_PATTERNS = [
+    re.compile(r'\b(fix|add|create|build|implement|write|change|update|modify|remove|delete|refactor)\b', re.I),
+    re.compile(r'^!plan\b', re.I),
+    # Conversational / status queries — not research
+    re.compile(r'\b(show me|status|right now|currently|look at|check|run|list)\b', re.I),
+    re.compile(r'\b(can you|could you|please)\b.*\b(do|make|set|give|tell)\b', re.I),
+]
+
+
+def _detect_research_intent(message: str) -> bool:
+    """Detect if a message likely wants deep research, not a quick answer.
+
+    Conservative: only triggers on strong signals or multiple weak signals
+    in longer messages. Action verbs and conversational phrases suppress it.
+    """
+    if len(message) < 20:
+        return False
+    for p in _ACTION_PATTERNS:
+        if p.search(message):
+            return False
+
+    # Strong signals — one is enough
+    for p in _RESEARCH_STRONG:
+        if p.search(message):
+            return True
+
+    # Weak signals — need the message to be longer (50+ chars) to avoid
+    # triggering on casual questions like "what is the status"
+    if len(message) >= 50:
+        weak_hits = sum(1 for p in _RESEARCH_WEAK if p.search(message))
+        if weak_hits >= 2:
+            return True
+        # Single weak hit + question mark on a long message
+        if weak_hits == 1 and message.strip().endswith("?"):
+            return True
+
+    return False
+
+
+
+
+def _format_tool_arg_summary(name: str, args: dict) -> str:
+    """Format a brief argument summary for tool display."""
+    if not args:
+        return ""
+    if name in ("read_file", "write_file", "edit_file"):
+        return args.get("path", args.get("file_path", ""))
+    if name in ("grep_files", "glob_files"):
+        pattern = args.get("pattern", "")
+        path = args.get("path", args.get("directory", ""))
+        return f'"{pattern}" {path}'.strip()
+    if name == "run_command":
+        return args.get("command", "")[:60]
+    if name == "list_directory":
+        return args.get("path", args.get("directory", ""))
+    if name == "web_search":
+        return args.get("query", "")[:50]
+    if name == "web_fetch":
+        return args.get("url", "")[:60]
+    # Generic: show first string arg
+    for v in args.values():
+        if isinstance(v, str) and v:
+            return v[:50]
+    return ""
+
+
+def _display_tool_batch(
+    calls: list[tuple[str, dict]],
+    results: list[tuple],
+):
+    """Render a tool batch using Rich Tree (collapsible-style display).
+
+    calls: list of (name, arguments) for each tool in the batch.
+    results: list of (ToolResult, is_dedup_blocked) for each tool.
+    """
+    global _tool_batch_history
+    _tool_batch_history.append((calls, results))
+    # Keep last 50 batches
+    if len(_tool_batch_history) > 50:
+        _tool_batch_history = _tool_batch_history[-50:]
+
+    for i, ((name, args), (result, blocked)) in enumerate(zip(calls, results)):
+        arg_summary = _format_tool_arg_summary(name, args)
+
+        if blocked:
+            line = Text()
+            line.append("  ⎯ ", style="dim")
+            line.append(name, style="dim bold")
+            line.append(" [duplicate blocked]", style="dim italic")
+            console.print(line)
+            continue
+
+        # Status icon
+        if not result.success:
+            icon = "✘"
+            icon_style = "red bold"
+        elif name == "edit_file":
+            icon = "✎"
+            icon_style = "yellow"
+        elif name in ("write_file", "create_project"):
+            icon = "+"
+            icon_style = "green"
+        elif name in ("run_command",):
+            icon = "$"
+            icon_style = "cyan"
+        elif name in ("task_complete", "enter_plan_mode", "exit_plan_mode"):
+            icon = "●"
+            icon_style = "green bold"
+        else:
+            icon = "▸"
+            icon_style = "dim"
+
+        # Build the tool call line
+        line = Text()
+        line.append(f"  {icon} ", style=icon_style)
+        line.append(name, style="bold")
+        if arg_summary:
+            line.append(f" {arg_summary}", style="dim")
+
+        console.print(line)
+
+        # Show result detail in verbose mode or for errors/edits
+        show_detail = _verbose_tools or not result.success
+        if not show_detail and name == "edit_file" and result.success:
+            # Always show edit diffs
+            show_detail = True
+
+        if show_detail and result.result:
+            if not result.success:
+                err = result.result[:200].replace("\n", " ")
+                console.print(f"    [red]{err}[/red]")
+            elif name == "edit_file" and "\x1b[" in result.result:
+                # Colored diff — show first line + diff
+                lines = result.result.split("\n", 1)
+                console.print(f"    [dim]{lines[0]}[/dim]")
+                if len(lines) > 1 and lines[1].strip():
+                    # Print raw ANSI diff
+                    sys.stdout.write("    " + lines[1].replace("\n", "\n    ") + "\n")
+                    sys.stdout.flush()
+            elif _verbose_tools:
+                # Show truncated result
+                preview = result.result[:300].replace("\n", "\n    ")
+                console.print(f"    [dim]{preview}[/dim]")
+
+    console.print()  # blank line after batch
 
 
 async def _pause_check() -> "PauseResult | None":
@@ -188,6 +406,9 @@ async def _pause_check() -> "PauseResult | None":
     paused = False
     while msvcrt.kbhit():
         key = msvcrt.getch()
+        if key == b'\x1b' and msvcrt.kbhit():
+            _consume_vt_sequence(msvcrt)
+            continue  # mouse click — ignore
         if key in (b' ', b'p', b'P'):
             paused = True
         # Drain other buffered keys
@@ -482,6 +703,39 @@ async def chat_loop(
                             features.append("requirement checklist")
                         console.print(f"[dim]  Active: {', '.join(features)}[/dim]")
                     continue
+                elif cmd[0] == "verbose":
+                    global _verbose_tools
+                    _verbose_tools = not _verbose_tools
+                    state = "[green]ON[/green]" if _verbose_tools else "[yellow]OFF[/yellow]"
+                    console.print(f"[dim]Verbose tool output: {state}[/dim]")
+                    continue
+                elif cmd[0] == "expand":
+                    if not _tool_batch_history:
+                        console.print("[dim]No tool batches to show.[/dim]")
+                    else:
+                        # Show last N batches (default 1)
+                        n = 1
+                        if cmd_args:
+                            try:
+                                n = int(cmd_args[0])
+                            except ValueError:
+                                pass
+                        batches = _tool_batch_history[-n:]
+                        for batch_idx, (calls, results) in enumerate(batches):
+                            for (name, args), (result, blocked) in zip(calls, results):
+                                if blocked:
+                                    console.print(f"[dim]  {name}: [duplicate blocked][/dim]")
+                                    continue
+                                arg_summary = _format_tool_arg_summary(name, args)
+                                style = "red" if not result.success else "bold"
+                                console.print(f"  [{style}]{name}[/{style}] {arg_summary}", highlight=False)
+                                # Show full result
+                                if result.result:
+                                    text = result.result[:2000]
+                                    console.print(Panel(text, border_style="dim", expand=False))
+                            if batch_idx < len(batches) - 1:
+                                console.print("[dim]---[/dim]")
+                    continue
                 elif cmd[0] == "approve":
                     if len(cmd) > 1 and cmd[1] == "all":
                         # Auto-approve everything for this session
@@ -499,6 +753,15 @@ async def chat_loop(
                         console.print("[dim]  /approve all   — auto-approve all for this session[/dim]")
                         console.print("[dim]  /approve reset — reset all approvals[/dim]")
                     continue
+                elif cmd[0] == "research":
+                    query = " ".join(cmd_args) if cmd_args else ""
+                    if not query:
+                        console.print("[yellow]Usage: /research <question or topic>[/yellow]")
+                        console.print("[dim]Triggers deep research with web search and thorough exploration.[/dim]")
+                        continue
+                    # Rewrite user_input so it's handled like !plan below
+                    user_input = "!research " + query
+                    # Fall through (no continue) — handled alongside !plan
                 elif cmd[0] == "code":
                     if len(cmd) < 2:
                         console.print("[yellow]Usage: /code [--model name] <file-or-folder> [instruction][/yellow]")
@@ -571,12 +834,30 @@ async def chat_loop(
                     console.print(f"[yellow]Unknown command: /{cmd[0]}[/yellow]")
                     continue
 
-            # Check for force-plan prefix
+            # Check for force-plan and research prefixes
             force_plan = False
+            research_mode = False
             message = user_input
             if user_input.startswith("!plan "):
                 force_plan = True
                 message = user_input[6:]
+            elif user_input.startswith("!research "):
+                research_mode = True
+                message = user_input[10:]
+                console.print(f"[dim italic]Researching: {message}[/dim italic]")
+
+            # Auto-detect research intent (only for normal messages, not commands/plan)
+            if not force_plan and not research_mode and _detect_research_intent(message):
+                try:
+                    answer = (await async_prompt(
+                        _simple_session,
+                        "  This looks like a research question. Use /research mode? (y/n) ",
+                    )).strip().lower()
+                    if answer in ("y", "yes"):
+                        research_mode = True
+                        console.print("[dim italic]Research mode activated[/dim italic]")
+                except (EOFError, KeyboardInterrupt):
+                    pass
 
             # Stream response with thinking spinner (Esc to cancel)
             response_parts = []
@@ -597,7 +878,7 @@ async def chat_loop(
             thinking_status.start()
 
             _active_chat_task = asyncio.create_task(
-                agent.chat(message, on_token=on_token, force_plan=force_plan)
+                agent.chat(message, on_token=on_token, force_plan=force_plan, on_tool_display=_display_tool_batch, research_mode=research_mode)
             )
             chat_task = _active_chat_task
             esc_task = asyncio.create_task(_poll_for_escape())
@@ -2257,8 +2538,11 @@ def _print_help():
         "[bold]/think[/bold]                 - Toggle LLM thinking mode on/off\n"
         "[bold]/reflect[/bold]               - Toggle self-reflection on/off\n"
         "[bold]/guardrails[/bold] [dim][on|off][/dim]   - Toggle guardrails (completion audit, drift monitor)\n"
+        "[bold]/verbose[/bold]               - Toggle verbose tool output on/off\n"
+        "[bold]/expand[/bold] [dim][n][/dim]             - Show full output of last n tool batches\n"
         "[bold]/approve[/bold] [dim]all|reset[/dim]     - Manage tool approval (write/edit/run)\n"
         "[bold]/changes[/bold]               - Show files modified this session\n"
+        "[bold]/research <query>[/bold]       - Deep research with web + code exploration\n"
         "[bold]/code <path> [msg][/bold]     - Send code to LLM for review\n"
         "[bold]/feedback <msg>[/bold]        - Save feedback as a lesson\n"
         "[bold]/offload <msg>[/bold]         - Run a task on remote PC in background\n"

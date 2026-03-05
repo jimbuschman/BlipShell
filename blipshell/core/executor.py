@@ -359,6 +359,7 @@ class TaskExecutor:
         on_step_start: Optional[Callable[[int], None]] = None,
         on_step_complete: Optional[Callable[[int, str], None]] = None,
         on_token: Optional[Callable[[str], None]] = None,
+        on_tool_display: Optional[Callable] = None,
         max_tool_calls: int = 0,
         memory_context: str = "",
         chat_history: list[dict] | None = None,
@@ -494,6 +495,7 @@ class TaskExecutor:
             tool_provider=_get_current_tools,
             on_pause_check=self.pause_check_callback,
             guardrails=guardrails_engine,
+            on_tool_display=on_tool_display,
         )
 
         # Use shared chat loop runner (from Agent) if available — gives us

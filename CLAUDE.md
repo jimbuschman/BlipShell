@@ -586,6 +586,47 @@ Off by default — zero overhead when disabled. Each sub-feature independently t
 - [ ] Stress test: 50+ tool call task with guardrails to check overhead and context pressure
 - [ ] Verify confirm_plan doesn't fire on simple one-file tasks (prompt says "skip for simple tasks")
 
+### 40. QoL: Click Fix + Rich Tool Display + Research Mode — CODE WRITTEN, NEEDS TESTING
+
+**3 improvements implemented in one batch:**
+
+#### 40a. Mouse click character bleed fix
+- [x] `_consume_vt_sequence()` in cli.py — consumes full VT/CSI escape sequences from keyboard buffer
+- [x] Handles: CSI sequences, basic mouse (`\x1b[M` + 3 bytes), SGR mouse (`\x1b[<...M/m`), arrow keys
+- [x] Applied to `_poll_for_escape()`, `_pause_check()`, and `_drain_keyboard()`
+- [x] After `\x1b`, brief `sleep(0.01)` + peek determines if bare Esc vs. sequence start
+- [ ] **NEEDS TESTING**: Click in terminal during LLM response — should not produce phantom characters
+- [ ] **NEEDS TESTING**: Esc key should still cancel LLM call normally
+
+#### 40b. Rich tool call display
+- [x] `_display_tool_batch()` in cli.py — renders tool batches using `rich.text.Text`
+- [x] `on_tool_display` callback on `LoopConfig` — structured (calls, results) data
+- [x] Wired through: `chat()` → `_chat_simple()` → LoopConfig, and `execute_dynamic()` → LoopConfig
+- [x] Phase 4 pre-execution: shows `⏳ tool_name` immediately, then `\r\x1b[2K` clears it before Rich results
+- [x] Phase 7 result display and `task_complete` signal both suppressed when `on_tool_display` active
+- [x] Icons per tool type: ✎ edit, + write, $ command, ● completion, ✘ error, ▸ default
+- [x] `/verbose` toggle — shows full tool results when ON
+- [x] `/expand [n]` command — shows full output of last n tool batches (stored in `_tool_batch_history`)
+- [x] Edit diffs always shown (verbose or not), errors always shown
+- [ ] **NEEDS TESTING**: Verify Rich display renders correctly during interactive use
+- [ ] **NEEDS TESTING**: Verify `/verbose` toggle works and `/expand` shows stored batches
+- [ ] **NEEDS TESTING**: Verify both simple chat and executor paths use Rich display
+
+#### 40c. Research mode
+- [x] `/research <query>` command — routes through `_chat_simple` with `research_mode=True`
+- [x] Research guidance injected into system prompt (not user message — avoids session history pollution)
+- [x] 3x tool budget in research mode (`max_iterations * 3`, min 30) for thorough exploration
+- [x] Auto-detection: strong signals (investigate, compare, deep dive, alternatives) trigger immediately
+- [x] Auto-detection: weak signals (how does, what is) require 50+ chars AND 2+ matches or question mark
+- [x] Anti-patterns: action verbs + conversational phrases (status, show me, check, list) suppress auto-detection
+- [x] When auto-detected, prompts user: "This looks like a research question. Use /research mode? (y/n)"
+- [x] System prompt instructs: web_search, web_fetch multiple sources, cross-reference, cite sources, explore code
+- [ ] **NEEDS TESTING**: `/research how does X work` triggers web search + structured response
+- [ ] **NEEDS TESTING**: Auto-detection fires on "compare Redis vs Memcached" but NOT on "what is the status"
+- [ ] **NEEDS TESTING**: User can decline auto-detected research mode
+
+**Files modified**: `cli.py` (all 3 features), `chat_loop.py` (on_tool_display + Phase 4 pre-exec), `agent_chat.py` (research_mode + system prompt injection), `executor.py` (on_tool_display pass-through)
+
 ### Wish List
 Items worth doing eventually but not prioritized:
 - **Telegram notifications**: Via mcp-communicator-telegram — background tasks notify you on phone, executor can ask_user remotely. Set up @BotFather bot + chat ID.

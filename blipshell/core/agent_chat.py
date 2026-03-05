@@ -32,6 +32,8 @@ class ChatMixin:
         user_message: str,
         on_token: Optional[Callable[[str], None]] = None,
         force_plan: bool = False,
+        on_tool_display: Optional[Callable] = None,
+        research_mode: bool = False,
     ) -> str:
         """Process a user message through the full agent pipeline.
 
@@ -42,6 +44,8 @@ class ChatMixin:
             user_message: The user's input
             on_token: Optional callback for streaming tokens
             force_plan: If True, skip classification and go straight to planning
+            on_tool_display: Optional callback for structured tool batch display
+            research_mode: If True, boost tool budget and inject research guidance
 
         Returns:
             The assistant's complete response
@@ -78,10 +82,10 @@ class ChatMixin:
 
         if needs_planning:
             logger.info("Message classified as complex — using planned execution")
-            response = await self._chat_planned(user_message, on_token=on_token)
+            response = await self._chat_planned(user_message, on_token=on_token, on_tool_display=on_tool_display)
         else:
             logger.info("Message classified as simple — using direct chat")
-            response = await self._chat_simple(user_message, on_token=on_token)
+            response = await self._chat_simple(user_message, on_token=on_token, on_tool_display=on_tool_display, research_mode=research_mode)
 
         # Self-reflection: second LLM pass to catch errors/gaps
         if self.reflect_enabled and response and not response.startswith("Error:"):
@@ -281,6 +285,8 @@ class ChatMixin:
         self,
         user_message: str,
         on_token: Optional[Callable[[str], None]] = None,
+        on_tool_display: Optional[Callable] = None,
+        research_mode: bool = False,
     ) -> str:
         """Simple chat path — uses unified ChatLoop with endpoint fallback."""
         from blipshell.core.chat_loop import LoopConfig
@@ -291,12 +297,33 @@ class ChatMixin:
         # Build message list
         messages = self._build_messages(user_message)
 
+        # Research mode: inject guidance as system message (not user message)
+        if research_mode:
+            research_instruction = (
+                "\n\n[RESEARCH MODE]\n"
+                "The user wants thorough research. Be comprehensive:\n"
+                "- Use web_search for current information, best practices, and alternatives\n"
+                "- Use web_fetch to read multiple sources and cross-reference\n"
+                "- If exploring code, read multiple files and trace through the architecture\n"
+                "- Synthesize findings into a structured, detailed response\n"
+                "- Cite sources when using web information\n"
+                "- Don't stop at the first answer — explore thoroughly"
+            )
+            # Append to system prompt (first message)
+            if messages and messages[0].get("role") == "system":
+                messages[0]["content"] += research_instruction
+            else:
+                messages.insert(0, {"role": "system", "content": research_instruction})
+
         # Event: context_built (stats computed in _build_messages)
         if self._last_context_stats:
             await self._log_event("context_built", self._last_context_stats)
 
         tools = self.tool_registry.get_all_ollama_tools() or None
         max_iterations = self.config.agent.max_tool_iterations if tools else 0
+        # Research mode gets 3x budget for thorough exploration
+        if research_mode and max_iterations > 0:
+            max_iterations = max(max_iterations * 3, 30)
         logger.info("Passing %d tools (max_iterations=%d)",
                      len(tools) if tools else 0, max_iterations)
 
@@ -312,6 +339,7 @@ class ChatMixin:
             auto_continue_on_exhaustion=True,
             tool_provider=_get_current_tools,
             on_pause_check=self._pause_check_callback,
+            on_tool_display=on_tool_display,
         )
 
         result, endpoint_name, model, using_fallback = await self._run_chat_loop(
@@ -343,6 +371,7 @@ class ChatMixin:
         self,
         user_message: str,
         on_token: Optional[Callable[[str], None]] = None,
+        on_tool_display: Optional[Callable] = None,
     ) -> str:
         """Planned chat path — dynamic iterative execution (no pre-generated plan).
 
@@ -400,6 +429,7 @@ class ChatMixin:
                 user_message,
                 on_step_complete=on_step_complete,
                 on_token=on_token,
+                on_tool_display=on_tool_display,
                 memory_context=memory_context,
                 chat_history=chat_history,
                 log_event=self._log_event,
@@ -409,7 +439,7 @@ class ChatMixin:
             # Fallback to simple chat
             if on_token:
                 on_token("[Execution failed, falling back to direct chat]\n")
-            return await self._chat_simple(user_message, on_token=on_token)
+            return await self._chat_simple(user_message, on_token=on_token, on_tool_display=on_tool_display)
 
         # Extract tool call names from executor transcript for programmatic access
         tool_names = []

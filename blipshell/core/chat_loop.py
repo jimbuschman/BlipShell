@@ -86,6 +86,12 @@ class LoopConfig:
     """Async callback checked between tool batches. Returns PauseResult.
     If None, no pause checking occurs."""
 
+    on_tool_display: Optional[Callable] = None
+    """Callback for structured tool display: (calls, results) -> None.
+    calls: list of (name, args) tuples for the batch.
+    results: list of ToolResult objects (same order as calls).
+    When set, Phase 4/7 tool display via on_token is suppressed."""
+
     guardrails: object | None = None
     """GuardrailsEngine instance for instruction adherence checks.
     None = no guardrails (default). Set by executor when guardrails are enabled."""
@@ -465,8 +471,9 @@ class ChatLoop:
                         else:
                             batch_seen.add(call_key)
 
-                # Phase 4: Display tool call summary (compact)
-                if self.on_token and parsed_calls:
+                # Phase 4: Display tool call summary (compact, pre-execution)
+                if parsed_calls and self.on_token and not config.on_tool_display:
+                    # Legacy on_token display (when no structured callback)
                     active_calls = [
                         (name, args) for i, (name, args, _) in enumerate(parsed_calls)
                         if i not in dedup_blocked
@@ -478,6 +485,20 @@ class ChatLoop:
                     elif active_calls:
                         names = ", ".join(n for n, _ in active_calls)
                         self.on_token(f"\n\x1b[2m  \u25b8 Running {len(active_calls)} tools: {names}\x1b[0m\n")
+                elif parsed_calls and config.on_tool_display:
+                    # Structured display: show tool names immediately (before execution)
+                    active_calls = [
+                        (name, args) for i, (name, args, _) in enumerate(parsed_calls)
+                        if i not in dedup_blocked
+                    ]
+                    if active_calls and self.on_token:
+                        if len(active_calls) == 1:
+                            name, args = active_calls[0]
+                            hint = format_tool_arg_hint(name, args)
+                            self.on_token(f"\n\x1b[2m  ⏳ {name}{hint}\x1b[0m")
+                        else:
+                            names = ", ".join(n for n, _ in active_calls)
+                            self.on_token(f"\n\x1b[2m  ⏳ Running {len(active_calls)} tools: {names}\x1b[0m")
 
                 # Phase 5: Partition into sequential (approval/ask_user) and parallel
                 results: list[ToolResult | None] = [None] * len(parsed_calls)
@@ -549,7 +570,7 @@ class ChatLoop:
                     # Completion tool detection
                     if config.completion_tool and name == config.completion_tool:
                         completion_tool_result = result.result
-                        if self.on_token:
+                        if self.on_token and not config.on_tool_display:
                             self.on_token("  [Task complete signal received]\n")
 
                     # Caller tracking callback (sync or async)
@@ -561,7 +582,7 @@ class ChatLoop:
                     messages.append(result.to_ollama_message())
 
                     # Display result preview (compact, one line per tool)
-                    if self.on_token:
+                    if self.on_token and not config.on_tool_display:
                         if i in dedup_blocked:
                             self.on_token(f"\x1b[2m    \u2502 {name}: [duplicate blocked]\x1b[0m\n")
                         elif not result.success:
@@ -577,8 +598,22 @@ class ChatLoop:
                             preview = result.result[:80].replace("\n", " ")
                             self.on_token(f"\x1b[2m    \u2502 {name}: {preview}\x1b[0m\n")
 
+                # Structured tool display callback (Rich rendering)
+                if config.on_tool_display and parsed_calls:
+                    # Clear the pre-execution "⏳ ..." line before showing results
+                    if self.on_token:
+                        self.on_token("\r\x1b[2K")
+                    batch_calls = [
+                        (name, args) for name, args, _ in parsed_calls
+                    ]
+                    batch_results = [
+                        (results[i], i in dedup_blocked)
+                        for i in range(len(parsed_calls))
+                    ]
+                    config.on_tool_display(batch_calls, batch_results)
+
                 # Blank line after tool results block
-                if self.on_token and parsed_calls:
+                if self.on_token and parsed_calls and not config.on_tool_display:
                     self.on_token("\n")
 
                 # Update last_tool_call for next batch dedup
