@@ -40,7 +40,6 @@ from rich.console import Console
 from rich.table import Table
 
 from blipshell.llm.client import LLMClient
-from blipshell.llm.endpoints import EndpointManager
 from blipshell.llm.prompts import (
     decide_memory_action,
     detect_contradiction,
@@ -48,9 +47,7 @@ from blipshell.llm.prompts import (
     rank_importance_and_classify,
     summarize_memory,
 )
-from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.processor import MemoryProcessor
-from blipshell.models.config import EndpointConfig, LLMConfig, ModelsConfig
 
 console = Console()
 
@@ -539,27 +536,16 @@ DEDUP_TESTS = [
 
 
 # ============================================================================
-# ROUTER SETUP
+# CLIENT SETUP (direct LLMClient — no router/gate/fallback overhead)
 # ============================================================================
 
-def make_router(model_name: str, ollama_url: str = OLLAMA_URL, timeout: float = 120.0) -> LLMRouter:
-    """Create a router that sends all task types to a specific model."""
-    models = ModelsConfig(
-        reasoning=model_name,
-        summarization=model_name,
-        ranking=model_name,
-        importance=model_name,
-        ranking_importance=model_name,
-    )
-    ep = EndpointConfig(
-        name="benchmark",
-        url=ollama_url,
-        roles=["reasoning", "summarization", "ranking", "importance", "ranking_importance"],
-        priority=1,
-        max_concurrent=1,
-    )
-    # No retries in benchmark — one timeout = fail, move on
-    return LLMRouter(models, EndpointManager([ep], LLMConfig(timeout=timeout, max_retries=0)), pii_enabled=False)
+def make_client(ollama_url: str = OLLAMA_URL, timeout: float = 120.0) -> LLMClient:
+    """Create a direct LLMClient for benchmark use.
+
+    Bypasses LLMRouter entirely — no OllamaGate, no fallback routing, no PII.
+    The httpx timeout is set at construction so the HTTP layer enforces it.
+    """
+    return LLMClient(host=ollama_url, max_retries=0, retry_base_delay=0, timeout=timeout)
 
 
 async def list_available_models(ollama_url: str = OLLAMA_URL) -> list[str]:
@@ -572,11 +558,11 @@ async def list_available_models(ollama_url: str = OLLAMA_URL) -> list[str]:
         return []
 
 
-async def warmup_model(router: LLMRouter, model_name: str):
+async def warmup_model(client: LLMClient, model_name: str):
     """Send a throwaway request to load the model into memory."""
     try:
         await asyncio.wait_for(
-            router.generate(TaskType.REASONING, "Say hello.", system="Be brief.", think=False),
+            client.generate(prompt="Say hello.", model=model_name, system="Be brief.", think=False),
             timeout=120,
         )
     except Exception:
@@ -705,7 +691,7 @@ def score_dedup_test(action: str, test: dict) -> dict:
 # BENCHMARK RUNNERS
 # ============================================================================
 
-async def bench_ranking(router: LLMRouter, timeout: float) -> dict:
+async def bench_ranking(client: LLMClient, model: str, timeout: float) -> dict:
     """Run ranking/importance/type tests. Returns per-test results + aggregates."""
     results = []
     for test in RANKING_TESTS:
@@ -713,7 +699,7 @@ async def bench_ranking(router: LLMRouter, timeout: float) -> dict:
         t0 = time.monotonic()
         try:
             raw = await asyncio.wait_for(
-                router.generate(TaskType.RANKING_IMPORTANCE, user_prompt, system=sys_prompt, think=False),
+                client.generate(prompt=user_prompt, model=model, system=sys_prompt, think=False),
                 timeout=timeout,
             )
             elapsed = time.monotonic() - t0
@@ -741,7 +727,7 @@ async def bench_ranking(router: LLMRouter, timeout: float) -> dict:
     return _aggregate_results("ranking", results, ["rank", "importance", "type"])
 
 
-async def bench_summarization(router: LLMRouter, timeout: float) -> dict:
+async def bench_summarization(client: LLMClient, model: str, timeout: float) -> dict:
     """Run summarization tests."""
     results = []
     for test in SUMMARY_TESTS:
@@ -749,7 +735,7 @@ async def bench_summarization(router: LLMRouter, timeout: float) -> dict:
         t0 = time.monotonic()
         try:
             raw = await asyncio.wait_for(
-                router.generate(TaskType.SUMMARIZATION, user_prompt, system=sys_prompt, think=False),
+                client.generate(prompt=user_prompt, model=model, system=sys_prompt, think=False),
                 timeout=timeout,
             )
             elapsed = time.monotonic() - t0
@@ -774,7 +760,7 @@ async def bench_summarization(router: LLMRouter, timeout: float) -> dict:
     return _aggregate_results("summarization", results, ["skip_correct", "fact_recall"])
 
 
-async def bench_entities(router: LLMRouter, timeout: float) -> dict:
+async def bench_entities(client: LLMClient, model: str, timeout: float) -> dict:
     """Run entity extraction tests."""
     results = []
     for test in ENTITY_TESTS:
@@ -782,7 +768,7 @@ async def bench_entities(router: LLMRouter, timeout: float) -> dict:
         t0 = time.monotonic()
         try:
             raw = await asyncio.wait_for(
-                router.generate(TaskType.REASONING, user_prompt, system=sys_prompt, think=False),
+                client.generate(prompt=user_prompt, model=model, system=sys_prompt, think=False),
                 timeout=timeout,
             )
             elapsed = time.monotonic() - t0
@@ -808,7 +794,7 @@ async def bench_entities(router: LLMRouter, timeout: float) -> dict:
     return _aggregate_results("entities", results, ["recall", "format_ok", "correct"])
 
 
-async def bench_contradiction(router: LLMRouter, timeout: float) -> dict:
+async def bench_contradiction(client: LLMClient, model: str, timeout: float) -> dict:
     """Run contradiction detection tests."""
     results = []
     for test in CONTRADICTION_TESTS:
@@ -816,7 +802,7 @@ async def bench_contradiction(router: LLMRouter, timeout: float) -> dict:
         t0 = time.monotonic()
         try:
             raw = await asyncio.wait_for(
-                router.generate(TaskType.REASONING, user_prompt, system=sys_prompt, think=False),
+                client.generate(prompt=user_prompt, model=model, system=sys_prompt, think=False),
                 timeout=timeout,
             )
             elapsed = time.monotonic() - t0
@@ -843,7 +829,7 @@ async def bench_contradiction(router: LLMRouter, timeout: float) -> dict:
     return _aggregate_results("contradiction", results, ["correct"])
 
 
-async def bench_dedup(router: LLMRouter, timeout: float) -> dict:
+async def bench_dedup(client: LLMClient, model: str, timeout: float) -> dict:
     """Run dedup / memory action tests."""
     results = []
     for test in DEDUP_TESTS:
@@ -851,7 +837,7 @@ async def bench_dedup(router: LLMRouter, timeout: float) -> dict:
         t0 = time.monotonic()
         try:
             raw = await asyncio.wait_for(
-                router.generate(TaskType.REASONING, user_prompt, system=sys_prompt, think=False),
+                client.generate(prompt=user_prompt, model=model, system=sys_prompt, think=False),
                 timeout=timeout,
             )
             elapsed = time.monotonic() - t0
@@ -1125,7 +1111,7 @@ BENCH_FUNCTIONS = {
 }
 
 
-async def run_model(model_name: str, router: LLMRouter, tasks: list[str], timeout: float) -> dict:
+async def run_model(model_name: str, client: LLMClient, tasks: list[str], timeout: float) -> dict:
     """Run all requested benchmark tasks for one model. Returns {task: results}."""
     model_data = {}
 
@@ -1133,7 +1119,7 @@ async def run_model(model_name: str, router: LLMRouter, tasks: list[str], timeou
         bench_fn = BENCH_FUNCTIONS[task]
         console.print(f"    {task}...", end=" ")
         try:
-            result = await bench_fn(router, timeout)
+            result = await bench_fn(client, model_name, timeout)
             # Compute quick score for display
             metrics = result["metrics"]
             vals = [v for v in metrics.values() if v is not None]
@@ -1225,15 +1211,15 @@ async def main():
         for i, model_name in enumerate(models_to_test, 1):
             console.rule(f"[bold cyan]{model_name}[/bold cyan] ({i}/{len(models_to_test)})")
 
-            router = make_router(model_name, args.url, timeout=args.timeout)
+            client = make_client(args.url, timeout=args.timeout)
 
             # Warmup
             console.print("  Warming up...", end=" ")
-            await warmup_model(router, model_name)
+            await warmup_model(client, model_name)
             console.print("[green]ready[/green]")
 
             # Run benchmarks
-            model_data = await run_model(model_name, router, tasks, args.timeout)
+            model_data = await run_model(model_name, client, tasks, args.timeout)
 
             if model_data:
                 all_results[model_name] = model_data
