@@ -25,6 +25,7 @@ JOB_ORDER = [
     "backup",
     "chroma_retry",
     "reconcile",
+    "clean_empty_sessions",
     "cleanup",
     "backfill_summaries",
     "backfill_lessons",
@@ -170,6 +171,7 @@ class NightlyRunner:
             "backup": self._job_backup,
             "chroma_retry": self._job_chroma_retry,
             "reconcile": self._job_reconcile,
+            "clean_empty_sessions": self._job_clean_empty_sessions,
             "cleanup": self._job_cleanup,
             "backfill_summaries": self._job_backfill_summaries,
             "backfill_lessons": self._job_backfill_lessons,
@@ -218,6 +220,13 @@ class NightlyRunner:
             f"{stats['errors']} errors"
         )
         return stats
+
+    async def _job_clean_empty_sessions(self, on_status) -> dict:
+        """Delete sessions with zero memories (app started but user never chatted)."""
+        count = await self.sqlite.delete_empty_sessions(min_age_hours=24)
+        if count:
+            on_status(f"Deleted {count} empty sessions")
+        return {"deleted": count}
 
     async def _job_cleanup(self, on_status) -> dict:
         """Reprocess failed memories."""

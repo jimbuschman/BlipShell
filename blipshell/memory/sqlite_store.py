@@ -634,6 +634,34 @@ class SQLiteStore:
         )
         await self._db.commit()
 
+    async def delete_empty_sessions(self, min_age_hours: int = 24) -> int:
+        """Delete sessions with zero memories that are older than min_age_hours.
+
+        Also cleans up any orphaned session_messages rows for those sessions.
+        Returns count of deleted sessions.
+        """
+        cursor = await self._db.execute("""
+            SELECT s.id FROM sessions s
+            WHERE NOT EXISTS (SELECT 1 FROM memories m WHERE m.session_id = s.id)
+              AND s.created_at < datetime('now', ?)
+        """, (f'-{min_age_hours} hours',))
+        ids = [r[0] for r in await cursor.fetchall()]
+        if not ids:
+            return 0
+
+        placeholders = ",".join("?" * len(ids))
+        await self._db.execute(
+            f"DELETE FROM session_messages WHERE session_id IN ({placeholders})", ids,
+        )
+        await self._db.execute(
+            f"DELETE FROM session_reflections WHERE session_id IN ({placeholders})", ids,
+        )
+        await self._db.execute(
+            f"DELETE FROM sessions WHERE id IN ({placeholders})", ids,
+        )
+        await self._db.commit()
+        return len(ids)
+
     async def list_sessions(self, limit: int = 50, project: Optional[str] = None) -> list[Session]:
         """List sessions, optionally filtered by project."""
         if project:
