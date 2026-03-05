@@ -235,7 +235,7 @@ class PipelineSuite(BenchmarkSuite):
                 elapsed = time.monotonic() - start
                 times.append(elapsed)
 
-                text = raw.strip()
+                text = (raw or "").strip()
                 rank = msg.get("rank", 3)
 
                 if text.upper() == "SKIP":
@@ -370,7 +370,7 @@ class PipelineSuite(BenchmarkSuite):
                 elapsed = time.monotonic() - start
                 times.append(elapsed)
 
-                answer = raw.strip().upper()
+                answer = (raw or "").strip().upper()
                 is_yes = answer.startswith("YES")
                 is_no = answer.startswith("NO")
 

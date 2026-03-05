@@ -228,7 +228,7 @@ def _check_syntax(code: str) -> bool:
 
 def _extract_code(raw: str) -> str:
     """Extract code from LLM response, stripping markdown fences and explanation."""
-    text = raw.strip()
+    text = (raw or "").strip()
     # If wrapped in code fence, extract
     if "```" in text:
         blocks = text.split("```")

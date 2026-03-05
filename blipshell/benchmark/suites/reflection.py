@@ -50,7 +50,7 @@ def _score_reflection(raw: str, parsed: dict) -> dict:
         "valid_effectiveness": valid_effectiveness,
         "bullet_count": bullet_count,
         "specific_count": specific_count,
-        "is_skip": raw.strip().upper() == "SKIP",
+        "is_skip": (raw or "").strip().upper() == "SKIP",
     }
 
 

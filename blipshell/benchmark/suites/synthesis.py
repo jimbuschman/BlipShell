@@ -165,7 +165,7 @@ class SynthesisSuite(BenchmarkSuite):
                 errors += 1
                 continue
 
-            text = raw.strip()
+            text = (raw or "").strip()
             is_skip = text.upper() == "SKIP"
 
             if expect_skip:
@@ -275,7 +275,7 @@ class SynthesisSuite(BenchmarkSuite):
                 errors += 1
                 continue
 
-            title = raw.strip().strip('"').strip("'")
+            title = (raw or "").strip().strip('"').strip("'")
             checks = {}
 
             # 1. Length OK: <=10 words
@@ -356,7 +356,7 @@ class SynthesisSuite(BenchmarkSuite):
                 errors += 1
                 continue
 
-            text = raw.strip()
+            text = (raw or "").strip()
             checks = {}
 
             # 1. Sections present
@@ -437,7 +437,7 @@ class SynthesisSuite(BenchmarkSuite):
                 errors += 1
                 continue
 
-            text = raw.strip()
+            text = (raw or "").strip()
             is_no_changes = text.upper() == "NO_CHANGES" or text.upper() == "NO_CHANGES."
 
             if expected == "NO_CHANGES":
@@ -513,7 +513,7 @@ class SynthesisSuite(BenchmarkSuite):
                 errors += 1
                 continue
 
-            text = raw.strip()
+            text = (raw or "").strip()
 
             # Parse steps
             steps = _step_re.findall(text)

@@ -254,7 +254,7 @@ class UnifiedPipelineSuite(BenchmarkSuite):
                 errors += 1
                 continue
 
-            text = raw.strip()
+            text = (raw or "").strip()
             checks = {}
 
             # 1. Parse OK: non-empty response
@@ -356,7 +356,7 @@ class UnifiedPipelineSuite(BenchmarkSuite):
                 errors += 1
                 continue
 
-            text = raw.strip()
+            text = (raw or "").strip()
             rank, importance, mem_type = MemoryProcessor._parse_rank_importance_type(text)
             checks = {}
 
@@ -439,7 +439,7 @@ class UnifiedPipelineSuite(BenchmarkSuite):
                 errors += 1
                 continue
 
-            text = raw.strip()
+            text = (raw or "").strip()
             action, target = MemoryProcessor._parse_memory_action(text)
             checks = {}
 
@@ -508,7 +508,7 @@ class UnifiedPipelineSuite(BenchmarkSuite):
                 errors += 1
                 continue
 
-            text = raw.strip().upper()
+            text = (raw or "").strip().upper()
             # Parse: first word should be YES or NO
             first_word = text.split()[0] if text.split() else ""
             is_yes = first_word == "YES"
@@ -594,7 +594,7 @@ class UnifiedPipelineSuite(BenchmarkSuite):
                 errors += 1
                 continue
 
-            text = raw.strip()
+            text = (raw or "").strip()
             is_skip = text.upper() == "SKIP"
             checks = {}
 

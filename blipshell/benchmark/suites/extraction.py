@@ -162,7 +162,7 @@ class ExtractionSuite(BenchmarkSuite):
                 errors += 1
                 continue
 
-            text = raw.strip()
+            text = (raw or "").strip()
             is_none = text.upper() == "NONE"
 
             # Parse triples
@@ -275,7 +275,7 @@ class ExtractionSuite(BenchmarkSuite):
 
         # Parse response: "1: tag1, tag2\n2: tag3\n..."
         assigned: dict[int, set[str]] = {}
-        for line in raw.strip().split("\n"):
+        for line in (raw or "").strip().split("\n"):
             m = re.match(r"(\d+):\s*(.+)", line.strip())
             if m:
                 idx = int(m.group(1))
@@ -365,7 +365,7 @@ class ExtractionSuite(BenchmarkSuite):
                 errors += 1
                 continue
 
-            text = raw.strip().upper()
+            text = (raw or "").strip().upper()
             first_word = text.split()[0] if text.split() else ""
             is_yes = first_word == "YES"
             is_no = first_word == "NO"
@@ -439,7 +439,7 @@ class ExtractionSuite(BenchmarkSuite):
                 errors += 1
                 continue
 
-            text = raw.strip()
+            text = (raw or "").strip()
             is_none = text.upper() == "NONE"
 
             # Parse tag:pattern lines
