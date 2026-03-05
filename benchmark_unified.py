@@ -178,6 +178,29 @@ async def _mock_run(
 # Live run: execute suites with real LLM calls
 # ---------------------------------------------------------------------------
 
+def _get_completed_models(output_path: str) -> dict[str, set[str]]:
+    """Load existing results and return {model: set(task_names)} for completed work."""
+    try:
+        import json as _json
+        with open(output_path) as f:
+            data = _json.load(f)
+        completed: dict[str, set[str]] = {}
+        for model, tasks in data.get("models", {}).items():
+            completed[model] = set(tasks.keys())
+        return completed
+    except (FileNotFoundError, Exception):
+        return {}
+
+
+# Expected roles per suite (for skip detection)
+_SUITE_ROLES: dict[str, list[str]] = {
+    "pipeline": ["summarization", "scoring", "dedup", "contradiction", "lesson"],
+    "extraction": ["entity_extraction", "entity_resolution", "tag_discovery", "batch_tags"],
+    "synthesis": ["reflection", "titling", "digest", "self_reflection", "plan_gen"],
+    "interactive": ["tool_calling", "coding"],
+}
+
+
 async def _live_run(
     models: list[str],
     suites: list[str],
@@ -185,9 +208,11 @@ async def _live_run(
     config_path: str | None = None,
     sample: int | None = None,
     output_path: str = "data/benchmark_unified.json",
+    force: bool = False,
 ) -> BenchmarkResult:
     """Run suites with real model calls.
 
+    Skips models that already have complete results for a suite (unless --force).
     Saves incrementally after each suite so Ctrl+C preserves completed work.
     """
     from blipshell.benchmark.shared import (
@@ -209,6 +234,9 @@ async def _live_run(
     if not available:
         console.print("[red]No models available![/red]")
         return BenchmarkResult()
+
+    # Load existing results for skip logic
+    completed = _get_completed_models(output_path) if not force else {}
 
     # Router factory
     def router_factory(model_name: str):
@@ -234,9 +262,26 @@ async def _live_run(
 
     for suite_name in suites:
         suite = _load_suite(suite_name)
+        expected_roles = set(_SUITE_ROLES.get(suite_name, []))
+
+        # Filter to models that need this suite
+        models_to_run = []
+        skipped = []
+        for m in available:
+            existing_roles = completed.get(m, set())
+            if expected_roles and expected_roles.issubset(existing_roles):
+                skipped.append(m)
+            else:
+                models_to_run.append(m)
 
         console.print(f"\n{'-' * 60}")
         console.print(f"[bold cyan]Suite: {suite.name}[/bold cyan] — {suite.description}")
+        if skipped:
+            console.print(f"  [dim]Skipping (already complete): {', '.join(skipped)}[/dim]")
+        if not models_to_run:
+            console.print(f"  [dim]All models complete for this suite[/dim]")
+            continue
+        console.print(f"  Models to run: {', '.join(models_to_run)}")
         console.print(f"{'-' * 60}")
 
         # Per-model incremental save callback (for slow suites like interactive)
@@ -247,7 +292,7 @@ async def _live_run(
 
         try:
             suite_results = await suite.run(
-                available,
+                models_to_run,
                 router_factory=router_factory,
                 config=config,
                 db_path=resolved_db,
@@ -322,6 +367,10 @@ def parse_args() -> argparse.Namespace:
         "--detail",
         help="Show per-case breakdown for a role (e.g. --detail lesson, --detail lssn)",
     )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Re-run all models even if results already exist",
+    )
     return parser.parse_args()
 
 
@@ -354,6 +403,7 @@ async def main():
             config_path=args.config,
             sample=args.sample,
             output_path=args.output,
+            force=args.force,
         )
 
     # Save JSON (merges with prior runs)
