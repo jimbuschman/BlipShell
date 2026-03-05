@@ -173,23 +173,36 @@ class EndpointManager:
             timeout=llm_cfg.timeout,
         )
 
-    async def get_endpoint_for_role(self, role: str, exclude: str | None = None) -> Optional[Endpoint]:
+    async def get_endpoint_for_role(self, role: str, exclude: str | None = None, min_context_tokens: int | None = None) -> Optional[Endpoint]:
         """Get the best available endpoint that supports the given role.
 
         Selection priority:
         1. Supports the requested role
         2. Enabled and can accept requests
-        3. Highest priority value
-        4. Fewest active requests (load balancing)
+        3. Has sufficient context window (if min_context_tokens specified)
+        4. Highest priority value
+        5. Fewest active requests (load balancing)
 
         Args:
             exclude: Endpoint name to skip (used for fallback to avoid retrying the same endpoint).
+            min_context_tokens: Minimum context window required. Endpoints with smaller
+                context are filtered out, preferring endpoints that can handle the request
+                without chunking.
         """
         async with self._lock:
             candidates = [
                 ep for ep in self._endpoints
                 if role in ep.roles and ep.can_accept_request and ep.name != exclude
             ]
+            # Filter by minimum context window if specified
+            if min_context_tokens and candidates:
+                big_enough = [
+                    ep for ep in candidates
+                    if ep.context_tokens and ep.context_tokens >= min_context_tokens
+                ]
+                if big_enough:
+                    candidates = big_enough
+                # If no endpoint is big enough, fall through to original candidates (will chunk)
             is_fallback = False
             if not candidates:
                 # Fallback: any enabled endpoint (still excluding the failed one)

@@ -332,12 +332,15 @@ class NightlyRunner:
 
     async def _job_backfill_lessons(self, on_status) -> dict:
         """Re-extract lessons from sessions with messages but no lessons."""
+        from blipshell.memory.manager import estimate_tokens
+
         sessions = await self.sqlite.get_sessions_missing_lessons(limit=50)
         if not sessions:
             return {"processed": 0, "total": 0}
 
         processed = 0
         failed = 0
+        cloud_routed = 0
         for session in sessions:
             sid = session["id"]
             project = session.get("project")
@@ -345,15 +348,21 @@ class NightlyRunner:
                 messages = await self.sqlite.get_session_messages_for_lesson(sid)
                 conversation_lines = [f"{m['role']}: {m['content']}" for m in messages]
                 conversation_text = "\n".join(conversation_lines)
+                tokens = estimate_tokens(conversation_text)
+                # Route large sessions to bigger-context endpoint
+                min_ctx = tokens + 4096 if tokens > 28000 else None
+                if min_ctx:
+                    cloud_routed += 1
                 await self.processor.process_lesson(
                     conversation_text, sid, project=project,
+                    min_context_tokens=min_ctx,
                 )
                 processed += 1
             except Exception as e:
                 logger.error("Lesson backfill failed for session %d: %s", sid, e)
                 failed += 1
 
-        return {"processed": processed, "failed": failed, "total": len(sessions)}
+        return {"processed": processed, "failed": failed, "cloud_routed": cloud_routed, "total": len(sessions)}
 
     async def _job_session_reflections(self, on_status) -> dict:
         """Generate holistic reflections for unreflected sessions."""
@@ -364,19 +373,25 @@ class NightlyRunner:
         processed = 0
         skipped = 0
         failed = 0
+        cloud_routed = 0
         for session in sessions:
             sid = session["id"]
             summary = session["summary"]
             project = session.get("project")
             try:
-                chunks = await self.processor.prepare_conversation_for_reflection(
+                chunks, total_tokens = await self.processor.prepare_conversation_for_reflection(
                     sid, summary,
                 )
+                # Route large sessions to bigger-context endpoint
+                min_ctx = total_tokens + 4096 if total_tokens > 28000 else None
+                if min_ctx:
+                    cloud_routed += 1
                 result = await self.processor.process_reflection(
                     session_id=sid,
                     session_summary=summary,
                     conversation_chunks=chunks,
                     project=project,
+                    min_context_tokens=min_ctx,
                 )
                 if result is None:
                     skipped += 1
@@ -390,6 +405,7 @@ class NightlyRunner:
             "processed": processed,
             "skipped": skipped,
             "failed": failed,
+            "cloud_routed": cloud_routed,
             "total": len(sessions),
         }
 

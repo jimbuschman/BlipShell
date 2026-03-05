@@ -22,6 +22,7 @@ class ModelsConfig(BaseModel):
     ranking: str = "qwen2.5:14b"
     importance: str = "qwen3:14b"
     ranking_importance: Optional[str] = None  # combined scoring; falls back to ranking model
+    session_review: Optional[str] = None  # whole-session analysis; falls back to reasoning model
     embedding: str = "nomic-embed-text"
     # Fallback models used when cloud endpoints are unavailable
     reasoning_fallback: str = "gpt-oss:latest"
@@ -31,6 +32,7 @@ class ModelsConfig(BaseModel):
     ranking_fallback: Optional[str] = None
     importance_fallback: Optional[str] = None
     ranking_importance_fallback: Optional[str] = None
+    session_review_fallback: Optional[str] = None
     # Disable thinking for fallback models (faster conversational responses)
     fallback_think: bool = False
 

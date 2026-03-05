@@ -234,15 +234,17 @@ class MemoryProcessor:
     async def process_lesson(
         self, conversation_text: str, session_id: int,
         project: str | None = None,
+        min_context_tokens: int | None = None,
     ) -> int:
         """Extract and store a lesson from a conversation."""
-        # Generate lesson text via reasoning model (needs understanding, not just summarization)
+        # Generate lesson text via session review model (needs full-conversation understanding)
         try:
             lesson_system, lesson_prompt = extract_lesson(conversation_text)
             lesson_text = await self.router.generate(
-                TaskType.REASONING,
+                TaskType.SESSION_REVIEW,
                 lesson_prompt,
                 system=lesson_system,
+                min_context_tokens=min_context_tokens,
             )
         except Exception as e:
             logger.error("Lesson extraction failed: %s", e)
@@ -473,11 +475,16 @@ class MemoryProcessor:
         session_summary: str,
         conversation_chunks: list[str],
         project: str | None = None,
+        min_context_tokens: int | None = None,
     ) -> dict | None:
         """Generate and store a session reflection.
 
         Accepts a list of conversation chunks (from prepare_conversation_for_reflection).
         Single chunk: reflect directly. Multiple chunks: reflect on each, then merge.
+
+        Args:
+            min_context_tokens: If set, prefer endpoints with at least this context window.
+                Passed through to router so large sessions route to cloud endpoints.
 
         Returns the parsed reflection dict, or None if the session was SKIP-ped.
         """
@@ -485,6 +492,7 @@ class MemoryProcessor:
             # Single chunk — reflect directly
             raw = await self._reflect_on_text(
                 session_summary, conversation_chunks[0], project,
+                min_context_tokens=min_context_tokens,
             )
         else:
             # Multiple chunks — reflect on each, then merge
@@ -509,7 +517,7 @@ class MemoryProcessor:
             )
             try:
                 raw = await self.router.generate(
-                    TaskType.REASONING, user_prompt, system=system,
+                    TaskType.SESSION_REVIEW, user_prompt, system=system,
                 )
             except Exception as e:
                 logger.error("Reflection merge failed: %s", e)
@@ -553,6 +561,7 @@ class MemoryProcessor:
 
     async def _reflect_on_text(
         self, session_summary: str, conversation_text: str, project: str | None,
+        min_context_tokens: int | None = None,
     ) -> str:
         """Run the reflection LLM call on a single text. Returns raw output."""
         system, user_prompt = reflect_on_session(
@@ -560,7 +569,8 @@ class MemoryProcessor:
         )
         try:
             return await self.router.generate(
-                TaskType.REASONING, user_prompt, system=system,
+                TaskType.SESSION_REVIEW, user_prompt, system=system,
+                min_context_tokens=min_context_tokens,
             )
         except Exception as e:
             logger.error("Session reflection LLM call failed: %s", e)
@@ -568,12 +578,12 @@ class MemoryProcessor:
 
     async def prepare_conversation_for_reflection(
         self, session_id: int, session_summary: str,
-    ) -> list[str]:
+    ) -> tuple[list[str], int]:
         """Build full conversation text for reflection, chunked if needed.
 
-        Returns a list of conversation chunks. Most sessions produce a single
-        chunk. Large sessions that would exceed context are split into chunks
-        so the LLM sees everything without information loss.
+        Returns (chunks, estimated_tokens). Most sessions produce a single chunk.
+        Large sessions that exceed the local context window are routed to a
+        bigger-context endpoint; if still too big, they're chunked.
         """
         messages = await self.sqlite.get_session_messages_for_lesson(session_id)
 
@@ -581,20 +591,24 @@ class MemoryProcessor:
         if not messages:
             memories = await self.sqlite.get_memories_by_session(session_id)
             if not memories:
-                return [session_summary]
+                total = estimate_tokens(session_summary)
+                return [session_summary], total
             messages = [{"role": m.role, "content": m.content} for m in memories]
-
-        # Get actual context window from the endpoint that will handle this
-        context_tokens = await self.router.get_context_tokens(TaskType.REASONING)
-        # Reserve ~4K for system prompt + response
-        max_tokens = max(context_tokens - 4096, context_tokens // 2)
 
         lines = [f"{m['role']}: {m['content']}" for m in messages]
         full_text = "\n".join(lines)
         total_tokens = estimate_tokens(full_text)
 
+        # Ask the router for the best endpoint — if the session is large,
+        # min_context_tokens steers toward a bigger-context endpoint (e.g. cloud)
+        context_tokens = await self.router.get_context_tokens(
+            TaskType.SESSION_REVIEW, min_context_tokens=total_tokens + 4096,
+        )
+        # Reserve ~4K for system prompt + response
+        max_tokens = max(context_tokens - 4096, context_tokens // 2)
+
         if total_tokens <= max_tokens:
-            return [full_text]
+            return [full_text], total_tokens
 
         # Chunk by tokens — accumulate messages until we approach the limit
         chunks = []
@@ -624,7 +638,7 @@ class MemoryProcessor:
             chunk_text += "\n".join(current_batch)
             chunks.append(chunk_text)
 
-        return chunks
+        return chunks, total_tokens
 
     @staticmethod
     def _parse_reflection(text: str) -> dict:

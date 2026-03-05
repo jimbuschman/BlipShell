@@ -174,17 +174,18 @@ class TestPrepareConversation:
         ]
         mock_sqlite.get_session_messages_for_lesson.return_value = messages
 
-        chunks = await processor.prepare_conversation_for_reflection(1, "Summary")
+        chunks, total_tokens = await processor.prepare_conversation_for_reflection(1, "Summary")
         assert len(chunks) == 1
         assert "Message 0" in chunks[0]
         assert "Message 9" in chunks[0]
+        assert total_tokens > 0
 
     @pytest.mark.asyncio
     async def test_empty_session(self, processor, mock_sqlite):
         """Empty sessions return single chunk with just the summary."""
         mock_sqlite.get_session_messages_for_lesson.return_value = []
         mock_sqlite.get_memories_by_session.return_value = []
-        chunks = await processor.prepare_conversation_for_reflection(1, "Summary text")
+        chunks, total_tokens = await processor.prepare_conversation_for_reflection(1, "Summary text")
         assert len(chunks) == 1
         assert chunks[0] == "Summary text"
 
@@ -200,8 +201,9 @@ class TestPrepareConversation:
         ]
         mock_sqlite.get_session_messages_for_lesson.return_value = messages
 
-        chunks = await processor.prepare_conversation_for_reflection(1, "Summary")
+        chunks, total_tokens = await processor.prepare_conversation_for_reflection(1, "Summary")
         assert len(chunks) > 1
+        assert total_tokens > 28000  # large enough to chunk
         # All messages should be represented across chunks
         all_text = "\n".join(chunks)
         assert "Message 0" in all_text

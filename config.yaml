@@ -8,19 +8,22 @@ models:
   # --- Background processing (local) ---
   reasoning: "qwen3:14b"                 # entity extraction, tag discovery, lessons, contradiction
   summarization: "glm4:latest"           # memory/session summaries (Groq/Gemini tried first via endpoint priority)
-  ranking: "qwen2.5:14b"                 # memory ranking 1-5
+  ranking: "qwen3:14b"                   # memory ranking 1-5 (was qwen2.5:14b — qwen3:14b matches reasoning, avoids model swap)
   importance: "qwen3:14b"               # memory importance 0.0-1.0
-  ranking_importance: "qwen2.5:14b"      # combined rank+importance for batch import
+  ranking_importance: "qwen3:14b"        # combined rank+importance (was qwen2.5:14b — consolidate on reasoning model)
+  # --- Session Review (local primary, cloud for big sessions) ---
+  session_review: "qwen3:14b"             # whole-session analysis (lessons, reflections)
   # --- Embedding (local) ---
   embedding: "nomic-embed-text"          # vector search — snowflake had better quality but too much GPU contention
   # --- Fallbacks (local, used when cloud is down) ---
   tool_calling_fallback: "gpt-oss:latest"
   coding_fallback: "gpt-oss:latest"
   reasoning_fallback: "gpt-oss:latest"
-  summarization_fallback: "glm4:latest"
-  ranking_fallback: "qwen2.5:14b"
+  summarization_fallback: "qwen3:14b"    # was glm4; qwen3:14b scores 100/95% vs 92/100%, already loaded
+  ranking_fallback: "qwen3:14b"
   importance_fallback: "qwen3:14b"
-  ranking_importance_fallback: "qwen2.5:7b"   # was 14b; 7b is 40% faster with same accuracy
+  ranking_importance_fallback: "qwen3.5:9b"   # was qwen2.5:7b; qwen3.5:9b scores 98/98% vs 92/90%
+  session_review_fallback: "gpt-oss:latest"   # emergency fallback for session review
   fallback_think: false                  # disable thinking for fallback models (faster chat)
 
 endpoints:
@@ -52,15 +55,17 @@ endpoints:
       summarization: "gemini-2.5-flash"
   - name: "local-cloud"
     url: "http://localhost:11434"
-    roles: ["tool_calling", "coding"]
+    roles: ["tool_calling", "coding", "session_review"]
     priority: 1
     max_concurrent: 5
     context_tokens: 196608  # 192K — glm-5:cloud supports 198K
     pii_sanitize: true       # glm-5:cloud relays to remote server — data leaves machine
     enabled: true
+    models:
+      session_review: "kimi-k2.5:cloud"  # 100% contradiction+dedup, 0.65s avg, large context
   - name: "local"
     url: "http://localhost:11434"
-    roles: ["reasoning", "embedding", "summarization", "ranking", "importance", "ranking_importance"]
+    roles: ["reasoning", "embedding", "summarization", "ranking", "importance", "ranking_importance", "session_review"]
     priority: 1
     max_concurrent: 5
     context_tokens: 32768   # 32K — local models (qwen3:14b, glm4, qwen2.5:14b) don't need more

@@ -2609,6 +2609,59 @@ def nightly_cmd(ctx, job, quiet):
     asyncio.run(_run())
 
 
+# --- Bulk Session Review ---
+
+@main.command("review")
+@click.option("--lessons/--no-lessons", default=True, help="Extract lessons from sessions")
+@click.option("--reflections/--no-reflections", default=True, help="Generate session reflections")
+@click.option("--limit", type=int, default=None, help="Max sessions to process (default: all)")
+@click.option("--quiet", "-q", is_flag=True, help="JSON output only")
+@click.pass_context
+def review_cmd(ctx, lessons, reflections, limit, quiet):
+    """Bulk process all sessions missing lessons and/or reflections."""
+    import json as _json
+
+    async def _run():
+        from scripts.bulk_session_review import run_bulk_review
+
+        config_path = ctx.obj.get("config_path")
+
+        if quiet:
+            result = await run_bulk_review(
+                config_path=config_path,
+                do_lessons=lessons,
+                do_reflections=reflections,
+                limit=limit,
+            )
+            print(_json.dumps(result, indent=2, default=str))
+        else:
+            from rich.status import Status
+
+            with Status("[bold cyan]Processing sessions...", console=console) as status:
+                def on_status(msg):
+                    status.update(f"[bold cyan]{msg}")
+
+                result = await run_bulk_review(
+                    config_path=config_path,
+                    do_lessons=lessons,
+                    do_reflections=reflections,
+                    limit=limit,
+                    on_status=on_status,
+                )
+
+            for job_name in ["lessons", "reflections"]:
+                job_stats = result.get(job_name)
+                if job_stats is None:
+                    continue
+                console.print(f"\n[bold]{job_name.title()}[/bold]:")
+                for k, v in job_stats.items():
+                    console.print(f"  {k}: {v}")
+
+            console.print(f"\n[dim]Total: {result['elapsed_s']}s[/dim]")
+
+    asyncio.run(_run())
+
+
 # --- ChatGPT Import ---
 
 @main.group("import-chatgpt")

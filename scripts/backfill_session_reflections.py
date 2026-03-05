@@ -90,9 +90,12 @@ async def backfill(
             call_start = time.monotonic()
 
             # Prepare full conversation (chunked if too large for context)
-            chunks = await processor.prepare_conversation_for_reflection(
+            chunks, total_tokens = await processor.prepare_conversation_for_reflection(
                 sid, summary,
             )
+
+            # Route large sessions to bigger-context endpoint
+            min_ctx = total_tokens + 4096 if total_tokens > 28000 else None
 
             # Generate reflection (auto-merges if multiple chunks)
             result = await processor.process_reflection(
@@ -100,6 +103,7 @@ async def backfill(
                 session_summary=summary,
                 conversation_chunks=chunks,
                 project=proj,
+                min_context_tokens=min_ctx,
             )
             elapsed = time.monotonic() - call_start
 

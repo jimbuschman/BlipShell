@@ -26,6 +26,7 @@ class TaskType:
     IMPORTANCE = "importance"
     RANKING_IMPORTANCE = "ranking_importance"
     EMBEDDING = "embedding"
+    SESSION_REVIEW = "session_review"
 
 
 class LLMRouter:
@@ -53,6 +54,7 @@ class LLMRouter:
             TaskType.IMPORTANCE: self._models.importance,
             TaskType.RANKING_IMPORTANCE: self._models.ranking_importance or self._models.ranking,
             TaskType.EMBEDDING: self._models.embedding,
+            TaskType.SESSION_REVIEW: self._models.session_review or self._models.reasoning,
         }
         return model_map.get(task_type, self._models.reasoning)
 
@@ -66,6 +68,7 @@ class LLMRouter:
             TaskType.RANKING: self._models.ranking_fallback,
             TaskType.IMPORTANCE: self._models.importance_fallback,
             TaskType.RANKING_IMPORTANCE: self._models.ranking_importance_fallback,
+            TaskType.SESSION_REVIEW: self._models.session_review_fallback,
         }
         return fallback_map.get(task_type)
 
@@ -101,9 +104,9 @@ class LLMRouter:
         model = endpoint.models.get(task_type) or self.get_model(task_type)
         return model, endpoint.client
 
-    async def get_context_tokens(self, task_type: str) -> int:
+    async def get_context_tokens(self, task_type: str, min_context_tokens: int | None = None) -> int:
         """Get context window size for the endpoint that would handle this task type."""
-        endpoint = await self._endpoint_manager.get_endpoint_for_role(task_type)
+        endpoint = await self._endpoint_manager.get_endpoint_for_role(task_type, min_context_tokens=min_context_tokens)
         if endpoint and endpoint.context_tokens:
             return endpoint.context_tokens
         return 32768  # safe default
@@ -131,13 +134,18 @@ class LLMRouter:
             prompt=prompt, model=model, system=system, **gen_kwargs,
         )
 
-    async def generate(self, task_type: str, prompt: str, system: Optional[str] = None, think: Optional[bool | str] = None) -> str:
+    async def generate(self, task_type: str, prompt: str, system: Optional[str] = None, think: Optional[bool | str] = None, min_context_tokens: int | None = None) -> str:
         """Route a generate request to the appropriate model/endpoint.
 
         If the primary model/endpoint fails and a fallback model is configured,
         retries with the fallback model on any available endpoint.
+
+        Args:
+            min_context_tokens: If set, prefer endpoints with at least this many
+                context tokens. Used by session_review to route large sessions to
+                cloud endpoints with bigger context windows.
         """
-        endpoint = await self._endpoint_manager.get_endpoint_for_role(task_type)
+        endpoint = await self._endpoint_manager.get_endpoint_for_role(task_type, min_context_tokens=min_context_tokens)
         if not endpoint:
             raise RuntimeError(f"No available endpoint for task type: {task_type}")
 
