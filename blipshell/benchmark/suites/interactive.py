@@ -536,7 +536,7 @@ class InteractiveSuite(BenchmarkSuite):
                 })
                 continue
 
-            code = _extract_code(raw)
+            code = _extract_code(raw or "")
             passed = 0
             total = len(task["checks"])
             check_results = {}
