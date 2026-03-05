@@ -63,6 +63,7 @@ class NightlyRunner:
         from blipshell.memory.chroma_store import ChromaStore
         from blipshell.memory.processor import MemoryProcessor
         from blipshell.memory.sqlite_store import SQLiteStore
+        from blipshell.models.config import get_ollama_url
 
         config_mgr = ConfigManager(config_path)
         config = config_mgr.load()
@@ -73,7 +74,7 @@ class NightlyRunner:
         chroma = ChromaStore(
             persist_dir=config.database.chroma_path,
             embedding_model=config.models.embedding,
-            ollama_url=config.endpoints[0].url if config.endpoints else "http://localhost:11434",
+            ollama_url=get_ollama_url(config.endpoints),
         )
         chroma.initialize()
 
