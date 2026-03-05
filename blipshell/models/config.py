@@ -260,6 +260,22 @@ class MCPServerConfig(BaseModel):
     timeout: int = 30  # per-call timeout in seconds
 
 
+class GuardrailsConfig(BaseModel):
+    """Toggleable guardrails for instruction adherence.
+
+    When enabled, adds mid-execution checks to reduce specification drift,
+    forgotten requirements, and repeated mistakes.
+    """
+    enabled: bool = False
+    completion_audit: bool = True       # re-check original request before accepting task_complete
+    correction_detector: bool = True    # detect user corrections → anti-pattern lessons
+    trajectory_monitor: bool = True     # periodic state injection with original task reminder
+    context_pinning: bool = True        # pin original task in compaction
+    requirement_checklist: bool = True  # confirm_plan tool before execution
+    monitor_interval: int = 5           # inject trajectory check every N tool calls
+    max_audit_retries: int = 2          # max times to reject task_complete before accepting
+
+
 class WorkerConfig(BaseModel):
     """Remote worker configuration."""
     enabled: bool = False
@@ -302,6 +318,7 @@ class BlipShellConfig(BaseModel):
     web_ui: WebUIConfig = WebUIConfig()
     pii: PIIConfig = PIIConfig()
     planner: PlannerConfig = PlannerConfig()
+    guardrails: GuardrailsConfig = GuardrailsConfig()
     worker: WorkerConfig = WorkerConfig()
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
     model_settings: dict[str, dict] = Field(default_factory=dict)

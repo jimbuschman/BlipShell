@@ -14,7 +14,7 @@ from blipshell.core.tools.base import ToolRegistry
 from blipshell.llm.prompts import dynamic_execution_prompt, executor_system_prompt, execute_step, summarize_plan_results, UTILITY_SYSTEM_PROMPT
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.sqlite_store import SQLiteStore
-from blipshell.models.config import PlannerConfig
+from blipshell.models.config import GuardrailsConfig, PlannerConfig
 from blipshell.models.task import PlanStatus, StepStatus, TaskPlan
 
 from typing import TYPE_CHECKING
@@ -207,6 +207,8 @@ class TaskExecutor:
         self.pause_check_callback: Optional[Callable] = None
         # Shared chat loop runner — set by Agent to reuse endpoint/fallback logic
         self.chat_loop_runner: Optional[Callable] = None
+        # Guardrails configuration (set by Agent from config)
+        self.guardrails_config: Optional[GuardrailsConfig] = None
         # Phase 2 test override flags (set by TestOverrides.apply())
         self._disable_winddown: bool = False
         self._disable_state_block: bool = False
@@ -378,6 +380,25 @@ class TaskExecutor:
             from blipshell.core.tools.interaction_tools import TaskCompleteTool
             self.tool_registry.register(TaskCompleteTool(), group="general")
 
+        # Set up guardrails engine if configured
+        guardrails_engine = None
+        if self.guardrails_config and self.guardrails_config.enabled:
+            from blipshell.core.guardrails import GuardrailsEngine
+            guardrails_engine = GuardrailsEngine(self.guardrails_config, self.router)
+            guardrails_engine.original_request = user_request
+
+            # Register confirm_plan tool if requirement checklist is enabled
+            if self.guardrails_config.requirement_checklist:
+                if not self.tool_registry.get_tool("confirm_plan"):
+                    from blipshell.core.tools.interaction_tools import ConfirmPlanTool
+                    # Reuse ask_user's callback for confirm_plan (same UX pattern)
+                    ask_user_tool = self.tool_registry.get_tool("ask_user")
+                    cb = ask_user_tool.callback if ask_user_tool else None
+                    self.tool_registry.register(
+                        ConfirmPlanTool(callback=cb, guardrails_engine=guardrails_engine),
+                        group="general",
+                    )
+
         # Wire file cache AND files_read into ReadFileTool so it can detect
         # re-reads and serve cached content instead of re-reading from disk.
         self._file_cache.clear()
@@ -391,6 +412,25 @@ class TaskExecutor:
         sys_prompt = executor_system_prompt()
         if self.active_project and self.project_context:
             sys_prompt += "\n\n" + self.project_context
+
+        # Guardrails: add context pinning and checklist guidance to system prompt
+        if guardrails_engine:
+            guardrails_prompt = "\n\n# Guardrails\n"
+            if self.guardrails_config.requirement_checklist:
+                guardrails_prompt += (
+                    "- For complex tasks (3+ files, ambiguous requirements), "
+                    "call confirm_plan FIRST to show your plan and get approval.\n"
+                )
+            if self.guardrails_config.completion_audit:
+                guardrails_prompt += (
+                    "- Your task_complete will be validated against the original request. "
+                    "Make sure you address every requirement before calling it.\n"
+                )
+            if self.guardrails_config.context_pinning:
+                pinned = guardrails_engine.pinned_context
+                if pinned:
+                    guardrails_prompt += f"\n{pinned}\n"
+            sys_prompt += guardrails_prompt
 
         tools = self.tool_registry.get_all_ollama_tools() or None
 
@@ -453,6 +493,7 @@ class TaskExecutor:
             capture_inline_text=True,
             tool_provider=_get_current_tools,
             on_pause_check=self.pause_check_callback,
+            guardrails=guardrails_engine,
         )
 
         # Use shared chat loop runner (from Agent) if available — gives us

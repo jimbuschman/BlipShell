@@ -72,6 +72,104 @@ class TaskCompleteTool(Tool):
         return "\n".join(parts) if parts else "Task complete."
 
 
+class ConfirmPlanTool(Tool):
+    """Guardrails tool: confirm a plan with the user before execution.
+
+    The LLM lists its planned steps and postconditions. The user reviews
+    and approves, modifies, or rejects before any changes are made.
+
+    When a GuardrailsEngine is attached, the approved checklist is stored
+    for later use by the completion audit.
+    """
+    read_only = True
+
+    def __init__(
+        self,
+        callback: Optional[AskUserCallback] = None,
+        guardrails_engine=None,
+    ):
+        self.callback = callback
+        self.guardrails_engine = guardrails_engine
+
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="confirm_plan",
+            description=(
+                "Present your plan to the user for approval BEFORE making changes. "
+                "Call this at the start of complex tasks (3+ files, ambiguous requirements, "
+                "destructive changes). List your planned steps and what should be true when done.\n\n"
+                "The user will approve, modify, or reject the plan. Do NOT proceed with "
+                "changes until the plan is confirmed.\n\n"
+                "Skip this for simple, obvious tasks (single file edit, clear instruction)."
+            ),
+            parameters=[
+                ToolParameter(
+                    name="plan",
+                    type=ToolParameterType.STRING,
+                    description="Your planned steps, one per line (e.g. '1. Read X\\n2. Edit Y\\n3. Create Z')",
+                ),
+                ToolParameter(
+                    name="postconditions",
+                    type=ToolParameterType.STRING,
+                    description="What should be true when the task is done (e.g. 'Tests pass, new endpoint returns 200')",
+                    required=False,
+                ),
+            ],
+        )
+
+    async def execute(
+        self,
+        plan: str = "",
+        postconditions: str = "",
+        **kwargs,
+    ) -> str:
+        if not plan:
+            return "Error: 'plan' argument is required."
+
+        # Format for display
+        formatted = f"Proposed plan:\n{plan}"
+        if postconditions:
+            formatted += f"\n\nDone when:\n{postconditions}"
+        formatted += "\n\nApprove this plan? (yes / modify / reject)"
+
+        # Get user confirmation
+        if self.callback:
+            try:
+                answer = await self.callback(formatted)
+            except Exception as e:
+                logger.error("confirm_plan callback failed: %s", e)
+                answer = "approved"
+        else:
+            answer = "approved"
+
+        # Parse steps for checklist storage
+        steps = [
+            line.strip().lstrip("0123456789.-) ")
+            for line in plan.strip().splitlines()
+            if line.strip()
+        ]
+        postcond_list = [
+            line.strip().lstrip("0123456789.-) ")
+            for line in postconditions.strip().splitlines()
+            if line.strip()
+        ] if postconditions else []
+
+        answer_lower = answer.strip().lower()
+
+        if answer_lower in ("yes", "y", "approved", "approve", "ok", "lgtm", "go", ""):
+            # Store checklist for completion audit
+            if self.guardrails_engine:
+                self.guardrails_engine.record_checklist(steps, postcond_list)
+            return "Plan approved by user. Proceed with execution."
+        elif answer_lower.startswith(("reject", "no")):
+            return f"Plan rejected by user: {answer}. Ask the user what they want instead."
+        else:
+            # User modified the plan
+            if self.guardrails_engine:
+                self.guardrails_engine.record_checklist(steps, postcond_list)
+            return f"User feedback on plan: {answer}. Adjust your approach accordingly."
+
+
 class AskUserTool(Tool):
     read_only = True
     """Allows the LLM to ask the user a question mid-execution.

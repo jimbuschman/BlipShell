@@ -56,6 +56,11 @@ class ChatMixin:
         # Reset tool call tracking (populated by _chat_simple/_chat_planned)
         self._last_tool_calls = []
 
+        # Guardrails: correction detection (cheap regex, no LLM call)
+        if (hasattr(self, 'config') and self.config.guardrails.enabled
+                and self.config.guardrails.correction_detector):
+            await self._detect_and_persist_correction(user_message)
+
         # Add user message to session
         self.session_manager.add_message(MessageRole.USER, user_message)
 
@@ -95,6 +100,61 @@ class ChatMixin:
         task.add_done_callback(self._background_tasks.discard)
 
         return response
+
+    async def _detect_and_persist_correction(self, user_message: str):
+        """Detect if a user message is correcting the assistant and persist as anti-pattern lesson.
+
+        Runs on every user message when guardrails.correction_detector is enabled.
+        Uses cheap regex matching — no LLM call.
+        """
+        from blipshell.core.guardrails import detect_correction
+
+        correction_signal = detect_correction(user_message)
+        if not correction_signal:
+            return
+
+        # Get the last assistant message for context on what went wrong
+        prev_assistant = ""
+        messages = self.session_manager.get_messages()
+        for msg in reversed(messages):
+            if msg.role == MessageRole.ASSISTANT:
+                prev_assistant = msg.content[:200]
+                break
+
+        # Build anti-pattern lesson content
+        anti_pattern = (
+            f"ANTI-PATTERN: User corrected the assistant. "
+            f"Signal: \"{correction_signal}\". "
+        )
+        if prev_assistant:
+            anti_pattern += f"Previous response (excerpt): \"{prev_assistant}...\". "
+        anti_pattern += f"User said: \"{user_message[:200]}\""
+
+        # Persist as a lesson (tagged for retrieval)
+        try:
+            from blipshell.models.memory import Lesson
+            lesson = Lesson(
+                content=anti_pattern,
+                source_session_id=self.session_manager.session_id,
+                project=self.active_project.get("name") if self.active_project else None,
+            )
+            lesson_id = await self.sqlite.create_lesson(lesson)
+
+            # Embed for semantic search
+            meta = {}
+            if self.active_project:
+                meta["project"] = self.active_project["name"]
+            self.chroma.add_lesson(lesson_id, anti_pattern, metadata=meta or None)
+
+            # Tag with anti-pattern for identification
+            await self.sqlite.tag_lesson(lesson_id, ["anti-pattern"])
+
+            logger.info(
+                "Correction detected and persisted as anti-pattern lesson %d: %s",
+                lesson_id, correction_signal,
+            )
+        except Exception as e:
+            logger.warning("Failed to persist anti-pattern lesson: %s", e)
 
     async def _run_chat_loop(
         self,

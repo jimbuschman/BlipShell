@@ -86,6 +86,10 @@ class LoopConfig:
     """Async callback checked between tool batches. Returns PauseResult.
     If None, no pause checking occurs."""
 
+    guardrails: object | None = None
+    """GuardrailsEngine instance for instruction adherence checks.
+    None = no guardrails (default). Set by executor when guardrails are enabled."""
+
     ollama_gate: object | None = None
     """OllamaGate instance for serializing local Ollama calls. None = no gating."""
 
@@ -587,6 +591,34 @@ class ChatLoop:
 
                 # ── Completion tool fired ──
                 if completion_tool_result is not None:
+                    # Guardrails: completion audit — validate against original request
+                    if config.guardrails and hasattr(config.guardrails, 'validate_completion'):
+                        try:
+                            # Extract files_modified from the task_complete args
+                            tc_files = ""
+                            for _i2, (n2, a2, _) in enumerate(parsed_calls):
+                                if n2 == config.completion_tool:
+                                    tc_files = a2.get("files_modified", "")
+                                    break
+                            valid, feedback = await config.guardrails.validate_completion(
+                                completion_tool_result, tc_files,
+                            )
+                            if not valid:
+                                if self.on_token:
+                                    self.on_token(
+                                        f"\x1b[33m  [Completion audit: rejected "
+                                        f"({config.guardrails.audit_retries}/"
+                                        f"{config.guardrails.config.max_audit_retries})]\x1b[0m\n"
+                                    )
+                                messages.append({
+                                    "role": "user",
+                                    "content": feedback,
+                                })
+                                completion_tool_result = None
+                                continue  # Continue the loop — model should fix and retry
+                        except Exception as e:
+                            logger.warning("Completion audit error: %s — accepting", e)
+
                     final_response = completion_tool_result
                     completion_method = "tool"
                     break
@@ -613,6 +645,24 @@ class ChatLoop:
                             })
                     except Exception as e:
                         logger.debug("Pause check error: %s", e)
+
+                # ── Guardrails: trajectory monitor injection ──
+                if config.guardrails and hasattr(config.guardrails, 'build_trajectory_injection'):
+                    try:
+                        injection = config.guardrails.build_trajectory_injection(
+                            tool_call_count, config.budget, tool_call_names,
+                        )
+                        if injection:
+                            messages.append({
+                                "role": "user",
+                                "content": injection,
+                            })
+                            if self.on_token:
+                                self.on_token(
+                                    "\x1b[2m  [Trajectory checkpoint injected]\x1b[0m\n"
+                                )
+                    except Exception as e:
+                        logger.debug("Trajectory injection error: %s", e)
 
                 continue
 

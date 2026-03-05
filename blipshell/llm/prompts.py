@@ -684,6 +684,52 @@ def update_digest_with_sessions(
     return system, user
 
 
+def validate_task_completion(
+    original_request: str,
+    summary: str,
+    files_modified: str = "",
+    checklist: list[str] | None = None,
+) -> tuple[str, str]:
+    """Prompt for validating whether task_complete matches the original request.
+
+    Returns (system_prompt, user_prompt). The LLM checks each requirement
+    from the original request against what was actually done.
+
+    Part of the Guardrails system (completion audit).
+    """
+    system = (
+        "You verify whether a coding task was completed correctly.\n\n"
+        "You are given the original user request and a completion summary. "
+        "Check whether every requirement in the original request was addressed.\n\n"
+        "Rules:\n"
+        "- Go through each requirement or sub-task in the original request\n"
+        "- For each, check if the summary or files modified indicate it was done\n"
+        "- If ALL requirements are met, respond: PASS\n"
+        "- If ANY requirement is missing or incomplete, respond: FAIL: <what's missing>\n"
+        "- Be strict but fair — if the request said 'add X and Y', both must be done\n"
+        "- Do NOT fail for style/quality issues — only for missing requirements\n"
+        "- Do NOT fail for things the user didn't ask for\n\n"
+        "Respond with ONLY: PASS or FAIL: <brief explanation of what's missing>"
+    )
+
+    checklist_section = ""
+    if checklist:
+        items = "\n".join(f"  {i+1}. {step}" for i, step in enumerate(checklist))
+        checklist_section = f"\nConfirmed plan (each step should be done):\n{items}\n"
+
+    user = (
+        f"Original request:\n{original_request}\n"
+        f"{checklist_section}\n"
+        f"Completion summary:\n{summary}\n"
+    )
+    if files_modified:
+        user += f"\nFiles modified: {files_modified}\n"
+
+    user += "\nDid this task_complete address all requirements? PASS or FAIL:"
+
+    return system, user
+
+
 def summarize_plan_results(user_request: str, step_results: list[str]) -> str:
     """Prompt for summarizing all completed plan steps into a final response."""
     results_text = ""

@@ -461,6 +461,27 @@ async def chat_loop(
                     state = "[green]ON[/green]" if agent.reflect_enabled else "[yellow]OFF[/yellow]"
                     console.print(f"[dim]Self-reflection: {state}[/dim]")
                     continue
+                elif cmd[0] == "guardrails":
+                    if len(cmd) > 1 and cmd[1] in ("on", "off"):
+                        config.guardrails.enabled = cmd[1] == "on"
+                    else:
+                        config.guardrails.enabled = not config.guardrails.enabled
+                    state = "[green]ON[/green]" if config.guardrails.enabled else "[yellow]OFF[/yellow]"
+                    console.print(f"[dim]Guardrails: {state}[/dim]")
+                    if config.guardrails.enabled:
+                        features = []
+                        if config.guardrails.completion_audit:
+                            features.append("completion audit")
+                        if config.guardrails.correction_detector:
+                            features.append("correction detector")
+                        if config.guardrails.trajectory_monitor:
+                            features.append("trajectory monitor")
+                        if config.guardrails.context_pinning:
+                            features.append("context pinning")
+                        if config.guardrails.requirement_checklist:
+                            features.append("requirement checklist")
+                        console.print(f"[dim]  Active: {', '.join(features)}[/dim]")
+                    continue
                 elif cmd[0] == "approve":
                     if len(cmd) > 1 and cmd[1] == "all":
                         # Auto-approve everything for this session
@@ -2235,6 +2256,7 @@ def _print_help():
         "[bold]/core[/bold]                  - Show core memories and lessons\n"
         "[bold]/think[/bold]                 - Toggle LLM thinking mode on/off\n"
         "[bold]/reflect[/bold]               - Toggle self-reflection on/off\n"
+        "[bold]/guardrails[/bold] [dim][on|off][/dim]   - Toggle guardrails (completion audit, drift monitor)\n"
         "[bold]/approve[/bold] [dim]all|reset[/dim]     - Manage tool approval (write/edit/run)\n"
         "[bold]/changes[/bold]               - Show files modified this session\n"
         "[bold]/code <path> [msg][/bold]     - Send code to LLM for review\n"

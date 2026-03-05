@@ -521,6 +521,71 @@ LLM can self-restrict to read-only tools before making complex changes.
 - [ ] **NEEDS TESTING**: Verify exit_plan_mode restores full tool set
 - [ ] **NEEDS TESTING**: Verify canned tests still pass with plan tools registered
 
+### 39. Guardrails Mode — CODE WRITTEN, NEEDS TESTING
+Toggleable instruction adherence system. Reduces specification drift, forgotten
+requirements, and repeated mistakes during LLM execution. Based on Wink (Meta,
+22.5% specification drift in production agents, 91% recovery with mid-stream
+course correction) and Devin playbooks research.
+
+**Config**: `guardrails.enabled: true` in config.yaml, or `/guardrails on` at runtime.
+Off by default — zero overhead when disabled. Each sub-feature independently toggleable.
+
+**5 sub-capabilities**:
+
+1. **Requirement Checklist** (`confirm_plan` tool):
+- [x] `ConfirmPlanTool` in `interaction_tools.py` — LLM shows plan, user approves before execution
+- [x] Stores confirmed steps + postconditions on `GuardrailsEngine` for later audit
+- [x] Reuses `ask_user` callback pattern (same UX for CLI interaction)
+- [x] Prompt guidance in executor system prompt: "For complex tasks, call confirm_plan FIRST"
+- [ ] **NEEDS TESTING**: Give a complex multi-file task with `/guardrails on`, verify confirm_plan fires
+- [ ] **NEEDS TESTING**: Reject/modify a plan and verify the model adjusts
+
+2. **Trajectory Monitor** (periodic state injection):
+- [x] `build_trajectory_injection()` injects original task + progress every N tool calls (default 5)
+- [x] Includes: tool call count/budget, recent actions, checklist if confirm_plan was used
+- [x] Injected as user message in ChatLoop between tool batches
+- [ ] **NEEDS TESTING**: Run a 20+ tool call task, verify checkpoints appear every 5 calls
+- [ ] **NEEDS TESTING**: Verify the model stays on-task better with trajectory injection
+
+3. **Completion Audit** (validate before accepting task_complete):
+- [x] `validate_completion()` calls REASONING model with original request + summary
+- [x] Prompt returns PASS or FAIL with explanation of missing requirements
+- [x] On FAIL: rejects task_complete, injects feedback, model continues (up to max_audit_retries)
+- [x] Graceful degradation: accepts on LLM error, accepts after max retries (default 2)
+- [ ] **NEEDS TESTING**: Give a task, intentionally incomplete task_complete → verify rejection
+- [ ] **NEEDS TESTING**: Verify PASS/FAIL parsing works with real LLM output
+- [ ] **NEEDS TESTING**: Verify max_audit_retries cap works (doesn't loop forever)
+
+4. **Correction Detector** (regex → anti-pattern lessons):
+- [x] 12 regex patterns in `guardrails.py` (e.g., "I already told you", "you missed", "stop doing")
+- [x] `detect_correction()` runs on every user message (cheap, no LLM call)
+- [x] Detected corrections → persisted as lessons tagged "anti-pattern" with context
+- [x] Includes previous assistant response excerpt for what-went-wrong context
+- [ ] **NEEDS TESTING**: Send a correction message with guardrails on, verify lesson is created
+- [ ] **NEEDS TESTING**: Check that anti-pattern lessons appear in `/core` output
+- [ ] **NEEDS TESTING**: Verify false positive rate is acceptable in normal conversation
+
+5. **Context Pinning** (original task survives compaction):
+- [x] `pinned_context` property on `GuardrailsEngine` — always includes original task
+- [x] Injected into executor system prompt (visible to model at all times)
+- [x] Includes confirmed plan checklist if confirm_plan was used
+- [ ] **NEEDS TESTING**: Run a long task that triggers compaction, verify original task still visible
+
+**Infrastructure**:
+- [x] `GuardrailsConfig` in `models/config.py` — 5 feature toggles + monitor_interval + max_audit_retries
+- [x] `GuardrailsEngine` in `blipshell/core/guardrails.py` — per-execution state management
+- [x] `validate_task_completion()` prompt in `prompts.py`
+- [x] `guardrails` field on `LoopConfig` — ChatLoop integration point
+- [x] `/guardrails [on|off]` CLI command with feature summary
+- [x] Wired: agent.py → executor → LoopConfig → ChatLoop
+- [x] 59 unit tests in `tests/test_guardrails.py` (all passing)
+
+**End-to-end testing needed on Ollama PC**:
+- [ ] `/guardrails on` → give a multi-step coding task → verify all 5 features fire
+- [ ] Compare task quality with guardrails on vs off on the same task
+- [ ] Stress test: 50+ tool call task with guardrails to check overhead and context pressure
+- [ ] Verify confirm_plan doesn't fire on simple one-file tasks (prompt says "skip for simple tasks")
+
 ### Wish List
 Items worth doing eventually but not prioritized:
 - **Telegram notifications**: Via mcp-communicator-telegram — background tasks notify you on phone, executor can ask_user remotely. Set up @BotFather bot + chat ID.
