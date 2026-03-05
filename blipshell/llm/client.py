@@ -41,8 +41,7 @@ class LLMClient:
         """Retry an async call with exponential backoff.
 
         Retries up to max_retries times with delays of base*2^attempt seconds.
-        Each attempt has a generous 10-minute safety timeout to catch dead
-        connections without killing slow-but-valid work.
+        Each attempt uses self.timeout (from LLMConfig, default 120s).
         """
         last_error = None
         for attempt in range(self.max_retries + 1):

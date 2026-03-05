@@ -558,7 +558,8 @@ def make_router(model_name: str, ollama_url: str = OLLAMA_URL, timeout: float = 
         priority=1,
         max_concurrent=1,
     )
-    return LLMRouter(models, EndpointManager([ep], LLMConfig(timeout=timeout)), pii_enabled=False)
+    # No retries in benchmark — one timeout = fail, move on
+    return LLMRouter(models, EndpointManager([ep], LLMConfig(timeout=timeout, max_retries=0)), pii_enabled=False)
 
 
 async def list_available_models(ollama_url: str = OLLAMA_URL) -> list[str]:

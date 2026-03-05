@@ -875,7 +875,8 @@ def make_router(model_name: str, timeout: float = 300.0) -> LLMRouter:
             context_tokens=131072,
         )
 
-    llm_config = LLMConfig(timeout=timeout)
+    # No retries in benchmark — one timeout = fail, move on
+    llm_config = LLMConfig(timeout=timeout, max_retries=0)
     endpoint_manager = EndpointManager([endpoint_cfg], llm_config)
     return LLMRouter(models, endpoint_manager)
 
