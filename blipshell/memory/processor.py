@@ -508,6 +508,7 @@ class MemoryProcessor:
         """
         if not conversation_chunks:
             logger.warning("No conversation chunks for session %d — skipping", session_id)
+            await self._save_skipped_reflection(session_id)
             return None
 
         if len(conversation_chunks) == 1:
@@ -531,6 +532,7 @@ class MemoryProcessor:
                     chunk_reflections.append(chunk_raw)
 
             if not chunk_reflections:
+                await self._save_skipped_reflection(session_id)
                 return None  # All chunks were trivial
 
             # Merge chunk reflections
@@ -547,6 +549,7 @@ class MemoryProcessor:
 
         # Check for SKIP
         if raw.strip().upper() == "SKIP":
+            await self._save_skipped_reflection(session_id)
             return None
 
         parsed = self._parse_reflection(raw)
@@ -580,6 +583,17 @@ class MemoryProcessor:
             )
 
         return parsed
+
+    async def _save_skipped_reflection(self, session_id: int):
+        """Save a placeholder reflection so skipped sessions don't reappear."""
+        try:
+            await self.sqlite.create_session_reflection(
+                session_id=session_id,
+                effectiveness="skipped",
+                reflection_text="Session skipped — insufficient conversation data.",
+            )
+        except Exception:
+            pass  # IntegrityError if already exists
 
     async def _reflect_on_text(
         self, session_summary: str, conversation_text: str, project: str | None,
