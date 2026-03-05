@@ -64,8 +64,9 @@ from blipshell.models.config import EndpointConfig, LLMConfig, ModelsConfig, Pla
 # ---------------------------------------------------------------------------
 BENCHMARK_MODELS = [
     # Current coding model (baseline)
-    "qwen3-coder:480b-cloud",
+    "glm-5:cloud",
     # Ollama cloud models to evaluate
+    "qwen3-coder:480b-cloud",
     "qwen3-coder-next:cloud",
     "devstral-2:123b-cloud",
     "deepseek-v3.2:cloud",
@@ -73,7 +74,12 @@ BENCHMARK_MODELS = [
     "cogito-2.1:671b-cloud",
     "qwen3-next:80b-cloud",
     "minimax-m2.5:cloud",
-    "glm-5:cloud",
+    "qwen3.5:397b-cloud",
+    # Local models
+    "qwen3.5:9b",
+    "qwen3.5:4b",
+    "qwen3:14b",
+    "qwen2.5-coder:7b",
 ]
 
 OLLAMA_URL = "http://localhost:11434"
