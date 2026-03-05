@@ -10,6 +10,7 @@ import logging
 from collections import OrderedDict
 from typing import Any, AsyncIterator, Optional
 
+import httpx
 import ollama
 
 logger = logging.getLogger(__name__)
@@ -29,13 +30,12 @@ class LLMClient:
         self.max_retries = max_retries
         self.retry_base_delay = retry_base_delay
         self.timeout = timeout
-        self._client = ollama.AsyncClient(host=host)
-
-    # Safety timeout for detecting genuinely dead Ollama connections.
-    # Not meant to limit slow-but-valid work — model loading + long
-    # generations can legitimately take 5+ minutes. This only fires
-    # if the connection is truly hung (process crash, socket stuck).
-    SAFETY_TIMEOUT = 600.0  # 10 minutes
+        # Pass timeout to httpx so the HTTP layer enforces it directly.
+        # ollama SDK defaults to timeout=None (wait forever).
+        self._client = ollama.AsyncClient(
+            host=host,
+            timeout=httpx.Timeout(timeout, connect=10.0),
+        )
 
     async def _retry_call(self, func, *args, **kwargs):
         """Retry an async call with exponential backoff.
@@ -49,7 +49,7 @@ class LLMClient:
                 return await asyncio.wait_for(
                     func(*args, **kwargs), timeout=self.timeout,
                 )
-            except asyncio.TimeoutError:
+            except (asyncio.TimeoutError, httpx.TimeoutException):
                 last_error = TimeoutError(
                     f"Ollama call timed out after {self.timeout:.0f}s"
                 )
