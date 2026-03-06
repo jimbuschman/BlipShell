@@ -1356,18 +1356,29 @@ class SQLiteStore:
         """, (limit,))
         return [dict(r) for r in await cursor.fetchall()]
 
-    async def get_session_messages_for_lesson(self, session_id: int) -> list[dict]:
+    async def get_session_messages_for_lesson(self, session_id: int, include_archived: bool = False) -> list[dict]:
         """Get conversation messages for lesson/reflection extraction.
 
         Reads from the memories table (which stores raw content for all sessions,
         both live and imported) rather than session_messages (which is only for
         crash recovery and may not exist for imported sessions).
+
+        Args:
+            include_archived: If True, also return archived memories. Useful for
+                reflections on sessions whose memories were consolidated.
         """
-        cursor = await self._db.execute("""
-            SELECT role, content FROM memories
-            WHERE session_id = ? AND is_archived = 0
-            ORDER BY id
-        """, (session_id,))
+        if include_archived:
+            cursor = await self._db.execute("""
+                SELECT role, content FROM memories
+                WHERE session_id = ?
+                ORDER BY id
+            """, (session_id,))
+        else:
+            cursor = await self._db.execute("""
+                SELECT role, content FROM memories
+                WHERE session_id = ? AND is_archived = 0
+                ORDER BY id
+            """, (session_id,))
         return [dict(r) for r in await cursor.fetchall()]
 
     # --- Session Reflections ---
@@ -1411,12 +1422,13 @@ class SQLiteStore:
         """Find sessions eligible for reflection.
 
         Criteria: has a summary, not archived, no existing reflection,
-        at least 2 memories (conversation data).
+        at least 1 memory (including archived — consolidated sessions still
+        have valid data for reflection).
         """
         cursor = await self._db.execute("""
             SELECT s.id, s.summary, s.project, s.title,
                    (SELECT COUNT(*) FROM memories m
-                    WHERE m.session_id = s.id AND m.is_archived = 0) as msg_count
+                    WHERE m.session_id = s.id) as msg_count
             FROM sessions s
             LEFT JOIN session_reflections sr ON sr.session_id = s.id
             WHERE sr.id IS NULL
@@ -1424,7 +1436,7 @@ class SQLiteStore:
               AND s.summary != ''
               AND s.is_archived = 0
             GROUP BY s.id
-            HAVING msg_count >= 2
+            HAVING msg_count >= 1
             ORDER BY s.id DESC
             LIMIT ?
         """, (limit,))

@@ -277,7 +277,8 @@ class TestGetSessionsMissingReflections:
         await store.close()
 
     @pytest.mark.asyncio
-    async def test_excludes_sessions_with_single_message(self, db_path):
+    async def test_includes_sessions_with_single_message(self, db_path):
+        """Sessions with 1 memory are eligible — the summary provides enough context."""
         from blipshell.memory.sqlite_store import SQLiteStore
 
         store = SQLiteStore(db_path)
@@ -285,7 +286,23 @@ class TestGetSessionsMissingReflections:
 
         sid = await store.create_session(title="Short")
         await store.update_session(sid, summary="Brief chat")
-        await store.save_raw_memory(sid, "user", "single msg")  # < 2 messages
+        await store.save_raw_memory(sid, "user", "single msg")
+
+        sessions = await store.get_sessions_missing_reflections(limit=10)
+        assert len(sessions) == 1
+
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_excludes_sessions_with_zero_memories(self, db_path):
+        """Sessions with no memories at all are excluded."""
+        from blipshell.memory.sqlite_store import SQLiteStore
+
+        store = SQLiteStore(db_path)
+        await store.initialize()
+
+        sid = await store.create_session(title="Empty")
+        await store.update_session(sid, summary="Nothing happened")
 
         sessions = await store.get_sessions_missing_reflections(limit=10)
         assert len(sessions) == 0

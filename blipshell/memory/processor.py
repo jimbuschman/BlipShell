@@ -621,7 +621,7 @@ class MemoryProcessor:
         Large sessions that exceed the local context window are routed to a
         bigger-context endpoint; if still too big, they're chunked.
         """
-        messages = await self.sqlite.get_session_messages_for_lesson(session_id)
+        messages = await self.sqlite.get_session_messages_for_lesson(session_id, include_archived=True)
         if not messages:
             logger.warning("Session %d has no conversation data — skipping reflection", session_id)
             return [], 0
