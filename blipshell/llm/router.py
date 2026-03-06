@@ -10,7 +10,7 @@ from typing import Optional
 
 from blipshell.llm.client import LLMClient
 from blipshell.llm.endpoints import EndpointManager
-from blipshell.llm.exceptions import is_model_error
+from blipshell.llm.exceptions import is_bad_request_error, is_model_error
 from blipshell.models.config import ModelsConfig
 
 logger = logging.getLogger(__name__)
@@ -216,7 +216,14 @@ class LLMRouter:
             endpoint.record_success(0)
             return result
         except Exception as primary_err:
-            if is_model_error(primary_err):
+            if is_bad_request_error(primary_err):
+                # 400 = per-request issue (content filter, malformed input).
+                # Don't penalize endpoint or mark model as permanently failed.
+                logger.warning(
+                    "Bad request on '%s'/'%s' (not penalizing): %s",
+                    model, endpoint.name, primary_err,
+                )
+            elif is_model_error(primary_err):
                 logger.warning(
                     "Model-level error on endpoint '%s' (not penalizing): %s",
                     endpoint.name, primary_err,

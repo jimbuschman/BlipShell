@@ -84,6 +84,8 @@ async def run_bulk_review(
                 except Exception as e:
                     logger.error("Lesson extraction failed for session %d: %s", sid, e)
                     failed += 1
+                    # Clear model failures so one bad session doesn't poison all subsequent ones
+                    processor.router.clear_failed_models()
 
             stats["lessons"] = {
                 "processed": processed,
@@ -130,6 +132,8 @@ async def run_bulk_review(
                 except Exception as e:
                     logger.error("Session reflection failed for session %d: %s", sid, e)
                     failed += 1
+                    # Clear model failures so one bad session doesn't poison all subsequent ones
+                    processor.router.clear_failed_models()
 
             stats["reflections"] = {
                 "processed": processed,

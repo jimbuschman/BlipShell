@@ -28,6 +28,30 @@ class RateLimitExhaustedError(Exception):
         super().__init__(message or f"Rate limit retries exhausted for {endpoint_name}")
 
 
+def is_bad_request_error(error: Exception) -> bool:
+    """Check if an error is a per-request 400 Bad Request.
+
+    Bad requests are caused by the specific input (content filter, malformed
+    content, context overflow) — NOT a model or endpoint failure. The same
+    model/endpoint will likely succeed on the next request with different input.
+
+    Should NOT penalize the endpoint or mark the model as permanently failed.
+    """
+    if _ollama is not None:
+        if isinstance(error, _ollama.ResponseError):
+            if hasattr(error, "status_code") and error.status_code == 400:
+                return True
+            msg = str(error).lower()
+            if "bad request" in msg:
+                return True
+
+    if _openai is not None:
+        if isinstance(error, _openai.BadRequestError):
+            return True
+
+    return False
+
+
 def is_model_error(error: Exception) -> bool:
     """Check if an error is a model-level problem (not an endpoint failure).
 
