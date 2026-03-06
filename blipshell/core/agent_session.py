@@ -59,6 +59,9 @@ class SessionMixin:
         # Check for nightly report warnings/errors
         self._nightly_notification = await self._check_nightly_report()
 
+        # Load pending follow-ups for proactive session opener
+        self._pending_follow_ups = await self._load_follow_ups()
+
         return session_id
 
     async def _retry_chroma_queue(self):
@@ -277,6 +280,30 @@ class SessionMixin:
                 priority_score=2.0,
                 session_id=s.id,
             ))
+
+    async def _load_follow_ups(self) -> str:
+        """Load pending follow-ups and format for injection into first turn."""
+        try:
+            project = self.active_project["name"] if self.active_project else None
+            items = await self.sqlite.get_pending_follow_ups(project=project, limit=10)
+            if not items:
+                return ""
+
+            lines = ["[OPEN FOLLOW-UPS from previous sessions]"]
+            for item in items:
+                line = f"- #{item['id']}: {item['content']}"
+                if item.get("due_hint"):
+                    line += f" (due: {item['due_hint']})"
+                lines.append(line)
+            lines.append(
+                "Mention relevant items naturally. "
+                "Use resolve_followup when an item is addressed."
+            )
+            logger.info("Loaded %d pending follow-ups", len(items))
+            return "\n".join(lines)
+        except Exception as e:
+            logger.debug("Failed to load follow-ups: %s", e)
+            return ""
 
     async def _check_nightly_report(self) -> str | None:
         """Check if the last nightly run had warnings/errors. Returns notification or None."""

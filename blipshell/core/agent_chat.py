@@ -643,6 +643,10 @@ class ChatMixin:
         if memory_text.strip():
             system_prompt += f"\n\n{memory_text}"
 
+        # Inject pending follow-ups from previous sessions
+        if getattr(self, "_pending_follow_ups", "") and self._pending_follow_ups.strip():
+            system_prompt += f"\n\n{self._pending_follow_ups}"
+
         if self._files_read:
             files_list = "\n".join(f"  - {f}" for f in sorted(self._files_read))
             system_prompt += (

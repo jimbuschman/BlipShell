@@ -317,6 +317,22 @@ CREATE TABLE IF NOT EXISTS session_reflections (
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_reflections_session ON session_reflections(session_id);
+
+CREATE TABLE IF NOT EXISTS follow_ups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content TEXT NOT NULL,
+    source_session INTEGER,
+    project TEXT,
+    due_hint TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    resolved_session INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME,
+    FOREIGN KEY (source_session) REFERENCES sessions(id),
+    FOREIGN KEY (resolved_session) REFERENCES sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_follow_ups_status ON follow_ups(status);
 """
 
 
@@ -2337,3 +2353,71 @@ class SQLiteStore:
             }
             for r in rows
         ]
+
+    # --- Follow-Up Queue ---
+
+    async def add_follow_up(
+        self, content: str, session_id: int | None = None,
+        project: str | None = None, due_hint: str | None = None,
+    ) -> int:
+        """Add a follow-up item. Returns the new ID."""
+        cursor = await self._db.execute(
+            "INSERT INTO follow_ups (content, source_session, project, due_hint) "
+            "VALUES (?, ?, ?, ?)",
+            (content, session_id, project, due_hint),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_pending_follow_ups(
+        self, project: str | None = None, limit: int = 20,
+    ) -> list[dict]:
+        """Get pending follow-up items, optionally filtered by project."""
+        if project:
+            cursor = await self._db.execute(
+                "SELECT * FROM follow_ups WHERE status = 'pending' "
+                "AND (project = ? OR project IS NULL) "
+                "ORDER BY created_at DESC LIMIT ?",
+                (project, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT * FROM follow_ups WHERE status = 'pending' "
+                "ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def resolve_follow_up(
+        self, follow_up_id: int, session_id: int | None = None,
+    ) -> bool:
+        """Mark a follow-up as resolved. Returns True if found and updated."""
+        cursor = await self._db.execute(
+            "UPDATE follow_ups SET status = 'resolved', resolved_session = ?, "
+            "resolved_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'",
+            (session_id, follow_up_id),
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def dismiss_follow_up(self, follow_up_id: int) -> bool:
+        """Dismiss a follow-up (no longer relevant). Returns True if found."""
+        cursor = await self._db.execute(
+            "UPDATE follow_ups SET status = 'dismissed', "
+            "resolved_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'",
+            (follow_up_id,),
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    async def get_all_follow_ups(self, limit: int = 50) -> list[dict]:
+        """Get all follow-ups (any status) for display."""
+        cursor = await self._db.execute(
+            "SELECT * FROM follow_ups ORDER BY "
+            "CASE status WHEN 'pending' THEN 0 WHEN 'resolved' THEN 1 ELSE 2 END, "
+            "created_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]

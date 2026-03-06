@@ -811,6 +811,9 @@ async def chat_loop(
                 elif cmd[0] == "changes":
                     _print_changes(agent)
                     continue
+                elif cmd[0] in ("followups", "followup"):
+                    await _print_followups(agent)
+                    continue
                 elif cmd[0] == "compact":
                     focus = " ".join(cmd_args) if cmd_args else ""
                     await _handle_compact(agent, focus)
@@ -2383,6 +2386,32 @@ def _print_changes(agent):
     console.print(table)
 
 
+async def _print_followups(agent: Agent):
+    """Print pending follow-up items."""
+    items = await agent.sqlite.get_pending_follow_ups(
+        project=agent.active_project["name"] if agent.active_project else None,
+        limit=20,
+    )
+    if not items:
+        console.print("[dim]No pending follow-ups.[/dim]")
+        return
+
+    table = Table(title=f"Pending Follow-ups ({len(items)})")
+    table.add_column("#", style="cyan", width=5)
+    table.add_column("Content")
+    table.add_column("Due", style="yellow", width=14)
+    table.add_column("Added", style="dim", width=12)
+
+    for item in items:
+        table.add_row(
+            str(item["id"]),
+            item["content"],
+            item.get("due_hint") or "",
+            item.get("created_at", "")[:10],
+        )
+    console.print(table)
+
+
 async def _handle_compact(agent: Agent, focus: str):
     """Compact older conversation messages to free context space."""
     with console.status("[dim]Compacting conversation...[/dim]", spinner="dots"):
@@ -2542,6 +2571,7 @@ def _print_help():
         "[bold]/expand[/bold] [dim][n][/dim]             - Show full output of last n tool batches\n"
         "[bold]/approve[/bold] [dim]all|reset[/dim]     - Manage tool approval (write/edit/run)\n"
         "[bold]/changes[/bold]               - Show files modified this session\n"
+        "[bold]/followups[/bold]             - Show pending follow-up items\n"
         "[bold]/research <query>[/bold]       - Deep research with web + code exploration\n"
         "[bold]/code <path> [msg][/bold]     - Send code to LLM for review\n"
         "[bold]/feedback <msg>[/bold]        - Save feedback as a lesson\n"

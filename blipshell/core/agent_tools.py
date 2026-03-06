@@ -19,6 +19,11 @@ from blipshell.core.tools.filesystem import (
     WriteFileTool,
 )
 from blipshell.core.tools.plan_tools import EnterPlanModeTool, ExitPlanModeTool
+from blipshell.core.tools.followup_tools import (
+    AddFollowUpTool,
+    ListFollowUpsTool,
+    ResolveFollowUpTool,
+)
 from blipshell.core.tools.memory_tools import (
     ListSessionsTool,
     PromoteToCoreMemoryTool,
@@ -95,6 +100,18 @@ class ToolsMixin:
         ), group="memory")
         self.tool_registry.register(ListSessionsTool(self.sqlite), group="memory")
         self.tool_registry.register(CreateProjectTool(self.sqlite), group="general")
+
+        # Follow-up queue tools (always available)
+        project_name = self.active_project["name"] if self.active_project else None
+        self.tool_registry.register(AddFollowUpTool(
+            self.sqlite, session_id, project_name,
+        ), group="memory")
+        self.tool_registry.register(ListFollowUpsTool(
+            self.sqlite, project_name,
+        ), group="memory")
+        self.tool_registry.register(ResolveFollowUpTool(
+            self.sqlite, session_id,
+        ), group="memory")
 
     def _register_task_tools(self):
         """Register background task and workflow tools (needs session_id)."""
