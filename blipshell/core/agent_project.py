@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass  # All types accessed via self
 
-from blipshell.core.tools.code_tools import GlobTool, GrepTool
+from blipshell.core.tools.code_tools import GlobTool, GrepTool, RepoMapTool
 from blipshell.core.tools.git_tools import (
     GitAddTool, GitCommitTool, GitDiffTool, GitStatusTool,
 )
@@ -72,6 +72,7 @@ class ProjectMixin:
 
         # Initialize repo map for code structure context
         self._repo_map = RepoMap(root)
+        self.tool_registry.register(RepoMapTool(self._repo_map), group="coding")
 
         # Tag current session with this project
         if self.session_manager and self.session_manager.session_id:
@@ -130,6 +131,7 @@ class ProjectMixin:
         self.tool_registry.unregister("git_commit")
         self.tool_registry.unregister("ask_user")
         self.tool_registry.unregister("task_complete")
+        self.tool_registry.unregister("repo_map")
 
         # Clear executor project state
         if self.task_executor:

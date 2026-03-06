@@ -1,11 +1,15 @@
-"""Code-focused tools: grep (search file contents) and glob (find files)."""
+"""Code-focused tools: grep (search file contents), glob (find files), repo_map (code structure)."""
 
 import os
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from blipshell.core.tools.base import Tool
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
+
+if TYPE_CHECKING:
+    from blipshell.core.repo_map import RepoMap
 
 # Directories to always skip when walking a file tree.
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".tox",
@@ -429,3 +433,81 @@ class GlobTool(Tool):
             except ValueError:
                 pass
         return str(file_path)
+
+
+class RepoMapTool(Tool):
+    """Query the project's code structure map — classes, functions, types across all languages."""
+    read_only = True
+
+    def __init__(self, repo_map: "RepoMap"):
+        self._repo_map = repo_map
+
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="repo_map",
+            description=(
+                "Get a structural map of the project's source code: classes, functions, "
+                "methods, types (structs, interfaces, enums) across all supported languages "
+                "(Python, JS/TS, Go, Rust, Java, C/C++).\n\n"
+                "Use this BEFORE grepping or reading files to understand the codebase layout. "
+                "Much faster than exploring with list_directory + read_file.\n\n"
+                "Examples:\n"
+                "- repo_map() → full project structure\n"
+                "- repo_map(path='src/core') → only files under src/core/\n"
+                "- repo_map(language='python') → only Python files\n"
+                "- repo_map(query='search') → only symbols containing 'search'\n"
+                "- repo_map(query='Router', language='go') → Go symbols matching 'Router'"
+            ),
+            parameters=[
+                ToolParameter(
+                    name="path",
+                    type=ToolParameterType.STRING,
+                    description="Subdirectory to limit the map to (e.g. 'src/core', 'blipshell/memory'). Default: entire project.",
+                    required=False,
+                ),
+                ToolParameter(
+                    name="language",
+                    type=ToolParameterType.STRING,
+                    description="Filter by language: python, javascript, typescript, go, rust, java, c, cpp. Default: all languages.",
+                    required=False,
+                ),
+                ToolParameter(
+                    name="query",
+                    type=ToolParameterType.STRING,
+                    description="Filter to symbols (class/function/type names) containing this substring (case-insensitive). Default: show all.",
+                    required=False,
+                ),
+                ToolParameter(
+                    name="max_lines",
+                    type=ToolParameterType.INTEGER,
+                    description="Maximum output lines (default: 200). Use higher values for large projects.",
+                    required=False,
+                ),
+            ],
+        )
+
+    async def execute(
+        self,
+        path: str = "",
+        language: str = "",
+        query: str = "",
+        max_lines: int = 200,
+        **kwargs,
+    ) -> str:
+        result = self._repo_map.build(
+            max_lines=max_lines,
+            path_filter=path,
+            language_filter=language,
+            symbol_query=query,
+        )
+        if not result:
+            parts = []
+            if path:
+                parts.append(f"path='{path}'")
+            if language:
+                parts.append(f"language='{language}'")
+            if query:
+                parts.append(f"query='{query}'")
+            filter_desc = ", ".join(parts) if parts else "no filters"
+            return f"No code definitions found ({filter_desc}). Try broader filters or check the path."
+        return result
