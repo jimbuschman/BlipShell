@@ -333,6 +333,20 @@ CREATE TABLE IF NOT EXISTS follow_ups (
 );
 
 CREATE INDEX IF NOT EXISTS idx_follow_ups_status ON follow_ups(status);
+
+CREATE TABLE IF NOT EXISTS friction_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER,
+    source TEXT NOT NULL DEFAULT 'nightly',
+    category TEXT NOT NULL,
+    description TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    is_reviewed BOOLEAN DEFAULT 0,
+    FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_friction_log_session ON friction_log(session_id);
+CREATE INDEX IF NOT EXISTS idx_friction_log_reviewed ON friction_log(is_reviewed);
 """
 
 
@@ -2417,6 +2431,67 @@ class SQLiteStore:
             "SELECT * FROM follow_ups ORDER BY "
             "CASE status WHEN 'pending' THEN 0 WHEN 'resolved' THEN 1 ELSE 2 END, "
             "created_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    # --- Friction Log ---
+
+    async def add_friction_entry(
+        self, session_id: int | None, source: str,
+        category: str, description: str,
+    ) -> int:
+        """Log a friction item. Returns the new ID."""
+        cursor = await self._db.execute(
+            "INSERT INTO friction_log (session_id, source, category, description) "
+            "VALUES (?, ?, ?, ?)",
+            (session_id, source, category, description),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_friction_entries(
+        self, unreviewed_only: bool = False, limit: int = 50,
+    ) -> list[dict]:
+        """Get friction log entries, newest first."""
+        where = "WHERE is_reviewed = 0" if unreviewed_only else ""
+        cursor = await self._db.execute(
+            f"SELECT * FROM friction_log {where} "
+            "ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def mark_friction_reviewed(self, friction_ids: list[int]) -> int:
+        """Mark friction entries as reviewed. Returns count updated."""
+        if not friction_ids:
+            return 0
+        placeholders = ",".join("?" * len(friction_ids))
+        cursor = await self._db.execute(
+            f"UPDATE friction_log SET is_reviewed = 1 WHERE id IN ({placeholders})",
+            friction_ids,
+        )
+        await self._db.commit()
+        return cursor.rowcount
+
+    async def get_sessions_missing_friction_analysis(
+        self, limit: int = 20,
+    ) -> list[dict]:
+        """Get sessions that have reflections but no friction analysis yet."""
+        cursor = await self._db.execute(
+            """SELECT s.id, s.summary, s.project, s.message_count
+               FROM sessions s
+               JOIN session_reflections sr ON sr.session_id = s.id
+               WHERE s.summary IS NOT NULL
+               AND s.message_count >= 5
+               AND sr.reflection_text != 'SKIP'
+               AND s.id NOT IN (
+                   SELECT DISTINCT session_id FROM friction_log
+                   WHERE session_id IS NOT NULL AND source = 'nightly'
+               )
+               ORDER BY s.id DESC LIMIT ?""",
             (limit,),
         )
         rows = await cursor.fetchall()

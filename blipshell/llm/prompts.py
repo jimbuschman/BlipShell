@@ -842,3 +842,99 @@ def merge_chunk_reflections(
     )
 
     return system, user
+
+
+def analyze_session_friction(
+    session_summary: str,
+    conversation_text: str,
+    project: str | None = None,
+) -> tuple[str, str]:
+    """Prompt for detecting system/tool friction in a completed session.
+
+    Separate from reflection (which focuses on task outcomes). This focuses
+    on SYSTEM issues: tool failures, missing capabilities, workflow friction.
+
+    Returns (system_prompt, user_prompt).
+    """
+    project_ctx = f" (project: {project})" if project else ""
+
+    system = (
+        "You are a system friction analyst. Your job is to review a conversation "
+        "between a user and an AI assistant and identify SYSTEM-LEVEL friction — "
+        "problems with the tools, missing capabilities, or workflow issues that "
+        "slowed things down or caused frustration.\n\n"
+        "You are NOT evaluating task outcomes or interaction quality. You are looking for:\n\n"
+        "- Tool failures: commands that errored, files that couldn't be read, searches that "
+        "returned nothing useful, tools used incorrectly\n"
+        "- Repeated retries: the same action attempted multiple times before succeeding "
+        "(or never succeeding)\n"
+        "- Missing capabilities: moments where the assistant clearly needed a tool or "
+        "feature that didn't exist\n"
+        "- Workflow friction: awkward multi-step workarounds, unnecessary context switching, "
+        "information the assistant should have had but didn't\n"
+        "- Context issues: the assistant forgot something from earlier, lost track of state, "
+        "or had to re-read files it already read\n\n"
+        "Output format:\n"
+        "One friction item per line. Each line should be specific and actionable:\n"
+        "- TOOL_FAILURE: <what failed and why>\n"
+        "- REPEATED_RETRY: <what was retried and how many times>\n"
+        "- MISSING_CAPABILITY: <what was needed but didn't exist>\n"
+        "- WORKFLOW_FRICTION: <what was awkward or slow>\n"
+        "- CONTEXT_ISSUE: <what was forgotten or lost>\n\n"
+        "Rules:\n"
+        "- Be SPECIFIC. Include tool names, file paths, error messages when available.\n"
+        "- Only report real friction, not minor inconveniences.\n"
+        "- Do NOT report task-related difficulties (hard problems are not friction).\n"
+        "- Do NOT report interaction style issues.\n"
+        "- If there was NO system friction, respond with exactly: NONE\n"
+        "- Maximum 5 items. Focus on the most impactful ones."
+    )
+
+    user = (
+        f"Analyze this session for system-level friction.{project_ctx}\n\n"
+        f"Session summary:\n{session_summary}\n\n"
+        f"Conversation:\n{conversation_text}"
+    )
+
+    return system, user
+
+
+def idle_friction_probe(conversation_text: str) -> tuple[str, str]:
+    """Prompt for mid-session friction self-assessment during idle time.
+
+    Fired when user has been idle for several minutes. The LLM reviews the
+    conversation so far and flags any friction it's experiencing.
+
+    Returns (system_prompt, user_prompt).
+    """
+    system = (
+        "You are reviewing an in-progress conversation between yourself (an AI assistant) "
+        "and a user. The user has stepped away for a moment, and you've been asked to "
+        "honestly self-assess how the conversation is going FROM A SYSTEM PERSPECTIVE.\n\n"
+        "Think about:\n"
+        "- Are you having trouble with any tools? Repeated failures, missing data?\n"
+        "- Is there something you keep having to work around?\n"
+        "- Did you lose track of something the user said earlier?\n"
+        "- Is there a tool or capability you wished you had?\n"
+        "- Are you spending too many steps on something that should be simpler?\n"
+        "- Is context getting cluttered or hard to manage?\n\n"
+        "Be brutally honest. This is an internal diagnostic — the user won't see this "
+        "directly. Generic praise like 'everything is going well' is USELESS and will be "
+        "discarded. Only flag real, specific issues.\n\n"
+        "Output format:\n"
+        "One issue per line, categorized:\n"
+        "- TOOL_ISSUE: <specific problem>\n"
+        "- MISSING_FEATURE: <what you wish existed>\n"
+        "- CONTEXT_PROBLEM: <what you lost track of or can't access>\n"
+        "- WORKFLOW_ISSUE: <something unnecessarily slow or awkward>\n\n"
+        "If there are genuinely no issues, respond with exactly: NONE\n"
+        "Maximum 3 items. Only the most impactful."
+    )
+
+    user = (
+        "Review this in-progress conversation and flag any system-level friction "
+        "you're experiencing:\n\n"
+        f"{conversation_text}"
+    )
+
+    return system, user

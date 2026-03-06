@@ -30,6 +30,7 @@ JOB_ORDER = [
     "backfill_summaries",
     "backfill_lessons",
     "session_reflections",
+    "friction_analysis",
     "entity_extraction",
     "centroid_tag",
     "batch_tag",
@@ -176,6 +177,7 @@ class NightlyRunner:
             "backfill_summaries": self._job_backfill_summaries,
             "backfill_lessons": self._job_backfill_lessons,
             "session_reflections": self._job_session_reflections,
+            "friction_analysis": self._job_friction_analysis,
             "entity_extraction": self._job_entity_extraction,
             "centroid_tag": self._job_centroid_tag,
             "batch_tag": self._job_batch_tag,
@@ -416,6 +418,63 @@ class NightlyRunner:
             "skipped": skipped,
             "failed": failed,
             "cloud_routed": cloud_routed,
+            "total": len(sessions),
+        }
+
+    async def _job_friction_analysis(self, on_status) -> dict:
+        """Analyze recent sessions for system-level friction."""
+        sessions = await self.sqlite.get_sessions_missing_friction_analysis(limit=20)
+        if not sessions:
+            return {"processed": 0, "friction_items": 0, "total": 0}
+
+        processed = 0
+        total_items = 0
+        failed = 0
+        for session in sessions:
+            sid = session["id"]
+            summary = session["summary"]
+            project = session.get("project")
+            try:
+                chunks, _ = await self.processor.prepare_conversation_for_reflection(
+                    sid, summary,
+                )
+                if not chunks:
+                    continue
+                # Use first chunk only for friction (don't need full multi-chunk)
+                conversation_text = chunks[0]
+                if len(chunks) > 1:
+                    conversation_text += f"\n\n[... {len(chunks) - 1} more parts omitted]"
+
+                items = await self.processor.analyze_session_friction(
+                    session_id=sid,
+                    session_summary=summary,
+                    conversation_text=conversation_text,
+                    project=project,
+                )
+                for item in items:
+                    await self.sqlite.add_friction_entry(
+                        session_id=sid,
+                        source=item["source"],
+                        category=item["category"],
+                        description=item["description"],
+                    )
+                total_items += len(items)
+                processed += 1
+
+                # Even if NONE, mark session as analyzed by inserting a sentinel
+                if not items:
+                    await self.sqlite.add_friction_entry(
+                        session_id=sid, source="nightly",
+                        category="NONE", description="No friction detected",
+                    )
+            except Exception as e:
+                logger.error("Friction analysis failed for session %d: %s", sid, e)
+                failed += 1
+
+        return {
+            "processed": processed,
+            "friction_items": total_items,
+            "failed": failed,
             "total": len(sessions),
         }
 

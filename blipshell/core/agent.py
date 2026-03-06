@@ -110,6 +110,8 @@ class Agent(
 
         self._health_check_task: Optional[asyncio.Task] = None
         self._nightly_scheduler_task: Optional[asyncio.Task] = None
+        self._friction_probe_task: Optional[asyncio.Task] = None
+        self._friction_probe_fired: bool = False  # only once per session
         self._background_tasks: set[asyncio.Task] = set()
         self._memory_worker = None  # MemoryWorker — dedicated thread for background processing
         self._last_user_activity: float = time.time()
@@ -275,6 +277,12 @@ class Agent(
             self._nightly_scheduler_loop()
         )
 
+        # Start idle friction probe (fires once per session)
+        self._friction_probe_fired = False
+        self._friction_probe_task = asyncio.create_task(
+            self._friction_probe_loop()
+        )
+
         # Queue background tasks instead of blocking startup
         await self._enqueue_startup_background_tasks()
 
@@ -425,6 +433,69 @@ class Agent(
             except Exception as e:
                 logger.warning("Nightly scheduler error: %s", e)
 
+    async def _friction_probe_loop(self):
+        """Background task: fire one idle friction probe per session.
+
+        Checks every 60 seconds. Fires once if:
+        - User has been idle for 5+ minutes
+        - Session has 10+ messages (enough context to analyze)
+        - Hasn't already fired this session
+        """
+        idle_threshold = 5 * 60  # 5 minutes
+        min_messages = 10
+
+        # Wait 3 minutes after startup before first check
+        await asyncio.sleep(180)
+
+        while True:
+            try:
+                await asyncio.sleep(60)
+
+                if self._friction_probe_fired:
+                    continue
+
+                # Check idle
+                idle_seconds = time.time() - self._last_user_activity
+                if idle_seconds < idle_threshold:
+                    continue
+
+                # Check message count
+                if not self.session_manager or self.session_manager.message_count < min_messages:
+                    continue
+
+                self._friction_probe_fired = True
+                logger.info("Idle friction probe: firing (idle %.0fs, %d messages)",
+                            idle_seconds, self.session_manager.message_count)
+
+                # Build conversation text from recent messages
+                messages = self.session_manager.get_messages()[-20:]
+                conversation_text = "\n".join(
+                    f"{m.role.value}: {m.content}" for m in messages
+                )
+
+                items = await self.processor.analyze_idle_friction(
+                    session_id=self.session_manager.session_id,
+                    conversation_text=conversation_text,
+                )
+
+                if items:
+                    for item in items:
+                        await self.sqlite.add_friction_entry(
+                            session_id=self.session_manager.session_id,
+                            source=item["source"],
+                            category=item["category"],
+                            description=item["description"],
+                        )
+                    logger.info("Idle friction probe: logged %d items", len(items))
+                else:
+                    logger.info("Idle friction probe: no friction detected")
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning("Friction probe error: %s", e)
+                self._friction_probe_fired = True  # don't retry on error
+
     def _record_token_usage_from_chunk(self, chunk):
         """Extract and accumulate token usage from an Ollama response/chunk.
 
@@ -495,6 +566,9 @@ class Agent(
         if self._health_check_task:
             self._health_check_task.cancel()
             self._health_check_task = None
+        if self._friction_probe_task:
+            self._friction_probe_task.cancel()
+            self._friction_probe_task = None
 
         # Enqueue any remaining undumped messages to worker before shutdown
         self._enqueue_undumped_messages()
@@ -547,6 +621,9 @@ class Agent(
         if self._health_check_task:
             self._health_check_task.cancel()
             self._health_check_task = None
+        if self._friction_probe_task:
+            self._friction_probe_task.cancel()
+            self._friction_probe_task = None
         if self.job_queue:
             try:
                 await self.job_queue.stop()

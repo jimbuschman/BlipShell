@@ -736,6 +736,90 @@ class MemoryProcessor:
             parts.append(f"Process insights: {parsed['process_insights']}")
         return "\n".join(parts) if parts else "Session reflection"
 
+    async def analyze_session_friction(
+        self,
+        session_id: int,
+        session_summary: str,
+        conversation_text: str,
+        project: str | None = None,
+    ) -> list[dict]:
+        """Analyze a session for system-level friction.
+
+        Returns list of parsed friction items, or empty list if NONE.
+        """
+        from blipshell.llm.prompts import analyze_session_friction
+
+        system, user_prompt = analyze_session_friction(
+            session_summary, conversation_text, project,
+        )
+        try:
+            raw = await self.router.generate(
+                TaskType.REASONING, user_prompt, system=system,
+            )
+        except Exception as e:
+            logger.error("Friction analysis LLM call failed: %s", e)
+            return []
+
+        return self._parse_friction_response(raw, session_id, source="nightly")
+
+    async def analyze_idle_friction(
+        self,
+        session_id: int,
+        conversation_text: str,
+    ) -> list[dict]:
+        """Mid-session friction probe during idle time.
+
+        Returns list of parsed friction items, or empty list if NONE.
+        """
+        from blipshell.llm.prompts import idle_friction_probe
+
+        system, user_prompt = idle_friction_probe(conversation_text)
+        try:
+            raw = await self.router.generate(
+                TaskType.REASONING, user_prompt, system=system,
+            )
+        except Exception as e:
+            logger.error("Idle friction probe LLM call failed: %s", e)
+            return []
+
+        return self._parse_friction_response(raw, session_id, source="idle_probe")
+
+    @staticmethod
+    def _parse_friction_response(
+        raw: str, session_id: int | None, source: str,
+    ) -> list[dict]:
+        """Parse friction analysis output into structured items."""
+        raw = raw.strip()
+        if not raw or raw.upper() == "NONE":
+            return []
+
+        valid_categories = {
+            "TOOL_FAILURE", "REPEATED_RETRY", "MISSING_CAPABILITY",
+            "WORKFLOW_FRICTION", "CONTEXT_ISSUE",
+            # idle probe categories
+            "TOOL_ISSUE", "MISSING_FEATURE", "CONTEXT_PROBLEM", "WORKFLOW_ISSUE",
+        }
+
+        items = []
+        for line in raw.split("\n"):
+            line = line.strip().lstrip("- ")
+            if not line or line.upper() == "NONE":
+                continue
+            # Parse "CATEGORY: description"
+            if ":" in line:
+                cat, _, desc = line.partition(":")
+                cat = cat.strip().upper()
+                desc = desc.strip()
+                if cat in valid_categories and desc:
+                    items.append({
+                        "session_id": session_id,
+                        "source": source,
+                        "category": cat,
+                        "description": desc,
+                    })
+
+        return items
+
     @staticmethod
     def _parse_rank(text: str) -> int:
         """Parse a rank (1-5) from LLM response."""

@@ -814,6 +814,10 @@ async def chat_loop(
                 elif cmd[0] in ("followups", "followup"):
                     await _print_followups(agent)
                     continue
+                elif cmd[0] == "friction":
+                    reviewed = len(cmd_args) > 0 and cmd_args[0] == "all"
+                    await _print_friction(agent, show_all=reviewed)
+                    continue
                 elif cmd[0] == "compact":
                     focus = " ".join(cmd_args) if cmd_args else ""
                     await _handle_compact(agent, focus)
@@ -2412,6 +2416,58 @@ async def _print_followups(agent: Agent):
     console.print(table)
 
 
+async def _print_friction(agent: Agent, show_all: bool = False):
+    """Print friction log entries."""
+    items = await agent.sqlite.get_friction_entries(
+        unreviewed_only=not show_all, limit=30,
+    )
+    # Filter out NONE sentinel entries
+    items = [i for i in items if i["category"] != "NONE"]
+    if not items:
+        console.print("[dim]No friction entries found.[/dim]")
+        return
+
+    # Category styling
+    cat_styles = {
+        "TOOL_FAILURE": "red", "TOOL_ISSUE": "red",
+        "REPEATED_RETRY": "yellow", "WORKFLOW_FRICTION": "yellow",
+        "WORKFLOW_ISSUE": "yellow",
+        "MISSING_CAPABILITY": "cyan", "MISSING_FEATURE": "cyan",
+        "CONTEXT_ISSUE": "magenta", "CONTEXT_PROBLEM": "magenta",
+    }
+
+    title = f"Friction Log ({len(items)} {'total' if show_all else 'unreviewed'})"
+    table = Table(title=title)
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Src", style="dim", width=7)
+    table.add_column("Category", width=20)
+    table.add_column("Description")
+    table.add_column("Session", style="dim", width=7)
+    table.add_column("Date", style="dim", width=10)
+
+    for item in items:
+        cat = item["category"]
+        style = cat_styles.get(cat, "white")
+        table.add_row(
+            str(item["id"]),
+            item["source"][:7],
+            f"[{style}]{cat}[/{style}]",
+            item["description"],
+            str(item["session_id"] or ""),
+            item.get("created_at", "")[:10],
+        )
+    console.print(table)
+
+    # Offer to mark as reviewed
+    unreviewed_ids = [i["id"] for i in items if not i.get("is_reviewed")]
+    if unreviewed_ids and not show_all:
+        console.print(
+            f"[dim]{len(unreviewed_ids)} unreviewed entries. "
+            "They'll auto-clear after next /friction view.[/dim]"
+        )
+        await agent.sqlite.mark_friction_reviewed(unreviewed_ids)
+
+
 async def _handle_compact(agent: Agent, focus: str):
     """Compact older conversation messages to free context space."""
     with console.status("[dim]Compacting conversation...[/dim]", spinner="dots"):
@@ -2572,6 +2628,7 @@ def _print_help():
         "[bold]/approve[/bold] [dim]all|reset[/dim]     - Manage tool approval (write/edit/run)\n"
         "[bold]/changes[/bold]               - Show files modified this session\n"
         "[bold]/followups[/bold]             - Show pending follow-up items\n"
+        "[bold]/friction[/bold] [dim][all][/dim]        - Show system friction log (unreviewed, or all)\n"
         "[bold]/research <query>[/bold]       - Deep research with web + code exploration\n"
         "[bold]/code <path> [msg][/bold]     - Send code to LLM for review\n"
         "[bold]/feedback <msg>[/bold]        - Save feedback as a lesson\n"
