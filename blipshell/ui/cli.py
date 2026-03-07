@@ -2808,6 +2808,16 @@ def web(ctx):
     )
 
 
+@main.command("telegram")
+@click.pass_context
+def telegram_cmd(ctx):
+    """Run the Telegram bot — chat with BlipShell from your phone."""
+    from blipshell.ui.telegram import run_telegram_bot
+
+    console.print("[cyan]Starting Telegram bot... (Ctrl+C to stop)[/cyan]")
+    asyncio.run(run_telegram_bot(config_path=ctx.obj.get("config_path")))
+
+
 # --- Headless Test ---
 
 @main.command("test")

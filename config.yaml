@@ -183,6 +183,11 @@ database:
   path: "data/blipshell.db"
   chroma_path: "data/chroma"
 
+telegram:
+  bot_token: "${BLIPSHELL_TELEGRAM_TOKEN}"  # from @BotFather
+  allowed_user_ids: []                       # your Telegram user ID (send /start, check logs)
+  enabled: false
+
 web_ui:
   host: "0.0.0.0"
   port: 8000

@@ -228,6 +228,13 @@ class AuthConfig(BaseModel):
     api_key: str = ""
 
 
+class TelegramConfig(BaseModel):
+    """Telegram bot configuration."""
+    bot_token: str = ""  # from @BotFather, supports ${ENV_VAR}
+    allowed_user_ids: list[int] = Field(default_factory=list)  # empty = allow all (DANGEROUS)
+    enabled: bool = False
+
+
 class WebUIConfig(BaseModel):
     """Web UI configuration."""
     host: str = "0.0.0.0"
@@ -315,6 +322,7 @@ class BlipShellConfig(BaseModel):
     llm: LLMConfig = LLMConfig()
     auth: AuthConfig = AuthConfig()
     database: DatabaseConfig = DatabaseConfig()
+    telegram: TelegramConfig = TelegramConfig()
     web_ui: WebUIConfig = WebUIConfig()
     pii: PIIConfig = PIIConfig()
     planner: PlannerConfig = PlannerConfig()
