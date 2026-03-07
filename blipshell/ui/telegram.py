@@ -56,7 +56,7 @@ async def _handle_message(update, context) -> None:
     if not user_text:
         return
 
-    logger.info("Telegram message from %s: %s", user_id, user_text[:80])
+    logger.warning("Telegram message from user %s: %s", user_id, user_text[:80])
 
     # Show typing indicator
     await update.message.chat.send_action(ChatAction.TYPING)
@@ -81,9 +81,13 @@ async def _handle_message(update, context) -> None:
 
 async def _handle_start(update, context) -> None:
     """Handle /start command."""
+    user_id = update.effective_user.id
     await update.message.reply_text(
-        "BlipShell connected. Send me a message and I'll respond "
-        "using the same memory and LLM as the desktop app."
+        f"BlipShell connected. Your user ID is {user_id}.\n\n"
+        "Add it to config.yaml under telegram.allowed_user_ids to lock "
+        "the bot to just you.\n\n"
+        "Send me a message and I'll respond using the same memory "
+        "and LLM as the desktop app."
     )
 
 
