@@ -221,18 +221,35 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     @app.get("/api/memories/search", dependencies=[Depends(verify_auth)])
     async def search_memories(query: str, limit: int = 10):
+        # Try semantic search first, fall back to FTS keyword search
         results = await _agent.search.search(query=query, n_results=limit)
-        return [
-            {
-                "memory_id": r.memory_id,
-                "summary": r.summary,
-                "similarity": r.similarity,
-                "boosted_score": r.boosted_score,
-                "rank": r.rank,
-                "importance": r.importance,
-            }
-            for r in results
-        ]
+        if results:
+            return [
+                {
+                    "memory_id": r.memory_id,
+                    "summary": r.summary,
+                    "similarity": r.similarity,
+                    "boosted_score": r.boosted_score,
+                    "rank": r.rank,
+                    "importance": r.importance,
+                }
+                for r in results
+            ]
+        # Semantic search returned nothing (noise filter, etc.) — try FTS
+        fts_results = await _agent.sqlite.search_fts(query, limit=limit)
+        out = []
+        for r in fts_results:
+            mem = await _agent.sqlite.get_memory(r["id"])
+            if mem:
+                out.append({
+                    "memory_id": mem.id,
+                    "summary": mem.summary or mem.raw_text[:200],
+                    "similarity": 0.0,
+                    "boosted_score": abs(r.get("fts_rank", 0.0)),
+                    "rank": mem.rank or 0,
+                    "importance": mem.importance or 0.0,
+                })
+        return out
 
     @app.get("/api/memories/stats", dependencies=[Depends(verify_auth)])
     async def memory_stats():
@@ -863,8 +880,9 @@ def _default_html() -> str:
                 if (!results.length) { el.innerHTML = '<div class="empty">No results</div>'; return; }
                 let html = '<div class="mem-section-title">Results (' + results.length + ')</div>';
                 results.forEach(r => {
+                    const score = (r.boosted_score || 0).toFixed(3);
                     html += '<div class="mem-card">' + esc(r.summary).substring(0, 250) +
-                        '<div class="meta">Score: ' + r.boosted_score.toFixed(3) + ' | Rank: ' + r.rank + '</div></div>';
+                        '<div class="meta">Score: ' + score + ' | Rank: ' + (r.rank || 0) + '</div></div>';
                 });
                 el.innerHTML = html;
             } catch(e) { el.innerHTML = '<div class="empty">Search failed</div>'; }
