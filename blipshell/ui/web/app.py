@@ -142,15 +142,30 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
                     await ws.send_json({"type": "thinking"})
 
-                    tokens = []
+                    # Stream tokens to client as they arrive
+                    token_queue: asyncio.Queue[str] = asyncio.Queue()
+                    chat_done = asyncio.Event()
 
-                    def collect_token(token: str):
-                        tokens.append(token)
+                    def on_token(token: str):
+                        token_queue.put_nowait(token)
 
-                    response = await _agent.chat(user_msg, on_token=collect_token)
+                    async def run_chat():
+                        try:
+                            return await _agent.chat(user_msg, on_token=on_token)
+                        finally:
+                            chat_done.set()
 
-                    for token in tokens:
-                        await ws.send_json({"type": "token", "content": token})
+                    chat_task = asyncio.create_task(run_chat())
+
+                    # Forward tokens as they arrive
+                    while not chat_done.is_set() or not token_queue.empty():
+                        try:
+                            token = await asyncio.wait_for(token_queue.get(), timeout=0.1)
+                            await ws.send_json({"type": "token", "content": token})
+                        except asyncio.TimeoutError:
+                            continue
+
+                    response = await chat_task
 
                     await ws.send_json({
                         "type": "response_complete",
@@ -544,205 +559,170 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
 
 def _default_html() -> str:
-    """Default HTML with chat, memory browser, and export."""
+    """Mobile-first chat UI with memory search."""
     return """<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>BlipShell</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; overflow: hidden; }
         body {
-            font-family: 'Segoe UI', system-ui, sans-serif;
+            font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
             background: #1a1a2e; color: #e0e0e0;
-            display: flex; height: 100vh;
+            display: flex; flex-direction: column; height: 100dvh;
         }
-        .sidebar {
-            width: 260px; background: #16213e; padding: 16px;
-            border-right: 1px solid #0f3460; overflow-y: auto;
-            display: flex; flex-direction: column;
-        }
-        .sidebar h2 { color: #00d9ff; margin-bottom: 12px; font-size: 18px; }
-        .nav-tabs {
-            display: flex; gap: 4px; margin-bottom: 12px;
-        }
-        .nav-tab {
-            flex: 1; padding: 8px 4px; background: #1a1a2e; border: 1px solid #0f3460;
-            border-radius: 6px; cursor: pointer; font-size: 11px; text-align: center;
-            color: #888;
-        }
-        .nav-tab.active { background: #0f3460; color: #00d9ff; border-color: #00d9ff; }
-        .session-item {
-            padding: 10px; margin-bottom: 8px; background: #1a1a2e;
-            border-radius: 6px; cursor: pointer; font-size: 13px;
-        }
-        .session-item:hover { background: #0f3460; }
-        .main { flex: 1; display: flex; flex-direction: column; }
+        /* Header */
         .header {
-            padding: 12px 20px; background: #16213e;
+            padding: 10px 16px; background: #16213e;
             border-bottom: 1px solid #0f3460;
-            display: flex; align-items: center; gap: 12px;
+            display: flex; align-items: center; gap: 10px;
+            flex-shrink: 0;
         }
-        .header h1 { color: #00d9ff; font-size: 20px; }
-        .header-actions { margin-left: auto; display: flex; gap: 8px; }
+        .header h1 { color: #00d9ff; font-size: 18px; }
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #ff9800;
+        }
+        .status-text { font-size: 11px; color: #888; }
+        .header-spacer { flex: 1; }
         .header-btn {
-            padding: 6px 12px; background: #0f3460; color: #00d9ff; border: 1px solid #0f3460;
+            padding: 6px 10px; background: #0f3460; color: #aaa; border: none;
             border-radius: 6px; cursor: pointer; font-size: 12px;
         }
-        .header-btn:hover { background: #1a3a6e; }
-        .status-dot {
-            width: 10px; height: 10px; border-radius: 50%;
-            background: #4caf50; display: inline-block;
+        .header-btn:hover { color: #00d9ff; }
+        .header-btn.active { color: #00d9ff; background: #1a3a6e; }
+
+        /* Views */
+        .view { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+        .view.active { display: flex; }
+
+        /* Chat */
+        .chat-area {
+            flex: 1; overflow-y: auto; padding: 12px 16px;
+            -webkit-overflow-scrolling: touch;
         }
-        .tab-content { display: none; flex: 1; overflow-y: auto; }
-        .tab-content.active { display: flex; flex-direction: column; }
-        .chat-area { flex: 1; overflow-y: auto; padding: 20px; }
         .message {
-            max-width: 80%; margin-bottom: 16px; padding: 12px 16px;
-            border-radius: 12px; line-height: 1.5; white-space: pre-wrap;
+            max-width: 85%; margin-bottom: 12px; padding: 10px 14px;
+            border-radius: 16px; line-height: 1.5; white-space: pre-wrap;
+            word-wrap: break-word; font-size: 15px;
         }
-        .message.user { background: #0f3460; margin-left: auto; }
-        .message.assistant { background: #1e2a4a; }
+        .message.user {
+            background: #0f3460; margin-left: auto;
+            border-bottom-right-radius: 4px;
+        }
+        .message.assistant {
+            background: #1e2a4a;
+            border-bottom-left-radius: 4px;
+        }
         .message.system {
-            background: #2a1a3e; font-size: 12px; color: #b0b0b0;
+            background: transparent; font-size: 12px; color: #666;
             text-align: center; max-width: 100%;
         }
-        .thinking-indicator { display: inline-flex; gap: 4px; padding: 4px 0; }
-        .thinking-indicator span {
-            width: 8px; height: 8px; border-radius: 50%;
+        .thinking { display: inline-flex; gap: 4px; padding: 4px 0; }
+        .thinking span {
+            width: 7px; height: 7px; border-radius: 50%;
             background: #00d9ff; opacity: 0.3;
             animation: pulse 1.4s infinite ease-in-out;
         }
-        .thinking-indicator span:nth-child(2) { animation-delay: 0.2s; }
-        .thinking-indicator span:nth-child(3) { animation-delay: 0.4s; }
+        .thinking span:nth-child(2) { animation-delay: 0.2s; }
+        .thinking span:nth-child(3) { animation-delay: 0.4s; }
         @keyframes pulse {
-            0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
-            40% { opacity: 1; transform: scale(1); }
+            0%, 80%, 100% { opacity: 0.3; }
+            40% { opacity: 1; }
         }
+
+        /* Input */
         .input-area {
-            padding: 16px 20px; background: #16213e;
+            padding: 8px 12px; background: #16213e;
             border-top: 1px solid #0f3460;
-            display: flex; gap: 12px;
+            display: flex; gap: 8px; align-items: flex-end;
+            flex-shrink: 0;
+            padding-bottom: max(8px, env(safe-area-inset-bottom));
         }
         #userInput {
-            flex: 1; padding: 12px 16px; border: 1px solid #0f3460;
-            border-radius: 8px; background: #1a1a2e; color: #e0e0e0;
-            font-size: 14px; outline: none; resize: none;
+            flex: 1; padding: 10px 14px; border: 1px solid #0f3460;
+            border-radius: 20px; background: #1a1a2e; color: #e0e0e0;
+            font-size: 16px; outline: none; resize: none;
+            max-height: 120px; line-height: 1.4;
         }
         #userInput:focus { border-color: #00d9ff; }
         #sendBtn {
-            padding: 12px 24px; background: #00d9ff; color: #1a1a2e;
-            border: none; border-radius: 8px; cursor: pointer;
-            font-weight: bold; font-size: 14px;
+            width: 42px; height: 42px; background: #00d9ff; color: #1a1a2e;
+            border: none; border-radius: 50%; cursor: pointer;
+            font-size: 18px; display: flex; align-items: center;
+            justify-content: center; flex-shrink: 0;
         }
-        #sendBtn:hover { background: #00b8d4; }
-        #sendBtn:disabled { opacity: 0.5; cursor: not-allowed; }
-        /* Memory Browser */
-        .mem-browser { padding: 20px; overflow-y: auto; flex: 1; }
-        .mem-search {
-            display: flex; gap: 8px; margin-bottom: 16px;
+        #sendBtn:disabled { opacity: 0.4; }
+
+        /* Memory search view */
+        .mem-view { padding: 12px 16px; overflow-y: auto; flex: 1; }
+        .mem-search-bar {
+            display: flex; gap: 8px; margin-bottom: 12px;
         }
-        .mem-search input {
-            flex: 1; padding: 10px 14px; background: #1a1a2e; border: 1px solid #0f3460;
-            border-radius: 8px; color: #e0e0e0; font-size: 14px; outline: none;
+        .mem-search-bar input {
+            flex: 1; padding: 10px 14px; background: #1a1a2e;
+            border: 1px solid #0f3460; border-radius: 20px;
+            color: #e0e0e0; font-size: 15px; outline: none;
         }
-        .mem-search input:focus { border-color: #00d9ff; }
-        .mem-search button {
+        .mem-search-bar input:focus { border-color: #00d9ff; }
+        .mem-search-bar button {
             padding: 10px 16px; background: #00d9ff; color: #1a1a2e;
-            border: none; border-radius: 8px; cursor: pointer; font-weight: bold;
+            border: none; border-radius: 20px; cursor: pointer;
+            font-weight: 600; font-size: 14px;
         }
-        .mem-section { margin-bottom: 24px; }
-        .mem-section h3 { color: #00d9ff; margin-bottom: 8px; font-size: 15px; }
         .mem-card {
-            background: #1e2a4a; border-radius: 8px; padding: 12px;
-            margin-bottom: 8px; font-size: 13px; position: relative;
+            background: #1e2a4a; border-radius: 10px; padding: 12px;
+            margin-bottom: 8px; font-size: 14px; line-height: 1.4;
         }
-        .mem-card .meta { color: #888; font-size: 11px; margin-top: 6px; }
-        .mem-card .actions {
-            position: absolute; top: 8px; right: 8px; display: flex; gap: 4px;
+        .mem-card .meta {
+            color: #888; font-size: 11px; margin-top: 6px;
         }
-        .mem-card .actions button {
-            padding: 3px 8px; font-size: 11px; border: 1px solid #0f3460;
-            background: #16213e; color: #888; border-radius: 4px; cursor: pointer;
+        .mem-section-title {
+            color: #00d9ff; font-size: 13px; font-weight: 600;
+            margin: 16px 0 8px; text-transform: uppercase; letter-spacing: 0.5px;
         }
-        .mem-card .actions button:hover { color: #00d9ff; border-color: #00d9ff; }
-        .mem-card .actions button.delete:hover { color: #f44336; border-color: #f44336; }
-        .mem-stats {
-            display: flex; gap: 16px; margin-bottom: 16px; font-size: 13px; color: #888;
-        }
-        .mem-stats span { color: #00d9ff; font-weight: bold; }
-        .pagination { display: flex; gap: 8px; justify-content: center; margin-top: 16px; }
-        .pagination button {
-            padding: 6px 14px; background: #0f3460; color: #e0e0e0;
-            border: none; border-radius: 6px; cursor: pointer;
-        }
-        .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
-        .pagination button.active { background: #00d9ff; color: #1a1a2e; }
+        .empty { color: #555; font-size: 13px; font-style: italic; }
     </style>
 </head>
 <body>
-    <div class="sidebar">
-        <h2>BlipShell</h2>
-        <div class="nav-tabs">
-            <div class="nav-tab active" onclick="switchView('chat')">Chat</div>
-            <div class="nav-tab" onclick="switchView('memories')">Memories</div>
-        </div>
-        <div id="sidebarContent">
-            <div id="sessionList"></div>
+    <div class="header">
+        <h1>BlipShell</h1>
+        <span class="status-dot" id="statusDot"></span>
+        <span class="status-text" id="statusText">Connecting...</span>
+        <div class="header-spacer"></div>
+        <button class="header-btn active" onclick="showView('chat')" id="btnChat">Chat</button>
+        <button class="header-btn" onclick="showView('mem')" id="btnMem">Memory</button>
+    </div>
+
+    <!-- Chat View -->
+    <div id="chatView" class="view active">
+        <div class="chat-area" id="chatArea"></div>
+        <div class="input-area">
+            <textarea id="userInput" rows="1" placeholder="Message BlipShell..."
+                oninput="autoGrow(this)"
+                onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
+            <button id="sendBtn" onclick="sendMessage()">&#9654;</button>
         </div>
     </div>
-    <div class="main">
-        <div class="header">
-            <h1 id="viewTitle">Chat</h1>
-            <span class="status-dot" id="statusDot"></span>
-            <span id="statusText" style="font-size:12px;color:#888;">Connecting...</span>
-            <div class="header-actions">
-                <button class="header-btn" onclick="exportAll()">Export</button>
+
+    <!-- Memory View -->
+    <div id="memView" class="view">
+        <div class="mem-view">
+            <div class="mem-search-bar">
+                <input type="text" id="memQuery" placeholder="Search memories..."
+                    onkeydown="if(event.key==='Enter')searchMem()">
+                <button onclick="searchMem()">Search</button>
             </div>
-        </div>
-        <!-- Chat Tab -->
-        <div id="chatTab" class="tab-content active">
-            <div class="chat-area" id="chatArea"></div>
-            <div class="input-area">
-                <textarea id="userInput" rows="1" placeholder="Type a message..."
-                    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage()}"></textarea>
-                <button id="sendBtn" onclick="sendMessage()">Send</button>
-            </div>
-        </div>
-        <!-- Memory Browser Tab -->
-        <div id="memTab" class="tab-content">
-            <div class="mem-browser">
-                <div class="mem-stats" id="memStats"></div>
-                <div class="mem-search">
-                    <input type="text" id="memSearchInput" placeholder="Search memories..."
-                        onkeydown="if(event.key==='Enter')searchMem()">
-                    <button onclick="searchMem()">Search</button>
-                </div>
-                <div class="mem-section">
-                    <h3>Core Memories</h3>
-                    <div id="coreMemList"></div>
-                </div>
-                <div class="mem-section">
-                    <h3>Lessons</h3>
-                    <div id="lessonList"></div>
-                </div>
-                <div class="mem-section">
-                    <h3>Memories</h3>
-                    <div id="memList"></div>
-                    <div class="pagination" id="memPagination"></div>
-                </div>
-            </div>
+            <div id="memResults"></div>
         </div>
     </div>
 
     <script>
-        let ws = null;
-        let currentResponse = '';
-        let activeResponseEl = null;
-        let msgCounter = 0;
-        let memPage = 1;
-        const API_KEY = ''; // Set if auth enabled
+        let ws = null, currentResponse = '', activeEl = null, sending = false;
+        const API_KEY = '';
 
         function authHeaders() {
             const h = {'Content-Type': 'application/json'};
@@ -750,65 +730,58 @@ def _default_html() -> str:
             return h;
         }
 
-        function switchView(view) {
-            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-            if (view === 'chat') {
-                document.querySelectorAll('.nav-tab')[0].classList.add('active');
-                document.getElementById('chatTab').classList.add('active');
-                document.getElementById('viewTitle').textContent = 'Chat';
-            } else {
-                document.querySelectorAll('.nav-tab')[1].classList.add('active');
-                document.getElementById('memTab').classList.add('active');
-                document.getElementById('viewTitle').textContent = 'Memory Browser';
-                loadMemoryBrowser();
-            }
+        // --- Views ---
+        function showView(v) {
+            document.getElementById('chatView').classList.toggle('active', v === 'chat');
+            document.getElementById('memView').classList.toggle('active', v === 'mem');
+            document.getElementById('btnChat').classList.toggle('active', v === 'chat');
+            document.getElementById('btnMem').classList.toggle('active', v === 'mem');
+            if (v === 'mem') loadMemOverview();
         }
 
         // --- Chat ---
         function connect() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${location.host}/ws/chat`);
+            ws = new WebSocket(protocol + '//' + location.host + '/ws/chat');
             ws.onopen = () => {
                 setStatus('connected', 'Connected');
-                const init = {project: null, resume: false};
-                if (API_KEY) init.token = API_KEY;
-                ws.send(JSON.stringify(init));
+                ws.send(JSON.stringify({project: null, resume: false, token: API_KEY || undefined}));
             };
-            ws.onmessage = (event) => handleMessage(JSON.parse(event.data));
-            ws.onclose = () => { setStatus('disconnected', 'Disconnected'); setTimeout(connect, 3000); };
+            ws.onmessage = (e) => handleMsg(JSON.parse(e.data));
+            ws.onclose = () => { setStatus('off', 'Offline'); setTimeout(connect, 3000); };
             ws.onerror = () => setStatus('error', 'Error');
         }
 
-        function handleMessage(data) {
-            switch(data.type) {
+        function handleMsg(d) {
+            switch(d.type) {
                 case 'session_started':
-                    addSystemMessage('Session #' + data.session_id + ' started');
-                    loadSessions();
+                    addSystem('Session #' + d.session_id);
                     break;
                 case 'thinking':
                     currentResponse = '';
-                    activeResponseEl = createAssistantBubble();
-                    activeResponseEl.innerHTML = '<div class="thinking-indicator"><span></span><span></span><span></span></div>';
-                    scrollToBottom();
+                    activeEl = addBubble('assistant');
+                    activeEl.innerHTML = '<div class="thinking"><span></span><span></span><span></span></div>';
+                    scroll();
                     break;
                 case 'token':
-                    currentResponse += data.content;
-                    if (activeResponseEl) activeResponseEl.textContent = currentResponse;
-                    scrollToBottom();
+                    currentResponse += d.content;
+                    if (activeEl) activeEl.textContent = currentResponse;
+                    scroll();
                     break;
                 case 'response_complete':
-                    if (activeResponseEl) activeResponseEl.textContent = data.content;
-                    activeResponseEl = null;
+                    if (activeEl) activeEl.textContent = d.content;
+                    activeEl = null;
+                    sending = false;
                     document.getElementById('sendBtn').disabled = false;
-                    scrollToBottom();
+                    scroll();
                     break;
                 case 'error':
-                    if (activeResponseEl) {
-                        activeResponseEl.textContent = 'Error: ' + data.message;
-                        activeResponseEl.style.borderLeft = '3px solid #f44336';
-                        activeResponseEl = null;
-                    } else { addSystemMessage('Error: ' + data.message); }
+                    if (activeEl) {
+                        activeEl.textContent = 'Error: ' + d.message;
+                        activeEl.style.borderLeft = '3px solid #f44336';
+                        activeEl = null;
+                    }
+                    sending = false;
                     document.getElementById('sendBtn').disabled = false;
                     break;
             }
@@ -817,155 +790,87 @@ def _default_html() -> str:
         function sendMessage() {
             const input = document.getElementById('userInput');
             const msg = input.value.trim();
-            if (!msg || !ws || ws.readyState !== 1) return;
-            addUserMessage(msg);
+            if (!msg || !ws || ws.readyState !== 1 || sending) return;
+            addBubble('user').textContent = msg;
             ws.send(JSON.stringify({type: 'message', content: msg}));
             input.value = '';
+            input.style.height = 'auto';
+            sending = true;
             document.getElementById('sendBtn').disabled = true;
+            scroll();
         }
 
-        function addUserMessage(text) {
+        function addBubble(cls) {
             const div = document.createElement('div');
-            div.className = 'message user'; div.textContent = text;
-            document.getElementById('chatArea').appendChild(div); scrollToBottom();
-        }
-        function createAssistantBubble() {
-            const div = document.createElement('div');
-            div.className = 'message assistant'; div.id = 'msg-' + (++msgCounter);
-            document.getElementById('chatArea').appendChild(div); return div;
-        }
-        function addSystemMessage(text) {
-            const div = document.createElement('div');
-            div.className = 'message system'; div.textContent = text;
+            div.className = 'message ' + cls;
             document.getElementById('chatArea').appendChild(div);
+            return div;
         }
-        function scrollToBottom() {
-            const area = document.getElementById('chatArea');
-            area.scrollTop = area.scrollHeight;
+        function addSystem(text) {
+            const div = addBubble('system');
+            div.textContent = text;
         }
-        function setStatus(state, text) {
+        function scroll() {
+            const a = document.getElementById('chatArea');
+            a.scrollTop = a.scrollHeight;
+        }
+        function setStatus(s, t) {
             document.getElementById('statusDot').style.background =
-                state === 'connected' ? '#4caf50' : state === 'error' ? '#f44336' : '#ff9800';
-            document.getElementById('statusText').textContent = text;
+                s === 'connected' ? '#4caf50' : s === 'error' ? '#f44336' : '#ff9800';
+            document.getElementById('statusText').textContent = t;
+        }
+        function autoGrow(el) {
+            el.style.height = 'auto';
+            el.style.height = Math.min(el.scrollHeight, 120) + 'px';
         }
 
-        async function loadSessions() {
+        // --- Memory ---
+        async function loadMemOverview() {
+            const el = document.getElementById('memResults');
+            el.innerHTML = '<div class="empty">Loading...</div>';
             try {
-                const resp = await fetch('/api/sessions?limit=20', {headers: authHeaders()});
-                const sessions = await resp.json();
-                const list = document.getElementById('sessionList');
-                list.innerHTML = '';
-                sessions.forEach(s => {
-                    const div = document.createElement('div');
-                    div.className = 'session-item';
-                    div.textContent = '#' + s.id + ' ' + (s.title || 'Untitled');
-                    list.appendChild(div);
+                const [coreRes, lessonRes] = await Promise.all([
+                    fetch('/api/core-memories', {headers: authHeaders()}),
+                    fetch('/api/lessons', {headers: authHeaders()}),
+                ]);
+                const core = await coreRes.json();
+                const lessons = await lessonRes.json();
+                let html = '<div class="mem-section-title">Core Memories (' + core.length + ')</div>';
+                if (!core.length) html += '<div class="empty">None</div>';
+                core.forEach(m => {
+                    html += '<div class="mem-card">' + esc(m.content) +
+                        '<div class="meta">' + m.category + '</div></div>';
                 });
-            } catch(e) {}
-        }
-
-        // --- Memory Browser ---
-        async function loadMemoryBrowser() {
-            loadMemStats(); loadCoreMem(); loadLessons(); loadMemories(1);
-        }
-
-        async function loadMemStats() {
-            try {
-                const resp = await fetch('/api/memories/stats', {headers: authHeaders()});
-                const s = await resp.json();
-                document.getElementById('memStats').innerHTML =
-                    'Active: <span>' + s.active + '</span> | ' +
-                    'Archived: <span>' + s.archived + '</span> | ' +
-                    'ChromaDB: <span>' + (s.chroma?.memories||0) + '</span>';
-            } catch(e) {}
-        }
-
-        async function loadCoreMem() {
-            try {
-                const resp = await fetch('/api/core-memories', {headers: authHeaders()});
-                const mems = await resp.json();
-                const el = document.getElementById('coreMemList');
-                el.innerHTML = mems.length ? '' : '<div style="color:#666;font-size:12px">No core memories</div>';
-                mems.forEach(m => {
-                    el.innerHTML += '<div class="mem-card">' + escHtml(m.content) +
-                        '<div class="meta">Category: ' + m.category + ' | Importance: ' + (m.importance||0).toFixed(2) + '</div>' +
-                        '<div class="actions"><button class="delete" onclick="deactivateCore(' + m.id + ')">Deactivate</button></div></div>';
+                html += '<div class="mem-section-title">Lessons (' + lessons.length + ')</div>';
+                if (!lessons.length) html += '<div class="empty">None</div>';
+                lessons.slice(0, 20).forEach(l => {
+                    html += '<div class="mem-card">' + esc(l.content).substring(0, 200) +
+                        '<div class="meta">Rank: ' + l.rank + '</div></div>';
                 });
-            } catch(e) {}
-        }
-
-        async function loadLessons() {
-            try {
-                const resp = await fetch('/api/lessons', {headers: authHeaders()});
-                const lessons = await resp.json();
-                const el = document.getElementById('lessonList');
-                el.innerHTML = lessons.length ? '' : '<div style="color:#666;font-size:12px">No lessons</div>';
-                lessons.forEach(l => {
-                    el.innerHTML += '<div class="mem-card">' + escHtml(l.content).substring(0,300) +
-                        '<div class="meta">Rank: ' + l.rank + ' | Importance: ' + (l.importance||0).toFixed(2) + '</div>' +
-                        '<div class="actions"><button class="delete" onclick="deleteLesson(' + l.id + ')">Delete</button></div></div>';
-                });
-            } catch(e) {}
-        }
-
-        async function loadMemories(page) {
-            memPage = page;
-            try {
-                const resp = await fetch('/api/memories?page=' + page + '&limit=20', {headers: authHeaders()});
-                const data = await resp.json();
-                const el = document.getElementById('memList');
-                el.innerHTML = '';
-                data.memories.forEach(m => {
-                    el.innerHTML += '<div class="mem-card">' + escHtml(m.summary || m.content).substring(0,200) +
-                        '<div class="meta">Rank: ' + m.rank + ' | Imp: ' + (m.importance||0).toFixed(2) +
-                        ' | ' + (m.timestamp||'').substring(0,10) + '</div>' +
-                        '<div class="actions">' +
-                        '<button class="delete" onclick="archiveMem(' + m.id + ')">Archive</button>' +
-                        '</div></div>';
-                });
-                // Pagination
-                const pg = document.getElementById('memPagination');
-                pg.innerHTML = '';
-                for (let i = 1; i <= data.pages && i <= 10; i++) {
-                    pg.innerHTML += '<button ' + (i===page?'class="active"':'') +
-                        ' onclick="loadMemories(' + i + ')">' + i + '</button>';
-                }
-            } catch(e) {}
+                if (lessons.length > 20) html += '<div class="empty">...and ' + (lessons.length - 20) + ' more</div>';
+                el.innerHTML = html;
+            } catch(e) { el.innerHTML = '<div class="empty">Failed to load</div>'; }
         }
 
         async function searchMem() {
-            const q = document.getElementById('memSearchInput').value.trim();
-            if (!q) { loadMemories(1); return; }
+            const q = document.getElementById('memQuery').value.trim();
+            if (!q) { loadMemOverview(); return; }
+            const el = document.getElementById('memResults');
+            el.innerHTML = '<div class="empty">Searching...</div>';
             try {
                 const resp = await fetch('/api/memories/search?query=' + encodeURIComponent(q) + '&limit=20', {headers: authHeaders()});
                 const results = await resp.json();
-                const el = document.getElementById('memList');
-                el.innerHTML = '';
+                if (!results.length) { el.innerHTML = '<div class="empty">No results</div>'; return; }
+                let html = '<div class="mem-section-title">Results (' + results.length + ')</div>';
                 results.forEach(r => {
-                    el.innerHTML += '<div class="mem-card">' + escHtml(r.summary).substring(0,200) +
+                    html += '<div class="mem-card">' + esc(r.summary).substring(0, 250) +
                         '<div class="meta">Score: ' + r.boosted_score.toFixed(3) + ' | Rank: ' + r.rank + '</div></div>';
                 });
-                document.getElementById('memPagination').innerHTML = '';
-            } catch(e) {}
+                el.innerHTML = html;
+            } catch(e) { el.innerHTML = '<div class="empty">Search failed</div>'; }
         }
 
-        async function archiveMem(id) {
-            await fetch('/api/memories/' + id, {method:'DELETE', headers: authHeaders()});
-            loadMemories(memPage); loadMemStats();
-        }
-        async function deactivateCore(id) {
-            await fetch('/api/core-memories/' + id, {method:'DELETE', headers: authHeaders()});
-            loadCoreMem();
-        }
-        async function deleteLesson(id) {
-            await fetch('/api/lessons/' + id, {method:'DELETE', headers: authHeaders()});
-            loadLessons();
-        }
-        async function exportAll() {
-            window.open('/api/export/all?format=json', '_blank');
-        }
-
-        function escHtml(s) {
+        function esc(s) {
             const d = document.createElement('div');
             d.textContent = s || '';
             return d.innerHTML;
