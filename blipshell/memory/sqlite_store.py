@@ -680,12 +680,24 @@ class SQLiteStore:
             return 0
 
         placeholders = ",".join("?" * len(ids))
-        await self._db.execute(
-            f"DELETE FROM session_messages WHERE session_id IN ({placeholders})", ids,
-        )
-        await self._db.execute(
-            f"DELETE FROM session_reflections WHERE session_id IN ({placeholders})", ids,
-        )
+        # Delete from all child tables that reference sessions(id)
+        child_tables = [
+            ("turn_events", "session_id"),
+            ("session_messages", "session_id"),
+            ("session_reflections", "session_id"),
+            ("friction_entries", "session_id"),
+            ("task_plans", "session_id"),
+            ("background_tasks", "session_id"),
+            ("tool_approvals", "session_id"),
+            ("follow_ups", "source_session"),
+        ]
+        for table, col in child_tables:
+            try:
+                await self._db.execute(
+                    f"DELETE FROM {table} WHERE {col} IN ({placeholders})", ids,
+                )
+            except Exception:
+                pass  # table may not exist in older schemas
         await self._db.execute(
             f"DELETE FROM sessions WHERE id IN ({placeholders})", ids,
         )
