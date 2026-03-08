@@ -50,6 +50,7 @@ _tool_batch_history: list = []  # Stores recent tool batches for /expand
 
 
 from blipshell.ui.diff import generate_colored_diff as _generate_colored_diff
+from blipshell.ui.markdown_stream import MarkdownStreamer
 
 
 async def _tool_approval_prompt(tool_name: str, arguments: dict, force: bool = False) -> bool:
@@ -147,31 +148,84 @@ async def _ask_user_input(question: str) -> str:
         return "User cancelled. Proceed with your best judgment."
 
 
-async def _poll_for_escape():
-    """Poll for Esc keypress. Returns when Esc is detected.
+class InputResult:
+    """Result from _poll_for_input during LLM generation."""
+    ESCAPE = "escape"
+    MESSAGE = "message"
 
-    Uses msvcrt on Windows. On other platforms, blocks forever (no-op).
-    Mouse clicks produce VT escape sequences (e.g. \\x1b[M... or \\x1b[<...)
-    that must be consumed entirely to prevent character bleed-through.
+    def __init__(self, action: str, message: str = ""):
+        self.action = action
+        self.message = message
+
+
+async def _poll_for_input() -> InputResult:
+    """Poll for Esc or typed message during LLM response.
+
+    Uses msvcrt on Windows. Captures:
+    - Esc: cancel current generation
+    - Printable chars + Enter: queue as next message (interrupts generation)
+    - Backspace: delete last typed char
+
+    Typed characters appear dimmed at the cursor position. When Enter is
+    pressed, the generation is cancelled and the typed text becomes the
+    next user message.
     """
     try:
         import msvcrt
     except ImportError:
         await asyncio.Event().wait()
-        return
+        return InputResult(InputResult.ESCAPE)
+
+    buffer: list[str] = []
+    typing_shown = False
 
     while True:
         if msvcrt.kbhit():
-            key = msvcrt.getch()
-            if key == b'\x1b':
-                # Could be bare Esc or start of a VT sequence — peek ahead
-                await asyncio.sleep(0.01)  # brief wait for rest of sequence
+            key = msvcrt.getwch()  # Unicode support
+            if key == '\x1b':
+                # Could be bare Esc or start of a VT sequence
+                await asyncio.sleep(0.01)
                 if msvcrt.kbhit():
                     _consume_vt_sequence(msvcrt)
-                    continue  # was a mouse/VT sequence, not Esc
-                return  # bare Esc keypress
-            # Discard other keypresses so they don't bleed into next input
+                    continue  # mouse/VT sequence, not Esc
+                return InputResult(InputResult.ESCAPE)
+            elif key == '\r':  # Enter
+                if buffer:
+                    # Clear the typing indicator
+                    msg = "".join(buffer)
+                    if typing_shown:
+                        # Erase the typing line
+                        sys.stdout.write(f"\r\x1b[2K")
+                        sys.stdout.flush()
+                    return InputResult(InputResult.MESSAGE, msg)
+                # Empty enter — ignore
+            elif key == '\x08':  # Backspace
+                if buffer:
+                    buffer.pop()
+                    if typing_shown:
+                        sys.stdout.write('\b \b')
+                        sys.stdout.flush()
+            elif key >= ' ':  # Printable character
+                if not typing_shown and not buffer:
+                    # First character — show typing indicator on new line
+                    sys.stdout.write(f"\n\x1b[2m> \x1b[0m")
+                    typing_shown = True
+                buffer.append(key)
+                # Show typed char in dim
+                sys.stdout.write(f"\x1b[2m{key}\x1b[0m")
+                sys.stdout.flush()
         await asyncio.sleep(0.05)
+
+
+async def _poll_for_escape():
+    """Poll for Esc keypress only. Returns when Esc is detected.
+
+    Simplified version for contexts where message queuing isn't wanted
+    (e.g., /code command).
+    """
+    result = await _poll_for_input()
+    # If they typed a message instead of Esc, treat as cancel anyway
+    return
 
 
 def _consume_vt_sequence(msvcrt_mod):
@@ -312,7 +366,7 @@ def _display_tool_batch(
     calls: list[tuple[str, dict]],
     results: list[tuple],
 ):
-    """Render a tool batch using Rich Tree (collapsible-style display).
+    """Render a tool batch in Claude Code style — indented tree with continuation lines.
 
     calls: list of (name, arguments) for each tool in the batch.
     results: list of (ToolResult, is_dedup_blocked) for each tool.
@@ -329,62 +383,72 @@ def _display_tool_batch(
         if blocked:
             line = Text()
             line.append("  ⎯ ", style="dim")
-            line.append(name, style="dim bold")
-            line.append(" [duplicate blocked]", style="dim italic")
+            line.append(name, style="dim")
+            line.append(" duplicate — skipped", style="dim italic")
             console.print(line)
             continue
 
-        # Status icon
-        if not result.success:
-            icon = "✘"
-            icon_style = "red bold"
-        elif name == "edit_file":
-            icon = "✎"
-            icon_style = "yellow"
-        elif name in ("write_file", "create_project"):
-            icon = "+"
-            icon_style = "green"
-        elif name in ("run_command",):
-            icon = "$"
-            icon_style = "cyan"
-        elif name in ("task_complete", "enter_plan_mode", "exit_plan_mode"):
-            icon = "●"
-            icon_style = "green bold"
-        else:
-            icon = "▸"
-            icon_style = "dim"
-
-        # Build the tool call line
+        # Tool name line — bold name, dim args
         line = Text()
-        line.append(f"  {icon} ", style=icon_style)
+        line.append("  ", style="")
         line.append(name, style="bold")
         if arg_summary:
             line.append(f" {arg_summary}", style="dim")
-
         console.print(line)
 
-        # Show result detail in verbose mode or for errors/edits
-        show_detail = _verbose_tools or not result.success
-        if not show_detail and name == "edit_file" and result.success:
-            # Always show edit diffs
-            show_detail = True
-
-        if show_detail and result.result:
-            if not result.success:
-                err = result.result[:200].replace("\n", " ")
-                console.print(f"    [red]{err}[/red]")
-            elif name == "edit_file" and "\x1b[" in result.result:
-                # Colored diff — show first line + diff
+        # Result line — indented with continuation character
+        if not result.success:
+            err = result.result[:200].replace("\n", " ") if result.result else "unknown error"
+            console.print(f"  ⎿  [red]{err}[/red]")
+        elif name == "edit_file" and result.result:
+            if "\x1b[" in result.result:
+                # Colored diff — show status + diff
                 lines = result.result.split("\n", 1)
-                console.print(f"    [dim]{lines[0]}[/dim]")
+                console.print(f"  ⎿  [dim]{lines[0]}[/dim]")
                 if len(lines) > 1 and lines[1].strip():
-                    # Print raw ANSI diff
-                    sys.stdout.write("    " + lines[1].replace("\n", "\n    ") + "\n")
+                    # Indent diff lines under continuation
+                    diff_text = lines[1].replace("\n", "\n     ")
+                    sys.stdout.write(f"     {diff_text}\n")
                     sys.stdout.flush()
-            elif _verbose_tools:
-                # Show truncated result
-                preview = result.result[:300].replace("\n", "\n    ")
-                console.print(f"    [dim]{preview}[/dim]")
+            else:
+                console.print(f"  ⎿  [dim]{result.result[:100]}[/dim]")
+        elif name == "task_complete":
+            summary = args.get("summary", result.result[:100] if result.result else "")
+            if summary:
+                console.print(f"  ⎿  [green]{summary[:120]}[/green]")
+        elif name == "run_command" and result.result:
+            # Show first few lines of command output
+            out_lines = result.result.strip().split("\n")
+            if len(out_lines) == 1:
+                console.print(f"  ⎿  [dim]{out_lines[0][:120]}[/dim]")
+            else:
+                preview = out_lines[0][:100]
+                console.print(f"  ⎿  [dim]{preview} (+{len(out_lines) - 1} lines)[/dim]")
+            if _verbose_tools:
+                for extra in out_lines[1:5]:
+                    console.print(f"     [dim]{extra[:120]}[/dim]")
+                if len(out_lines) > 5:
+                    console.print(f"     [dim]... {len(out_lines) - 5} more lines[/dim]")
+        elif _verbose_tools and result.result:
+            # Verbose: show truncated result
+            preview = result.result[:200].replace("\n", " ")
+            console.print(f"  ⎿  [dim]{preview}[/dim]")
+        elif result.result:
+            # Compact: one-line summary
+            line_count = result.result.count("\n") + 1
+            char_count = len(result.result)
+            if name in ("read_file",):
+                console.print(f"  ⎿  [dim]{line_count} lines[/dim]")
+            elif name in ("grep_files", "glob_files"):
+                hits = result.result.strip().split("\n")
+                console.print(f"  ⎿  [dim]{len(hits)} results[/dim]")
+            elif name == "list_directory":
+                items = result.result.strip().split("\n")
+                console.print(f"  ⎿  [dim]{len(items)} items[/dim]")
+            elif char_count < 80:
+                console.print(f"  ⎿  [dim]{result.result.strip()[:80]}[/dim]")
+            else:
+                console.print(f"  ⎿  [dim]{char_count} chars[/dim]")
 
     console.print()  # blank line after batch
 
@@ -589,7 +653,7 @@ async def chat_loop(
         f"[bold cyan]BlipShell[/bold cyan] v0.1.0\n"
         f"Session #{sid}"
         + (f" | Project: [bold]{proj_display}[/bold]" if proj_display else "")
-        + f"\nType [bold]/help[/bold] for commands, [bold]/quit[/bold] to exit, [bold]Esc[/bold] to cancel"
+        + f"\nType [bold]/help[/bold] for commands, [bold]/quit[/bold] to exit, [bold]Esc[/bold] to cancel, type to interrupt"
         + f"\nThinking: [bold]{'ON' if agent.think_enabled else 'OFF'}[/bold]",
         border_style="cyan",
     ))
@@ -600,6 +664,8 @@ async def chat_loop(
         console.print(f"  {agent._nightly_notification}", style=style)
         agent._nightly_notification = None
 
+    _queued_message: str | None = None
+
     try:
         while True:
             if _exit_requested:
@@ -608,13 +674,23 @@ async def chat_loop(
             # Notify about background tasks that finished
             await _check_completed_tasks(agent)
 
-            try:
+            # Use queued message (typed during LLM response) or prompt for input
+            if _queued_message:
+                user_input = _queued_message
+                _queued_message = None
+                # Echo the queued message as if user just typed it
                 prompt = format_chat_prompt(
                     agent.active_project["name"] if agent.active_project else None
                 )
-                user_input = (await async_prompt(chat_session, prompt)).strip()
-            except (EOFError, KeyboardInterrupt):
-                break
+                console.print(f"{prompt}{user_input}")
+            else:
+                try:
+                    prompt = format_chat_prompt(
+                        agent.active_project["name"] if agent.active_project else None
+                    )
+                    user_input = (await async_prompt(chat_session, prompt)).strip()
+                except (EOFError, KeyboardInterrupt):
+                    break
 
             if not user_input:
                 continue
@@ -872,6 +948,7 @@ async def chat_loop(
             thinking_status = console.status("[dim]Thinking...[/dim]", spinner="dots")
             thinking_active = True
             cancelled = False
+            md_streamer = MarkdownStreamer()
 
             def on_token(token: str):
                 nonlocal thinking_active
@@ -879,7 +956,11 @@ async def chat_loop(
                     thinking_status.stop()
                     thinking_active = False
                 response_parts.append(token)
-                sys.stdout.write(token)
+                # ANSI escape sequences (tool status, cursor control) pass through raw
+                if "\x1b[" in token:
+                    sys.stdout.write(token)
+                else:
+                    sys.stdout.write(md_streamer.feed(token))
                 sys.stdout.flush()
 
             console.print()  # blank line before response
@@ -889,11 +970,11 @@ async def chat_loop(
                 agent.chat(message, on_token=on_token, force_plan=force_plan, on_tool_display=_display_tool_batch, research_mode=research_mode)
             )
             chat_task = _active_chat_task
-            esc_task = asyncio.create_task(_poll_for_escape())
+            input_task = asyncio.create_task(_poll_for_input())
 
             try:
                 done, pending = await asyncio.wait(
-                    {chat_task, esc_task},
+                    {chat_task, input_task},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 for task in pending:
@@ -909,6 +990,12 @@ async def chat_loop(
                         response = chat_task.result()
                     except Exception as e:
                         response = f"Error: {e}"
+                elif input_task in done:
+                    input_result = input_task.result()
+                    cancelled = True
+                    response = "".join(response_parts)
+                    if input_result.action == InputResult.MESSAGE:
+                        _queued_message = input_result.message
                 else:
                     cancelled = True
                     response = "".join(response_parts)
@@ -921,6 +1008,11 @@ async def chat_loop(
                 _active_chat_task = None
                 if thinking_active:
                     thinking_status.stop()
+                # Flush any remaining markdown formatting
+                remaining = md_streamer.flush()
+                if remaining:
+                    sys.stdout.write(remaining)
+                    sys.stdout.flush()
                 _drain_keyboard()
 
             if cancelled:
@@ -2654,7 +2746,7 @@ def _print_help():
         "[bold]/project digest[/bold]        - Show project status digest\n"
         "[bold]/project digest rebuild[/bold] - Regenerate digest from scratch\n\n"
         "[bold]/help[/bold]                  - Show this help\n\n"
-        "[dim]Press [bold]Esc[/bold] during a response to cancel the LLM call[/dim]\n"
+        "[dim]Press [bold]Esc[/bold] to cancel, or type + [bold]Enter[/bold] to interrupt and send a new message[/dim]\n"
         "[dim]Prefix with !plan to force planning: !plan <message>[/dim]",
         title="Commands",
         border_style="blue",

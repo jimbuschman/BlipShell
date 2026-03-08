@@ -495,10 +495,10 @@ class ChatLoop:
                         if len(active_calls) == 1:
                             name, args = active_calls[0]
                             hint = format_tool_arg_hint(name, args)
-                            self.on_token(f"\n\x1b[2m  ⏳ {name}{hint}\x1b[0m")
+                            self.on_token(f"\n\x1b[2m  {name}{hint} …\x1b[0m")
                         else:
                             names = ", ".join(n for n, _ in active_calls)
-                            self.on_token(f"\n\x1b[2m  ⏳ Running {len(active_calls)} tools: {names}\x1b[0m")
+                            self.on_token(f"\n\x1b[2m  {len(active_calls)} tools: {names} …\x1b[0m")
 
                 # Phase 5: Partition into sequential (approval/ask_user) and parallel
                 results: list[ToolResult | None] = [None] * len(parsed_calls)
