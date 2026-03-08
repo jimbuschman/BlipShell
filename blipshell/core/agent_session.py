@@ -306,22 +306,40 @@ class SessionMixin:
             return ""
 
     async def _check_nightly_report(self) -> str | None:
-        """Check if the last nightly run had warnings/errors. Returns notification or None."""
+        """Check last nightly run status. Always reports when it ran, highlights issues."""
         try:
             import json
-            raw = await self.sqlite.get_metadata("nightly_report")
+            from datetime import datetime as _dt
+
+            raw = await self.sqlite.get_metadata("nightly_last_run")
             if not raw:
                 return None
-            report = json.loads(raw)
-            warnings = report.get("warnings", [])
-            errors = report.get("errors", [])
-            if not warnings and not errors:
+            data = json.loads(raw)
+            completed_at = data.get("completed_at")
+            if not completed_at:
                 return None
-            parts = []
-            if errors:
-                parts.append(f"{len(errors)} error(s)")
-            if warnings:
-                parts.append(f"{len(warnings)} warning(s)")
-            return f"Nightly run: {', '.join(parts)}. Use /nightly report for details."
+
+            last_run = _dt.fromtimestamp(completed_at)
+            elapsed = data.get("elapsed_s", 0)
+            time_str = last_run.strftime("%Y-%m-%d %I:%M %p")
+
+            # Check for warnings/errors in the report
+            report_raw = await self.sqlite.get_metadata("nightly_report")
+            warnings = []
+            errors = []
+            if report_raw:
+                report = json.loads(report_raw)
+                warnings = report.get("warnings", [])
+                errors = report.get("errors", [])
+
+            if errors or warnings:
+                parts = []
+                if errors:
+                    parts.append(f"{len(errors)} error(s)")
+                if warnings:
+                    parts.append(f"{len(warnings)} warning(s)")
+                return f"Nightly ran {time_str} ({elapsed:.0f}s) — {', '.join(parts)}. Use /nightly report for details."
+            else:
+                return f"Nightly ran {time_str} ({elapsed:.0f}s) — all clean."
         except Exception:
             return None

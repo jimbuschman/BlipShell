@@ -32,6 +32,7 @@ JOB_ORDER = [
     "session_reflections",
     "friction_analysis",
     "entity_extraction",
+    "entity_cleanup",
     "centroid_tag",
     "batch_tag",
     "prune",
@@ -179,6 +180,7 @@ class NightlyRunner:
             "session_reflections": self._job_session_reflections,
             "friction_analysis": self._job_friction_analysis,
             "entity_extraction": self._job_entity_extraction,
+            "entity_cleanup": self._job_entity_cleanup,
             "centroid_tag": self._job_centroid_tag,
             "batch_tag": self._job_batch_tag,
             "prune": self._job_prune,
@@ -490,6 +492,77 @@ class NightlyRunner:
             ),
         )
         return await extractor.extract_batch(concurrency=1)
+
+    async def _job_entity_cleanup(self, on_status) -> dict:
+        """Clean up bad entities: pronouns, long names, invalid types, commentary."""
+        from scripts.cleanup_entities import (
+            DELETE_NAMES, VALID_TYPES, has_commentary,
+            strip_formatting, clean_entity_type,
+        )
+
+        db = self.sqlite._db
+        cursor = await db.execute("SELECT id, name, entity_type FROM entities")
+        all_rows = await cursor.fetchall()
+
+        deleted = 0
+        type_fixed = 0
+        renamed = 0
+        for row in all_rows:
+            eid, name, etype = row["id"], row["name"], row["entity_type"]
+            name_lower = name.strip().lower()
+
+            # Delete: commentary, pronouns, single-char, long names
+            should_delete = (
+                has_commentary(name)
+                or name_lower in DELETE_NAMES
+                or len(name.strip()) <= 1
+                or len(name) > 60
+                or name.replace(".", "").replace("-", "").strip().isdigit()
+            )
+            if should_delete:
+                await db.execute("DELETE FROM entity_mentions WHERE entity_id = ?", (eid,))
+                await db.execute("DELETE FROM entity_relationships WHERE subject_id = ? OR object_id = ?", (eid, eid))
+                await db.execute("DELETE FROM entities WHERE id = ?", (eid,))
+                deleted += 1
+                continue
+
+            # Fix invalid entity types
+            if etype not in VALID_TYPES:
+                fixed = clean_entity_type(etype)
+                await db.execute("UPDATE entities SET entity_type = ? WHERE id = ?", (fixed, eid))
+                type_fixed += 1
+
+            # Strip formatting prefixes
+            cleaned = strip_formatting(name)
+            if cleaned != name and cleaned and len(cleaned) > 1:
+                await db.execute("UPDATE entities SET name = ? WHERE id = ?", (cleaned, eid))
+                renamed += 1
+
+        if deleted or type_fixed or renamed:
+            await db.commit()
+
+        # Clean orphaned relationships/mentions
+        cursor = await db.execute(
+            "DELETE FROM entity_relationships WHERE "
+            "subject_id NOT IN (SELECT id FROM entities) OR "
+            "object_id NOT IN (SELECT id FROM entities)"
+        )
+        orphan_rels = cursor.rowcount
+        cursor = await db.execute(
+            "DELETE FROM entity_mentions WHERE "
+            "entity_id NOT IN (SELECT id FROM entities)"
+        )
+        orphan_mentions = cursor.rowcount
+        if orphan_rels or orphan_mentions:
+            await db.commit()
+
+        return {
+            "deleted": deleted,
+            "type_fixed": type_fixed,
+            "renamed": renamed,
+            "orphan_rels": orphan_rels,
+            "orphan_mentions": orphan_mentions,
+        }
 
     async def _job_health_check(self, on_status) -> dict:
         """Run audit_db checks and return structured findings."""

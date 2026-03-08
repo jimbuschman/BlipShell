@@ -72,6 +72,21 @@ class LLMRouter:
         }
         return fallback_map.get(task_type)
 
+    def _resolve_fallback_model(self, fallback_ep, task_type: str) -> Optional[str]:
+        """Resolve the model to use on a fallback endpoint.
+
+        Returns None if the endpoint can't handle this task type.
+        Cloud endpoints only use their explicitly configured per-endpoint models.
+        Local (ollama) endpoints can use global fallback model names.
+        """
+        fb_model = fallback_ep.models.get(task_type)
+        if fb_model:
+            return fb_model
+        # Global fallback models are local model names — never send to cloud
+        if fallback_ep.provider == "ollama":
+            return self.get_fallback_model(task_type) or self.get_model(task_type)
+        return None
+
     def mark_model_failed(self, model: str):
         """Mark a model as failed. Subsequent calls skip straight to fallback."""
         self._failed_models[model] = time.time()
@@ -161,15 +176,16 @@ class LLMRouter:
                 task_type, exclude=endpoint.name,
             )
             if fallback_ep:
-                fb_model = fallback_ep.models.get(task_type) or self.get_fallback_model(task_type) or self.get_model(task_type)
-                logger.info(
-                    "Request ~%dK tokens would exceed %s TPM budget, routing to %s",
-                    estimated_tokens // 1000, endpoint.name, fallback_ep.name,
-                )
-                endpoint = fallback_ep
-                model = fb_model
-                client = fallback_ep.client
-                use_fallback = True
+                fb_model = self._resolve_fallback_model(fallback_ep, task_type)
+                if fb_model:
+                    logger.info(
+                        "Request ~%dK tokens would exceed %s TPM budget, routing to %s",
+                        estimated_tokens // 1000, endpoint.name, fallback_ep.name,
+                    )
+                    endpoint = fallback_ep
+                    model = fb_model
+                    client = fallback_ep.client
+                    use_fallback = True
 
         # Skip straight to fallback if primary model is known to be down
         if not self._disable_fallback and self.is_model_failed(model):
@@ -178,18 +194,17 @@ class LLMRouter:
                 task_type, exclude=endpoint.name,
             )
             if fallback_ep:
-                fb_model = fallback_ep.models.get(task_type)
-                if not fb_model:
-                    fb_model = self.get_fallback_model(task_type) or self.get_model(task_type)
-                logger.info(
-                    "Model '%s' is failed, skipping to '%s' on '%s'",
-                    model, fb_model, fallback_ep.name,
-                )
-                endpoint = fallback_ep
-                model = fb_model
-                client = fallback_ep.client
-                use_fallback = True
-            else:
+                fb_model = self._resolve_fallback_model(fallback_ep, task_type)
+                if fb_model:
+                    logger.info(
+                        "Model '%s' is failed, skipping to '%s' on '%s'",
+                        model, fb_model, fallback_ep.name,
+                    )
+                    endpoint = fallback_ep
+                    model = fb_model
+                    client = fallback_ep.client
+                    use_fallback = True
+            if not use_fallback:
                 # No alternative endpoint — try fallback model on same endpoint as last resort
                 fallback_model = self.get_fallback_model(task_type)
                 if fallback_model:
@@ -237,12 +252,10 @@ class LLMRouter:
                     fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
                         task_type, exclude=endpoint.name,
                     )
+                    fb_model = None
                     if fallback_ep:
-                        # Use the fallback endpoint's own model for this task,
-                        # or the global fallback model if it's a local endpoint
-                        fb_model = fallback_ep.models.get(task_type)
-                        if not fb_model:
-                            fb_model = self.get_fallback_model(task_type) or self.get_model(task_type)
+                        fb_model = self._resolve_fallback_model(fallback_ep, task_type)
+                    if fallback_ep and fb_model:
                         logger.warning(
                             "Primary '%s' on '%s' failed, trying '%s' on '%s'",
                             model, endpoint.name, fb_model, fallback_ep.name,

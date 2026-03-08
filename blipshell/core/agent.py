@@ -110,6 +110,7 @@ class Agent(
 
         self._health_check_task: Optional[asyncio.Task] = None
         self._nightly_scheduler_task: Optional[asyncio.Task] = None
+        self._memory_flush_task: Optional[asyncio.Task] = None
         self._friction_probe_task: Optional[asyncio.Task] = None
         self._friction_probe_fired: bool = False  # only once per session
         self._background_tasks: set[asyncio.Task] = set()
@@ -277,6 +278,11 @@ class Agent(
             self._nightly_scheduler_loop()
         )
 
+        # Start periodic memory flush (catches messages during idle)
+        self._memory_flush_task = asyncio.create_task(
+            self._memory_flush_loop()
+        )
+
         # Start idle friction probe (fires once per session)
         self._friction_probe_fired = False
         self._friction_probe_task = asyncio.create_task(
@@ -383,6 +389,22 @@ class Agent(
         )
         jobs = [job] if job else None
         return await runner.run(on_status=on_status, jobs=jobs)
+
+    async def _memory_flush_loop(self):
+        """Background task: periodically flush undumped messages to the worker.
+
+        Catches messages that accumulate when the user goes idle (no chat turns
+        to trigger the post-turn enqueue). Runs every 60 seconds.
+        """
+        await asyncio.sleep(30)  # Initial delay after startup
+        while True:
+            try:
+                await asyncio.sleep(60)
+                self._enqueue_undumped_messages()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("Memory flush loop error: %s", e)
 
     async def _nightly_scheduler_loop(self):
         """Background task: auto-run nightly at the configured hour if idle.
@@ -563,6 +585,9 @@ class Agent(
         if self._nightly_scheduler_task:
             self._nightly_scheduler_task.cancel()
             self._nightly_scheduler_task = None
+        if self._memory_flush_task:
+            self._memory_flush_task.cancel()
+            self._memory_flush_task = None
         if self._health_check_task:
             self._health_check_task.cancel()
             self._health_check_task = None
@@ -618,6 +643,9 @@ class Agent(
         if self._nightly_scheduler_task:
             self._nightly_scheduler_task.cancel()
             self._nightly_scheduler_task = None
+        if self._memory_flush_task:
+            self._memory_flush_task.cancel()
+            self._memory_flush_task = None
         if self._health_check_task:
             self._health_check_task.cancel()
             self._health_check_task = None

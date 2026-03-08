@@ -81,12 +81,13 @@ class TestIsModelError:
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 
-def _make_endpoint(name="ep1", context_tokens=65536, models=None):
+def _make_endpoint(name="ep1", context_tokens=65536, models=None, provider="ollama"):
     """Create a mock endpoint with sensible defaults."""
     ep = MagicMock()
     ep.name = name
     ep.context_tokens = context_tokens
     ep.models = models or {}
+    ep.provider = provider
     ep.client = AsyncMock()
     ep.client.generate = AsyncMock(return_value="response from " + name)
     ep.start_request = MagicMock()
@@ -355,3 +356,71 @@ class TestNoEndpointAvailable:
         endpoint_manager.get_endpoint_for_role = AsyncMock(return_value=None)
         with pytest.raises(RuntimeError, match="No available endpoint"):
             await router.generate("reasoning", "hello")
+
+
+# ── Cloud endpoints never receive local model names ─────────────────────────
+
+
+class TestCloudFallbackModelSafety:
+    """Verify that local-only model names (like gpt-oss:latest) are never
+    sent to cloud (openai provider) endpoints during fallback."""
+
+    async def test_cloud_fallback_skipped_when_no_task_model(self, endpoint_manager):
+        """When primary (local) fails and only fallback is a cloud endpoint
+        without a model for the task type, should NOT send local model name
+        to cloud — should raise the original error instead."""
+        models = _make_models_config(reasoning_fallback="gpt-oss:latest")
+        router = LLMRouter(models, endpoint_manager)
+        primary_ep = _make_endpoint("local", provider="ollama")
+        primary_ep.client.generate = AsyncMock(
+            side_effect=ConnectionError("Ollama down")
+        )
+        # Fallback is a cloud endpoint with NO reasoning model configured
+        cloud_ep = _make_endpoint("groq", provider="openai", models={
+            "summarization": "openai/gpt-oss-120b",
+        })
+        endpoint_manager.get_endpoint_for_role = AsyncMock(
+            side_effect=[primary_ep, cloud_ep]
+        )
+        with pytest.raises(ConnectionError, match="Ollama down"):
+            await router.generate("reasoning", "hello")
+        # Cloud endpoint should never have been called
+        cloud_ep.client.generate.assert_not_called()
+
+    async def test_cloud_fallback_used_when_task_model_configured(self, endpoint_manager):
+        """When cloud endpoint HAS a model for the task type, fallback works."""
+        models = _make_models_config()
+        router = LLMRouter(models, endpoint_manager)
+        primary_ep = _make_endpoint("local", provider="ollama")
+        primary_ep.client.generate = AsyncMock(
+            side_effect=ConnectionError("Ollama down")
+        )
+        cloud_ep = _make_endpoint("groq", provider="openai", models={
+            "reasoning": "llama-3.3-70b-versatile",
+        })
+        endpoint_manager.get_endpoint_for_role = AsyncMock(
+            side_effect=[primary_ep, cloud_ep]
+        )
+        result = await router.generate("reasoning", "hello")
+        assert result == "response from groq"
+        # Should have used the cloud endpoint's own model
+        call_kwargs = cloud_ep.client.generate.call_args
+        assert call_kwargs.kwargs.get("model") == "llama-3.3-70b-versatile"
+
+    async def test_model_failed_skip_doesnt_use_cloud_without_task_model(self, endpoint_manager):
+        """When model is marked failed and only cloud fallback exists (without
+        a model for this task), should try local fallback model on same endpoint."""
+        models = _make_models_config(reasoning_fallback="gpt-oss:latest")
+        router = LLMRouter(models, endpoint_manager)
+        router.mark_model_failed("model-a")
+        local_ep = _make_endpoint("local", provider="ollama")
+        cloud_ep = _make_endpoint("groq", provider="openai", models={})
+        # First call returns local (primary), second returns cloud (no reasoning model)
+        endpoint_manager.get_endpoint_for_role = AsyncMock(
+            side_effect=[local_ep, cloud_ep]
+        )
+        result = await router.generate("reasoning", "hello")
+        # Should have fallen back to gpt-oss:latest on the LOCAL endpoint
+        call_kwargs = local_ep.client.generate.call_args
+        assert call_kwargs.kwargs.get("model") == "gpt-oss:latest"
+        cloud_ep.client.generate.assert_not_called()

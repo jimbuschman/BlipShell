@@ -22,10 +22,13 @@ class BackgroundMixin:
     """Background memory processing methods mixed into Agent."""
 
     async def _background_memory_processing(self):
-        """Enqueue undumped messages to the memory worker thread."""
+        """Enqueue undumped messages to the memory worker thread.
+
+        Runs after every chat turn so messages are processed in real-time,
+        not batched until session close.
+        """
         try:
-            if self.session_manager.message_count % 5 == 0:
-                self._enqueue_undumped_messages()
+            self._enqueue_undumped_messages()
         except Exception as e:
             logger.error("Background memory processing error: %s", e)
 

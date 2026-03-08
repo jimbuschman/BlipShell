@@ -594,9 +594,10 @@ async def chat_loop(
         border_style="cyan",
     ))
 
-    # Show nightly report notification if there were warnings/errors
+    # Show nightly run status (always shown when nightly has run)
     if hasattr(agent, '_nightly_notification') and agent._nightly_notification:
-        console.print(f"  {agent._nightly_notification}", style="dim yellow")
+        style = "dim yellow" if "error" in agent._nightly_notification or "warning" in agent._nightly_notification else "dim green"
+        console.print(f"  {agent._nightly_notification}", style=style)
         agent._nightly_notification = None
 
     try:

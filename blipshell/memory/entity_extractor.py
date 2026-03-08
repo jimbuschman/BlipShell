@@ -345,10 +345,38 @@ class EntityExtractor:
             # Skip empty or vague entries
             if not subj or not pred or not obj:
                 continue
-            if subj.lower() in ("something", "it", "this", "that"):
+
+            # Validate entity names
+            skip = False
+            for name in (subj, obj):
+                name_lower = name.lower().strip()
+                # Reject pronouns and vague words
+                if name_lower in (
+                    "something", "it", "this", "that", "these", "those",
+                    "she", "her", "he", "him", "his", "they", "them", "their",
+                    "someone", "anyone", "anything", "nothing",
+                    "the user", "the assistant", "assistant", "none",
+                ):
+                    skip = True
+                    break
+                # Reject single-char names
+                if len(name_lower) <= 1:
+                    skip = True
+                    break
+                # Reject names > 60 chars (sentence-length descriptions)
+                if len(name) > 60:
+                    skip = True
+                    break
+            if skip:
                 continue
-            if obj.lower() in ("something", "it", "this", "that"):
-                continue
+
+            # Validate entity types
+            valid_types = {"person", "project", "technology", "concept",
+                           "preference", "place", "organization"}
+            if s_type.lower().strip() not in valid_types:
+                s_type = "concept"
+            if o_type.lower().strip() not in valid_types:
+                o_type = "concept"
 
             triples.append((subj, pred, obj, s_type, o_type))
 
