@@ -148,84 +148,31 @@ async def _ask_user_input(question: str) -> str:
         return "User cancelled. Proceed with your best judgment."
 
 
-class InputResult:
-    """Result from _poll_for_input during LLM generation."""
-    ESCAPE = "escape"
-    MESSAGE = "message"
+async def _poll_for_escape():
+    """Poll for Esc keypress. Returns when Esc is detected.
 
-    def __init__(self, action: str, message: str = ""):
-        self.action = action
-        self.message = message
-
-
-async def _poll_for_input() -> InputResult:
-    """Poll for Esc or typed message during LLM response.
-
-    Uses msvcrt on Windows. Captures:
-    - Esc: cancel current generation
-    - Printable chars + Enter: queue as next message (interrupts generation)
-    - Backspace: delete last typed char
-
-    Typed characters appear dimmed at the cursor position. When Enter is
-    pressed, the generation is cancelled and the typed text becomes the
-    next user message.
+    Uses msvcrt on Windows. On other platforms, blocks forever (no-op).
+    Mouse clicks produce VT escape sequences (e.g. \\x1b[M... or \\x1b[<...)
+    that must be consumed entirely to prevent character bleed-through.
     """
     try:
         import msvcrt
     except ImportError:
         await asyncio.Event().wait()
-        return InputResult(InputResult.ESCAPE)
-
-    buffer: list[str] = []
-    typing_shown = False
+        return
 
     while True:
         if msvcrt.kbhit():
-            key = msvcrt.getwch()  # Unicode support
-            if key == '\x1b':
-                # Could be bare Esc or start of a VT sequence
-                await asyncio.sleep(0.01)
+            key = msvcrt.getch()
+            if key == b'\x1b':
+                # Could be bare Esc or start of a VT sequence — peek ahead
+                await asyncio.sleep(0.01)  # brief wait for rest of sequence
                 if msvcrt.kbhit():
                     _consume_vt_sequence(msvcrt)
-                    continue  # mouse/VT sequence, not Esc
-                return InputResult(InputResult.ESCAPE)
-            elif key == '\r':  # Enter
-                if buffer:
-                    # Clear the typing indicator
-                    msg = "".join(buffer)
-                    if typing_shown:
-                        # Erase the typing line
-                        sys.stdout.write(f"\r\x1b[2K")
-                        sys.stdout.flush()
-                    return InputResult(InputResult.MESSAGE, msg)
-                # Empty enter — ignore
-            elif key == '\x08':  # Backspace
-                if buffer:
-                    buffer.pop()
-                    if typing_shown:
-                        sys.stdout.write('\b \b')
-                        sys.stdout.flush()
-            elif key >= ' ':  # Printable character
-                if not typing_shown and not buffer:
-                    # First character — show typing indicator on new line
-                    sys.stdout.write(f"\n\x1b[2m> \x1b[0m")
-                    typing_shown = True
-                buffer.append(key)
-                # Show typed char in dim
-                sys.stdout.write(f"\x1b[2m{key}\x1b[0m")
-                sys.stdout.flush()
+                    continue  # was a mouse/VT sequence, not Esc
+                return  # bare Esc keypress
+            # Discard other keypresses so they don't bleed into next input
         await asyncio.sleep(0.05)
-
-
-async def _poll_for_escape():
-    """Poll for Esc keypress only. Returns when Esc is detected.
-
-    Simplified version for contexts where message queuing isn't wanted
-    (e.g., /code command).
-    """
-    result = await _poll_for_input()
-    # If they typed a message instead of Esc, treat as cancel anyway
-    return
 
 
 def _consume_vt_sequence(msvcrt_mod):
@@ -653,7 +600,7 @@ async def chat_loop(
         f"[bold cyan]BlipShell[/bold cyan] v0.1.0\n"
         f"Session #{sid}"
         + (f" | Project: [bold]{proj_display}[/bold]" if proj_display else "")
-        + f"\nType [bold]/help[/bold] for commands, [bold]/quit[/bold] to exit, [bold]Esc[/bold] to cancel, type to interrupt"
+        + f"\nType [bold]/help[/bold] for commands, [bold]/quit[/bold] to exit, [bold]Esc[/bold] to cancel"
         + f"\nThinking: [bold]{'ON' if agent.think_enabled else 'OFF'}[/bold]",
         border_style="cyan",
     ))
@@ -664,8 +611,6 @@ async def chat_loop(
         console.print(f"  {agent._nightly_notification}", style=style)
         agent._nightly_notification = None
 
-    _queued_message: str | None = None
-
     try:
         while True:
             if _exit_requested:
@@ -674,23 +619,13 @@ async def chat_loop(
             # Notify about background tasks that finished
             await _check_completed_tasks(agent)
 
-            # Use queued message (typed during LLM response) or prompt for input
-            if _queued_message:
-                user_input = _queued_message
-                _queued_message = None
-                # Echo the queued message as if user just typed it
+            try:
                 prompt = format_chat_prompt(
                     agent.active_project["name"] if agent.active_project else None
                 )
-                console.print(f"{prompt}{user_input}")
-            else:
-                try:
-                    prompt = format_chat_prompt(
-                        agent.active_project["name"] if agent.active_project else None
-                    )
-                    user_input = (await async_prompt(chat_session, prompt)).strip()
-                except (EOFError, KeyboardInterrupt):
-                    break
+                user_input = (await async_prompt(chat_session, prompt)).strip()
+            except (EOFError, KeyboardInterrupt):
+                break
 
             if not user_input:
                 continue
@@ -970,11 +905,11 @@ async def chat_loop(
                 agent.chat(message, on_token=on_token, force_plan=force_plan, on_tool_display=_display_tool_batch, research_mode=research_mode)
             )
             chat_task = _active_chat_task
-            input_task = asyncio.create_task(_poll_for_input())
+            esc_task = asyncio.create_task(_poll_for_escape())
 
             try:
                 done, pending = await asyncio.wait(
-                    {chat_task, input_task},
+                    {chat_task, esc_task},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 for task in pending:
@@ -990,12 +925,6 @@ async def chat_loop(
                         response = chat_task.result()
                     except Exception as e:
                         response = f"Error: {e}"
-                elif input_task in done:
-                    input_result = input_task.result()
-                    cancelled = True
-                    response = "".join(response_parts)
-                    if input_result.action == InputResult.MESSAGE:
-                        _queued_message = input_result.message
                 else:
                     cancelled = True
                     response = "".join(response_parts)
@@ -2746,7 +2675,7 @@ def _print_help():
         "[bold]/project digest[/bold]        - Show project status digest\n"
         "[bold]/project digest rebuild[/bold] - Regenerate digest from scratch\n\n"
         "[bold]/help[/bold]                  - Show this help\n\n"
-        "[dim]Press [bold]Esc[/bold] to cancel, or type + [bold]Enter[/bold] to interrupt and send a new message[/dim]\n"
+        "[dim]Press [bold]Esc[/bold] during a response to cancel the LLM call[/dim]\n"
         "[dim]Prefix with !plan to force planning: !plan <message>[/dim]",
         title="Commands",
         border_style="blue",
