@@ -501,6 +501,324 @@ CODING_TASKS = [
 
 
 # ---------------------------------------------------------------------------
+# Hard tasks — codebase comprehension, diagnosis, edge cases, refactoring
+# ---------------------------------------------------------------------------
+
+HARD_TASKS = [
+    {
+        "name": "add_method_existing_class",
+        "description": "Add method to existing class (requires reading + understanding existing code)",
+        "request": (
+            "Add a `get_memory_stats()` async method to `SQLiteStore` in "
+            "blipshell/memory/sqlite_store.py. It should return a dict with:\n"
+            "- 'total_memories': int — count of non-archived memories\n"
+            "- 'avg_rank': float — average rank rounded to 1 decimal (0.0 if no ranked memories)\n"
+            "- 'type_breakdown': dict — mapping memory_type string to count\n"
+            "- 'oldest_date': str — created_at of oldest memory (ISO format), or '' if empty\n\n"
+            "You MUST read sqlite_store.py first to understand the DB schema, table names, "
+            "and coding patterns (async methods, aiosqlite usage, etc). Do NOT guess the "
+            "schema — look at existing methods.\n\n"
+            "Then write a test in tests/test_memory_stats.py that:\n"
+            "1. Creates an in-memory SQLiteStore (see existing test fixtures for how)\n"
+            "2. Inserts a couple of test memories\n"
+            "3. Calls get_memory_stats() and asserts the structure is correct\n"
+            "4. Asserts total_memories matches what was inserted"
+        ),
+        "verify_checks": [
+            # Method added to the right file
+            ("diff_contains", ("blipshell/memory/sqlite_store.py", r"\+.*async def get_memory_stats")),
+            # Uses SQL queries (not just returning dummy data)
+            ("diff_contains", ("blipshell/memory/sqlite_store.py", r"\+.*(SELECT|COUNT|AVG)")),
+            # Modified file still compiles
+            ("syntax_check", "blipshell/memory/sqlite_store.py"),
+            # Test file exists and compiles
+            ("file_exists", "tests/test_memory_stats.py"),
+            ("syntax_check", "tests/test_memory_stats.py"),
+            # Test has assertions
+            ("grep_in_sandbox", ("tests/test_memory_stats.py", r"assert")),
+            # Test imports from the right place
+            ("grep_in_sandbox", ("tests/test_memory_stats.py", r"from blipshell\.memory\.sqlite_store")),
+            # Test passes
+            ("pytest_in_sandbox", "tests/test_memory_stats.py"),
+            # Functional: method exists and returns a dict
+            ("functional_test",
+             "import asyncio; "
+             "from blipshell.memory.sqlite_store import SQLiteStore; "
+             "async def check(): "
+             "  s = SQLiteStore(':memory:'); await s.initialize(); "
+             "  stats = await s.get_memory_stats(); "
+             "  assert isinstance(stats, dict); "
+             "  assert 'total_memories' in stats; "
+             "  assert 'avg_rank' in stats; "
+             "  assert 'type_breakdown' in stats; "
+             "  assert 'oldest_date' in stats; "
+             "  assert stats['total_memories'] == 0; "
+             "asyncio.run(check())"),
+        ],
+    },
+    {
+        "name": "edge_case_parser",
+        "description": "Implement parser with many edge cases (algorithmic thinking)",
+        "request": (
+            "Create blipshell/utils/config_parser.py with a function:\n\n"
+            "  parse_value(raw: str) -> int | float | bool | str\n\n"
+            "Rules (applied in this priority order):\n"
+            "1. If raw is empty or only whitespace → return ''\n"
+            "2. Env vars: '${VAR_NAME}' → os.environ['VAR_NAME']. Raise KeyError if not set. "
+            "The ENTIRE string must be '${...}' — not embedded in other text.\n"
+            "3. Booleans: 'true'/'True'/'TRUE' → True, 'false'/'False'/'FALSE' → False "
+            "(only exact case variants, not 'tRuE')\n"
+            "4. Integers: string of optional '-' + digits → int (e.g., '42', '-7', '0')\n"
+            "5. Floats: string matching optional '-' + digits + '.' + digits → float "
+            "(e.g., '3.14', '-0.5'). Must have digits on both sides of the dot.\n"
+            "6. Quoted strings: if starts AND ends with matching '\"' or \"'\", "
+            "strip the outer quotes (e.g., '\"hello\"' → 'hello'). Single layer only.\n"
+            "7. Everything else: return as-is (stripped of leading/trailing whitespace)\n\n"
+            "Also create blipshell/utils/__init__.py if it doesn't exist (can be empty).\n\n"
+            "Write tests/test_config_parser.py covering ALL these cases plus edge cases:\n"
+            "- '' and '   ' return ''\n"
+            "- '42' → 42, '-7' → -7, '0' → 0\n"
+            "- '3.14' → 3.14, '-0.5' → -0.5\n"
+            "- '.5' stays as string (no digit before dot)\n"
+            "- '3.' stays as string (no digit after dot)\n"
+            "- 'true' → True, 'FALSE' → False, 'tRuE' stays as string\n"
+            "- '\"hello world\"' → 'hello world'\n"
+            "- \"'single'\" → 'single'\n"
+            "- '\"mismatched' stays as string\n"
+            "- '${PATH}' returns os.environ['PATH']\n"
+            "- '${NONEXISTENT_XYZ}' raises KeyError\n"
+            "- 'prefix${VAR}' stays as string (not a pure env var)\n"
+            "- '  42  ' → 42 (whitespace stripped before parsing)"
+        ),
+        "verify_checks": [
+            # Module exists and compiles
+            ("file_exists", "blipshell/utils/config_parser.py"),
+            ("syntax_check", "blipshell/utils/config_parser.py"),
+            # Has the function
+            ("grep_in_sandbox", ("blipshell/utils/config_parser.py", r"def parse_value")),
+            # Test file exists and compiles
+            ("file_exists", "tests/test_config_parser.py"),
+            ("syntax_check", "tests/test_config_parser.py"),
+            # Test passes
+            ("pytest_in_sandbox", "tests/test_config_parser.py"),
+            # Functional: integers
+            ("functional_test",
+             "from blipshell.utils.config_parser import parse_value; "
+             "assert parse_value('42') == 42; "
+             "assert parse_value('-7') == -7; "
+             "assert parse_value('0') == 0; "
+             "assert type(parse_value('42')) is int"),
+            # Functional: floats and non-floats
+            ("functional_test",
+             "from blipshell.utils.config_parser import parse_value; "
+             "assert parse_value('3.14') == 3.14; "
+             "assert type(parse_value('3.14')) is float; "
+             "assert parse_value('.5') == '.5'; "
+             "assert parse_value('3.') == '3.'"),
+            # Functional: booleans
+            ("functional_test",
+             "from blipshell.utils.config_parser import parse_value; "
+             "assert parse_value('true') is True; "
+             "assert parse_value('FALSE') is False; "
+             "assert parse_value('True') is True; "
+             "assert parse_value('tRuE') == 'tRuE'"),
+            # Functional: quoted strings
+            ("functional_test",
+             "from blipshell.utils.config_parser import parse_value; "
+             "assert parse_value('\"hello world\"') == 'hello world'; "
+             "assert parse_value(\"'single'\") == 'single'; "
+             "assert parse_value('\"mismatched') == '\"mismatched'"),
+            # Functional: env vars
+            ("functional_test",
+             "import os; "
+             "from blipshell.utils.config_parser import parse_value; "
+             "assert parse_value('${PATH}') == os.environ['PATH']; "
+             "try: parse_value('${NONEXISTENT_BENCHMARK_XYZ_123}'); assert False\n"
+             "except KeyError: pass; "
+             "assert parse_value('prefix${PATH}') == 'prefix${PATH}'"),
+            # Functional: whitespace and empty
+            ("functional_test",
+             "from blipshell.utils.config_parser import parse_value; "
+             "assert parse_value('') == ''; "
+             "assert parse_value('   ') == ''; "
+             "assert parse_value('  42  ') == 42"),
+        ],
+    },
+    {
+        "name": "cross_file_cli_feature",
+        "description": "Add feature spanning two existing files (codebase navigation + integration)",
+        "request": (
+            "Add a `/recent` CLI command that shows the N most recently created memories "
+            "(default 5). This requires changes to TWO existing files:\n\n"
+            "1. blipshell/memory/sqlite_store.py — add an async method:\n"
+            "   get_recent_memories(n: int = 5) -> list[dict]\n"
+            "   Returns dicts with keys: id, summary, memory_type, rank, created_at\n"
+            "   Ordered by created_at DESC, only non-archived memories.\n\n"
+            "2. blipshell/ui/cli.py — add a /recent command handler:\n"
+            "   - Follow the EXACT pattern of existing slash commands (look at how /core, "
+            "   /flow, /health, etc. are registered and dispatched)\n"
+            "   - Accept optional number argument: /recent or /recent 10\n"
+            "   - Display results in a Rich table with columns: ID, Type, Rank, Summary (truncated), Date\n\n"
+            "You MUST read both files first to understand the patterns. Do not guess — "
+            "the CLI has a specific command dispatch pattern you must follow."
+        ),
+        "verify_checks": [
+            # Method added to sqlite_store
+            ("diff_contains", ("blipshell/memory/sqlite_store.py", r"\+.*async def get_recent_memories")),
+            ("diff_contains", ("blipshell/memory/sqlite_store.py", r"\+.*(SELECT|ORDER BY)")),
+            ("syntax_check", "blipshell/memory/sqlite_store.py"),
+            # Command added to cli.py
+            ("diff_contains", ("blipshell/ui/cli.py", r"\+.*recent")),
+            ("syntax_check", "blipshell/ui/cli.py"),
+            # Both files changed
+            ("files_changed", 2),
+            # Functional: method exists and returns a list
+            ("functional_test",
+             "import asyncio; "
+             "from blipshell.memory.sqlite_store import SQLiteStore; "
+             "async def check(): "
+             "  s = SQLiteStore(':memory:'); await s.initialize(); "
+             "  result = await s.get_recent_memories(5); "
+             "  assert isinstance(result, list); "
+             "asyncio.run(check())"),
+            # No junk files
+            ("no_unwanted_files", None),
+        ],
+    },
+    {
+        "name": "inject_and_diagnose_bug",
+        "description": "Find and fix an injected bug from symptoms only (diagnosis)",
+        "request": (
+            "There's a bug in blipshell/core/tools/filesystem.py — the edit_file tool. "
+            "Users report that edits silently fail: the tool returns success but the file "
+            "content doesn't actually change. The bug was introduced recently.\n\n"
+            "Your task:\n"
+            "1. Read the edit_file tool's execute method in filesystem.py\n"
+            "2. Find the bug (hint: look at the write-back logic)\n"
+            "3. Fix it\n"
+            "4. Write a test in tests/test_edit_bug.py that:\n"
+            "   - Creates a temp file with known content\n"
+            "   - Calls edit_file to change some text\n"
+            "   - Reads the file back and asserts the change was applied\n"
+            "   - Also tests that edit_file returns a success message"
+        ),
+        # This task requires a sandbox setup hook to inject the bug
+        "setup_hook": "inject_edit_bug",
+        "verify_checks": [
+            # Model changed filesystem.py (fixed the bug)
+            ("diff_contains", ("blipshell/core/tools/filesystem.py", r"\+.*write|open")),
+            ("syntax_check", "blipshell/core/tools/filesystem.py"),
+            # Test file exists and passes
+            ("file_exists", "tests/test_edit_bug.py"),
+            ("syntax_check", "tests/test_edit_bug.py"),
+            ("grep_in_sandbox", ("tests/test_edit_bug.py", r"assert")),
+            ("pytest_in_sandbox", "tests/test_edit_bug.py"),
+            # Functional: edit_file actually works after the fix
+            ("functional_test",
+             "import asyncio, tempfile, os; "
+             "from blipshell.core.tools.filesystem import EditFileTool; "
+             "async def check(): "
+             "  t = EditFileTool(); "
+             "  f = tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False); "
+             "  f.write('hello world'); f.close(); "
+             "  t._root_path = os.path.dirname(f.name); "
+             "  from blipshell.core.tools.base import ToolCall; "
+             "  tc = ToolCall(id='t1', name='edit_file', arguments={'path': f.name, 'old_text': 'hello', 'new_text': 'goodbye'}); "
+             "  r = await t.execute(tc); "
+             "  content = open(f.name).read(); "
+             "  os.unlink(f.name); "
+             "  assert 'goodbye' in content, f'Edit did not apply: {content}'; "
+             "asyncio.run(check())"),
+            # No junk
+            ("no_unwanted_files", None),
+        ],
+    },
+]
+
+
+# ---------------------------------------------------------------------------
+# A/B System Configurations — test which BlipShell features help
+# ---------------------------------------------------------------------------
+
+SYSTEM_CONFIGS = {
+    "full": {
+        "description": "All systems ON (production defaults)",
+        # No overrides — uses all defaults
+    },
+    "bare": {
+        "description": "Minimal prompt, no scaffolding — raw LLM capability",
+        "use_minimal_prompt": True,
+        "enable_dedup": False,
+        "enable_compaction": False,
+        "disable_state_block": True,
+        "disable_winddown": True,
+    },
+    "no_state": {
+        "description": "No [STATE] block injection — can the model track its own state?",
+        "disable_state_block": True,
+    },
+    "no_dedup": {
+        "description": "No dedup — does the model waste calls re-reading files?",
+        "enable_dedup": False,
+    },
+    "no_winddown": {
+        "description": "No budget wind-down message — does the model run out gracefully?",
+        "disable_winddown": True,
+    },
+    "guardrails": {
+        "description": "Full + guardrails (trajectory monitor + completion audit)",
+        "guardrails_enabled": True,
+    },
+    "no_scaffolding": {
+        "description": "No state block, no wind-down, no compaction — just dedup and prompt",
+        "disable_state_block": True,
+        "disable_winddown": True,
+        "enable_compaction": False,
+    },
+}
+
+
+def build_minimal_system_prompt(sandbox_path: str, tool_limit: int = 15) -> str:
+    """Bare-bones system prompt — no scaffolding rules, just the essential context."""
+    return (
+        "You are a coding assistant. Complete the task using the available tools.\n"
+        f"Project root: {sandbox_path}\n"
+        "Use relative paths. Call task_complete when done.\n"
+        "Platform: Windows — use the file/grep/glob tools, not shell commands.\n"
+    )
+
+
+def inject_edit_bug(sandbox_path: str):
+    """Inject a subtle bug into edit_file: comment out the write-back so edits silently fail.
+
+    The actual code has `resolved.write_text(new_content, encoding="utf-8")` in multiple
+    places (Layer 1 exact match, Layer 2 whitespace match, etc.). We break the FIRST
+    occurrence so the most common edit path silently succeeds without writing.
+    """
+    fs_path = os.path.join(sandbox_path, "blipshell", "core", "tools", "filesystem.py")
+    with open(fs_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # Replace first write_text(new_content...) with a no-op
+    # The actual line is: resolved.write_text(new_content, encoding="utf-8")
+    content = content.replace(
+        'resolved.write_text(new_content, encoding="utf-8")',
+        '# BUG: write_text accidentally removed during refactor\n'
+        '            _ = new_content  # noqa: F841 — computed but never written',
+        1,  # only replace first occurrence
+    )
+
+    with open(fs_path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
+# Setup hooks — called before a task runs to modify the sandbox
+SETUP_HOOKS = {
+    "inject_edit_bug": inject_edit_bug,
+}
+
+
+# ---------------------------------------------------------------------------
 # Metrics tracking
 # ---------------------------------------------------------------------------
 
@@ -1158,20 +1476,31 @@ async def run_task(
     sandbox_path: str,
     project_context: str,
     timeout: float = 300.0,
+    system_config: dict | None = None,
 ) -> TaskMetrics:
     """Run a coding task with a given model against the real codebase and return metrics.
 
     Uses execute_dynamic() — iterative dynamic execution — with transcript capture.
+
+    Args:
+        system_config: Optional A/B config dict from SYSTEM_CONFIGS.
+            Controls scaffolding features (state block, dedup, compaction, etc.).
     """
+    config_name = system_config.get("_name", "full") if system_config else "full"
     metrics = TaskMetrics(task_name=task["name"], model=model_spec)
 
-    # Set up transcript capture
+    # Set up transcript capture (include config name in filename)
     transcript_dir = Path("data") / "benchmark_coding_transcripts"
     transcript = TranscriptCapture(model_spec, task["name"], transcript_dir)
 
     try:
         # Reset sandbox to clean state
         reset_sandbox(sandbox_path)
+
+        # Run task-specific setup hook (e.g., inject a bug)
+        setup_hook = task.get("setup_hook")
+        if setup_hook and setup_hook in SETUP_HOOKS:
+            SETUP_HOOKS[setup_hook](sandbox_path)
 
         router = make_router(model_spec, timeout=timeout)
         sqlite = await create_sqlite(sandbox_path)
@@ -1180,13 +1509,22 @@ async def run_task(
         # Get model-specific settings
         ms = get_model_settings(model_spec)
 
-        # Build system prompt matching production project mode
-        system_prompt = build_executor_system_prompt(
-            sandbox_path=sandbox_path,
-            project_context=project_context,
-            tool_limit=ms.max_tool_calls,
-            extra_instructions=ms.extra_instructions,
-        )
+        sc = system_config or {}
+
+        # Build system prompt — minimal or full based on config
+        if sc.get("use_minimal_prompt"):
+            system_prompt = build_minimal_system_prompt(
+                sandbox_path=sandbox_path,
+                tool_limit=ms.max_tool_calls,
+            )
+            system_prompt += "\n\n" + project_context
+        else:
+            system_prompt = build_executor_system_prompt(
+                sandbox_path=sandbox_path,
+                project_context=project_context,
+                tool_limit=ms.max_tool_calls,
+                extra_instructions=ms.extra_instructions,
+            )
 
         planner_config = PlannerConfig(
             enabled=True,
@@ -1206,10 +1544,30 @@ async def run_task(
         executor.active_project = {"name": "blipshell", "root_path": sandbox_path}
         executor.project_context = ""  # Already baked into system_prompt
 
+        # Apply A/B system config overrides to executor
+        if sc.get("disable_state_block"):
+            executor._disable_state_block = True
+        if sc.get("disable_winddown"):
+            executor._disable_winddown = True
+        if "enable_dedup" in sc:
+            executor._override_enable_dedup = sc["enable_dedup"]
+        if "enable_compaction" in sc:
+            executor._override_enable_compaction = sc["enable_compaction"]
+        if sc.get("guardrails_enabled"):
+            from blipshell.models.config import GuardrailsConfig
+            executor.guardrails_config = GuardrailsConfig(
+                enabled=True,
+                trajectory_monitor=True,
+                completion_audit=True,
+                monitor_interval=5,
+                max_audit_retries=1,
+            )
+
         wall_start = time.perf_counter()
 
         # Add transcript header
-        transcript.add_header("[Dynamic execution — single continuous conversation]")
+        config_label = f" [config: {config_name}]" if config_name != "full" else ""
+        transcript.add_header(f"[Dynamic execution — single continuous conversation{config_label}]")
 
         # Capture metrics as one step (the entire task)
         tool_registry.reset_log()
@@ -1453,8 +1811,21 @@ def print_totals_table(all_results: dict[str, list[TaskMetrics]]):
 # Main
 # ---------------------------------------------------------------------------
 
-async def run_benchmark(models: list[str], timeout: float = 300.0):
-    """Run the full coding benchmark for all models."""
+async def run_benchmark(
+    models: list[str],
+    timeout: float = 300.0,
+    tasks: list[dict] | None = None,
+    system_config: dict | None = None,
+):
+    """Run the coding benchmark for specified models.
+
+    Args:
+        tasks: Task list to run. Defaults to CODING_TASKS.
+        system_config: A/B config dict from SYSTEM_CONFIGS. None = "full" (defaults).
+    """
+    task_list = tasks or CODING_TASKS
+    config_name = system_config.get("_name", "full") if system_config else "full"
+
     data_dir = Path("data")
     data_dir.mkdir(exist_ok=True)
     output_path = data_dir / "benchmark_coding_results.json"
@@ -1475,7 +1846,8 @@ async def run_benchmark(models: list[str], timeout: float = 300.0):
 
     console.print(f"\n[bold]Coding Model Benchmark (Real Codebase)[/bold]")
     console.print(f"Models: {', '.join(models)}")
-    console.print(f"Tasks: {', '.join(t['name'] for t in CODING_TASKS)}")
+    console.print(f"Tasks: {', '.join(t['name'] for t in task_list)}")
+    console.print(f"Config: [bold]{config_name}[/bold] — {(system_config or {}).get('description', 'all systems ON')}")
     console.print(f"Timeout: {timeout}s per LLM call\n")
 
     # Create a single sandbox for the entire benchmark run
@@ -1492,15 +1864,18 @@ async def run_benchmark(models: list[str], timeout: float = 300.0):
 
     try:
         for model_spec in models:
-            console.rule(f"[bold blue]Benchmarking: {model_spec}")
+            # Results key includes config for A/B comparison
+            result_key = f"{model_spec}:{config_name}" if config_name != "full" else model_spec
+            console.rule(f"[bold blue]Benchmarking: {result_key}")
             model_results: list[TaskMetrics] = []
 
-            for task in CODING_TASKS:
+            for task in task_list:
                 console.print(f"\n  [dim]Task: {task['name']} — {task['description']}[/dim]")
                 console.print(f"  [dim]Request: {task['request'][:80]}...[/dim]")
 
                 metrics = await run_task(
-                    model_spec, task, sandbox_path, project_context, timeout=timeout,
+                    model_spec, task, sandbox_path, project_context,
+                    timeout=timeout, system_config=system_config,
                 )
 
                 if metrics.error:
@@ -1523,14 +1898,14 @@ async def run_benchmark(models: list[str], timeout: float = 300.0):
 
                 model_results.append(metrics)
 
-            all_results[model_spec] = model_results
-            all_raw[model_spec] = [m.to_dict() for m in model_results]
+            all_results[result_key] = model_results
+            all_raw[result_key] = [m.to_dict() for m in model_results]
 
             # Save incrementally after each model
             with open(output_path, "w") as f:
                 json.dump(all_raw, f, indent=2)
 
-            console.print(f"\n  [green]Completed all tasks for {model_spec}[/green]")
+            console.print(f"\n  [green]Completed all tasks for {result_key}[/green]")
 
     finally:
         # Cleanup sandbox
@@ -1581,10 +1956,25 @@ async def dry_run_verify():
 
 
 def main():
-    """CLI entry point."""
+    """CLI entry point.
+
+    Usage:
+        python tests/benchmark_coding.py                              # all models, standard tasks
+        python tests/benchmark_coding.py glm-5:cloud --hard           # one model, hard tasks
+        python tests/benchmark_coding.py glm-5:cloud --config bare    # A/B test with bare config
+        python tests/benchmark_coding.py --ab glm-5:cloud             # run all configs for one model
+        python tests/benchmark_coding.py --tasks stats_command,edge_case_parser  # specific tasks
+        python tests/benchmark_coding.py --list-configs               # show available A/B configs
+        python tests/benchmark_coding.py --dry-run-verify             # test checks on unmodified code
+    """
     models = []
     timeout = 300.0
     dry_run = False
+    use_hard = False
+    use_all = False
+    config_name = "full"
+    ab_mode = False
+    task_filter: list[str] = []
 
     args = sys.argv[1:]
     i = 0
@@ -1595,6 +1985,31 @@ def main():
         elif args[i] == "--dry-run-verify":
             dry_run = True
             i += 1
+        elif args[i] == "--hard":
+            use_hard = True
+            i += 1
+        elif args[i] == "--all":
+            use_all = True
+            i += 1
+        elif args[i] == "--config" and i + 1 < len(args):
+            config_name = args[i + 1]
+            i += 2
+        elif args[i] == "--ab":
+            ab_mode = True
+            i += 1
+        elif args[i] == "--tasks" and i + 1 < len(args):
+            task_filter = [t.strip() for t in args[i + 1].split(",")]
+            i += 2
+        elif args[i] == "--list-configs":
+            console.print("\n[bold]Available A/B System Configurations[/bold]\n")
+            for name, cfg in SYSTEM_CONFIGS.items():
+                desc = cfg.get("description", "")
+                overrides = {k: v for k, v in cfg.items() if k != "description"}
+                console.print(f"  [cyan]{name:16s}[/cyan] {desc}")
+                if overrides:
+                    console.print(f"                   [dim]{overrides}[/dim]")
+            console.print()
+            return
         else:
             models.append(args[i])
             i += 1
@@ -1606,7 +2021,45 @@ def main():
     if not models:
         models = BENCHMARK_MODELS
 
-    asyncio.run(run_benchmark(models, timeout=timeout))
+    # Build task list
+    if use_all:
+        task_list = CODING_TASKS + HARD_TASKS
+    elif use_hard:
+        task_list = HARD_TASKS
+    else:
+        task_list = CODING_TASKS
+
+    # Apply task filter
+    if task_filter:
+        task_list = [t for t in task_list if t["name"] in task_filter]
+        if not task_list:
+            all_names = [t["name"] for t in CODING_TASKS + HARD_TASKS]
+            console.print(f"[red]No tasks matched filter: {task_filter}[/red]")
+            console.print(f"[dim]Available: {', '.join(all_names)}[/dim]")
+            return
+
+    # A/B mode: run all configs for each model
+    if ab_mode:
+        console.print(f"\n[bold]A/B Benchmark — testing {len(SYSTEM_CONFIGS)} configs[/bold]\n")
+        for cfg_name, cfg in SYSTEM_CONFIGS.items():
+            cfg_with_name = {**cfg, "_name": cfg_name}
+            console.rule(f"[bold magenta]Config: {cfg_name} — {cfg.get('description', '')}")
+            asyncio.run(run_benchmark(
+                models, timeout=timeout, tasks=task_list, system_config=cfg_with_name,
+            ))
+        return
+
+    # Single config mode
+    system_config = None
+    if config_name != "full":
+        if config_name not in SYSTEM_CONFIGS:
+            console.print(f"[red]Unknown config: {config_name}. Use --list-configs to see options.[/red]")
+            return
+        system_config = {**SYSTEM_CONFIGS[config_name], "_name": config_name}
+
+    asyncio.run(run_benchmark(
+        models, timeout=timeout, tasks=task_list, system_config=system_config,
+    ))
 
 
 if __name__ == "__main__":

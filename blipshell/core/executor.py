@@ -209,10 +209,13 @@ class TaskExecutor:
         self.chat_loop_runner: Optional[Callable] = None
         # Guardrails configuration (set by Agent from config)
         self.guardrails_config: Optional[GuardrailsConfig] = None
-        # Phase 2 test override flags (set by TestOverrides.apply())
+        # Phase 2 test override flags (set by TestOverrides.apply() or benchmark configs)
         self._disable_winddown: bool = False
         self._disable_state_block: bool = False
         self._natural_completion_primary: bool = False
+        # A/B benchmark overrides for LoopConfig (None = use defaults)
+        self._override_enable_dedup: bool | None = None
+        self._override_enable_compaction: bool | None = None
 
     async def execute_plan(
         self,
@@ -483,11 +486,11 @@ class TaskExecutor:
                 return self.tool_registry.get_plan_mode_tools() or None
             return tools
 
-        # Build executor-specific loop config
+        # Build executor-specific loop config (A/B overrides take precedence)
         config = LoopConfig(
             budget=budget,
-            enable_dedup=True,
-            enable_compaction=True,
+            enable_dedup=self._override_enable_dedup if self._override_enable_dedup is not None else True,
+            enable_compaction=self._override_enable_compaction if self._override_enable_compaction is not None else True,
             compaction_threshold=0.85,
             context_limit=65536,  # will be updated by _run_chat_loop with endpoint value
             completion_tool="task_complete",
