@@ -1184,7 +1184,7 @@ def make_router(model_name: str, timeout: float = 300.0) -> LLMRouter:
             roles=["reasoning", "tool_calling", "coding", "summarization",
                    "ranking", "importance", "embedding"],
             priority=1,
-            max_concurrent=1,
+            max_concurrent=2,
             context_tokens=131072,
         )
     else:
@@ -1195,7 +1195,7 @@ def make_router(model_name: str, timeout: float = 300.0) -> LLMRouter:
             roles=["reasoning", "tool_calling", "coding", "summarization",
                    "ranking", "importance", "embedding"],
             priority=1,
-            max_concurrent=1,
+            max_concurrent=2,
             context_tokens=131072,
         )
 
@@ -1558,7 +1558,7 @@ async def run_task(
             executor.guardrails_config = GuardrailsConfig(
                 enabled=True,
                 trajectory_monitor=True,
-                completion_audit=False,  # needs REASONING endpoint not available in benchmark
+                completion_audit=True,
                 monitor_interval=5,
                 max_audit_retries=1,
             )
