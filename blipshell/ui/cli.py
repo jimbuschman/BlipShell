@@ -594,6 +594,11 @@ async def chat_loop(
         except KeyError:
             console.print(f"[yellow]Project '{project}' not found in DB. Use /project new to create it.[/yellow]")
 
+    # Disable terminal focus reporting — prevents \x1b[I / \x1b[O sequences
+    # from being injected as literal [O[I characters when clicking in the window.
+    sys.stdout.write("\x1b[?1004l")
+    sys.stdout.flush()
+
     # Header
     proj_display = agent.active_project["name"] if agent.active_project else None
     console.print(Panel.fit(
@@ -891,8 +896,11 @@ async def chat_loop(
                     thinking_status.stop()
                     thinking_active = False
                 response_parts.append(token)
-                # ANSI escape sequences (tool status, cursor control) pass through raw
+                # ANSI escape sequences (tool status, cursor control) pass through raw.
+                # Reset the markdown streamer first — tool displays move the cursor,
+                # invalidating the erase-and-replace mechanism for partial lines.
                 if "\x1b[" in token:
+                    md_streamer.reset_line()
                     sys.stdout.write(token)
                 else:
                     sys.stdout.write(md_streamer.feed(token))

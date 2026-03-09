@@ -135,15 +135,25 @@ class MarkdownStreamer:
         self._pending_output = ""
         return f"\x1b[{n}D\x1b[{n}X"
 
+    def reset_line(self):
+        """Discard buffered partial line state.
+
+        Call this when external output (ANSI tool displays) has moved the
+        cursor, making the erase-and-replace mechanism invalid. The
+        previously emitted raw text stays on screen as-is.
+        """
+        self._line_buffer = ""
+        self._pending_output = ""
+
     def flush(self) -> str:
         """Flush any remaining buffered content (call at end of stream)."""
         if self._line_buffer:
-            # Format whatever's left without erasing (it's the final partial line)
+            # Erase the raw partial output we emitted, replace with formatted
+            erase = self._erase_pending()
             if self._in_code_block:
-                result = f"{DIM}{self._line_buffer}{RESET}"
+                result = f"{erase}{DIM}{self._line_buffer}{RESET}"
             else:
-                result = self._format_inline(self._line_buffer)
+                result = f"{erase}{self._format_inline(self._line_buffer)}"
             self._line_buffer = ""
-            self._pending_output = ""
             return result
         return ""
