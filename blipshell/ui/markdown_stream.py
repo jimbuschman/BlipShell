@@ -11,6 +11,8 @@ Designed for incremental token-by-token input. Formatting is applied
 at line boundaries to avoid partial-token issues.
 """
 
+import os
+
 # ANSI escape codes
 BOLD = "\x1b[1m"
 DIM = "\x1b[2m"
@@ -27,6 +29,13 @@ class MarkdownStreamer:
         self._in_code_block = False
         self._code_lang = ""
         self._pending_output = ""
+
+    @staticmethod
+    def _get_term_width() -> int:
+        try:
+            return os.get_terminal_size().columns
+        except (OSError, ValueError):
+            return 80
 
     def feed(self, token: str) -> str:
         """Accept a token and return ANSI-formatted output.
@@ -46,20 +55,21 @@ class MarkdownStreamer:
             else:
                 self._line_buffer += char
 
-        # For partial lines (no newline yet), buffer them.
-        # We need to emit something for responsiveness, but we can't
-        # format until we see the full line. Compromise: emit raw text
-        # for partial lines, unless we're in a code block.
+        # For partial lines (no newline yet), emit raw chars for responsiveness.
+        # Cap at terminal width — CUB (Cursor Backward) used by _erase_pending()
+        # cannot cross terminal line wraps, so we must keep pending output within
+        # a single terminal line for erase-and-replace to work correctly.
         if self._line_buffer and not any(c == "\n" for c in token):
-            # Partial line — emit the new characters raw (or dimmed in code block)
             new_chars = token
-            if self._in_code_block:
-                output.append(f"{DIM}{new_chars}{RESET}")
-            else:
-                output.append(new_chars)
-            # But we've already added to _line_buffer, so when the line
-            # completes we'd double-output. Track what we've emitted.
-            self._pending_output += new_chars
+            max_emit = self._get_term_width() - 1
+            available = max_emit - len(self._pending_output)
+            if available > 0:
+                emit = new_chars[:available]
+                if self._in_code_block:
+                    output.append(f"{DIM}{emit}{RESET}")
+                else:
+                    output.append(emit)
+                self._pending_output += emit
 
         return "".join(output)
 
