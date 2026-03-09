@@ -1558,7 +1558,7 @@ async def run_task(
             executor.guardrails_config = GuardrailsConfig(
                 enabled=True,
                 trajectory_monitor=True,
-                completion_audit=True,
+                completion_audit=False,  # needs REASONING endpoint not available in benchmark
                 monitor_interval=5,
                 max_audit_retries=1,
             )
