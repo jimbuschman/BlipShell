@@ -1832,8 +1832,8 @@ async def run_task(
                         f"ESTIMATED COST: ${metrics.estimated_cost_usd:.4f}\n"
                     )
                     break
-        except Exception as e:
-            logger.debug("Token usage capture failed: %s", e)
+        except Exception:
+            pass  # non-critical — cost tracking is best-effort
 
         # Save transcript
         metrics.transcript_path = transcript.save()
