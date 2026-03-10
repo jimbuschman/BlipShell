@@ -35,12 +35,13 @@ class ReadFileTool(Tool):
 
     def __init__(self, max_file_size: int = 1048576, blocked_paths: list[str] | None = None,
                  root_path: str | None = None, files_read: set[str] | None = None,
-                 file_cache: dict[str, str] | None = None):
+                 file_cache: dict[str, str] | None = None, stale_files: set[str] | None = None):
         self.max_file_size = max_file_size
         self.blocked_paths = blocked_paths or []
         self.root_path = root_path
         self.files_read = files_read  # shared set from agent — checked to prevent re-reads
         self.file_cache = file_cache  # optional cache — if set, re-reads return cached content
+        self.stale_files = stale_files  # files modified since last read — allow re-read
 
     # Default line limit for large files — prevents context window flooding
     DEFAULT_MAX_LINES = 300
@@ -86,20 +87,26 @@ class ReadFileTool(Tool):
         # Re-read handling: behavior depends on whether a cache is available.
         # With cache (executor/planned path): return cached content (fast, no disk IO)
         # Without cache (simple chat path): block re-reads entirely
+        # EXCEPTION: stale files (modified since last read) always re-read from disk.
         if self.files_read is not None:
             resolved_str = str(resolved)
             if resolved_str in self.files_read or path in self.files_read:
-                # Check cache first — return cached content if available
-                if self.file_cache is not None:
-                    cached = self.file_cache.get(path) or self.file_cache.get(resolved_str)
-                    if cached:
-                        logger.debug("Returning cached content for %s", path)
-                        return self._paginate(cached, start_line, max_lines)
-                # No cache — block the re-read
-                return (
-                    f"ALREADY READ: '{path}' was already read this session. "
-                    "The content is in our conversation above. Do not re-read."
-                )
+                # Stale files bypass cache — content changed, re-read from disk
+                is_stale = (self.stale_files is not None and
+                            (path in self.stale_files or resolved_str in self.stale_files))
+                if not is_stale:
+                    # Check cache first — return cached content if available
+                    if self.file_cache is not None:
+                        cached = self.file_cache.get(path) or self.file_cache.get(resolved_str)
+                        if cached:
+                            logger.debug("Returning cached content for %s", path)
+                            return self._paginate(cached, start_line, max_lines)
+                    # No cache — block the re-read
+                    return (
+                        f"ALREADY READ: '{path}' was already read this session. "
+                        "The content is in our conversation above. Do not re-read."
+                    )
+                logger.debug("Re-reading stale file %s (modified since last read)", path)
 
         if self._is_blocked(str(resolved)):
             return f"Error: Access to '{path}' is blocked."

@@ -198,6 +198,7 @@ class TaskExecutor:
         self.project_context: str = ""
         self.files_read: set[str] = set()  # shared with Agent to track across steps
         self._file_cache: dict[str, str] = {}  # path → content, for cross-step re-reads
+        self._stale_files: set[str] = set()  # files modified since last read — need re-read
         # Per-step tracking for rich context summaries
         self._step_files_created: list[str] = []
         self._step_files_edited: list[str] = []
@@ -407,10 +408,12 @@ class TaskExecutor:
         # re-reads and serve cached content instead of re-reading from disk.
         self._file_cache.clear()
         self.files_read.clear()
+        self._stale_files.clear()
         read_tool = self.tool_registry.get_tool("read_file")
         if read_tool is not None:
             read_tool.file_cache = self._file_cache
             read_tool.files_read = self.files_read
+            read_tool.stale_files = self._stale_files
 
         # Build system prompt — use executor-specific prompt with rules
         sys_prompt = executor_system_prompt()
@@ -732,6 +735,7 @@ class TaskExecutor:
             read_path = arguments.get("path", "")
             if read_path:
                 self.files_read.add(read_path)
+                self._stale_files.discard(read_path)  # just read — no longer stale
         if result.success and name == "write_file":
             file_path = arguments.get("path", "")
             if file_path:
@@ -739,11 +743,17 @@ class TaskExecutor:
                 written = arguments.get("content", "")
                 if written:
                     self._file_cache[file_path] = written
+                # Mark stale if it was previously read (content changed)
+                if file_path in self.files_read:
+                    self._stale_files.add(file_path)
         if result.success and name == "edit_file":
             file_path = arguments.get("path", "")
             if file_path:
                 self._step_files_edited.append(file_path)
                 self._file_cache.pop(file_path, None)
+                # Mark stale — cached/in-context content is now outdated
+                if file_path in self.files_read:
+                    self._stale_files.add(file_path)
         if result.success and name == "list_directory":
             read_path = arguments.get("path", "")
             if read_path:
@@ -777,14 +787,20 @@ class TaskExecutor:
         """
         parts = [f"[STATE] Tool calls: {tool_call_count}/{budget}"]
 
-        # Files read
+        # Files read (annotate stale files)
         if self.files_read:
             files = sorted(self.files_read)
-            if len(files) > 10:
-                shown = files[:10]
+            annotated = []
+            for f in files:
+                if f in self._stale_files:
+                    annotated.append(f"{f} (STALE — modified, re-read before using)")
+                else:
+                    annotated.append(f)
+            if len(annotated) > 10:
+                shown = annotated[:10]
                 parts.append(f"Files read ({len(files)}): {', '.join(shown)}, ... +{len(files) - 10} more")
             else:
-                parts.append(f"Files read: {', '.join(files)}")
+                parts.append(f"Files read: {', '.join(annotated)}")
 
         # Files created/modified
         if self._step_files_created:

@@ -384,3 +384,465 @@ class TestLoopConfigGuardrails:
         engine = GuardrailsEngine(GuardrailsConfig(enabled=True), router=None)
         config = LoopConfig(guardrails=engine)
         assert config.guardrails is engine
+
+
+# ── Critique Provider Config ─────────────────────────────────────────────────
+
+
+class TestCritiqueConfig:
+    """Test critique provider configuration fields."""
+
+    def test_defaults_off(self):
+        cfg = GuardrailsConfig(enabled=True)
+        assert cfg.critique_edits is False
+        assert cfg.critique_trajectory is False
+        assert cfg.critique_completion is False
+
+    def test_toggle_individually(self):
+        cfg = GuardrailsConfig(
+            enabled=True,
+            critique_edits=True,
+            critique_trajectory=False,
+            critique_completion=True,
+        )
+        assert cfg.critique_edits is True
+        assert cfg.critique_trajectory is False
+        assert cfg.critique_completion is True
+
+
+# ── Critique Provider: Edit Critique ─────────────────────────────────────────
+
+
+class TestCritiqueEdit:
+    """Test edit critique via guardrails engine."""
+
+    def _make_engine(self, **overrides):
+        cfg = GuardrailsConfig(enabled=True, **overrides)
+        return GuardrailsEngine(cfg, router=None)
+
+    def test_disabled_returns_none(self):
+        engine = self._make_engine(critique_edits=False)
+        engine.original_request = "Fix the bug"
+        result = asyncio.run(
+            engine.critique_edit("foo.py", "old", "new")
+        )
+        assert result is None
+
+    def test_prompt_generation(self):
+        from blipshell.llm.prompts import critique_edit
+        system, user = critique_edit(
+            original_task="Add error handling",
+            file_path="handler.py",
+            old_text="return data",
+            new_text="try:\n    return data\nexcept Exception:\n    return None",
+        )
+        assert "correctness" in system.lower() or "review" in system.lower()
+        assert "handler.py" in user
+        assert "Add error handling" in user
+        assert "BEFORE" in user
+        assert "AFTER" in user
+
+    def test_prompt_truncates_long_text(self):
+        from blipshell.llm.prompts import critique_edit
+        long_text = "x" * 1000
+        _, user = critique_edit("task", "file.py", long_text, long_text)
+        # Should truncate to ~500 chars + "..."
+        assert "..." in user
+        assert len(user) < 2000
+
+
+# ── Critique Provider: Trajectory Critique ───────────────────────────────────
+
+
+class TestCritiqueTrajectory:
+    """Test trajectory critique via guardrails engine."""
+
+    def _make_engine(self, **overrides):
+        cfg = GuardrailsConfig(enabled=True, **overrides)
+        return GuardrailsEngine(cfg, router=None)
+
+    def test_disabled_returns_none(self):
+        engine = self._make_engine(critique_trajectory=False)
+        engine.original_request = "Fix the bug"
+        result = asyncio.run(
+            engine.critique_trajectory(5, 50, ["read_file"] * 5)
+        )
+        assert result is None
+
+    def test_not_due_returns_none(self):
+        engine = self._make_engine(critique_trajectory=True, monitor_interval=5)
+        engine.original_request = "Fix the bug"
+        result = asyncio.run(
+            engine.critique_trajectory(3, 50, ["read_file"] * 3)
+        )
+        assert result is None
+
+    def test_at_zero_returns_none(self):
+        engine = self._make_engine(critique_trajectory=True)
+        engine.original_request = "Fix the bug"
+        result = asyncio.run(
+            engine.critique_trajectory(0, 50, [])
+        )
+        assert result is None
+
+    def test_prompt_generation(self):
+        from blipshell.llm.prompts import critique_trajectory
+        system, user = critique_trajectory(
+            original_task="Refactor the handler",
+            recent_actions=["read_file", "read_file", "grep_files", "read_file", "read_file"],
+            tool_call_count=10,
+            budget=50,
+        )
+        assert "productive" in system.lower()
+        assert "Refactor the handler" in user
+        assert "10/50" in user
+        assert "20%" in user  # 10/50 = 20%
+
+
+# ── Critique Provider: Completion Critique ───────────────────────────────────
+
+
+class TestCritiqueCompletion:
+    """Test completion critique via guardrails engine."""
+
+    def _make_engine(self, **overrides):
+        cfg = GuardrailsConfig(enabled=True, **overrides)
+        return GuardrailsEngine(cfg, router=None)
+
+    def test_disabled_returns_none(self):
+        engine = self._make_engine(critique_completion=False)
+        engine.original_request = "Fix the bug"
+        result = asyncio.run(
+            engine.critique_completion("Done", "file.py")
+        )
+        assert result is None
+
+    def test_prompt_generation(self):
+        from blipshell.llm.prompts import critique_completion
+        system, user = critique_completion(
+            original_task="Add logging to handler.py",
+            summary="Added logging statements",
+            files_modified="handler.py",
+            recent_actions=["read_file", "edit_file", "read_file"],
+            checklist=["Add import", "Add log calls"],
+        )
+        assert "quality" in system.lower() or "review" in system.lower()
+        assert "Add logging" in user
+        assert "handler.py" in user
+        assert "Add import" in user
+
+    def test_prompt_without_checklist(self):
+        from blipshell.llm.prompts import critique_completion
+        _, user = critique_completion(
+            original_task="Fix bug",
+            summary="Fixed",
+        )
+        assert "Fix bug" in user
+        assert "Confirmed plan" not in user
+
+
+# ── Stale File Detection ─────────────────────────────────────────────────────
+
+
+class TestStaleFileDetection:
+    """Test that ReadFileTool allows re-reading stale files."""
+
+    @pytest.fixture
+    def read_tool(self, tmp_path):
+        """Create a ReadFileTool with tracking sets."""
+        from blipshell.core.tools.filesystem import ReadFileTool
+        test_file = tmp_path / "test.py"
+        test_file.write_text("line 1\nline 2\nline 3\n")
+        files_read = set()
+        file_cache = {}
+        stale_files = set()
+        tool = ReadFileTool(
+            root_path=str(tmp_path),
+            files_read=files_read,
+            file_cache=file_cache,
+            stale_files=stale_files,
+        )
+        return tool, str(test_file), files_read, file_cache, stale_files
+
+    def test_normal_reread_blocked(self, read_tool):
+        """Re-reads should be blocked when file is not stale."""
+        tool, path, files_read, file_cache, stale_files = read_tool
+        files_read.add(path)
+        result = asyncio.run(
+            tool.execute(path)
+        )
+        assert "ALREADY READ" in result
+
+    def test_stale_file_reread_allowed(self, read_tool):
+        """Stale files should be re-read from disk."""
+        tool, path, files_read, file_cache, stale_files = read_tool
+        files_read.add(path)
+        stale_files.add(path)
+        result = asyncio.run(
+            tool.execute(path)
+        )
+        assert "ALREADY READ" not in result
+        assert "line 1" in result
+
+    def test_stale_bypasses_cache(self, read_tool):
+        """Stale files should read from disk, not cache."""
+        tool, path, files_read, file_cache, stale_files = read_tool
+        files_read.add(path)
+        file_cache[path] = "old cached content"
+        stale_files.add(path)
+        result = asyncio.run(
+            tool.execute(path)
+        )
+        assert "old cached content" not in result
+        assert "line 1" in result
+
+    def test_non_stale_uses_cache(self, read_tool):
+        """Non-stale files should still return cached content."""
+        tool, path, files_read, file_cache, stale_files = read_tool
+        files_read.add(path)
+        file_cache[path] = "cached content here"
+        result = asyncio.run(
+            tool.execute(path)
+        )
+        assert "cached content" in result
+
+
+# ── Per-Tool-Type Compaction ─────────────────────────────────────────────────
+
+
+class TestPerToolTypeCompaction:
+    """Test that compact_messages uses different strategies per tool type."""
+
+    def _make_messages(self, tool_calls_and_results):
+        """Build a message list with system, user, then tool call/result pairs.
+
+        tool_calls_and_results: list of (tool_name, result_content) tuples
+        """
+        messages = [
+            {"role": "system", "content": "You are an assistant."},
+            {"role": "user", "content": "Do the task"},
+        ]
+        for i, (name, content) in enumerate(tool_calls_and_results):
+            tc_id = f"tc_{i}"
+            messages.append({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": tc_id,
+                    "function": {"name": name, "arguments": "{}"},
+                }],
+            })
+            messages.append({
+                "role": "tool",
+                "content": content,
+                "tool_call_id": tc_id,
+            })
+        return messages
+
+    def test_read_file_dropped(self):
+        from blipshell.core.chat_loop import compact_messages
+        file_content = "\n".join(f"    {i}\tcode line {i}" for i in range(1, 101))
+        msgs = self._make_messages([
+            ("read_file", file_content),
+            ("read_file", "short file"),
+            ("edit_file", "OK — edited"),
+            ("read_file", "another file"),
+            ("edit_file", "OK — edited again"),
+            ("read_file", "final read"),
+        ])
+        result = compact_messages(msgs, keep_last_n=2)
+        # Find compacted read_file results (should say "re-read from disk")
+        compacted_reads = [
+            m for m in result
+            if m.get("role") == "tool" and "re-read from disk" in m.get("content", "")
+        ]
+        assert len(compacted_reads) >= 1  # At least the big file got compacted
+
+    def test_grep_collapsed_to_files(self):
+        from blipshell.core.chat_loop import compact_messages
+        grep_output = "src/foo.py:10:match1\nsrc/bar.py:20:match2\nsrc/foo.py:30:match3"
+        msgs = self._make_messages([
+            ("grep_files", grep_output),
+            ("read_file", "content"),
+            ("edit_file", "OK"),
+            ("read_file", "more content"),
+            ("edit_file", "OK again"),
+            ("read_file", "final"),
+        ])
+        result = compact_messages(msgs, keep_last_n=2)
+        compacted_greps = [
+            m for m in result
+            if m.get("role") == "tool" and "grep_files" in m.get("content", "")
+        ]
+        assert len(compacted_greps) >= 1
+        assert "2 files" in compacted_greps[0]["content"] or "src/foo.py" in compacted_greps[0]["content"]
+
+    def test_shell_keeps_first_last(self):
+        from blipshell.core.chat_loop import compact_messages
+        shell_output = "\n".join(f"output line {i}" for i in range(50))
+        msgs = self._make_messages([
+            ("run_command", shell_output),
+            ("read_file", "content"),
+            ("edit_file", "OK"),
+            ("read_file", "more"),
+            ("edit_file", "OK 2"),
+            ("read_file", "final"),
+        ])
+        result = compact_messages(msgs, keep_last_n=2)
+        compacted_shells = [
+            m for m in result
+            if m.get("role") == "tool" and "run_command" in m.get("content", "")
+        ]
+        assert len(compacted_shells) >= 1
+        content = compacted_shells[0]["content"]
+        assert "output line 0" in content  # first line preserved
+        assert "output line 49" in content  # last line preserved
+        assert "50 lines" in content
+
+    def test_recent_results_kept_intact(self):
+        from blipshell.core.chat_loop import compact_messages
+        msgs = self._make_messages([
+            ("read_file", "old content " * 100),
+            ("read_file", "recent content"),
+            ("edit_file", "OK"),
+        ])
+        result = compact_messages(msgs, keep_last_n=2)
+        # Last 2 tool results should be untouched
+        tool_msgs = [m for m in result if m.get("role") == "tool"]
+        assert any("[Compacted]" not in m["content"] for m in tool_msgs[-2:])
+
+
+# ── Doom-Loop Detector ───────────────────────────────────────────────────────
+
+
+class TestDoomLoopDetector:
+    """Test the counter-based doom-loop detection."""
+
+    def _make_engine(self, **overrides):
+        cfg = GuardrailsConfig(enabled=True, **overrides)
+        return GuardrailsEngine(cfg, router=None)
+
+    def test_disabled_returns_none(self):
+        engine = self._make_engine(doom_loop_detector=False)
+        result = engine.check_doom_loop([("read_file", {"path": "foo.py"})] * 5)
+        assert result is None
+
+    def test_no_warning_below_threshold(self):
+        engine = self._make_engine(doom_loop_read_threshold=3)
+        engine.original_request = "Fix the bug"
+        # 2 reads of same file — below threshold
+        result = engine.check_doom_loop([
+            ("read_file", {"path": "foo.py"}),
+            ("read_file", {"path": "foo.py"}),
+        ])
+        assert result is None
+
+    def test_read_warning_at_threshold(self):
+        engine = self._make_engine(doom_loop_read_threshold=3)
+        engine.original_request = "Fix the bug"
+        # 3 reads of same file — hits threshold
+        result = engine.check_doom_loop([
+            ("read_file", {"path": "foo.py"}),
+            ("read_file", {"path": "foo.py"}),
+            ("read_file", {"path": "foo.py"}),
+        ])
+        assert result is not None
+        assert "DOOM-LOOP" in result
+        assert "foo.py" in result
+        assert "3 times" in result
+
+    def test_read_warning_across_batches(self):
+        engine = self._make_engine(doom_loop_read_threshold=3)
+        # Spread across multiple batches
+        engine.check_doom_loop([("read_file", {"path": "foo.py"})])
+        engine.check_doom_loop([("read_file", {"path": "foo.py"})])
+        result = engine.check_doom_loop([("read_file", {"path": "foo.py"})])
+        assert result is not None
+        assert "foo.py" in result
+
+    def test_different_files_no_warning(self):
+        engine = self._make_engine(doom_loop_read_threshold=3)
+        result = engine.check_doom_loop([
+            ("read_file", {"path": "foo.py"}),
+            ("read_file", {"path": "bar.py"}),
+            ("read_file", {"path": "baz.py"}),
+        ])
+        assert result is None
+
+    def test_edit_warning_at_threshold(self):
+        engine = self._make_engine(doom_loop_edit_threshold=3)
+        result = engine.check_doom_loop([
+            ("edit_file", {"path": "foo.py", "old_text": "a", "new_text": "b"}),
+            ("edit_file", {"path": "foo.py", "old_text": "b", "new_text": "c"}),
+            ("edit_file", {"path": "foo.py", "old_text": "c", "new_text": "d"}),
+        ])
+        assert result is not None
+        assert "edited" in result.lower() or "edit" in result.lower()
+
+    def test_readonly_streak_warning(self):
+        engine = self._make_engine(doom_loop_readonly_streak=5)
+        # 5 consecutive read-only tools
+        result = engine.check_doom_loop([
+            ("read_file", {"path": "a.py"}),
+            ("read_file", {"path": "b.py"}),
+            ("grep_files", {"pattern": "foo"}),
+            ("glob_files", {"pattern": "*.py"}),
+            ("list_directory", {"path": "."}),
+        ])
+        assert result is not None
+        assert "read-only" in result.lower() or "without making any changes" in result
+
+    def test_write_resets_readonly_streak(self):
+        engine = self._make_engine(doom_loop_readonly_streak=5)
+        # 4 reads, then a write, then 4 more reads — never hits 5
+        engine.check_doom_loop([
+            ("read_file", {"path": "a.py"}),
+            ("read_file", {"path": "b.py"}),
+            ("read_file", {"path": "c.py"}),
+            ("read_file", {"path": "d.py"}),
+        ])
+        engine.check_doom_loop([
+            ("edit_file", {"path": "a.py", "old_text": "x", "new_text": "y"}),
+        ])
+        result = engine.check_doom_loop([
+            ("read_file", {"path": "e.py"}),
+            ("read_file", {"path": "f.py"}),
+            ("read_file", {"path": "g.py"}),
+            ("read_file", {"path": "h.py"}),
+        ])
+        # Should be None — streak reset by edit
+        readonly_warnings = [
+            line for line in (result or "").split("\n")
+            if "read-only" in line.lower() or "without making" in line.lower()
+        ]
+        assert len(readonly_warnings) == 0
+
+    def test_warning_deduplicated(self):
+        engine = self._make_engine(doom_loop_read_threshold=3)
+        # First hit — warning
+        result1 = engine.check_doom_loop([
+            ("read_file", {"path": "foo.py"}),
+            ("read_file", {"path": "foo.py"}),
+            ("read_file", {"path": "foo.py"}),
+        ])
+        assert result1 is not None
+        # Second hit same file — no duplicate warning
+        result2 = engine.check_doom_loop([
+            ("read_file", {"path": "foo.py"}),
+        ])
+        assert result2 is None
+
+    def test_multiple_warnings_combined(self):
+        engine = self._make_engine(
+            doom_loop_read_threshold=2,
+            doom_loop_edit_threshold=2,
+        )
+        result = engine.check_doom_loop([
+            ("read_file", {"path": "foo.py"}),
+            ("read_file", {"path": "foo.py"}),
+            ("edit_file", {"path": "bar.py", "old_text": "a", "new_text": "b"}),
+            ("edit_file", {"path": "bar.py", "old_text": "b", "new_text": "c"}),
+        ])
+        assert result is not None
+        assert "foo.py" in result
+        assert "bar.py" in result

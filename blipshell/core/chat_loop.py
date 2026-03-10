@@ -154,8 +154,12 @@ def compact_messages(messages: list[dict], keep_last_n: int = 5) -> list[dict]:
     - The last N tool call/result pairs in full
     - Assistant reasoning text in full (planning, explanations)
 
-    Compresses:
-    - Older tool result messages → one-line summary
+    Compresses (per-tool-type strategy):
+    - read_file → dropped entirely (re-readable from disk)
+    - grep_files/glob_files → collapsed to file list
+    - shell/run_command → first + last lines with exit hint
+    - edit_file/write_file → kept short (already concise)
+    - other → generic preview
     """
     prefix = []
     conversation = []
@@ -171,6 +175,20 @@ def compact_messages(messages: list[dict], keep_last_n: int = 5) -> list[dict]:
     if not conversation:
         return messages
 
+    # Build tool_call_id → tool_name mapping from assistant messages
+    tc_id_to_name: dict[str, str] = {}
+    for msg in conversation:
+        if msg.get("role") == "assistant" and "tool_calls" in msg:
+            for tc in msg["tool_calls"]:
+                try:
+                    fn = tc.get("function", tc) if isinstance(tc, dict) else tc
+                    tc_id = tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", "")
+                    name = fn.get("name", "") if isinstance(fn, dict) else getattr(fn, "name", "")
+                    if tc_id and name:
+                        tc_id_to_name[tc_id] = name
+                except (AttributeError, TypeError):
+                    pass
+
     tool_results_from_end = 0
     keep_from_idx = len(conversation)
     for i in range(len(conversation) - 1, -1, -1):
@@ -185,20 +203,67 @@ def compact_messages(messages: list[dict], keep_last_n: int = 5) -> list[dict]:
     for msg in conversation[:keep_from_idx]:
         role = msg.get("role")
         if role == "tool":
-            content = msg.get("content", "")
-            orig_len = len(content)
-            preview = content[:100].replace("\n", " ").strip()
-            if orig_len > 100:
-                preview += "..."
-            compacted.append({
-                "role": "tool",
-                "content": f"[Compacted — {orig_len} chars] {preview}",
-                **({"tool_call_id": msg["tool_call_id"]} if "tool_call_id" in msg else {}),
-            })
+            compacted.append(_compact_tool_result(msg, tc_id_to_name))
         else:
             compacted.append(msg)
 
     return prefix + compacted + conversation[keep_from_idx:]
+
+
+def _compact_tool_result(msg: dict, tc_id_to_name: dict[str, str]) -> dict:
+    """Compact a single tool result message using a type-specific strategy."""
+    content = msg.get("content", "")
+    orig_len = len(content)
+    tc_id = msg.get("tool_call_id", "")
+    tool_name = tc_id_to_name.get(tc_id, "")
+
+    if tool_name in ("read_file",):
+        # File reads are re-readable — drop content entirely
+        lines = content.split("\n")
+        summary = f"[Compacted] read_file ({len(lines)} lines) — re-read from disk if needed"
+    elif tool_name in ("grep_files", "glob_files"):
+        # Collapse search results to just file paths
+        lines = content.strip().split("\n")
+        files = set()
+        for line in lines:
+            # Extract file paths (grep: "path:line:content", glob: just paths)
+            if ":" in line:
+                files.add(line.split(":")[0].strip())
+            elif line.strip():
+                files.add(line.strip())
+        file_list = sorted(files)
+        if len(file_list) > 5:
+            shown = ", ".join(file_list[:5])
+            summary = f"[Compacted] {tool_name}: {len(lines)} hits in {len(file_list)} files — {shown}, +{len(file_list) - 5} more"
+        else:
+            summary = f"[Compacted] {tool_name}: {len(lines)} hits in {', '.join(file_list) or 'no matches'}"
+    elif tool_name in ("run_command", "shell"):
+        # Shell output: keep first and last lines + exit status hint
+        lines = content.strip().split("\n")
+        if len(lines) <= 3:
+            summary = f"[Compacted] {tool_name}: {content.strip()}"
+        else:
+            first = lines[0][:100]
+            last = lines[-1][:100]
+            summary = f"[Compacted] {tool_name} ({len(lines)} lines): {first} ... {last}"
+    elif tool_name in ("edit_file", "write_file"):
+        # Edit/write results are already concise — short preview
+        preview = content[:150].replace("\n", " ").strip()
+        if orig_len > 150:
+            preview += "..."
+        summary = f"[Compacted] {tool_name}: {preview}"
+    else:
+        # Generic fallback
+        preview = content[:100].replace("\n", " ").strip()
+        if orig_len > 100:
+            preview += "..."
+        summary = f"[Compacted — {orig_len} chars] {tool_name + ': ' if tool_name else ''}{preview}"
+
+    return {
+        "role": "tool",
+        "content": summary,
+        **({"tool_call_id": tc_id} if tc_id else {}),
+    }
 
 
 def extract_tool_call_info(tc) -> tuple[str, dict, str]:
@@ -624,8 +689,79 @@ class ChatLoop:
                         json.dumps(last_args, sort_keys=True, default=str),
                     )
 
+                # ── Doom-loop detection ──
+                # Cheap counter check — no LLM cost
+                if config.guardrails and hasattr(config.guardrails, 'check_doom_loop'):
+                    try:
+                        batch_calls_for_doom = [
+                            (name, args) for name, args, _ in parsed_calls
+                        ]
+                        doom_warning = config.guardrails.check_doom_loop(batch_calls_for_doom)
+                        if doom_warning:
+                            messages.append({
+                                "role": "user",
+                                "content": doom_warning,
+                            })
+                            if self.on_token:
+                                self.on_token(
+                                    "\x1b[33m  [Doom-loop pattern detected]\x1b[0m\n"
+                                )
+                    except Exception as e:
+                        logger.debug("Doom-loop check error: %s", e)
+
+                # ── Critique: edit review ──
+                # After tool results are in, check if any edits need critique
+                if (config.guardrails and hasattr(config.guardrails, 'critique_edit')
+                        and completion_tool_result is None):
+                    for i, (name, arguments, tc_id) in enumerate(parsed_calls):
+                        if name == "edit_file" and results[i] and results[i].success:
+                            try:
+                                critique = await config.guardrails.critique_edit(
+                                    file_path=arguments.get("path", ""),
+                                    old_text=arguments.get("old_text", ""),
+                                    new_text=arguments.get("new_text", ""),
+                                )
+                                if critique:
+                                    messages.append({
+                                        "role": "user",
+                                        "content": critique,
+                                    })
+                                    if self.on_token:
+                                        self.on_token(
+                                            f"\x1b[33m  [Critique: edit issue found]\x1b[0m\n"
+                                        )
+                            except Exception as e:
+                                logger.debug("Edit critique error: %s", e)
+
                 # ── Completion tool fired ──
                 if completion_tool_result is not None:
+                    # Guardrails: critique completion — richer quality review (runs first)
+                    if config.guardrails and hasattr(config.guardrails, 'critique_completion'):
+                        try:
+                            tc_files = ""
+                            for _i3, (n3, a3, _) in enumerate(parsed_calls):
+                                if n3 == config.completion_tool:
+                                    tc_files = a3.get("files_modified", "")
+                                    break
+                            critique = await config.guardrails.critique_completion(
+                                summary=completion_tool_result,
+                                files_modified=tc_files,
+                                tool_call_names=tool_call_names,
+                            )
+                            if critique:
+                                if self.on_token:
+                                    self.on_token(
+                                        f"\x1b[33m  [Critique: completion issue found]\x1b[0m\n"
+                                    )
+                                messages.append({
+                                    "role": "user",
+                                    "content": critique,
+                                })
+                                completion_tool_result = None
+                                continue  # Model should fix and retry
+                        except Exception as e:
+                            logger.debug("Completion critique error: %s", e)
+
                     # Guardrails: completion audit — validate against original request
                     if config.guardrails and hasattr(config.guardrails, 'validate_completion'):
                         try:
@@ -680,6 +816,24 @@ class ChatLoop:
                             })
                     except Exception as e:
                         logger.debug("Pause check error: %s", e)
+
+                # ── Guardrails: trajectory critique (heavier, LLM call) ──
+                if config.guardrails and hasattr(config.guardrails, 'critique_trajectory'):
+                    try:
+                        critique = await config.guardrails.critique_trajectory(
+                            tool_call_count, config.budget, tool_call_names,
+                        )
+                        if critique:
+                            messages.append({
+                                "role": "user",
+                                "content": critique,
+                            })
+                            if self.on_token:
+                                self.on_token(
+                                    "\x1b[33m  [Critique: approach concern raised]\x1b[0m\n"
+                                )
+                    except Exception as e:
+                        logger.debug("Trajectory critique error: %s", e)
 
                 # ── Guardrails: trajectory monitor injection ──
                 if config.guardrails and hasattr(config.guardrails, 'build_trajectory_injection'):

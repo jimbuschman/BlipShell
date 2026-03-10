@@ -281,6 +281,15 @@ class GuardrailsConfig(BaseModel):
     requirement_checklist: bool = True  # confirm_plan tool before execution
     monitor_interval: int = 5           # inject trajectory check every N tool calls
     max_audit_retries: int = 2          # max times to reject task_complete before accepting
+    # Critique provider — active quality review during execution
+    critique_edits: bool = False        # review each edit_file for correctness
+    critique_trajectory: bool = False   # evaluate approach quality at checkpoints (heavier than trajectory_monitor)
+    critique_completion: bool = False   # richer pre-completion review (supplements completion_audit)
+    # Doom-loop detector — cheap counter-based pattern detection (no LLM cost)
+    doom_loop_detector: bool = True     # detect repetitive/stuck behavior patterns
+    doom_loop_read_threshold: int = 3   # warn after reading same file N times
+    doom_loop_edit_threshold: int = 3   # warn after editing same file N times
+    doom_loop_readonly_streak: int = 8  # warn after N consecutive read-only tools with no writes
 
 
 class WorkerConfig(BaseModel):

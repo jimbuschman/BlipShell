@@ -3,16 +3,19 @@
 Toggleable system that reduces specification drift, forgotten requirements,
 and repeated mistakes during LLM execution.
 
-Five sub-capabilities:
+Seven sub-capabilities:
 1. Requirement checklist — confirm_plan tool before execution
 2. Trajectory monitor — periodic state injection with original task reminder
 3. Completion audit — re-check original request before accepting task_complete
 4. Correction detector — detect user corrections → anti-pattern lessons
 5. Context pinning — original task survives compaction
+6. Critique provider — active LLM-based quality review (edits, trajectory, completion)
+7. Doom-loop detector — cheap counter-based stuck-pattern detection (no LLM cost)
 """
 
 import logging
 import re
+from collections import Counter
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -83,6 +86,12 @@ class GuardrailsEngine:
 
         # Completion audit retry tracking
         self.audit_retries: int = 0
+
+        # Doom-loop detector state
+        self._file_read_counts: Counter = Counter()   # path → read count
+        self._file_edit_counts: Counter = Counter()   # path → edit count
+        self._readonly_streak: int = 0                # consecutive read-only tool calls
+        self._doom_warnings_sent: set[str] = set()    # deduplicate warnings
 
     def record_checklist(self, plan_steps: list[str], postconditions: list[str] | None = None):
         """Store the confirmed plan for later completion audit."""
@@ -188,6 +197,230 @@ class GuardrailsEngine:
         )
 
         return False, rejection
+
+    # ── Doom-Loop Detector (#7) ─────────────────────────────────────────
+
+    # Tools that modify state — if we see these, reset the readonly streak
+    _WRITE_TOOLS = frozenset({
+        "edit_file", "write_file", "run_command", "shell", "task_complete",
+        "confirm_plan", "ask_user",
+    })
+
+    def check_doom_loop(
+        self,
+        tool_calls: list[tuple[str, dict]],
+    ) -> str | None:
+        """Check a batch of tool calls for stuck/repetitive patterns.
+
+        Call this after each tool batch. Updates internal counters and returns
+        a warning message if a doom-loop pattern is detected, or None.
+
+        Zero LLM cost — pure counter logic.
+
+        Args:
+            tool_calls: list of (tool_name, arguments) from the batch
+        """
+        if not self.config.doom_loop_detector:
+            return None
+
+        warnings = []
+
+        for name, args in tool_calls:
+            path = args.get("path", "") or args.get("directory", "")
+
+            # Track file reads
+            if name == "read_file" and path:
+                self._file_read_counts[path] += 1
+                count = self._file_read_counts[path]
+                if (count >= self.config.doom_loop_read_threshold
+                        and f"read:{path}" not in self._doom_warnings_sent):
+                    self._doom_warnings_sent.add(f"read:{path}")
+                    warnings.append(
+                        f"You've read '{path}' {count} times. The content hasn't changed — "
+                        "it's in the conversation above. Work with what you have or "
+                        "try a different approach."
+                    )
+
+            # Track file edits
+            if name == "edit_file" and path:
+                self._file_edit_counts[path] += 1
+                count = self._file_edit_counts[path]
+                if (count >= self.config.doom_loop_edit_threshold
+                        and f"edit:{path}" not in self._doom_warnings_sent):
+                    self._doom_warnings_sent.add(f"edit:{path}")
+                    warnings.append(
+                        f"You've edited '{path}' {count} times. If your edits keep failing, "
+                        "re-read the file to see current state or use ask_user for help."
+                    )
+
+            # Readonly streak tracking
+            if name in self._WRITE_TOOLS:
+                self._readonly_streak = 0
+            else:
+                self._readonly_streak += 1
+
+        # Check readonly streak
+        if (self._readonly_streak >= self.config.doom_loop_readonly_streak
+                and "readonly_streak" not in self._doom_warnings_sent):
+            self._doom_warnings_sent.add("readonly_streak")
+            warnings.append(
+                f"You've made {self._readonly_streak} consecutive read-only tool calls "
+                "without making any changes. If you have enough information, "
+                "start making changes. If you're stuck, use ask_user."
+            )
+
+        if not warnings:
+            return None
+
+        return "[DOOM-LOOP WARNING]\n" + "\n".join(f"- {w}" for w in warnings)
+
+    # ── Critique Provider (#6) ──────────────────────────────────────────
+
+    async def critique_edit(
+        self,
+        file_path: str,
+        old_text: str,
+        new_text: str,
+    ) -> str | None:
+        """Review an edit for correctness. Returns critique message or None if OK.
+
+        Calls the REASONING model to check whether the edit is correct.
+        Only runs when critique_edits is enabled.
+        """
+        if not self.config.critique_edits:
+            return None
+
+        from blipshell.llm.prompts import critique_edit as critique_edit_prompt
+        from blipshell.llm.router import TaskType
+
+        system, user = critique_edit_prompt(
+            original_task=self.original_request,
+            file_path=file_path,
+            old_text=old_text,
+            new_text=new_text,
+        )
+
+        try:
+            result = await self.router.generate(
+                TaskType.REASONING, user, system=system,
+            )
+        except Exception as e:
+            logger.warning("Critique edit LLM call failed: %s — skipping", e)
+            return None
+
+        result = result.strip()
+        if result.upper().startswith("OK"):
+            return None
+
+        # Extract the issue
+        feedback = result
+        if feedback.upper().startswith("ISSUE"):
+            feedback = feedback[5:].lstrip(":").lstrip()
+
+        return (
+            f"[CRITIQUE — edit review for {file_path}]\n"
+            f"{feedback}\n"
+            "Consider re-reading the file and verifying your change."
+        )
+
+    async def critique_trajectory(
+        self,
+        tool_call_count: int,
+        budget: int,
+        tool_call_names: list[str],
+    ) -> str | None:
+        """Evaluate whether the current approach is productive.
+
+        Heavier than trajectory_monitor (makes an LLM call) but provides
+        actual analysis instead of just a task reminder.
+        Returns critique message or None if on track.
+        """
+        if not self.config.critique_trajectory:
+            return None
+        if tool_call_count == 0:
+            return None
+        if tool_call_count % self.config.monitor_interval != 0:
+            return None
+
+        from blipshell.llm.prompts import critique_trajectory as critique_traj_prompt
+        from blipshell.llm.router import TaskType
+
+        system, user = critique_traj_prompt(
+            original_task=self.original_request,
+            recent_actions=tool_call_names,
+            tool_call_count=tool_call_count,
+            budget=budget,
+        )
+
+        try:
+            result = await self.router.generate(
+                TaskType.REASONING, user, system=system,
+            )
+        except Exception as e:
+            logger.warning("Critique trajectory LLM call failed: %s — skipping", e)
+            return None
+
+        result = result.strip()
+        if result.upper().startswith("ON TRACK"):
+            return None
+
+        feedback = result
+        if feedback.upper().startswith("CONCERN"):
+            feedback = feedback[7:].lstrip(":").lstrip()
+
+        return (
+            f"[CRITIQUE — approach review at {tool_call_count}/{budget} tool calls]\n"
+            f"{feedback}"
+        )
+
+    async def critique_completion(
+        self,
+        summary: str,
+        files_modified: str = "",
+        tool_call_names: list[str] | None = None,
+    ) -> str | None:
+        """Rich pre-completion quality review. Supplements completion_audit.
+
+        Returns critique message or None if quality is acceptable.
+        Runs BEFORE the standard completion_audit pass/fail check.
+        """
+        if not self.config.critique_completion:
+            return None
+
+        from blipshell.llm.prompts import critique_completion as critique_comp_prompt
+        from blipshell.llm.router import TaskType
+
+        system, user = critique_comp_prompt(
+            original_task=self.original_request,
+            summary=summary,
+            files_modified=files_modified,
+            recent_actions=tool_call_names,
+            checklist=self.checklist,
+        )
+
+        try:
+            result = await self.router.generate(
+                TaskType.REASONING, user, system=system,
+            )
+        except Exception as e:
+            logger.warning("Critique completion LLM call failed: %s — skipping", e)
+            return None
+
+        result = result.strip()
+        if result.upper().startswith("PASS"):
+            return None
+
+        feedback = result
+        if feedback.upper().startswith("ISSUE"):
+            feedback = feedback[5:].lstrip(":").lstrip()
+
+        self.audit_retries += 1
+        return (
+            f"[CRITIQUE — completion quality review, "
+            f"attempt {self.audit_retries}/{self.config.max_audit_retries}]\n"
+            f"{feedback}\n\n"
+            "Fix the issues and call task_complete again."
+        )
 
     # ── Context Pinning (#5) ─────────────────────────────────────────────
 
