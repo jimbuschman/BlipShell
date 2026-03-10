@@ -136,6 +136,26 @@ _MODEL_SETTINGS_CONFIG = {
         "max_tool_calls": 15,
         "use_repo_map": True,
     },
+    "minimax/minimax-m2.5": {
+        "max_tool_calls": 25,
+        "use_repo_map": True,
+        "think": False,
+    },
+    "moonshotai/kimi-k2.5": {
+        "max_tool_calls": 25,
+        "use_repo_map": True,
+        "think": False,
+    },
+    "qwen/qwen3-coder-next": {
+        "max_tool_calls": 25,
+        "use_repo_map": True,
+        "think": False,
+    },
+    "mistralai/devstral-2512": {
+        "max_tool_calls": 25,
+        "use_repo_map": True,
+        "think": False,
+    },
 }
 
 console = Console()
@@ -1362,6 +1382,10 @@ def make_router(model_name: str, timeout: float = 300.0) -> LLMRouter:
             "google/gemini-2.5-flash":   (0.15, 0.60),
             "google/gemini-2.5-pro":     (1.25, 10.0),
             "z-ai/glm-5":               (0.80, 2.56),
+            "minimax/minimax-m2.5":      (0.27, 0.95),
+            "moonshotai/kimi-k2.5":      (0.45, 2.20),
+            "qwen/qwen3-coder-next":     (0.12, 0.75),
+            "mistralai/devstral-2512":   (0.40, 2.00),
         }
         cost_prompt, cost_completion = 0.0, 0.0
         for prefix, (cp, cc) in _OPENROUTER_PRICING.items():
