@@ -3,6 +3,8 @@
 Pipeline: noise filter → rephrase query → ChromaDB search → filter by rank → importance boost → sort.
 """
 
+import asyncio
+import functools
 import logging
 import re
 from dataclasses import dataclass
@@ -141,12 +143,18 @@ class MemorySearch:
         overfetch = n_results * self.search_overfetch_multiplier
 
         # Step 2: ChromaDB semantic search — two-pass when project is active
+        # ChromaDB calls are sync + gated (OllamaGate serializes embedding calls).
+        # Run in executor so the event loop stays responsive (Esc cancel, etc.).
+        loop = asyncio.get_running_loop()
         chroma_results: list[dict] = []
         if project_session_ids:
             # Pass 1: Project-only memories
             project_filter = {"session_id": {"$in": [str(sid) for sid in project_session_ids]}}
-            project_chroma = self.chroma.search_memories(
-                query=query, n_results=overfetch, where=project_filter,
+            project_chroma = await loop.run_in_executor(
+                None, functools.partial(
+                    self.chroma.search_memories,
+                    query=query, n_results=overfetch, where=project_filter,
+                ),
             )
             # Mark project hits for later boosting
             project_chroma_ids = set()
@@ -157,16 +165,22 @@ class MemorySearch:
             project_hits = len(project_chroma)
 
             # Pass 2: General (unfiltered) — backfill, dedup by ID
-            general_chroma = self.chroma.search_memories(
-                query=query, n_results=overfetch,
+            general_chroma = await loop.run_in_executor(
+                None, functools.partial(
+                    self.chroma.search_memories,
+                    query=query, n_results=overfetch,
+                ),
             )
             for cr in general_chroma:
                 if cr["id"] not in project_chroma_ids:
                     chroma_results.append(cr)
         else:
             # No project — single-pass search
-            chroma_results = self.chroma.search_memories(
-                query=query, n_results=overfetch,
+            chroma_results = await loop.run_in_executor(
+                None, functools.partial(
+                    self.chroma.search_memories,
+                    query=query, n_results=overfetch,
+                ),
             )
 
         # Step 2b: FTS5 keyword search
@@ -428,7 +442,10 @@ class MemorySearch:
 
     async def search_core_memories(self, query: str, n_results: int = 10) -> list[dict]:
         """Search core memories by semantic similarity."""
-        return self.chroma.search_core_memories(query, n_results)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, functools.partial(self.chroma.search_core_memories, query, n_results),
+        )
 
     async def search_lessons(
         self, query: str, n_results: int = 10,
@@ -439,7 +456,10 @@ class MemorySearch:
         Lessons from the active project get a similarity boost, but lessons
         from other projects still appear (they may be universally relevant).
         """
-        results = self.chroma.search_lessons(query, n_results)
+        loop = asyncio.get_running_loop()
+        results = await loop.run_in_executor(
+            None, functools.partial(self.chroma.search_lessons, query, n_results),
+        )
         if active_project and results:
             for r in results:
                 meta = r.get("metadata", {})
