@@ -16,6 +16,9 @@ Usage:
     python tests/benchmark_coding.py                                              # all default models
     python tests/benchmark_coding.py qwen3-coder:480b-cloud devstral-2:123b-cloud # specific models
     python tests/benchmark_coding.py --timeout 600                                # longer timeout
+    python tests/benchmark_coding.py --hard                                       # hard tasks only
+    python tests/benchmark_coding.py --expert                                     # expert tasks only
+    python tests/benchmark_coding.py --all                                        # standard + hard + expert
     python tests/benchmark_coding.py --dry-run-verify                             # test checks on unmodified code
 """
 
@@ -899,6 +902,397 @@ HARD_TASKS = [
 
 
 # ---------------------------------------------------------------------------
+# Expert tasks — multi-step reasoning, refactoring, architecture, debugging
+# These separate 84% models from 90%+ models.
+# ---------------------------------------------------------------------------
+
+EXPERT_TASKS = [
+    {
+        "name": "refactor_preserve_behavior",
+        "description": "Refactor class into two classes while preserving all existing behavior",
+        "request": (
+            "The `RateTracker` concept doesn't exist yet. Create it, then immediately "
+            "refactor it. Specifically:\n\n"
+            "STEP 1: Create blipshell/core/rate_tracker.py with a class `RateTracker` "
+            "that has these methods:\n"
+            "  - __init__(self, window_seconds=60, max_calls=100)\n"
+            "  - record_call(self, endpoint: str) → None — records a call for an endpoint\n"
+            "  - get_rate(self, endpoint: str) → int — calls in window for that endpoint\n"
+            "  - is_limited(self, endpoint: str) → bool — True if rate >= max_calls\n"
+            "  - get_all_rates(self) → dict[str, int] — rates for all endpoints\n"
+            "  - reset(self, endpoint: str | None = None) → None — reset one or all\n"
+            "Use time.monotonic() and store per-endpoint call lists.\n\n"
+            "STEP 2: Write tests/test_rate_tracker.py that tests:\n"
+            "  - Recording calls increments rate for that endpoint only\n"
+            "  - Different endpoints track independently\n"
+            "  - is_limited returns True at max_calls\n"
+            "  - get_all_rates shows all tracked endpoints\n"
+            "  - reset(endpoint) clears only that endpoint\n"
+            "  - reset() with no args clears everything\n\n"
+            "STEP 3: Now refactor — split RateTracker into TWO classes:\n"
+            "  a) `EndpointCounter` — tracks calls for a SINGLE endpoint\n"
+            "     (window_seconds, max_calls, record_call, get_rate, is_limited, reset)\n"
+            "  b) `RateTracker` — orchestrates multiple EndpointCounters\n"
+            "     (same public API as before, but delegates to EndpointCounter instances)\n"
+            "  The refactored RateTracker must pass ALL the same tests unchanged.\n\n"
+            "STEP 4: Run the tests to confirm they still pass after refactoring.\n\n"
+            "CRITICAL: Do NOT modify the tests during refactoring. The whole point is "
+            "that the public API stays the same."
+        ),
+        "verify_checks": [
+            ("file_exists", "blipshell/core/rate_tracker.py"),
+            ("syntax_check", "blipshell/core/rate_tracker.py"),
+            # Both classes exist after refactor
+            ("grep_in_sandbox", ("blipshell/core/rate_tracker.py", r"class EndpointCounter")),
+            ("grep_in_sandbox", ("blipshell/core/rate_tracker.py", r"class RateTracker")),
+            # EndpointCounter has core methods
+            ("grep_in_sandbox", ("blipshell/core/rate_tracker.py", r"def record_call")),
+            ("grep_in_sandbox", ("blipshell/core/rate_tracker.py", r"def is_limited")),
+            # Tests exist and pass
+            ("file_exists", "tests/test_rate_tracker.py"),
+            ("syntax_check", "tests/test_rate_tracker.py"),
+            ("pytest_in_sandbox", "tests/test_rate_tracker.py"),
+            # Functional: refactored API still works
+            ("functional_test",
+             "from blipshell.core.rate_tracker import RateTracker, EndpointCounter; "
+             "rt = RateTracker(window_seconds=60, max_calls=2); "
+             "rt.record_call('ep1'); rt.record_call('ep1'); "
+             "assert rt.is_limited('ep1'); "
+             "assert not rt.is_limited('ep2'); "
+             "assert rt.get_all_rates() == {'ep1': 2}; "
+             "rt.reset('ep1'); assert rt.get_rate('ep1') == 0"),
+            # Functional: EndpointCounter works standalone
+            ("functional_test",
+             "from blipshell.core.rate_tracker import EndpointCounter; "
+             "ec = EndpointCounter(window_seconds=60, max_calls=3); "
+             "ec.record_call(); ec.record_call(); "
+             "assert ec.get_rate() == 2; "
+             "assert not ec.is_limited(); "
+             "ec.record_call(); assert ec.is_limited()"),
+            ("no_unwanted_files", None),
+        ],
+    },
+    {
+        "name": "debug_from_traceback",
+        "description": "Fix a real bug given only the error traceback (no hints about location)",
+        "request": (
+            "A user reported this error when running BlipShell:\n\n"
+            "```\n"
+            "Traceback (most recent call last):\n"
+            "  File \"blipshell/memory/search.py\", line 142, in search\n"
+            "    boosted = self._apply_boosts(results, query)\n"
+            "  File \"blipshell/memory/search.py\", line 198, in _apply_boosts\n"
+            "    for r in results:\n"
+            "  File \"blipshell/memory/search.py\", line 203, in _apply_boosts\n"
+            "    tag_overlap = len(set(r['tags']) & query_tags)\n"
+            "TypeError: unhashable type: 'list'\n"
+            "```\n\n"
+            "The tags field is sometimes a JSON string (like '[\"python\", \"coding\"]') "
+            "instead of a parsed list. When tags is already a list of strings, set() works. "
+            "But when a tag itself is a list (malformed data), set() fails.\n\n"
+            "Your task:\n"
+            "1. Read search.py to find the _apply_boosts method and understand the code\n"
+            "2. Fix it to handle both cases:\n"
+            "   - If r['tags'] is a string, parse it as JSON first\n"
+            "   - If any individual tag is not a string, skip it\n"
+            "   - Never crash — gracefully handle malformed tags\n"
+            "3. Write tests/test_search_boost_fix.py that verifies:\n"
+            "   - Normal list tags work: ['python', 'coding']\n"
+            "   - JSON string tags work: '[\"python\", \"coding\"]'\n"
+            "   - Nested list tags don't crash: [['python'], 'coding']\n"
+            "   - Empty/None tags don't crash\n\n"
+            "IMPORTANT: Only fix the specific bug. Do NOT refactor surrounding code."
+        ),
+        "setup_hook": "inject_tag_bug",
+        "verify_checks": [
+            # Fixed the bug in search.py
+            ("diff_contains", ("blipshell/memory/search.py", r"\+.*(json\.loads|isinstance|str)")),
+            ("syntax_check", "blipshell/memory/search.py"),
+            # Test exists and passes
+            ("file_exists", "tests/test_search_boost_fix.py"),
+            ("syntax_check", "tests/test_search_boost_fix.py"),
+            ("pytest_in_sandbox", "tests/test_search_boost_fix.py"),
+            # Didn't over-modify (fewer than 20 lines changed in search.py)
+            ("max_diff_lines", ("blipshell/memory/search.py", 20)),
+            ("no_unwanted_files", None),
+        ],
+    },
+    {
+        "name": "async_retry_decorator",
+        "description": "Implement a reusable async retry decorator with tests (design + correctness)",
+        "request": (
+            "Create blipshell/utils/retry.py with an async retry decorator:\n\n"
+            "```python\n"
+            "def async_retry(\n"
+            "    max_retries: int = 3,\n"
+            "    base_delay: float = 1.0,\n"
+            "    max_delay: float = 60.0,\n"
+            "    backoff_factor: float = 2.0,\n"
+            "    retry_on: tuple[type[Exception], ...] = (Exception,),\n"
+            ") -> Callable:\n"
+            "```\n\n"
+            "Requirements:\n"
+            "- Exponential backoff: delay = min(base_delay * backoff_factor^attempt, max_delay)\n"
+            "- Only retry exceptions that are instances of retry_on types\n"
+            "- Non-matching exceptions propagate immediately\n"
+            "- After max_retries exhausted, raise the last exception\n"
+            "- The decorator must preserve the function's name and docstring (use functools.wraps)\n"
+            "- Must work with async functions only (not sync)\n"
+            "- Use asyncio.sleep for delays\n\n"
+            "Also create blipshell/utils/__init__.py if it doesn't exist.\n\n"
+            "Write tests/test_retry.py:\n"
+            "- Function succeeds on first try → no retries, returns result\n"
+            "- Function fails twice then succeeds → retries and returns result\n"
+            "- Function always fails → raises after max_retries\n"
+            "- retry_on filter works: ValueError retried, TypeError not retried\n"
+            "- Decorator preserves __name__ and __doc__\n"
+            "- Backoff delays increase correctly (mock asyncio.sleep to capture delay values)\n"
+            "Use pytest and pytest-asyncio (or asyncio.run) for async tests."
+        ),
+        "verify_checks": [
+            ("file_exists", "blipshell/utils/retry.py"),
+            ("syntax_check", "blipshell/utils/retry.py"),
+            ("grep_in_sandbox", ("blipshell/utils/retry.py", r"def async_retry")),
+            ("grep_in_sandbox", ("blipshell/utils/retry.py", r"functools\.wraps")),
+            ("grep_in_sandbox", ("blipshell/utils/retry.py", r"asyncio\.sleep")),
+            ("file_exists", "tests/test_retry.py"),
+            ("syntax_check", "tests/test_retry.py"),
+            ("pytest_in_sandbox", "tests/test_retry.py"),
+            # Functional: basic retry works
+            ("functional_test",
+             "import asyncio; "
+             "from blipshell.utils.retry import async_retry; "
+             "call_count = 0; "
+             "@async_retry(max_retries=3, base_delay=0.01) \n"
+             "async def flaky(): \n"
+             "  global call_count; call_count += 1; \n"
+             "  if call_count < 3: raise ValueError('not yet'); \n"
+             "  return 'ok'; \n"
+             "assert asyncio.run(flaky()) == 'ok'; "
+             "assert call_count == 3"),
+            # Functional: non-matching exception propagates immediately
+            ("functional_test",
+             "import asyncio; "
+             "from blipshell.utils.retry import async_retry; "
+             "@async_retry(max_retries=3, base_delay=0.01, retry_on=(ValueError,)) \n"
+             "async def wrong_error(): raise TypeError('nope'); \n"
+             "try: asyncio.run(wrong_error()); assert False \n"
+             "except TypeError: pass"),
+            # Functional: preserves function metadata
+            ("functional_test",
+             "from blipshell.utils.retry import async_retry; "
+             "@async_retry() \n"
+             "async def my_func(): \n"
+             "  '''My docstring'''; \n"
+             "  pass; \n"
+             "assert my_func.__name__ == 'my_func'; "
+             "assert 'My docstring' in (my_func.__doc__ or '')"),
+            ("no_unwanted_files", None),
+        ],
+    },
+    {
+        "name": "read_existing_and_extend",
+        "description": "Read a complex existing file, understand its patterns, and extend it correctly",
+        "request": (
+            "Add a new tool `SearchMemoryTool` to the existing tool system. This requires "
+            "you to deeply understand the existing patterns before writing code.\n\n"
+            "1. Read blipshell/core/tools/base.py to understand: Tool base class, "
+            "   ToolDefinition, ToolParameter, ToolParameterType, ToolCall, and the "
+            "   execute() method signature.\n"
+            "2. Read one existing tool file (e.g., blipshell/core/tools/memory_tools.py) "
+            "   to see a real implementation pattern.\n"
+            "3. Create blipshell/core/tools/search_tool.py with `SearchMemoryTool(Tool)`:\n"
+            "   - Parameters: query (string, required), limit (integer, optional, default 5), "
+            "     memory_type (string, optional, one of: fact/preference/skill/event/conversation)\n"
+            "   - read_only = True\n"
+            "   - execute() should return a formatted string listing matching memories\n"
+            "   - Since we can't connect to a real DB in the benchmark, the execute method "
+            "     should accept an optional `search_fn` callback in __init__ that takes "
+            "     (query, limit, memory_type) and returns list[dict]. If no callback, "
+            "     return 'Search not available (no backend connected)'.\n"
+            "4. Write tests/test_search_tool.py:\n"
+            "   - Test that tool definition has correct parameters and types\n"
+            "   - Test execute with a mock search_fn that returns sample results\n"
+            "   - Test execute with no search_fn returns the fallback message\n"
+            "   - Test that memory_type parameter is optional\n"
+            "   - Test that limit defaults to 5 in the definition\n\n"
+            "CRITICAL: Your ToolDefinition, ToolParameter usage, and execute() signature "
+            "must EXACTLY match the patterns in the existing code. Don't invent your own."
+        ),
+        "verify_checks": [
+            ("file_exists", "blipshell/core/tools/search_tool.py"),
+            ("syntax_check", "blipshell/core/tools/search_tool.py"),
+            ("grep_in_sandbox", ("blipshell/core/tools/search_tool.py", r"class SearchMemoryTool")),
+            ("grep_in_sandbox", ("blipshell/core/tools/search_tool.py", r"read_only.*=.*True")),
+            # Uses proper imports from base
+            ("grep_in_sandbox", ("blipshell/core/tools/search_tool.py",
+                                 r"from.*tools\.base.*import")),
+            ("file_exists", "tests/test_search_tool.py"),
+            ("syntax_check", "tests/test_search_tool.py"),
+            ("pytest_in_sandbox", "tests/test_search_tool.py"),
+            # Functional: tool definition is correct
+            ("functional_test",
+             "from blipshell.core.tools.search_tool import SearchMemoryTool; "
+             "t = SearchMemoryTool(); "
+             "d = t.definition(); "
+             "names = [p.name for p in d.parameters]; "
+             "assert 'query' in names; "
+             "assert 'limit' in names; "
+             "assert 'memory_type' in names"),
+            # Functional: execute with mock callback
+            ("functional_test",
+             "import asyncio; "
+             "from blipshell.core.tools.search_tool import SearchMemoryTool; "
+             "from blipshell.core.tools.base import ToolCall; "
+             "async def mock_search(q, limit=5, memory_type=None): "
+             "  return [{'summary': 'test memory', 'rank': 3}]; "
+             "t = SearchMemoryTool(search_fn=mock_search); "
+             "tc = ToolCall(id='t1', name='search_memory', arguments={'query': 'test'}); "
+             "r = asyncio.run(t.execute(tc)); "
+             "assert 'test memory' in r"),
+            # Functional: execute without callback
+            ("functional_test",
+             "import asyncio; "
+             "from blipshell.core.tools.search_tool import SearchMemoryTool; "
+             "from blipshell.core.tools.base import ToolCall; "
+             "t = SearchMemoryTool(); "
+             "tc = ToolCall(id='t1', name='search_memory', arguments={'query': 'test'}); "
+             "r = asyncio.run(t.execute(tc)); "
+             "assert 'not available' in r.lower() or 'no backend' in r.lower()"),
+            ("no_unwanted_files", None),
+        ],
+    },
+    {
+        "name": "performance_optimization",
+        "description": "Identify and fix a performance problem (profiling mindset)",
+        "request": (
+            "Create blipshell/utils/text_index.py with a `TextIndex` class for fast "
+            "substring search across many documents:\n\n"
+            "```python\n"
+            "class TextIndex:\n"
+            "    def __init__(self):\n"
+            "        '''Initialize empty index.'''\n"
+            "    \n"
+            "    def add(self, doc_id: str, text: str) -> None:\n"
+            "        '''Add a document to the index.'''\n"
+            "    \n"
+            "    def search(self, query: str) -> list[str]:\n"
+            "        '''Return doc_ids containing query as substring (case-insensitive).'''\n"
+            "    \n"
+            "    def remove(self, doc_id: str) -> None:\n"
+            "        '''Remove a document from the index.'''\n"
+            "    \n"
+            "    def __len__(self) -> int:\n"
+            "        '''Number of indexed documents.'''\n"
+            "```\n\n"
+            "NAIVE approach would scan all documents on every search. Instead, implement "
+            "a trigram index:\n"
+            "- On add(): extract all 3-character subsequences (trigrams) from lowercased text\n"
+            "- Store a mapping: trigram → set of doc_ids\n"
+            "- On search(): extract trigrams from query, intersect their doc_id sets, "
+            "  then verify with actual substring check (trigram index can have false positives)\n"
+            "- On remove(): clean up trigram entries\n\n"
+            "Also create blipshell/utils/__init__.py if needed.\n\n"
+            "Write tests/test_text_index.py:\n"
+            "- Basic add + search works\n"
+            "- Case-insensitive search\n"
+            "- Remove actually removes from results\n"
+            "- Empty query returns empty list\n"
+            "- Short queries (< 3 chars) fall back to brute-force scan\n"
+            "- Performance test: add 1000 documents, search should complete in < 0.1s\n"
+            "  (import time, measure wall clock — this verifies the trigram index is used)\n"
+            "- __len__ returns correct count"
+        ),
+        "verify_checks": [
+            ("file_exists", "blipshell/utils/text_index.py"),
+            ("syntax_check", "blipshell/utils/text_index.py"),
+            ("grep_in_sandbox", ("blipshell/utils/text_index.py", r"class TextIndex")),
+            # Uses trigram approach (not just brute force)
+            ("grep_in_sandbox", ("blipshell/utils/text_index.py", r"trigram|ngram|3")),
+            ("file_exists", "tests/test_text_index.py"),
+            ("syntax_check", "tests/test_text_index.py"),
+            ("pytest_in_sandbox", "tests/test_text_index.py"),
+            # Functional: basic operations
+            ("functional_test",
+             "from blipshell.utils.text_index import TextIndex; "
+             "idx = TextIndex(); "
+             "idx.add('d1', 'Hello World Python'); "
+             "idx.add('d2', 'Goodbye World Java'); "
+             "idx.add('d3', 'Hello Python Again'); "
+             "r = idx.search('python'); "
+             "assert 'd1' in r; assert 'd3' in r; assert 'd2' not in r; "
+             "assert len(idx) == 3"),
+            # Functional: case insensitive
+            ("functional_test",
+             "from blipshell.utils.text_index import TextIndex; "
+             "idx = TextIndex(); "
+             "idx.add('d1', 'Hello WORLD'); "
+             "assert 'd1' in idx.search('world'); "
+             "assert 'd1' in idx.search('HELLO')"),
+            # Functional: remove works
+            ("functional_test",
+             "from blipshell.utils.text_index import TextIndex; "
+             "idx = TextIndex(); "
+             "idx.add('d1', 'test document'); "
+             "idx.remove('d1'); "
+             "assert 'd1' not in idx.search('test'); "
+             "assert len(idx) == 0"),
+            # Functional: performance — 1000 docs, search under 0.1s
+            ("functional_test",
+             "import time; "
+             "from blipshell.utils.text_index import TextIndex; "
+             "idx = TextIndex(); "
+             "for i in range(1000): "
+             "  idx.add(f'd{i}', f'document number {i} with some text about topic {i % 50}'); "
+             "start = time.monotonic(); "
+             "[idx.search('topic 25') for _ in range(100)]; "
+             "elapsed = time.monotonic() - start; "
+             "assert elapsed < 1.0, f'100 searches took {elapsed:.2f}s — too slow'"),
+            ("no_unwanted_files", None),
+        ],
+    },
+]
+
+
+# Setup hook for the tag bug injection
+def inject_tag_bug(sandbox_path: str):
+    """Inject a tag-handling bug into search.py's _apply_boosts method.
+
+    Makes tags sometimes appear as JSON strings or nested lists instead
+    of clean string lists, then removes the defensive parsing.
+    """
+    search_path = os.path.join(sandbox_path, "blipshell", "memory", "search.py")
+    if not os.path.exists(search_path):
+        return
+    with open(search_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # Find tag_overlap line and ensure it uses raw set() without defensive parsing
+    # If there's already defensive code, strip it to create the bug
+    import re as _re
+    # Look for any json.loads or isinstance checks near tag_overlap and remove them
+    # Then ensure the line does: tag_overlap = len(set(r['tags']) & query_tags)
+    # which will crash on non-hashable tags
+
+    # Simple approach: find _apply_boosts and inject a known-buggy version
+    if "_apply_boosts" in content and "tag_overlap" in content:
+        # Add a comment marking the bug location for verification
+        content = content.replace(
+            "tag_overlap = len(set(r.get('tags', []))",
+            "tag_overlap = len(set(r['tags'])",
+            1,
+        )
+        # Also try the other common pattern
+        content = content.replace(
+            "tags = r.get('tags', [])",
+            "tags = r['tags']  # BUG: no defensive parsing",
+            1,
+        )
+        with open(search_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+
+# ---------------------------------------------------------------------------
 # A/B System Configurations — test which BlipShell features help
 # ---------------------------------------------------------------------------
 
@@ -1004,6 +1398,7 @@ def inject_edit_bug(sandbox_path: str):
 # Setup hooks — called before a task runs to modify the sandbox
 SETUP_HOOKS = {
     "inject_edit_bug": inject_edit_bug,
+    "inject_tag_bug": inject_tag_bug,
 }
 
 
@@ -2221,6 +2616,7 @@ def main():
     Usage:
         python tests/benchmark_coding.py                              # all models, standard tasks
         python tests/benchmark_coding.py glm-5:cloud --hard           # one model, hard tasks
+        python tests/benchmark_coding.py glm-5:cloud --expert         # one model, expert tasks
         python tests/benchmark_coding.py glm-5:cloud --config bare    # A/B test with bare config
         python tests/benchmark_coding.py --ab glm-5:cloud             # run all configs for one model
         python tests/benchmark_coding.py --tasks stats_command,edge_case_parser  # specific tasks
@@ -2231,6 +2627,7 @@ def main():
     timeout = 300.0
     dry_run = False
     use_hard = False
+    use_expert = False
     use_all = False
     config_name = "full"
     ab_mode = False
@@ -2247,6 +2644,9 @@ def main():
             i += 1
         elif args[i] == "--hard":
             use_hard = True
+            i += 1
+        elif args[i] == "--expert":
+            use_expert = True
             i += 1
         elif args[i] == "--all":
             use_all = True
@@ -2283,7 +2683,9 @@ def main():
 
     # Build task list
     if use_all:
-        task_list = CODING_TASKS + HARD_TASKS
+        task_list = CODING_TASKS + HARD_TASKS + EXPERT_TASKS
+    elif use_expert:
+        task_list = EXPERT_TASKS
     elif use_hard:
         task_list = HARD_TASKS
     else:
@@ -2293,7 +2695,7 @@ def main():
     if task_filter:
         task_list = [t for t in task_list if t["name"] in task_filter]
         if not task_list:
-            all_names = [t["name"] for t in CODING_TASKS + HARD_TASKS]
+            all_names = [t["name"] for t in CODING_TASKS + HARD_TASKS + EXPERT_TASKS]
             console.print(f"[red]No tasks matched filter: {task_filter}[/red]")
             console.print(f"[dim]Available: {', '.join(all_names)}[/dim]")
             return
