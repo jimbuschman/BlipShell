@@ -156,6 +156,11 @@ _MODEL_SETTINGS_CONFIG = {
         "use_repo_map": True,
         "think": False,
     },
+    "z-ai/glm-4.7-flash": {
+        "max_tool_calls": 20,
+        "use_repo_map": True,
+        "think": False,
+    },
 }
 
 console = Console()
@@ -1386,6 +1391,7 @@ def make_router(model_name: str, timeout: float = 300.0) -> LLMRouter:
             "moonshotai/kimi-k2.5":      (0.45, 2.20),
             "qwen/qwen3-coder-next":     (0.12, 0.75),
             "mistralai/devstral-2512":   (0.40, 2.00),
+            "z-ai/glm-4.7-flash":        (0.06, 0.40),
         }
         cost_prompt, cost_completion = 0.0, 0.0
         for prefix, (cp, cc) in _OPENROUTER_PRICING.items():
