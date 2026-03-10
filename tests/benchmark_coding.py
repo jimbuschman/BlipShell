@@ -1350,6 +1350,11 @@ def make_router(model_name: str, timeout: float = 300.0) -> LLMRouter:
                 "OPENROUTER_API_KEY env var required for OpenRouter models. "
                 "Get one at https://openrouter.ai/keys"
             )
+        # Debug: show key is loaded (mask middle)
+        masked = api_key[:10] + "..." + api_key[-4:] if len(api_key) > 14 else "TOO_SHORT"
+        console.print(f"[dim]OpenRouter API key: {masked} ({len(api_key)} chars)[/dim]")
+        # Strip any accidental quotes/whitespace from the key
+        api_key = api_key.strip().strip('"').strip("'")
         # Per-model pricing ($/million tokens) — from OpenRouter pricing pages
         _OPENROUTER_PRICING = {
             "anthropic/claude-sonnet":   (3.0, 15.0),
