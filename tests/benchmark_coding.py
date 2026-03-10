@@ -733,6 +733,118 @@ HARD_TASKS = [
             ("no_unwanted_files", None),
         ],
     },
+    {
+        "name": "multi_file_feature_integration",
+        "description": "Add feature spanning 4 interdependent files (config + tool + registration + CLI)",
+        "request": (
+            "Add a 'session notes' feature to BlipShell — a simple scratchpad where the "
+            "user can save and retrieve named notes within a session. This requires "
+            "coordinated changes to FOUR existing files:\n\n"
+
+            "1. **blipshell/models/config.py** — Add a `NotesConfig` class (Pydantic BaseModel) with:\n"
+            "   - `enabled: bool = True`\n"
+            "   - `max_notes: int = 50` (max notes per session)\n"
+            "   - `max_note_length: int = 2000` (max chars per note)\n"
+            "   Add a `notes: NotesConfig = NotesConfig()` field to `BlipShellConfig`.\n"
+            "   You MUST read the file first to understand the existing config class patterns.\n\n"
+
+            "2. **blipshell/core/tools/note_tools.py** — Create a NEW file with two tools:\n"
+            "   a) `SaveNoteTool(Tool)` — saves a named note\n"
+            "      - Parameters: `name` (string, required), `content` (string, required)\n"
+            "      - Stores notes in a dict `self._notes: dict[str, str]`\n"
+            "      - Validates against `max_notes` and `max_note_length` from config\n"
+            "      - Returns confirmation message with note name\n"
+            "   b) `GetNoteTool(Tool)` — retrieves a note by name\n"
+            "      - Parameters: `name` (string, required)\n"
+            "      - Returns the note content, or an error message if not found\n"
+            "      - Mark as `read_only = True`\n"
+            "   Both tools must follow the EXACT Tool base class pattern — read "
+            "   blipshell/core/tools/base.py and another tool file (e.g. memory_tools.py) "
+            "   to understand the ToolDefinition, ToolParameter, ToolParameterType imports "
+            "   and the execute() method signature.\n\n"
+
+            "3. **blipshell/core/agent_tools.py** — Register both note tools in `_register_tools()`.\n"
+            "   You MUST read this file to see how other tools are registered:\n"
+            "   - Tools are instantiated with config values passed to constructors\n"
+            "   - Registered with `self.tool_registry.register(tool, group='group_name')`\n"
+            "   - Pass `self.config.notes.max_notes` and `self.config.notes.max_note_length` "
+            "   to the tool constructors\n"
+            "   - Use group name 'notes'\n\n"
+
+            "4. **blipshell/ui/cli.py** — Add a `/notes` slash command:\n"
+            "   - `/notes` with no args — list all saved notes (name + first 50 chars preview)\n"
+            "   - `/notes get <name>` — show full content of a note\n"
+            "   - `/notes clear` — clear all notes\n"
+            "   You MUST read cli.py to find the slash command dispatch section and follow "
+            "   the EXACT elif pattern used by other commands like /health, /flow, etc.\n"
+            "   The notes dict lives on the tool instances — access it via:\n"
+            "   `agent.tool_registry.get_tool('save_note')._notes`\n\n"
+
+            "CRITICAL: All four files must be consistent:\n"
+            "- Config field names must match what agent_tools.py passes to constructors\n"
+            "- Tool names in definitions must match what cli.py looks up via get_tool()\n"
+            "- Parameter names in ToolDefinition must match execute() method signatures\n"
+            "- All existing code in modified files must continue to work"
+        ),
+        "verify_checks": [
+            # --- Config layer ---
+            ("diff_contains", ("blipshell/models/config.py", r"\+.*class NotesConfig")),
+            ("diff_contains", ("blipshell/models/config.py", r"\+.*max_notes.*int.*=.*50")),
+            ("diff_contains", ("blipshell/models/config.py", r"\+.*notes.*:.*NotesConfig")),
+            ("syntax_check", "blipshell/models/config.py"),
+
+            # --- Tool layer ---
+            ("file_exists", "blipshell/core/tools/note_tools.py"),
+            ("syntax_check", "blipshell/core/tools/note_tools.py"),
+            ("grep_in_sandbox", ("blipshell/core/tools/note_tools.py", r"class SaveNoteTool")),
+            ("grep_in_sandbox", ("blipshell/core/tools/note_tools.py", r"class GetNoteTool")),
+            ("grep_in_sandbox", ("blipshell/core/tools/note_tools.py", r"read_only.*=.*True")),
+            # Uses proper base class imports
+            ("grep_in_sandbox", ("blipshell/core/tools/note_tools.py",
+                                 r"from.*tools\.(base|tools).*import.*(Tool|ToolDefinition)")),
+
+            # --- Registration layer ---
+            ("diff_contains", ("blipshell/core/agent_tools.py", r"\+.*SaveNoteTool|save_note|note_tools")),
+            ("diff_contains", ("blipshell/core/agent_tools.py", r"\+.*register.*group.*notes")),
+            ("syntax_check", "blipshell/core/agent_tools.py"),
+
+            # --- CLI layer ---
+            ("diff_contains", ("blipshell/ui/cli.py", r"\+.*notes")),
+            ("syntax_check", "blipshell/ui/cli.py"),
+
+            # --- Integration: tools actually work ---
+            ("functional_test",
+             "from blipshell.core.tools.note_tools import SaveNoteTool, GetNoteTool; "
+             "import asyncio; "
+             "async def check(): "
+             "  save = SaveNoteTool(max_notes=10, max_note_length=100); "
+             "  get = GetNoteTool(save._notes); "
+             "  r = await save.execute(name='todo', content='buy milk'); "
+             "  assert 'todo' in r.lower(); "
+             "  r2 = await get.execute(name='todo'); "
+             "  assert 'buy milk' in r2; "
+             "  r3 = await get.execute(name='nonexistent'); "
+             "  assert 'not found' in r3.lower() or 'error' in r3.lower(); "
+             "asyncio.run(check())"),
+
+            # --- Integration: max_notes limit enforced ---
+            ("functional_test",
+             "from blipshell.core.tools.note_tools import SaveNoteTool; "
+             "import asyncio; "
+             "async def check(): "
+             "  save = SaveNoteTool(max_notes=2, max_note_length=100); "
+             "  await save.execute(name='a', content='one'); "
+             "  await save.execute(name='b', content='two'); "
+             "  r = await save.execute(name='c', content='three'); "
+             "  assert 'limit' in r.lower() or 'max' in r.lower() or 'full' in r.lower(); "
+             "asyncio.run(check())"),
+
+            # --- 4 files changed ---
+            ("files_changed", 4),
+            # No junk files
+            ("no_unwanted_files", None),
+        ],
+    },
 ]
 
 
