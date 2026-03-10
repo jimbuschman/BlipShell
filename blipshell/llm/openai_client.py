@@ -163,6 +163,10 @@ class OpenAICompatClient:
 
         Chunk format matches what callers expect from LLMClient:
         each chunk has a 'message' dict with 'content'.
+
+        Tool calls arrive as deltas across multiple chunks (first the
+        function name, then argument fragments).  We accumulate them and
+        yield a final message with the complete tool_calls list.
         """
         params: dict[str, Any] = {
             "model": model,
@@ -173,16 +177,69 @@ class OpenAICompatClient:
             params["tools"] = self._convert_tools(tools)
         for key in ("options", "think", "format"):
             kwargs.pop(key, None)
+        # Request usage stats in the final streaming chunk
+        params.setdefault("stream_options", {"include_usage": True})
         params.update(kwargs)
 
         last_error = None
         for attempt in range(self.max_retries + 1):
             try:
                 stream = await self._client.chat.completions.create(**params)
+
+                # Accumulators for tool call deltas
+                # keyed by tool call index → {id, type, function: {name, arguments}}
+                tool_call_accum: dict[int, dict] = {}
+                full_content = ""
+
                 async for chunk in stream:
-                    delta = chunk.choices[0].delta if chunk.choices else None
-                    if delta and delta.content:
+                    # Capture streaming usage if present (final chunk)
+                    if hasattr(chunk, "usage") and chunk.usage:
+                        self.total_prompt_tokens += chunk.usage.prompt_tokens or 0
+                        self.total_completion_tokens += chunk.usage.completion_tokens or 0
+                        self.total_requests += 1
+
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    if delta is None:
+                        continue
+
+                    # Stream text content as it arrives
+                    if delta.content:
+                        full_content += delta.content
                         yield {"message": {"content": delta.content}}
+
+                    # Accumulate tool call deltas
+                    if delta.tool_calls:
+                        for tc_delta in delta.tool_calls:
+                            idx = tc_delta.index
+                            if idx not in tool_call_accum:
+                                tool_call_accum[idx] = {
+                                    "id": "",
+                                    "type": "function",
+                                    "function": {"name": "", "arguments": ""},
+                                }
+                            tc = tool_call_accum[idx]
+                            if tc_delta.id:
+                                tc["id"] = tc_delta.id
+                            if tc_delta.function:
+                                if tc_delta.function.name:
+                                    tc["function"]["name"] = tc_delta.function.name
+                                if tc_delta.function.arguments:
+                                    tc["function"]["arguments"] += tc_delta.function.arguments
+
+                # After stream ends, yield accumulated tool calls as a final message.
+                # Content is empty here — text was already yielded chunk-by-chunk above.
+                if tool_call_accum:
+                    tool_calls = [tool_call_accum[i] for i in sorted(tool_call_accum)]
+                    yield {
+                        "message": {
+                            "content": "",
+                            "role": "assistant",
+                            "tool_calls": tool_calls,
+                        }
+                    }
+
                 return
             except Exception as e:
                 last_error = e
