@@ -36,6 +36,10 @@ class OpenAICompatClient:
         self.max_retries = max_retries
         self.retry_base_delay = retry_base_delay
         self.timeout = timeout
+        # Cumulative token usage tracking (for cost estimation)
+        self.total_prompt_tokens: int = 0
+        self.total_completion_tokens: int = 0
+        self.total_requests: int = 0
         # Short connect timeout (5s) so failed cloud endpoints fall back fast.
         # Read timeout stays long for slow model responses.
         self._client = openai.AsyncOpenAI(
@@ -227,6 +231,11 @@ class OpenAICompatClient:
 
         try:
             response = await self._retry_call(_do_generate)
+            # Accumulate token usage
+            if hasattr(response, "usage") and response.usage:
+                self.total_prompt_tokens += response.usage.prompt_tokens or 0
+                self.total_completion_tokens += response.usage.completion_tokens or 0
+                self.total_requests += 1
             result = response.choices[0].message.content or ""
 
             if use_cache:
@@ -238,6 +247,20 @@ class OpenAICompatClient:
         except Exception as e:
             logger.error("OpenAI generate request failed after retries: %s", e)
             raise
+
+    def reset_usage(self):
+        """Reset cumulative token counters (e.g., between benchmark tasks)."""
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+        self.total_requests = 0
+
+    def get_usage(self) -> dict:
+        """Return current cumulative token usage."""
+        return {
+            "prompt_tokens": self.total_prompt_tokens,
+            "completion_tokens": self.total_completion_tokens,
+            "requests": self.total_requests,
+        }
 
     async def check_health(self) -> bool:
         """Check if the API is reachable by listing models."""
@@ -254,7 +277,14 @@ class OpenAICompatClient:
 
         Returns a dict-like object with .message.content (matching ollama
         response objects) for compatibility with existing code.
+        Also accumulates token usage for cost tracking.
         """
+        # Accumulate token usage (OpenAI/OpenRouter include this)
+        if hasattr(response, "usage") and response.usage:
+            self.total_prompt_tokens += response.usage.prompt_tokens or 0
+            self.total_completion_tokens += response.usage.completion_tokens or 0
+            self.total_requests += 1
+
         choice = response.choices[0] if response.choices else None
         if not choice:
             return {"message": {"content": "", "role": "assistant"}}

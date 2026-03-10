@@ -111,6 +111,31 @@ _MODEL_SETTINGS_CONFIG = {
         "max_tool_calls": 15,
         "use_repo_map": True,
     },
+    # OpenRouter models (matched via prefix scan, e.g. "anthropic/claude-sonnet-4-6")
+    "anthropic/claude-sonnet": {
+        "max_tool_calls": 30,
+        "use_repo_map": True,
+        "think": False,
+    },
+    "anthropic/claude-haiku": {
+        "max_tool_calls": 25,
+        "use_repo_map": True,
+        "think": False,
+    },
+    "google/gemini-2.5-flash": {
+        "max_tool_calls": 25,
+        "use_repo_map": True,
+        "think": False,
+    },
+    "google/gemini-2.5-pro": {
+        "max_tool_calls": 25,
+        "use_repo_map": True,
+        "think": False,
+    },
+    "z-ai/glm-5": {
+        "max_tool_calls": 15,
+        "use_repo_map": True,
+    },
 }
 
 console = Console()
@@ -1035,6 +1060,12 @@ class TaskMetrics:
     # Transcript file path
     transcript_path: str = ""
 
+    # Token usage and cost (OpenRouter / OpenAI-compatible)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    api_requests: int = 0
+    estimated_cost_usd: float = 0.0
+
     @property
     def total_tool_calls(self) -> int:
         return sum(s.tool_call_count for s in self.steps)
@@ -1094,6 +1125,10 @@ class TaskMetrics:
                 "llm_word_count": self.transcript_metrics.llm_word_count,
             },
             "transcript_path": self.transcript_path,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "api_requests": self.api_requests,
+            "estimated_cost_usd": round(self.estimated_cost_usd, 4),
             "error": self.error,
             "steps": [
                 {
@@ -1315,6 +1350,19 @@ def make_router(model_name: str, timeout: float = 300.0) -> LLMRouter:
                 "OPENROUTER_API_KEY env var required for OpenRouter models. "
                 "Get one at https://openrouter.ai/keys"
             )
+        # Per-model pricing ($/million tokens) — from OpenRouter pricing pages
+        _OPENROUTER_PRICING = {
+            "anthropic/claude-sonnet":   (3.0, 15.0),
+            "anthropic/claude-haiku":    (0.80, 4.0),
+            "google/gemini-2.5-flash":   (0.15, 0.60),
+            "google/gemini-2.5-pro":     (1.25, 10.0),
+            "z-ai/glm-5":               (0.80, 2.56),
+        }
+        cost_prompt, cost_completion = 0.0, 0.0
+        for prefix, (cp, cc) in _OPENROUTER_PRICING.items():
+            if model_name.startswith(prefix):
+                cost_prompt, cost_completion = cp, cc
+                break
         endpoint_cfg = EndpointConfig(
             name="openrouter",
             url="https://openrouter.ai/api/v1",
@@ -1323,8 +1371,10 @@ def make_router(model_name: str, timeout: float = 300.0) -> LLMRouter:
             roles=["reasoning", "tool_calling", "coding", "summarization",
                    "ranking", "importance", "embedding"],
             priority=1,
-            max_concurrent=2,
-            context_tokens=131072,
+            max_concurrent=3,
+            context_tokens=200000,
+            cost_per_1m_prompt=cost_prompt,
+            cost_per_1m_completion=cost_completion,
         )
     else:
         # Local Ollama
@@ -1760,6 +1810,31 @@ async def run_task(
         # Parse transcript behavioral metrics
         metrics.transcript_metrics = transcript.parse_metrics()
 
+        # Capture token usage and estimate cost (OpenRouter / OpenAI-compatible)
+        try:
+            from blipshell.llm.openai_client import OpenAICompatClient
+            for ep in router._endpoint_manager._endpoints:
+                client = ep._client
+                if isinstance(client, OpenAICompatClient):
+                    metrics.prompt_tokens = client.total_prompt_tokens
+                    metrics.completion_tokens = client.total_completion_tokens
+                    metrics.api_requests = client.total_requests
+                    # Estimate cost from endpoint config
+                    cfg = ep._config
+                    cost_prompt = cfg.cost_per_1m_prompt * metrics.prompt_tokens / 1_000_000
+                    cost_completion = cfg.cost_per_1m_completion * metrics.completion_tokens / 1_000_000
+                    metrics.estimated_cost_usd = cost_prompt + cost_completion
+                    transcript._lines.append(
+                        f"\nTOKEN USAGE: {metrics.prompt_tokens:,} prompt + "
+                        f"{metrics.completion_tokens:,} completion = "
+                        f"{metrics.prompt_tokens + metrics.completion_tokens:,} total "
+                        f"({metrics.api_requests} requests)\n"
+                        f"ESTIMATED COST: ${metrics.estimated_cost_usd:.4f}\n"
+                    )
+                    break
+        except Exception as e:
+            logger.debug("Token usage capture failed: %s", e)
+
         # Save transcript
         metrics.transcript_path = transcript.save()
 
@@ -1796,6 +1871,7 @@ def print_summary_table(all_results: dict[str, list[TaskMetrics]]):
     table.add_column("Checks", width=8, justify="center")
     table.add_column("Pytest", width=7, justify="center")
     table.add_column("?s Asked", width=8, justify="center")
+    table.add_column("Cost", width=8, justify="right")
 
     for model, task_results in all_results.items():
         for i, m in enumerate(task_results):
@@ -1821,6 +1897,8 @@ def print_summary_table(all_results: dict[str, list[TaskMetrics]]):
             else:
                 pytest_str = "[dim]n/a[/dim]"
 
+            cost_str = f"${m.estimated_cost_usd:.3f}" if m.estimated_cost_usd > 0 else "[dim]local[/dim]"
+
             table.add_row(
                 model_col,
                 m.task_name,
@@ -1832,6 +1910,7 @@ def print_summary_table(all_results: dict[str, list[TaskMetrics]]):
                 checks_str,
                 pytest_str,
                 questions_str,
+                cost_str,
             )
 
     console.print(table)
@@ -1910,6 +1989,7 @@ def print_totals_table(all_results: dict[str, list[TaskMetrics]]):
     table.add_column("Checks", width=10, justify="center")
     table.add_column("Questions", width=10, justify="center")
     table.add_column("Linux Cmds", width=10, justify="center")
+    table.add_column("Total Cost", width=10, justify="right")
 
     for model, task_results in all_results.items():
         total_time = sum(m.total_time for m in task_results)
@@ -1920,6 +2000,7 @@ def print_totals_table(all_results: dict[str, list[TaskMetrics]]):
         checks_total = sum(m.checks_total for m in task_results)
         total_questions = sum(m.transcript_metrics.questions_asked for m in task_results)
         total_linux = sum(m.transcript_metrics.linux_cmds_on_windows for m in task_results)
+        total_cost = sum(m.estimated_cost_usd for m in task_results)
 
         edit_str = (
             f"[red]{total_edit_fail}[/red]" if total_edit_fail > 0
@@ -1933,6 +2014,7 @@ def print_totals_table(all_results: dict[str, list[TaskMetrics]]):
             f"[red]{total_linux}[/red]" if total_linux > 0
             else "[green]0[/green]"
         )
+        cost_str = f"${total_cost:.3f}" if total_cost > 0 else "[dim]local[/dim]"
 
         table.add_row(
             model,
@@ -1944,6 +2026,7 @@ def print_totals_table(all_results: dict[str, list[TaskMetrics]]):
             f"{checks_pass}/{checks_total}",
             questions_str,
             linux_str,
+            cost_str,
         )
 
     console.print(table)
