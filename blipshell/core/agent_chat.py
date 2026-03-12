@@ -291,6 +291,13 @@ class ChatMixin:
         """Simple chat path — uses unified ChatLoop with endpoint fallback."""
         from blipshell.core.chat_loop import LoopConfig
 
+        # Clear stale recall results from previous turns so the model only
+        # sees memories relevant to the *current* question (not a cumulative
+        # pile from every prior turn in the session).
+        recall_pool = self.memory_manager.get_pool("Recall")
+        if recall_pool:
+            recall_pool.clear()
+
         # Search relevant memories for recall
         await self._search_relevant_memories(user_message)
 
