@@ -277,9 +277,9 @@ class CompactionConfig(BaseModel):
     conversation context while preserving key information. Falls back
     to mechanical per-tool-type compression on LLM failure.
     """
-    enabled: bool = True                        # enable compaction in all chat paths
+    enabled: bool = False                       # disabled by default — enable after testing on Ollama PC
     use_llm: bool = True                        # LLM-driven summary; False = mechanical only
-    compaction_threshold: float = 0.85           # trigger at this fraction of context_limit
+    compaction_threshold: float = 0.95           # trigger at this fraction of context_limit (was 0.85 — too aggressive)
     partial_compaction: bool = True              # only summarize old messages, keep recent verbatim
     min_recent_user_messages: int = 5            # keep at least this many recent user messages
     min_recent_tokens: int = 10000               # keep at least this many tokens of recent conversation
@@ -299,7 +299,7 @@ class NotesConfig(BaseModel):
     """
     enabled: bool = True
     max_notes: int = 50                          # max number of notes per session
-    max_total_tokens: int = 12000                # total token budget for all notes
+    max_total_tokens: int = 4000                 # total token budget for all notes (was 12K — too much context pressure)
     max_note_tokens: int = 2000                  # per-note token limit
 
 

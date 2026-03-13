@@ -58,11 +58,21 @@ class NightlyRunner:
         self.processor = processor
 
     @classmethod
-    async def create_from_config(cls, config_path: str | None = None) -> NightlyRunner:
+    async def create_from_config(
+        cls,
+        config_path: str | None = None,
+        *,
+        local_only: bool = False,
+    ) -> NightlyRunner:
         """Factory: build a NightlyRunner from config without a full Agent.
 
         Creates its own SQLite, ChromaDB, Router, and Processor instances.
         Caller must call close() when done.
+
+        Args:
+            local_only: If True, disable all non-Ollama endpoints so every
+                LLM call routes through local Ollama. Useful for bulk nightly
+                runs that would overwhelm cloud rate limits.
         """
         from blipshell.core.config import ConfigManager
         from blipshell.llm.endpoints import EndpointManager
@@ -75,17 +85,26 @@ class NightlyRunner:
         config_mgr = ConfigManager(config_path)
         config = config_mgr.load()
 
+        endpoints = config.endpoints
+        if local_only:
+            # Keep only Ollama endpoints, disable cloud (OpenAI-compatible)
+            for ep in endpoints:
+                if ep.provider != "ollama":
+                    ep.enabled = False
+            logger.info("Local-only mode: disabled %d cloud endpoints",
+                        sum(1 for ep in endpoints if not ep.enabled))
+
         sqlite = SQLiteStore(config.database.path)
         await sqlite.initialize()
 
         chroma = ChromaStore(
             persist_dir=config.database.chroma_path,
             embedding_model=config.models.embedding,
-            ollama_url=get_ollama_url(config.endpoints),
+            ollama_url=get_ollama_url(endpoints),
         )
         chroma.initialize()
 
-        endpoint_mgr = EndpointManager(config.endpoints, config.llm)
+        endpoint_mgr = EndpointManager(endpoints, config.llm)
         router = LLMRouter(config.models, endpoint_mgr)
         processor = MemoryProcessor(sqlite, chroma, router, config=config.memory)
 

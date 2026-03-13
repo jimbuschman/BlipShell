@@ -3046,15 +3046,18 @@ def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios):
 @click.option("--job", default=None, help="Run a specific job only (e.g. centroid_tag, batch_tag)")
 @click.option("--quiet", "-q", is_flag=True, help="JSON output only (for scheduled runs)")
 @click.option("--loop", is_flag=True, help="Repeat until nothing left to process (use with --job)")
+@click.option("--local", is_flag=True, help="Force all LLM calls through local Ollama (avoids cloud rate limits)")
 @click.pass_context
-def nightly_cmd(ctx, job, quiet, loop):
+def nightly_cmd(ctx, job, quiet, loop, local):
     """Run nightly maintenance jobs (backup, tagging, pruning, etc.)."""
     import json as _json
 
     async def _run():
         from blipshell.core.nightly import NightlyRunner
 
-        runner = await NightlyRunner.create_from_config(ctx.obj.get("config_path"))
+        runner = await NightlyRunner.create_from_config(
+            ctx.obj.get("config_path"), local_only=local,
+        )
         try:
             jobs = [job] if job else None
             iteration = 0

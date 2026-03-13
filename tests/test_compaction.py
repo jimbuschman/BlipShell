@@ -507,9 +507,9 @@ class TestCompactionConfig:
     def test_compaction_config_defaults(self):
         from blipshell.models.config import CompactionConfig
         cfg = CompactionConfig()
-        assert cfg.enabled is True
+        assert cfg.enabled is False
         assert cfg.use_llm is True
-        assert cfg.compaction_threshold == 0.85
+        assert cfg.compaction_threshold == 0.95
         assert cfg.partial_compaction is True
         assert cfg.min_recent_user_messages == 5
         assert cfg.min_recent_tokens == 10000
@@ -521,7 +521,7 @@ class TestCompactionConfig:
         cfg = NotesConfig()
         assert cfg.enabled is True
         assert cfg.max_notes == 50
-        assert cfg.max_total_tokens == 12000
+        assert cfg.max_total_tokens == 4000
         assert cfg.max_note_tokens == 2000
 
     def test_configs_on_blipshell_config(self):
@@ -529,7 +529,7 @@ class TestCompactionConfig:
         cfg = BlipShellConfig()
         assert hasattr(cfg, "compaction")
         assert hasattr(cfg, "notes")
-        assert cfg.compaction.enabled is True
+        assert cfg.compaction.enabled is False
         assert cfg.notes.enabled is True
 
 
