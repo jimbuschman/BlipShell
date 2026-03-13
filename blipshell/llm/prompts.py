@@ -229,6 +229,37 @@ def rank_importance_and_classify(text: str) -> tuple[str, str]:
     return system, user
 
 
+def rank_lesson(text: str) -> tuple[str, str]:
+    """Prompt for scoring a lesson on rank (1-5) and importance (0.0-1.0).
+
+    Returns (system_prompt, user_prompt). Lessons are extracted insights from
+    conversations, so they should generally score higher than raw messages.
+    """
+    system = (
+        "You rate extracted lessons on two scales.\n\n"
+        "A lesson is a synthesized insight from a conversation — NOT a raw message.\n\n"
+        "RANK (1-5) — how valuable is this lesson to remember?\n"
+        "1 = Trivial: generic advice, obvious facts, no specific insight\n"
+        "2 = Minor: slightly useful but too vague or context-dependent\n"
+        "3 = Useful: clear actionable lesson with enough context to be standalone\n"
+        "4 = Important: key insight, preference, pattern, or decision worth retaining\n"
+        "5 = Critical: fundamental user preference, major architectural decision, or hard-won lesson\n\n"
+        "IMPORTANCE (0.0-1.0) — how important to remember long-term?\n"
+        "0.1 = Throwaway: restates the obvious, no lasting value\n"
+        "0.3 = Low: mildly useful, likely outdated soon\n"
+        "0.5 = Medium: solid lesson that applies to similar future situations\n"
+        "0.7 = High: recurring pattern, user preference, important technical lesson\n"
+        "0.9 = Critical: core user preference, fundamental project decision\n\n"
+        "IMPORTANT: Use the FULL scale. Most lessons should be 3-4 range since "
+        "they're already filtered insights. Reserve 5/0.9 for truly critical ones "
+        "and 1-2 for low-quality extractions.\n\n"
+        "Respond with ONLY two values separated by a space: rank importance\n"
+        "Example: 4 0.7"
+    )
+    user = f"Rate this lesson:\n\n{text}"
+    return system, user
+
+
 def decide_memory_action(
     new_memory: str, existing_memories: list[str],
 ) -> tuple[str, str]:
@@ -275,26 +306,32 @@ def extract_lesson(text: str) -> tuple[str, str]:
     """
     system = (
         "You are a behavioral lesson extractor. Your job is to identify "
-        "HOW the assistant should behave with this user in future conversations.\n\n"
-        "A lesson is NOT a fact, not a summary, not trivia. A lesson is "
-        "BEHAVIORAL ADVICE about how to interact with this specific user.\n\n"
-        "GOOD lessons (behavioral advice):\n"
-        "- User prefers direct troubleshooting steps over lengthy explanations.\n"
-        "- Acknowledge user's frustration before jumping to technical solutions.\n"
-        "- User works on multiple hardware projects — always clarify which one.\n"
-        "- User appreciates casual tone and humor in responses.\n\n"
-        "BAD lessons (these are facts/trivia, NOT lessons):\n"
-        "- The user has an HP EliteBook with Intel HD 4400. (this is a fact)\n"
-        "- Set render distance to 16 chunks. (this is a tip)\n"
-        "- LLMs process tokens not letters. (this is trivia)\n"
-        "- The user's project uses an SSD1306 OLED. (this is a fact)\n\n"
-        "Extract 1-3 behavioral lessons. Rules:\n"
-        "- Each lesson MUST be advice about HOW to talk to or help this user\n"
-        "- Each lesson MUST be a single sentence under 25 words\n"
-        "- Start each lesson with a verb or 'User prefers/likes/dislikes...'\n"
+        "SPECIFIC, UNIQUE insights about how to interact with this user.\n\n"
+        "A lesson must be SPECIFIC to this conversation — not generic advice "
+        "that applies to any user. If a lesson could apply to 90% of users, "
+        "it is too generic and should not be extracted.\n\n"
+        "GOOD lessons (specific and actionable):\n"
+        "- When troubleshooting hardware, ask which of the user's projects "
+        "is affected before suggesting fixes.\n"
+        "- This user tests code by running it immediately — provide complete "
+        "runnable snippets, not pseudocode.\n"
+        "- After this user reports a bug fix, confirm the root cause was "
+        "addressed rather than just the symptom.\n\n"
+        "BAD lessons (too generic — NEVER output these):\n"
+        "- Be concise and direct. (generic — applies to everyone)\n"
+        "- Provide code examples. (generic — obviously)\n"
+        "- Acknowledge frustration before troubleshooting. (generic advice)\n"
+        "- The user has an HP EliteBook. (this is a fact, not a lesson)\n"
+        "- LLMs process tokens not letters. (this is trivia)\n\n"
+        "Extract 1-3 lessons. Rules:\n"
+        "- Each lesson MUST be specific to THIS user and THIS conversation\n"
+        "- Each lesson MUST describe a concrete behavior or pattern observed\n"
+        "- Each lesson MUST be under 30 words\n"
+        "- Start with a verb describing the action to take\n"
+        "- Do NOT output generic communication advice (be concise, be direct, "
+        "provide examples, etc.)\n"
         "- Do NOT output facts, project details, hardware specs, or tips\n"
-        "- Do NOT include conversation text, markdown, or emojis\n"
-        "- If there is nothing behavioral to learn, respond with: SKIP\n\n"
+        "- If there is nothing specific to learn, respond with: SKIP\n\n"
         "Format: One lesson per line. No numbering, no bullets, no headers."
     )
     user = f"Extract lessons from this conversation:\n\n{text}"

@@ -34,7 +34,7 @@ class Memory(BaseModel):
     content: str
     summary: Optional[str] = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    rank: int = 0  # 1-5 quality/relevance rank
+    rank: int = 1  # 1-5 quality/relevance rank (1 = unscored default)
     importance: float = 0.0  # 0.0 - 1.0 importance score
     tags: list[str] = Field(default_factory=list)
     memory_type: MemoryType = MemoryType.CONVERSATION

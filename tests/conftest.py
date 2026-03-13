@@ -124,12 +124,17 @@ _CANNED_RESPONSES = {
 }
 
 
-def _canned_generate(task_type, prompt="", system=None, think=None):
+def _canned_generate(task_type, prompt="", system=None, think=None, **kwargs):
     """Side-effect function for canned_router.generate()."""
     if task_type == "summarization":
         return _CANNED_RESPONSES["summarization"]
     if task_type == "ranking_importance":
         return _CANNED_RESPONSES["ranking_importance"]
+    if task_type == "session_review":
+        return (
+            "When discussing performance topics, profile before optimizing "
+            "and show concrete benchmark numbers rather than vague claims."
+        )
     if task_type == "reasoning":
         # Detect entity extraction by checking prompt/system content
         if system and "triple" in system.lower():

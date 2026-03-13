@@ -18,6 +18,7 @@ from blipshell.llm.prompts import (
     merge_chunk_reflections,
     rank_and_importance,
     rank_importance_and_classify,
+    rank_lesson,
     reflect_on_session,
     summarize_memory,
 )
@@ -252,8 +253,11 @@ class MemoryProcessor:
         self, conversation_text: str, session_id: int,
         project: str | None = None,
         min_context_tokens: int | None = None,
-    ) -> int:
-        """Extract and store a lesson from a conversation."""
+    ) -> int | None:
+        """Extract and store a lesson from a conversation.
+
+        Returns lesson_id on success, None if the lesson was filtered out.
+        """
         # Generate lesson text via session review model (needs full-conversation understanding)
         try:
             lesson_system, lesson_prompt = extract_lesson(conversation_text)
@@ -265,7 +269,25 @@ class MemoryProcessor:
             )
         except Exception as e:
             logger.error("Lesson extraction failed: %s", e)
-            lesson_text = conversation_text
+            return None
+
+        # Validate: filter SKIP, empty, and junk responses
+        stripped = lesson_text.strip()
+        if not stripped or stripped.upper() == "SKIP" or len(stripped) < 20:
+            logger.debug("Lesson filtered (SKIP/empty/short): %s", stripped[:50])
+            return None
+
+        # Dedup: check if a very similar lesson already exists
+        try:
+            similar = self.chroma.search_lessons(stripped, n_results=1)
+            if similar and similar[0].get("similarity", 0) > 0.92:
+                logger.debug(
+                    "Lesson skipped (near-duplicate of lesson %s, sim=%.3f): %s",
+                    similar[0].get("id"), similar[0]["similarity"], stripped[:80],
+                )
+                return None
+        except Exception as e:
+            logger.debug("Lesson dedup check failed (proceeding): %s", e)
 
         lesson = Lesson(
             content=lesson_text,
@@ -291,6 +313,20 @@ class MemoryProcessor:
             await self.sqlite.tag_lesson(lesson_id, tags)
         except Exception as e:
             logger.error("Lesson tagging failed: %s", e)
+
+        # Score: rank (1-5) + importance (0.0-1.0)
+        try:
+            ri_system, ri_prompt = rank_lesson(lesson_text)
+            ri_text = await self.router.generate(
+                TaskType.RANKING_IMPORTANCE,
+                ri_prompt,
+                system=ri_system,
+            )
+            rank, importance = self._parse_rank_and_importance(ri_text)
+            await self.sqlite.update_lesson_scores(lesson_id, rank, importance)
+            logger.debug("Lesson %d scored: rank=%d importance=%.2f", lesson_id, rank, importance)
+        except Exception as e:
+            logger.error("Lesson scoring failed (keeping defaults): %s", e)
 
         return lesson_id
 

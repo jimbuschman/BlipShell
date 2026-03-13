@@ -1021,7 +1021,7 @@ class SQLiteStore:
             content=row["content"],
             summary=row["summary"],
             timestamp=row["timestamp"],
-            rank=row["rank"] or 0,
+            rank=max(row["rank"] or 1, 1),  # clamp to min 1 (valid range 1-5)
             importance=row["importance"] or 0.0,
             memory_type=MemoryType(row["memory_type"]),
             is_archived=bool(row["is_archived"]),
@@ -1189,6 +1189,50 @@ class SQLiteStore:
     async def get_all_lessons(self) -> list[Lesson]:
         """Get all lessons."""
         cursor = await self._db.execute("SELECT * FROM lessons ORDER BY timestamp DESC")
+        rows = await cursor.fetchall()
+        return [
+            Lesson(
+                id=r["id"],
+                content=r["content"],
+                summary=r["summary"],
+                timestamp=r["timestamp"],
+                rank=r["rank"],
+                importance=r["importance"],
+                source_session_id=r["source_session_id"],
+                project=r["project"] if "project" in r.keys() else None,
+            )
+            for r in rows
+        ]
+
+    async def get_unsummarized_memories(self, batch_size: int = 50) -> list[Memory]:
+        """Get memories where summary = content (LLM summarization failed during import).
+
+        Only returns active memories with content > 200 chars (short messages
+        don't benefit from summarization).
+        """
+        cursor = await self._db.execute(
+            "SELECT * FROM memories WHERE summary = content AND is_archived = 0 "
+            "AND length(content) > 200 ORDER BY RANDOM() LIMIT ?",
+            (batch_size,),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_memory(r) for r in rows]
+
+    async def update_lesson_scores(self, lesson_id: int, rank: int, importance: float):
+        """Update rank and importance for a lesson."""
+        await self._db.execute(
+            "UPDATE lessons SET rank = ?, importance = ? WHERE id = ?",
+            (rank, importance, lesson_id),
+        )
+        await self._db.commit()
+
+    async def get_unscored_lessons(self, batch_size: int = 50) -> list[Lesson]:
+        """Get lessons still at default scores (rank=3, importance=0.5)."""
+        cursor = await self._db.execute(
+            "SELECT * FROM lessons WHERE rank = 3 AND importance = 0.5 "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (batch_size,),
+        )
         rows = await cursor.fetchall()
         return [
             Lesson(

@@ -28,7 +28,10 @@ JOB_ORDER = [
     "clean_empty_sessions",
     "cleanup",
     "backfill_summaries",
+    "resummarize",
     "backfill_lessons",
+    "score_lessons",
+    "clean_junk_lessons",
     "session_reflections",
     "friction_analysis",
     "entity_extraction",
@@ -37,6 +40,7 @@ JOB_ORDER = [
     "batch_tag",
     "prune",
     "consolidate",
+    "clean_neutral_tags",
     "tag_discovery",
     "rebuild_digests",
     "health_check",
@@ -176,7 +180,10 @@ class NightlyRunner:
             "clean_empty_sessions": self._job_clean_empty_sessions,
             "cleanup": self._job_cleanup,
             "backfill_summaries": self._job_backfill_summaries,
+            "resummarize": self._job_resummarize,
             "backfill_lessons": self._job_backfill_lessons,
+            "score_lessons": self._job_score_lessons,
+            "clean_junk_lessons": self._job_clean_junk_lessons,
             "session_reflections": self._job_session_reflections,
             "friction_analysis": self._job_friction_analysis,
             "entity_extraction": self._job_entity_extraction,
@@ -185,6 +192,7 @@ class NightlyRunner:
             "batch_tag": self._job_batch_tag,
             "prune": self._job_prune,
             "consolidate": self._job_consolidate,
+            "clean_neutral_tags": self._job_clean_neutral_tags,
             "tag_discovery": self._job_tag_discovery,
             "rebuild_digests": self._job_rebuild_digests,
             "health_check": self._job_health_check,
@@ -282,6 +290,62 @@ class NightlyRunner:
 
         return {"processed": processed, "failed": failed, "total": len(sessions)}
 
+    async def _job_resummarize(self, on_status) -> dict:
+        """Re-summarize memories where summary = content (import failures).
+
+        Processes 50 per run to avoid overwhelming Ollama. At 50/night,
+        the 19K backlog takes ~390 nights, but can be run manually with
+        `blipshell nightly --job resummarize` in a loop to clear faster.
+        """
+        from blipshell.llm.prompts import summarize_memory
+        from blipshell.llm.router import TaskType
+
+        memories = await self.sqlite.get_unsummarized_memories(batch_size=50)
+        if not memories:
+            return {"resummarized": 0, "remaining": 0, "total": 0}
+
+        on_status(f"Re-summarizing {len(memories)} memories...")
+        resummarized = 0
+        failed = 0
+        for mem in memories:
+            try:
+                sum_system, sum_prompt = summarize_memory(mem.content)
+                summary = await self.router.generate(
+                    TaskType.SUMMARIZATION,
+                    sum_prompt,
+                    system=sum_system,
+                )
+                if summary and summary.strip().upper() != "SKIP" and summary.strip() != mem.content.strip():
+                    await self.sqlite.update_memory(mem.id, summary=summary.strip())
+                    # Update ChromaDB embedding with proper summary
+                    try:
+                        self.chroma.add_memory(mem.id, summary.strip())
+                    except Exception as e:
+                        logger.debug("ChromaDB update failed for memory %d: %s", mem.id, e)
+                    resummarized += 1
+                else:
+                    # Mark it so we don't retry — set summary to truncated content
+                    truncated = mem.content[:300] + "..." if len(mem.content) > 300 else mem.content
+                    await self.sqlite.update_memory(mem.id, summary=truncated)
+                    resummarized += 1
+            except Exception as e:
+                logger.error("Re-summarize failed for memory %d: %s", mem.id, e)
+                failed += 1
+
+        # Count remaining
+        remaining_rows = await self.sqlite._db.execute_fetchall(
+            "SELECT COUNT(*) as cnt FROM memories WHERE summary = content "
+            "AND is_archived = 0 AND length(content) > 200"
+        )
+        remaining = remaining_rows[0][0] if remaining_rows else 0
+
+        return {
+            "resummarized": resummarized,
+            "failed": failed,
+            "remaining": remaining,
+            "total": len(memories),
+        }
+
     async def _job_centroid_tag(self, on_status) -> dict:
         """Run centroid-based tag assignment."""
         tagger = CentroidTagger(self.sqlite, self.chroma, self.config.memory)
@@ -330,6 +394,46 @@ class NightlyRunner:
         )
         return await consolidator.consolidate_batch()
 
+    async def _job_clean_neutral_tags(self, on_status) -> dict:
+        """Remove 'neutral' tag from memories that have other tags.
+
+        The 'neutral' tag is too broad (39% of memories) and adds no
+        discriminative value for search. Stripping it from multi-tagged
+        memories reduces noise without losing information.
+        """
+        removed = 0
+        try:
+            # Find memories tagged 'neutral' that also have other tags
+            rows = await self.sqlite._db.execute_fetchall(
+                """
+                SELECT mt.memory_id
+                FROM memory_tags mt
+                JOIN tags t ON t.id = mt.tag_id
+                WHERE t.name = 'neutral'
+                  AND mt.memory_id IN (
+                      SELECT mt2.memory_id FROM memory_tags mt2
+                      GROUP BY mt2.memory_id HAVING COUNT(*) > 1
+                  )
+                """
+            )
+            if rows:
+                memory_ids = [r[0] for r in rows]
+                tag_row = await self.sqlite._db.execute_fetchall(
+                    "SELECT id FROM tags WHERE name = 'neutral'"
+                )
+                if tag_row:
+                    neutral_tag_id = tag_row[0][0]
+                    for mid in memory_ids:
+                        await self.sqlite._db.execute(
+                            "DELETE FROM memory_tags WHERE memory_id = ? AND tag_id = ?",
+                            (mid, neutral_tag_id),
+                        )
+                        removed += 1
+                    await self.sqlite._db.commit()
+        except Exception as e:
+            logger.warning("clean_neutral_tags error: %s", e)
+        return {"neutral_tags_removed": removed}
+
     async def _job_tag_discovery(self, on_status) -> dict:
         """Run LLM-powered tag pattern discovery."""
         cfg = self.config.memory
@@ -377,6 +481,89 @@ class NightlyRunner:
                 failed += 1
 
         return {"processed": processed, "failed": failed, "cloud_routed": cloud_routed, "total": len(sessions)}
+
+    async def _job_score_lessons(self, on_status) -> dict:
+        """Score lessons that still have default rank=3/importance=0.5."""
+        from blipshell.llm.prompts import rank_lesson
+        from blipshell.llm.router import TaskType
+        from blipshell.memory.processor import MemoryProcessor
+
+        unscored = await self.sqlite.get_unscored_lessons(batch_size=50)
+        if not unscored:
+            return {"scored": 0, "total": 0}
+
+        on_status(f"Scoring {len(unscored)} unscored lessons...")
+        scored = 0
+        failed = 0
+        for lesson in unscored:
+            try:
+                ri_system, ri_prompt = rank_lesson(lesson.content)
+                ri_text = await self.router.generate(
+                    TaskType.RANKING_IMPORTANCE,
+                    ri_prompt,
+                    system=ri_system,
+                )
+                rank, importance = MemoryProcessor._parse_rank_and_importance(ri_text)
+                await self.sqlite.update_lesson_scores(lesson.id, rank, importance)
+                scored += 1
+            except Exception as e:
+                logger.error("Lesson %d scoring failed: %s", lesson.id, e)
+                failed += 1
+
+        return {"scored": scored, "failed": failed, "total": len(unscored)}
+
+    async def _job_clean_junk_lessons(self, on_status) -> dict:
+        """Delete junk lessons (SKIP, empty, short) and dedup near-identical ones."""
+        db = self.sqlite._db
+        deleted_junk = 0
+        deleted_dupes = 0
+
+        # Phase 1: Delete obvious junk
+        junk_rows = await db.execute_fetchall(
+            "SELECT id, content FROM lessons WHERE "
+            "TRIM(content) = 'SKIP' OR TRIM(content) = '' OR length(TRIM(content)) < 20"
+        )
+        for row in junk_rows:
+            lid = row[0]
+            await db.execute("DELETE FROM lesson_tags WHERE lesson_id = ?", (lid,))
+            await db.execute("DELETE FROM lessons WHERE id = ?", (lid,))
+            try:
+                self.chroma.delete_lesson(lid)
+            except Exception:
+                pass
+            deleted_junk += 1
+        if deleted_junk:
+            await db.commit()
+
+        # Phase 2: Dedup near-identical lessons via ChromaDB similarity
+        lessons = await self.sqlite.get_all_lessons()
+        seen_ids = set()
+        for lesson in lessons:
+            if lesson.id in seen_ids:
+                continue
+            try:
+                similar = self.chroma.search_lessons(lesson.content, n_results=5)
+                for s in similar:
+                    other_id = s.get("id")
+                    if other_id == lesson.id or other_id in seen_ids:
+                        continue
+                    if s.get("similarity", 0) > 0.92:
+                        # Keep the one with higher importance, or the older one
+                        await db.execute("DELETE FROM lesson_tags WHERE lesson_id = ?", (other_id,))
+                        await db.execute("DELETE FROM lessons WHERE id = ?", (other_id,))
+                        try:
+                            self.chroma.delete_lesson(other_id)
+                        except Exception:
+                            pass
+                        seen_ids.add(other_id)
+                        deleted_dupes += 1
+            except Exception as e:
+                logger.debug("Lesson dedup check failed for %d: %s", lesson.id, e)
+
+        if deleted_dupes:
+            await db.commit()
+
+        return {"deleted_junk": deleted_junk, "deleted_dupes": deleted_dupes}
 
     async def _job_session_reflections(self, on_status) -> dict:
         """Generate holistic reflections for unreflected sessions."""
@@ -522,6 +709,7 @@ class NightlyRunner:
             if should_delete:
                 await db.execute("DELETE FROM entity_mentions WHERE entity_id = ?", (eid,))
                 await db.execute("DELETE FROM entity_relationships WHERE subject_id = ? OR object_id = ?", (eid, eid))
+                await db.execute("DELETE FROM entity_aliases WHERE canonical_entity_id = ?", (eid,))
                 await db.execute("DELETE FROM entities WHERE id = ?", (eid,))
                 deleted += 1
                 continue
@@ -553,7 +741,12 @@ class NightlyRunner:
             "entity_id NOT IN (SELECT id FROM entities)"
         )
         orphan_mentions = cursor.rowcount
-        if orphan_rels or orphan_mentions:
+        cursor = await db.execute(
+            "DELETE FROM entity_aliases WHERE "
+            "canonical_entity_id NOT IN (SELECT id FROM entities)"
+        )
+        orphan_aliases = cursor.rowcount
+        if orphan_rels or orphan_mentions or orphan_aliases:
             await db.commit()
 
         return {
@@ -562,6 +755,7 @@ class NightlyRunner:
             "renamed": renamed,
             "orphan_rels": orphan_rels,
             "orphan_mentions": orphan_mentions,
+            "orphan_aliases": orphan_aliases,
         }
 
     async def _job_health_check(self, on_status) -> dict:
