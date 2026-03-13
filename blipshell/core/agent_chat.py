@@ -340,13 +340,22 @@ class ChatMixin:
                 return self.tool_registry.get_plan_mode_tools() or None
             return tools
 
+        # Enable structured compaction for long conversations
+        compaction_cfg = self.config.compaction if self.config.compaction.enabled else None
+        compaction_rtr = self.router if (compaction_cfg and compaction_cfg.use_llm) else None
+
         config = LoopConfig(
             budget=max_iterations,
             enable_dedup=True,
+            enable_compaction=self.config.compaction.enabled,
+            compaction_threshold=self.config.compaction.compaction_threshold,
             auto_continue_on_exhaustion=True,
             tool_provider=_get_current_tools,
             on_pause_check=self._pause_check_callback,
             on_tool_display=on_tool_display,
+            compaction_config=compaction_cfg,
+            compaction_router=compaction_rtr,
+            compaction_files_read=self._files_read,
         )
 
         result, endpoint_name, model, using_fallback = await self._run_chat_loop(
@@ -646,6 +655,14 @@ class ChatMixin:
         scratchpad = self._read_scratchpad()
         if scratchpad:
             system_prompt += f"\n\n--- SCRATCHPAD ---\n{scratchpad}"
+
+        # Inject session notes (persistent state surviving compaction)
+        session_notes = getattr(self, "_session_notes", {})
+        if session_notes:
+            notes_text = "\n\n--- SESSION NOTES ---\n"
+            for name, content in session_notes.items():
+                notes_text += f"[{name}]\n{content}\n\n"
+            system_prompt += notes_text
 
         if memory_text.strip():
             system_prompt += f"\n\n{memory_text}"

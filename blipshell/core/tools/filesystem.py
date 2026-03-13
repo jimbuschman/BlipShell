@@ -44,13 +44,14 @@ class ReadFileTool(Tool):
         self.stale_files = stale_files  # files modified since last read — allow re-read
 
     # Default line limit for large files — prevents context window flooding
-    DEFAULT_MAX_LINES = 300
+    # CC uses 2000; 500 is a reasonable middle ground for local models with smaller context
+    DEFAULT_MAX_LINES = 500
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="read_file",
             description=(
-                "Read the contents of a file. Returns up to 300 lines by default with line numbers.\n"
+                "Read the contents of a file. Returns up to 500 lines by default with line numbers.\n"
                 "For large files, a footer shows total lines and how to read the next section.\n\n"
                 "IMPORTANT:\n"
                 "- Check the [STATE] block before calling — if the file is listed in 'Files read', "
@@ -66,7 +67,7 @@ class ReadFileTool(Tool):
                               description="Line number to start reading from (1-based, default: 1)",
                               required=False),
                 ToolParameter(name="max_lines", type=ToolParameterType.INTEGER,
-                              description="Maximum number of lines to return (default: 300)",
+                              description="Maximum number of lines to return (default: 500)",
                               required=False),
             ],
         )

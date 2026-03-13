@@ -137,6 +137,7 @@ class Agent(
         self._project_context: str = ""
         self._file_changes: list[dict] = []
         self._files_read: set[str] = set()  # tracks files/dirs already read this session
+        self._session_notes: dict[str, str] = {}  # persistent notes surviving compaction
         self._repo_map: Optional[RepoMap] = None
 
     async def initialize(self, on_status=None):
@@ -227,6 +228,8 @@ class Agent(
         self.task_executor.chat_loop_runner = self._run_chat_loop
         # Wire guardrails config so executor can create GuardrailsEngine per-execution
         self.task_executor.guardrails_config = self.config.guardrails
+        # Wire compaction config for structured LLM compaction in executor
+        self.task_executor._compaction_config = self.config.compaction
 
         # Background task manager (Phase 2)
         self.background_manager = BackgroundTaskManager(
@@ -814,3 +817,35 @@ class Agent(
             f"into a summary ({new_tokens:,} tokens). "
             f"Saved ~{old_tokens - new_tokens:,} tokens."
         )
+
+    # ── Session Notes ─────────────────────────────────────────────────────────
+
+    async def get_session_notes(self) -> dict[str, str]:
+        """Get all session notes."""
+        return dict(self._session_notes)
+
+    async def save_session_note(self, name: str, content: str) -> str:
+        """Save a session note (CLI convenience method)."""
+        if not self.session_manager:
+            return "No active session."
+        from blipshell.memory.manager import estimate_tokens
+        name = name.strip()
+        content = content.strip()
+        if not name or not content:
+            return "Name and content are required."
+        content_tokens = estimate_tokens(content)
+        if content_tokens > self.config.notes.max_note_tokens:
+            return f"Note too long ({content_tokens} tokens, max {self.config.notes.max_note_tokens})."
+        if name not in self._session_notes and len(self._session_notes) >= self.config.notes.max_notes:
+            return f"Max notes ({self.config.notes.max_notes}) reached."
+        self._session_notes[name] = content
+        await self.sqlite.save_session_notes(self.session_manager.session_id, self._session_notes)
+        return f"Note '{name}' saved."
+
+    async def clear_session_notes(self) -> str:
+        """Clear all session notes."""
+        if not self.session_manager:
+            return "No active session."
+        self._session_notes.clear()
+        await self.sqlite.clear_session_notes(self.session_manager.session_id)
+        return "All session notes cleared."

@@ -1072,3 +1072,96 @@ def idle_friction_probe(conversation_text: str) -> tuple[str, str]:
     )
 
     return system, user
+
+
+# ── Context Compaction ────────────────────────────────────────────────────
+
+
+def structured_compaction_prompt(conversation_text: str, is_executor: bool = False) -> tuple[str, str]:
+    """9-section structured compaction summary (inspired by Claude Code).
+
+    Returns (system_prompt, user_prompt).
+    The model produces a structured summary that preserves the most important
+    information from a conversation that is about to be compacted.
+    """
+    context_note = (
+        "This conversation is from a coding task execution with tool calls."
+        if is_executor else
+        "This conversation is from an interactive chat session."
+    )
+
+    system = (
+        "You are a conversation summarizer. Your job is to produce a structured "
+        "summary that preserves all important information from a conversation.\n\n"
+        f"{context_note}\n\n"
+        "Produce a summary with EXACTLY these 9 sections. If a section has no "
+        "relevant content, write 'None' for that section. Be thorough but concise.\n\n"
+        "IMPORTANT: Respond with ONLY the summary below. No preamble, no tools, "
+        "no commentary.\n\n"
+        "## 1. Primary Request and Intent\n"
+        "What the user originally asked for. Include all stated requirements, "
+        "preferences, and constraints. Be detailed — this is the most important section.\n\n"
+        "## 2. Key Decisions Made\n"
+        "Important choices, design decisions, or trade-offs discussed and resolved.\n\n"
+        "## 3. Files and Code\n"
+        "Files examined, modified, or created. Include key code snippets or "
+        "structural information that would be needed to continue working.\n\n"
+        "## 4. Errors and Fixes\n"
+        "Problems encountered and how they were resolved. Include the fix, not "
+        "just the error.\n\n"
+        "## 5. Problem-Solving Progress\n"
+        "Approaches tried (both successful and failed), what worked and what didn't.\n\n"
+        "## 6. User Messages Summary\n"
+        "ALL user messages, corrections, and clarifications — verbatim or near-verbatim. "
+        "This is critical for preserving the user's voice and preferences.\n\n"
+        "## 7. Pending Tasks\n"
+        "Anything mentioned but not yet completed. Outstanding questions or TODOs.\n\n"
+        "## 8. Current Work\n"
+        "What was being worked on immediately before this summary. Include file names, "
+        "function names, and specific details.\n\n"
+        "## 9. Suggested Next Step\n"
+        "What the assistant should do next, based on the conversation flow."
+    )
+
+    user = f"Summarize this conversation:\n\n{conversation_text}"
+    return system, user
+
+
+def partial_compaction_prompt(old_portion_text: str) -> tuple[str, str]:
+    """Summarize only the old portion of conversation for partial compaction.
+
+    Returns (system_prompt, user_prompt).
+    Lighter than full structured compaction — used when recent messages are
+    kept verbatim and only older messages need summarizing.
+    """
+    system = (
+        "You are a conversation summarizer. Summarize the following older "
+        "conversation messages into a concise but thorough summary.\n\n"
+        "Preserve:\n"
+        "- The original user request and all stated requirements\n"
+        "- Key decisions and their rationale\n"
+        "- Files discussed or modified (with relevant details)\n"
+        "- Errors encountered and how they were fixed\n"
+        "- User corrections and preferences\n"
+        "- Anything still pending or unresolved\n\n"
+        "This summary will be followed by the recent conversation messages "
+        "(which are kept verbatim), so focus on context that the recent "
+        "messages might reference.\n\n"
+        "IMPORTANT: Respond with ONLY the summary. No preamble, no tools, "
+        "no commentary. Coverage over detail — ensure nothing important is lost."
+    )
+
+    user = f"Summarize these older conversation messages:\n\n{old_portion_text}"
+    return system, user
+
+
+def compaction_continuation_message() -> str:
+    """System message injected after compaction to tell the model to resume."""
+    return (
+        "This session is being continued from a conversation that was compacted "
+        "to save context space. The summary above contains the key information "
+        "from the earlier conversation. Resume directly — do not acknowledge "
+        "the summary, do not recap what was happening, do not preface with "
+        "'I\\'ll continue' or similar. Pick up from where you left off and "
+        "answer the user's most recent message."
+    )

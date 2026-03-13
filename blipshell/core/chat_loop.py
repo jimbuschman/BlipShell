@@ -102,6 +102,18 @@ class LoopConfig:
     gate_priority: int = 0
     """Priority for gate acquisition (0=INTERACTIVE, 2=BACKGROUND)."""
 
+    compaction_config: object | None = None
+    """CompactionConfig instance for structured LLM compaction. None = mechanical only."""
+
+    compaction_router: object | None = None
+    """LLMRouter for making the compaction LLM call. None = mechanical only."""
+
+    compaction_files_read: set | None = None
+    """Set of file paths read this session (for post-compaction file restoration)."""
+
+    compaction_file_cache: dict | None = None
+    """File path -> content cache (for post-compaction file restoration)."""
+
 
 @dataclass
 class LoopResult:
@@ -264,6 +276,272 @@ def _compact_tool_result(msg: dict, tc_id_to_name: dict[str, str]) -> dict:
         "content": summary,
         **({"tool_call_id": tc_id} if tc_id else {}),
     }
+
+
+def _find_split_point(
+    messages: list[dict],
+    min_recent_user_msgs: int = 5,
+    min_recent_tokens: int = 10000,
+) -> int:
+    """Find where old messages end and recent messages begin for partial compaction.
+
+    Walks backward from the end, counting user messages and tokens.
+    Returns the split index — messages[:split] are "old", messages[split:] are "recent".
+    Never splits in the middle of a tool_call/tool_result pair.
+    """
+    # Skip system messages at the start — they're always kept
+    first_non_system = 0
+    for i, msg in enumerate(messages):
+        if msg.get("role") != "system":
+            first_non_system = i
+            break
+
+    # Walk backward counting user messages and tokens
+    user_msg_count = 0
+    token_count = 0
+    split_idx = len(messages)  # default: nothing is "old" (compact everything)
+
+    from blipshell.memory.manager import estimate_tokens
+
+    for i in range(len(messages) - 1, first_non_system - 1, -1):
+        msg = messages[i]
+        token_count += estimate_tokens(msg.get("content", ""))
+        if msg.get("role") == "user":
+            user_msg_count += 1
+
+        # Stop when we've accumulated enough recent context
+        if user_msg_count >= min_recent_user_msgs and token_count >= min_recent_tokens:
+            split_idx = i
+            break
+
+    # If there's nothing old or everything is recent, don't split
+    if split_idx <= first_non_system + 1 or split_idx >= len(messages):
+        return first_non_system
+
+    # Don't split mid tool_call/tool_result pair — back up to before the assistant message
+    # that initiated the tool call
+    if split_idx > first_non_system:
+        while split_idx > first_non_system and messages[split_idx].get("role") == "tool":
+            split_idx -= 1
+        # Also include the assistant message that made the tool call
+        if split_idx > first_non_system and messages[split_idx].get("role") == "assistant":
+            # Only back up if this assistant message has tool_calls
+            if "tool_calls" in messages[split_idx]:
+                pass  # split_idx stays here — this assistant msg goes to recent
+
+    return split_idx
+
+
+def _messages_to_text(messages: list[dict]) -> str:
+    """Convert a list of message dicts to a readable text representation for the LLM."""
+    parts = []
+    for msg in messages:
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        if role == "system":
+            continue  # skip system messages — they're context, not conversation
+        if role == "tool":
+            tc_id = msg.get("tool_call_id", "")
+            # Truncate long tool results
+            if len(content) > 500:
+                content = content[:500] + f"... [{len(content)} chars total]"
+            parts.append(f"[Tool Result ({tc_id})]: {content}")
+        elif role == "assistant":
+            tool_calls = msg.get("tool_calls", [])
+            if content:
+                parts.append(f"Assistant: {content}")
+            if tool_calls:
+                for tc in tool_calls:
+                    try:
+                        fn = tc.get("function", tc) if isinstance(tc, dict) else tc
+                        name = fn.get("name", "") if isinstance(fn, dict) else getattr(fn, "name", "")
+                        parts.append(f"[Tool Call: {name}]")
+                    except (AttributeError, TypeError):
+                        parts.append("[Tool Call]")
+        elif role == "user":
+            parts.append(f"User: {content}")
+    return "\n".join(parts)
+
+
+def _restore_files_post_compaction(
+    messages: list[dict],
+    files_read: set[str] | None,
+    file_cache: dict[str, str] | None,
+    config,
+) -> list[dict]:
+    """Re-inject recently-read file contents as user messages after compaction.
+
+    Picks the most recently added files from files_read, reads from cache or
+    disk, and appends as restoration messages.
+    """
+    if not config.file_restoration or not files_read:
+        return messages
+
+    from pathlib import Path
+
+    # Take the last N files (sets aren't ordered, but in practice files_read
+    # is populated in order; convert to list and take tail)
+    file_list = list(files_read)[-config.max_restore_files:]
+    total_tokens = 0
+    restored = []
+
+    for fpath in file_list:
+        if total_tokens >= config.max_restore_tokens_total:
+            break
+
+        content = None
+        # Try cache first
+        if file_cache:
+            content = file_cache.get(fpath)
+        # Fall back to disk
+        if content is None:
+            try:
+                p = Path(fpath)
+                if p.is_file() and p.stat().st_size < 1_000_000:
+                    content = p.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+
+        if not content:
+            continue
+
+        # Truncate to per-file token limit
+        from blipshell.memory.manager import estimate_tokens
+        file_tokens = estimate_tokens(content)
+        if file_tokens > config.max_restore_tokens_per_file:
+            # Rough truncation by characters (4 chars ≈ 1 token)
+            max_chars = config.max_restore_tokens_per_file * 4
+            content = content[:max_chars] + f"\n... [truncated, {file_tokens} tokens total]"
+            file_tokens = config.max_restore_tokens_per_file
+
+        if total_tokens + file_tokens > config.max_restore_tokens_total:
+            break
+
+        restored.append({
+            "role": "user",
+            "content": (
+                f"[File restored after compaction: {fpath}]\n"
+                f"```\n{content}\n```"
+            ),
+        })
+        total_tokens += file_tokens
+
+    if restored:
+        logger.info("Restored %d files post-compaction (%d tokens)", len(restored), total_tokens)
+        return messages + restored
+
+    return messages
+
+
+async def structured_compact_messages(
+    messages: list[dict],
+    router,
+    config,
+    files_read: set[str] | None = None,
+    file_cache: dict[str, str] | None = None,
+    on_token: Callable | None = None,
+) -> list[dict]:
+    """LLM-driven structured compaction with partial split and file restoration.
+
+    1. Find split point (partial compaction)
+    2. Build conversation text from old portion
+    3. Call LLM for structured summary (REASONING model)
+    4. On LLM failure, fall back to mechanical compact_messages()
+    5. Rebuild messages: system + summary + recent portion
+    6. Restore recently-read files as user messages
+    7. Append continuation prompt
+    """
+    from blipshell.llm.prompts import (
+        compaction_continuation_message,
+        partial_compaction_prompt,
+        structured_compaction_prompt,
+    )
+    from blipshell.llm.router import TaskType
+
+    if on_token:
+        on_token("  [Compacting conversation with LLM...]\n")
+
+    # Separate system prefix
+    prefix = []
+    conversation = []
+    for msg in messages:
+        if not conversation and msg.get("role") == "system":
+            prefix.append(msg)
+        else:
+            conversation.append(msg)
+
+    if not conversation:
+        return messages
+
+    # Determine if this is an executor context (has tool_calls in conversation)
+    is_executor = any(
+        msg.get("tool_calls") for msg in conversation if msg.get("role") == "assistant"
+    )
+
+    # Partial compaction: split old vs recent
+    if config.partial_compaction:
+        split_idx = _find_split_point(
+            conversation,
+            min_recent_user_msgs=config.min_recent_user_messages,
+            min_recent_tokens=config.min_recent_tokens,
+        )
+        old_portion = conversation[:split_idx]
+        recent_portion = conversation[split_idx:]
+    else:
+        old_portion = conversation
+        recent_portion = []
+
+    # Build text from the portion to summarize
+    text_to_summarize = _messages_to_text(old_portion if old_portion else conversation)
+
+    if not text_to_summarize.strip():
+        return messages  # nothing to compact
+
+    # Choose prompt based on partial vs full
+    if config.partial_compaction and recent_portion:
+        system_prompt, user_prompt = partial_compaction_prompt(text_to_summarize)
+    else:
+        system_prompt, user_prompt = structured_compaction_prompt(
+            text_to_summarize, is_executor=is_executor,
+        )
+
+    # Call LLM for summary
+    try:
+        summary = await asyncio.wait_for(
+            router.generate(TaskType.REASONING, user_prompt, system=system_prompt),
+            timeout=config.summary_timeout,
+        )
+    except (asyncio.TimeoutError, Exception) as e:
+        logger.warning("LLM compaction failed (%s), falling back to mechanical", e)
+        if on_token:
+            on_token("  [LLM compaction failed, using mechanical fallback]\n")
+        return compact_messages(messages, keep_last_n=5)
+
+    if not summary or not summary.strip():
+        logger.warning("LLM compaction returned empty summary, falling back to mechanical")
+        return compact_messages(messages, keep_last_n=5)
+
+    # Rebuild message list
+    summary_msg = {
+        "role": "user",
+        "content": f"[Compacted conversation summary]\n\n{summary.strip()}",
+    }
+    continuation_msg = {
+        "role": "user",
+        "content": compaction_continuation_message(),
+    }
+
+    result = prefix + [summary_msg] + recent_portion + [continuation_msg]
+
+    # Post-compaction file restoration
+    result = _restore_files_post_compaction(result, files_read, file_cache, config)
+
+    if on_token:
+        old_tokens = estimate_messages_tokens(messages)
+        new_tokens = estimate_messages_tokens(result)
+        on_token(f"  [Compacted: {old_tokens} → {new_tokens} tokens]\n")
+
+    return result
 
 
 def extract_tool_call_info(tc) -> tuple[str, dict, str]:
@@ -475,12 +753,25 @@ class ChatLoop:
                 est_tokens = estimate_messages_tokens(messages)
                 if est_tokens > int(config.context_limit * config.compaction_threshold):
                     before = est_tokens
-                    messages[:] = compact_messages(messages, keep_last_n=5)
+                    # Try structured LLM compaction if configured
+                    if config.compaction_config and config.compaction_router:
+                        try:
+                            messages[:] = await structured_compact_messages(
+                                messages,
+                                config.compaction_router,
+                                config.compaction_config,
+                                files_read=config.compaction_files_read,
+                                file_cache=config.compaction_file_cache,
+                                on_token=self.on_token,
+                            )
+                        except Exception as e:
+                            logger.warning("Structured compaction failed, using mechanical: %s", e)
+                            messages[:] = compact_messages(messages, keep_last_n=5)
+                    else:
+                        messages[:] = compact_messages(messages, keep_last_n=5)
                     after = estimate_messages_tokens(messages)
                     logger.info("Context compacted: %d → %d tokens (saved %d)",
                                 before, after, before - after)
-                    if self.on_token:
-                        self.on_token(f"  [Context compacted: {before} → {after} tokens]\n")
 
             # ── Tool availability ──
             if config.tool_provider is not None:

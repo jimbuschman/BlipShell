@@ -508,7 +508,7 @@ class SQLiteStore:
 
     async def update_session(self, session_id: int, **kwargs):
         """Update session fields."""
-        allowed = {"title", "summary", "project", "last_active", "is_archived", "message_count"}
+        allowed = {"title", "summary", "project", "last_active", "is_archived", "message_count", "metadata_json"}
         set_clause, values = _safe_set_clause(kwargs, allowed)
         if not set_clause:
             return
@@ -520,6 +520,62 @@ class SQLiteStore:
         """Update a session's project tag."""
         await self._db.execute(
             "UPDATE sessions SET project = ? WHERE id = ?", (project, session_id),
+        )
+        await self._db.commit()
+
+    async def get_session_notes(self, session_id: int) -> dict[str, str]:
+        """Load session notes from metadata_json. Returns {name: content}."""
+        cursor = await self._db.execute(
+            "SELECT metadata_json FROM sessions WHERE id = ?", (session_id,),
+        )
+        row = await cursor.fetchone()
+        if not row or not row["metadata_json"]:
+            return {}
+        try:
+            import json
+            metadata = json.loads(row["metadata_json"])
+            return metadata.get("notes", {})
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    async def save_session_notes(self, session_id: int, notes: dict[str, str]) -> None:
+        """Save notes dict to sessions.metadata_json, merging with existing metadata."""
+        import json
+        # Read existing metadata
+        cursor = await self._db.execute(
+            "SELECT metadata_json FROM sessions WHERE id = ?", (session_id,),
+        )
+        row = await cursor.fetchone()
+        metadata = {}
+        if row and row["metadata_json"]:
+            try:
+                metadata = json.loads(row["metadata_json"])
+            except (json.JSONDecodeError, TypeError):
+                metadata = {}
+        metadata["notes"] = notes
+        await self._db.execute(
+            "UPDATE sessions SET metadata_json = ? WHERE id = ?",
+            (json.dumps(metadata), session_id),
+        )
+        await self._db.commit()
+
+    async def clear_session_notes(self, session_id: int) -> None:
+        """Remove notes from session metadata."""
+        import json
+        cursor = await self._db.execute(
+            "SELECT metadata_json FROM sessions WHERE id = ?", (session_id,),
+        )
+        row = await cursor.fetchone()
+        if not row or not row["metadata_json"]:
+            return
+        try:
+            metadata = json.loads(row["metadata_json"])
+        except (json.JSONDecodeError, TypeError):
+            return
+        metadata.pop("notes", None)
+        await self._db.execute(
+            "UPDATE sessions SET metadata_json = ? WHERE id = ?",
+            (json.dumps(metadata) if metadata else None, session_id),
         )
         await self._db.commit()
 

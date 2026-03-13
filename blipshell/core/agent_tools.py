@@ -113,6 +113,25 @@ class ToolsMixin:
             self.sqlite, session_id,
         ), group="memory")
 
+        # Session notes tools (persistent state surviving compaction)
+        if self.config.notes.enabled and session_id:
+            from blipshell.core.tools.note_tools import (
+                DeleteNoteTool,
+                GetNotesTool,
+                SaveNoteTool,
+            )
+            # Shared notes dict — all three tools see the same state
+            notes = getattr(self, "_session_notes", {})
+            self.tool_registry.register(SaveNoteTool(
+                self.sqlite, session_id, self.config.notes, notes,
+            ), group="memory")
+            self.tool_registry.register(GetNotesTool(
+                self.sqlite, session_id, notes,
+            ), group="memory")
+            self.tool_registry.register(DeleteNoteTool(
+                self.sqlite, session_id, notes,
+            ), group="memory")
+
     def _register_task_tools(self):
         """Register background task and workflow tools (needs session_id)."""
         session_id = self.session_manager.session_id if self.session_manager else None

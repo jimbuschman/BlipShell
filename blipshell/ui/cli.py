@@ -839,6 +839,9 @@ async def chat_loop(
                     focus = " ".join(cmd_args) if cmd_args else ""
                     await _handle_compact(agent, focus)
                     continue
+                elif cmd[0] == "notes":
+                    await _handle_notes_command(agent, cmd_args)
+                    continue
                 elif cmd[0] == "context":
                     _print_context(agent)
                     continue
@@ -2498,6 +2501,57 @@ async def _print_friction(agent: Agent, show_all: bool = False):
         await agent.sqlite.mark_friction_reviewed(unreviewed_ids)
 
 
+async def _handle_notes_command(agent: Agent, args: list[str]):
+    """Handle /notes commands: list, get, save, delete, clear."""
+    if not args:
+        # /notes — list all
+        notes = await agent.get_session_notes()
+        if not notes:
+            console.print("[dim]No session notes.[/dim]")
+            return
+        from blipshell.memory.manager import estimate_tokens
+        total_tokens = sum(estimate_tokens(v) for v in notes.values())
+        console.print(f"[bold]Session Notes[/bold] ({len(notes)} notes, ~{total_tokens} tokens)")
+        for name, content in notes.items():
+            preview = content[:200].replace("\n", " ")
+            if len(content) > 200:
+                preview += "..."
+            console.print(f"  [cyan]{name}[/cyan]: {preview}")
+    elif args[0] == "get" and len(args) > 1:
+        name = args[1]
+        notes = await agent.get_session_notes()
+        if name in notes:
+            console.print(f"[bold cyan]{name}[/bold cyan]")
+            console.print(notes[name])
+        else:
+            available = ", ".join(sorted(notes.keys())) if notes else "none"
+            console.print(f"[dim]Note '{name}' not found. Available: {available}[/dim]")
+    elif args[0] == "save" and len(args) > 2:
+        name = args[1]
+        content = " ".join(args[2:])
+        result = await agent.save_session_note(name, content)
+        console.print(f"[dim]{result}[/dim]")
+    elif args[0] == "clear":
+        result = await agent.clear_session_notes()
+        console.print(f"[dim]{result}[/dim]")
+    elif args[0] == "delete" and len(args) > 1:
+        name = args[1]
+        notes = await agent.get_session_notes()
+        if name in notes:
+            del agent._session_notes[name]
+            await agent.sqlite.save_session_notes(
+                agent.session_manager.session_id, agent._session_notes,
+            )
+            console.print(f"[dim]Note '{name}' deleted.[/dim]")
+        else:
+            console.print(f"[dim]Note '{name}' not found.[/dim]")
+    else:
+        console.print(
+            "[dim]Usage: /notes, /notes get <name>, /notes save <name> <content>, "
+            "/notes delete <name>, /notes clear[/dim]"
+        )
+
+
 async def _handle_compact(agent: Agent, focus: str):
     """Compact older conversation messages to free context space."""
     with console.status("[dim]Compacting conversation...[/dim]", spinner="dots"):
@@ -2648,6 +2702,9 @@ def _print_help():
         "[bold]/context[/bold]               - Show context window usage breakdown\n"
         "[bold]/tokens[/bold]                - Show token usage per endpoint this session\n"
         "[bold]/compact[/bold] [dim][focus][/dim]        - Compact older messages to free context\n"
+        "[bold]/notes[/bold]                 - Show session notes (survive compaction)\n"
+        "[bold]/notes save[/bold] [dim]<name> <text>[/dim] - Save a session note\n"
+        "[bold]/notes delete[/bold] [dim]<name>[/dim]   - Delete a note\n"
         "[bold]/save[/bold]                  - Force save session to memory\n"
         "[bold]/core[/bold]                  - Show core memories and lessons\n"
         "[bold]/think[/bold]                 - Toggle LLM thinking mode on/off\n"

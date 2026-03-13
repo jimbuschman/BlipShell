@@ -269,6 +269,39 @@ class MCPServerConfig(BaseModel):
     timeout: int = 30  # per-call timeout in seconds
 
 
+class CompactionConfig(BaseModel):
+    """Structured compaction configuration.
+
+    When enabled, uses LLM-driven 9-section summary to compress older
+    conversation context while preserving key information. Falls back
+    to mechanical per-tool-type compression on LLM failure.
+    """
+    enabled: bool = True                        # enable compaction in all chat paths
+    use_llm: bool = True                        # LLM-driven summary; False = mechanical only
+    compaction_threshold: float = 0.85           # trigger at this fraction of context_limit
+    partial_compaction: bool = True              # only summarize old messages, keep recent verbatim
+    min_recent_user_messages: int = 5            # keep at least this many recent user messages
+    min_recent_tokens: int = 10000               # keep at least this many tokens of recent conversation
+    file_restoration: bool = True                # re-inject recently-read files post-compaction
+    max_restore_files: int = 5                   # max files to restore
+    max_restore_tokens_per_file: int = 5000      # max tokens per restored file
+    max_restore_tokens_total: int = 25000        # total token cap for all restored files
+    summary_timeout: float = 60.0                # timeout for the LLM compaction call
+
+
+class NotesConfig(BaseModel):
+    """Session notes configuration.
+
+    Session notes are persistent key-value pairs that survive context
+    compaction. Both the LLM (via tools) and user (via /notes) can
+    manage them. Stored in sessions.metadata_json.
+    """
+    enabled: bool = True
+    max_notes: int = 50                          # max number of notes per session
+    max_total_tokens: int = 12000                # total token budget for all notes
+    max_note_tokens: int = 2000                  # per-note token limit
+
+
 class GuardrailsConfig(BaseModel):
     """Toggleable guardrails for instruction adherence.
 
@@ -337,6 +370,8 @@ class BlipShellConfig(BaseModel):
     web_ui: WebUIConfig = WebUIConfig()
     pii: PIIConfig = PIIConfig()
     planner: PlannerConfig = PlannerConfig()
+    compaction: CompactionConfig = CompactionConfig()
+    notes: NotesConfig = NotesConfig()
     guardrails: GuardrailsConfig = GuardrailsConfig()
     worker: WorkerConfig = WorkerConfig()
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)

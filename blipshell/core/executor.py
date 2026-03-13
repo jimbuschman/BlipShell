@@ -217,6 +217,8 @@ class TaskExecutor:
         # A/B benchmark overrides for LoopConfig (None = use defaults)
         self._override_enable_dedup: bool | None = None
         self._override_enable_compaction: bool | None = None
+        # Compaction config (set by Agent from config)
+        self._compaction_config = None
 
     async def execute_plan(
         self,
@@ -490,11 +492,12 @@ class TaskExecutor:
             return tools
 
         # Build executor-specific loop config (A/B overrides take precedence)
+        compaction_cfg = self._compaction_config
         config = LoopConfig(
             budget=budget,
             enable_dedup=self._override_enable_dedup if self._override_enable_dedup is not None else True,
             enable_compaction=self._override_enable_compaction if self._override_enable_compaction is not None else True,
-            compaction_threshold=0.85,
+            compaction_threshold=compaction_cfg.compaction_threshold if compaction_cfg else 0.85,
             context_limit=65536,  # will be updated by _run_chat_loop with endpoint value
             completion_tool="task_complete",
             capture_inline_text=True,
@@ -502,6 +505,10 @@ class TaskExecutor:
             on_pause_check=self.pause_check_callback,
             guardrails=guardrails_engine,
             on_tool_display=on_tool_display,
+            compaction_config=compaction_cfg if (compaction_cfg and compaction_cfg.use_llm) else None,
+            compaction_router=self.router if (compaction_cfg and compaction_cfg.use_llm) else None,
+            compaction_files_read=self.files_read,
+            compaction_file_cache=self._file_cache,
         )
 
         # Use shared chat loop runner (from Agent) if available — gives us

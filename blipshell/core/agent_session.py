@@ -62,6 +62,9 @@ class SessionMixin:
         # Load pending follow-ups for proactive session opener
         self._pending_follow_ups = await self._load_follow_ups()
 
+        # Load session notes (persistent state surviving compaction)
+        await self._load_session_notes()
+
         return session_id
 
     async def _retry_chroma_queue(self):
@@ -304,6 +307,21 @@ class SessionMixin:
         except Exception as e:
             logger.debug("Failed to load follow-ups: %s", e)
             return ""
+
+    async def _load_session_notes(self):
+        """Load session notes from database into agent state for system prompt injection."""
+        try:
+            if not self.config.notes.enabled:
+                return
+            session_id = self.session_manager.session_id if self.session_manager else None
+            if not session_id:
+                return
+            notes = await self.sqlite.get_session_notes(session_id)
+            self._session_notes = notes
+            if notes:
+                logger.info("Loaded %d session notes", len(notes))
+        except Exception as e:
+            logger.debug("Failed to load session notes: %s", e)
 
     async def _check_nightly_report(self) -> str | None:
         """Check last nightly run status. Always reports when it ran, highlights issues."""
