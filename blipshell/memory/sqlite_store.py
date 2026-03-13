@@ -1204,17 +1204,19 @@ class SQLiteStore:
             for r in rows
         ]
 
-    async def get_unsummarized_memories(self, batch_size: int = 500) -> list[Memory]:
+    async def get_unsummarized_memories(self, limit: int = 0) -> list[Memory]:
         """Get memories where summary = content (LLM summarization failed during import).
 
         Only returns active memories with content > 200 chars (short messages
-        don't benefit from summarization).
+        don't benefit from summarization). limit=0 means no limit.
         """
-        cursor = await self._db.execute(
+        query = (
             "SELECT * FROM memories WHERE summary = content AND is_archived = 0 "
-            "AND length(content) > 200 ORDER BY RANDOM() LIMIT ?",
-            (batch_size,),
+            "AND length(content) > 200 ORDER BY RANDOM()"
         )
+        if limit > 0:
+            query += f" LIMIT {limit}"
+        cursor = await self._db.execute(query)
         rows = await cursor.fetchall()
         return [self._row_to_memory(r) for r in rows]
 
@@ -1226,12 +1228,11 @@ class SQLiteStore:
         )
         await self._db.commit()
 
-    async def get_unscored_lessons(self, batch_size: int = 500) -> list[Lesson]:
+    async def get_unscored_lessons(self) -> list[Lesson]:
         """Get lessons still at default scores (rank=3, importance=0.5)."""
         cursor = await self._db.execute(
             "SELECT * FROM lessons WHERE rank = 3 AND importance = 0.5 "
-            "ORDER BY timestamp DESC LIMIT ?",
-            (batch_size,),
+            "ORDER BY timestamp DESC"
         )
         rows = await cursor.fetchall()
         return [

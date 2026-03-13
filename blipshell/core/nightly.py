@@ -291,23 +291,21 @@ class NightlyRunner:
         return {"processed": processed, "failed": failed, "total": len(sessions)}
 
     async def _job_resummarize(self, on_status) -> dict:
-        """Re-summarize memories where summary = content (import failures).
-
-        Processes 500 per run. At ~1s per memory on Groq, a full run
-        takes ~8 minutes. Run `blipshell nightly --job resummarize`
-        repeatedly to clear the backlog.
-        """
+        """Re-summarize memories where summary = content (import failures)."""
         from blipshell.llm.prompts import summarize_memory
         from blipshell.llm.router import TaskType
 
-        memories = await self.sqlite.get_unsummarized_memories(batch_size=500)
+        memories = await self.sqlite.get_unsummarized_memories()
         if not memories:
             return {"resummarized": 0, "remaining": 0, "total": 0}
 
-        on_status(f"Re-summarizing {len(memories)} memories...")
+        total = len(memories)
+        on_status(f"Re-summarizing {total} memories...")
         resummarized = 0
         failed = 0
-        for mem in memories:
+        for i, mem in enumerate(memories):
+            if (i + 1) % 50 == 0:
+                on_status(f"Re-summarizing {i + 1}/{total} ({resummarized} done, {failed} failed)...")
             try:
                 sum_system, sum_prompt = summarize_memory(mem.content)
                 summary = await self.router.generate(
@@ -488,14 +486,17 @@ class NightlyRunner:
         from blipshell.llm.router import TaskType
         from blipshell.memory.processor import MemoryProcessor
 
-        unscored = await self.sqlite.get_unscored_lessons(batch_size=500)
+        unscored = await self.sqlite.get_unscored_lessons()
         if not unscored:
             return {"scored": 0, "total": 0}
 
-        on_status(f"Scoring {len(unscored)} unscored lessons...")
+        total = len(unscored)
+        on_status(f"Scoring {total} unscored lessons...")
         scored = 0
         failed = 0
-        for lesson in unscored:
+        for i, lesson in enumerate(unscored):
+            if (i + 1) % 50 == 0:
+                on_status(f"Scoring lessons {i + 1}/{total} ({scored} done)...")
             try:
                 ri_system, ri_prompt = rank_lesson(lesson.content)
                 ri_text = await self.router.generate(
