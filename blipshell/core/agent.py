@@ -137,6 +137,7 @@ class Agent(
         self._project_context: str = ""
         self._file_changes: list[dict] = []
         self._files_read: set[str] = set()  # tracks files/dirs already read this session
+        self._file_mtimes: dict[str, float] = {}  # path → mtime at last read (for external edit detection)
         self._session_notes: dict[str, str] = {}  # persistent notes surviving compaction
         self._repo_map: Optional[RepoMap] = None
 
@@ -550,13 +551,14 @@ class Agent(
 
     async def _on_tool_executed(self, name: str, arguments: dict, result) -> None:
         """Callback for ChatLoop — tracks files and logs events."""
-        # Track files/dirs already read
+        # Track files/dirs already read + record mtime for external edit detection
         if result.success and name in ("read_file", "list_directory"):
             read_path = arguments.get("path", "")
             if read_path:
                 self._files_read.add(read_path)
+                self._record_file_mtime(read_path)
 
-        # Track file modifications
+        # Track file modifications + update mtime
         if result.success and name in ("write_file", "edit_file"):
             file_path = arguments.get("path", "")
             self._file_changes.append({
@@ -564,12 +566,45 @@ class Agent(
                 "tool": name,
                 "turn_number": self._turn_number,
             })
+            self._record_file_mtime(file_path)
             # Invalidate repo map cache for edited files
             if self._repo_map and file_path.endswith(".py"):
                 self._repo_map.invalidate(file_path)
             await self._log_event("file_modified", {
                 "path": file_path, "tool": name,
             })
+
+    def _record_file_mtime(self, path: str) -> None:
+        """Record the current mtime of a file for external edit detection."""
+        try:
+            from pathlib import Path as _Path
+            p = _Path(path)
+            if not p.is_absolute() and self.active_project:
+                root = self.active_project.get("root_path")
+                if root:
+                    p = (_Path(root) / p).resolve()
+            if p.is_file():
+                self._file_mtimes[str(p)] = p.stat().st_mtime
+        except (OSError, ValueError):
+            pass
+
+    def detect_external_file_changes(self) -> list[str]:
+        """Check tracked files for external modifications since last read.
+
+        Returns list of file paths that have been modified externally.
+        Updates stored mtimes for changed files.
+        """
+        changed = []
+        for path, old_mtime in list(self._file_mtimes.items()):
+            try:
+                from pathlib import Path as _Path
+                current_mtime = _Path(path).stat().st_mtime
+                if current_mtime > old_mtime:
+                    changed.append(path)
+                    self._file_mtimes[path] = current_mtime
+            except (OSError, ValueError):
+                pass
+        return changed
 
     # ── Session end & cleanup ────────────────────────────────────────────────
 

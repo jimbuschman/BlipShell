@@ -184,12 +184,34 @@ class ShellTool(Tool):
             # Cap output to prevent context blowup from large stack traces etc.
             max_chars = 8000
             if len(result) > max_chars:
-                result = result[:max_chars] + f"\n... [truncated — {len(result)} total chars]"
+                temp_path = self._save_full_output(result)
+                result = result[:max_chars]
+                if temp_path:
+                    result += (
+                        f"\n... [truncated — {len(output) + len(errors)} total chars]\n"
+                        f"Full output saved to: {temp_path}\n"
+                        f"Use read_file to see the complete output."
+                    )
+                else:
+                    result += f"\n... [truncated — {len(output) + len(errors)} total chars]"
 
             return result
 
         except Exception as e:
             return f"Error executing command: {e}"
+
+    @staticmethod
+    def _save_full_output(output: str) -> str | None:
+        """Save full command output to a temp file. Returns the file path or None."""
+        try:
+            import tempfile
+            fd, path = tempfile.mkstemp(suffix=".txt", prefix="blipshell_cmd_")
+            import os
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(output)
+            return path
+        except Exception:
+            return None
 
     def _validate_full_command(self, command: str) -> str | None:
         """Validate ALL commands in a chain against the allowlist.
@@ -304,10 +326,19 @@ class CheckProcessTool(Tool):
 
         result = "\n".join(result_parts)
 
-        # Cap output
+        # Cap output — save full to temp file if truncated
         max_chars = 8000
         if len(result) > max_chars:
-            result = result[:max_chars] + f"\n... [truncated — {len(result)} total chars]"
+            temp_path = ShellTool._save_full_output(result)
+            result = result[:max_chars]
+            if temp_path:
+                result += (
+                    f"\n... [truncated — {len(result)} total chars]\n"
+                    f"Full output saved to: {temp_path}\n"
+                    f"Use read_file to see the complete output."
+                )
+            else:
+                result += f"\n... [truncated — {len(result)} total chars]"
 
         # Clean up
         del _background_processes[pid]

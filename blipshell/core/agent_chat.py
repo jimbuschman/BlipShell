@@ -304,6 +304,22 @@ class ChatMixin:
         # Build message list
         messages = self._build_messages(user_message)
 
+        # Detect external file changes and inject notification
+        changed_files = self.detect_external_file_changes()
+        if changed_files:
+            notice_lines = ["[External file changes detected since last read:]"]
+            for f in changed_files[:10]:
+                notice_lines.append(f"  - {f}")
+            if len(changed_files) > 10:
+                notice_lines.append(f"  ... and {len(changed_files) - 10} more")
+            notice_lines.append("These files may have stale content in the conversation. "
+                                "Re-read them if you need current contents.")
+            notice = "\n".join(notice_lines)
+            # Insert as user message before the latest user message
+            messages.insert(-1, {"role": "user", "content": notice})
+            messages.insert(-1, {"role": "assistant", "content": "Noted — I'll re-read those files if I need them."})
+            logger.info("Injected external file change notice for %d files", len(changed_files))
+
         # Research mode: inject guidance as system message (not user message)
         if research_mode:
             research_instruction = (
