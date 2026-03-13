@@ -141,6 +141,11 @@ class MemoryWorker:
                 await self._process_item(item, processor, sqlite, router)
                 last_idle_extract = time.monotonic()  # reset after real work
 
+            except RuntimeError as e:
+                if "shutdown" in str(e).lower():
+                    logger.debug("Memory worker stopping (executor shut down)")
+                    break
+                logger.error("Memory worker loop error: %s", e)
             except Exception as e:
                 logger.error("Memory worker loop error: %s", e)
 
