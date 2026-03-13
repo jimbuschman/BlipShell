@@ -61,12 +61,13 @@ class PoolConfig(BaseModel):
     """Configuration for a memory token budget pool."""
     percentage: float
     max_tokens: Optional[int] = None
+    max_items: Optional[int] = None  # Hard cap on number of items (None = unlimited)
     priority: int = 0
 
 
 class MemoryPoolsConfig(BaseModel):
     """All memory pool configurations."""
-    core: PoolConfig = PoolConfig(percentage=0.10, priority=5)
+    core: PoolConfig = PoolConfig(percentage=0.10, priority=5, max_items=150)
     active_session: PoolConfig = PoolConfig(percentage=0.35, priority=3)
     recent_history: PoolConfig = PoolConfig(percentage=0.15, priority=4)
     recall: PoolConfig = PoolConfig(percentage=0.30, priority=2)

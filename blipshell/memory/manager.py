@@ -62,10 +62,12 @@ class PoolItem:
 class Pool:
     """A single memory token budget pool."""
 
-    def __init__(self, name: str, max_tokens: int, hard_cap: int | None = None):
+    def __init__(self, name: str, max_tokens: int, hard_cap: int | None = None,
+                 max_items: int | None = None):
         self.name = name
         self.max_tokens = max_tokens
         self.hard_cap = hard_cap
+        self.max_items = max_items  # Hard cap on number of items
         self._items: list[PoolItem] = []
 
     @property
@@ -84,12 +86,14 @@ class Pool:
         self._items.sort(key=lambda x: x.priority_score, reverse=True)
 
     def get_top_entries(self, available_tokens: int, max_override: int | None = None) -> list[PoolItem]:
-        """Get top entries that fit within available tokens."""
+        """Get top entries that fit within available tokens and item count cap."""
         selected = []
         used = 0
         effective_cap = min(available_tokens, max_override or self.hard_cap or self.max_tokens)
 
         for item in self._items:
+            if self.max_items and len(selected) >= self.max_items:
+                break
             if used + item.estimated_tokens <= effective_cap:
                 selected.append(item)
                 used += item.estimated_tokens
@@ -141,18 +145,18 @@ class MemoryManager:
         """Configure pools from config."""
         pools_cfg = self.config.pools
         pool_defs = {
-            "Core": (pools_cfg.core.percentage, pools_cfg.core.priority, pools_cfg.core.max_tokens),
-            "ActiveSession": (pools_cfg.active_session.percentage, pools_cfg.active_session.priority, pools_cfg.active_session.max_tokens),
-            "RecentHistory": (pools_cfg.recent_history.percentage, pools_cfg.recent_history.priority, pools_cfg.recent_history.max_tokens),
-            "Recall": (pools_cfg.recall.percentage, pools_cfg.recall.priority, pools_cfg.recall.max_tokens),
-            "Buffer": (pools_cfg.buffer.percentage, pools_cfg.buffer.priority, pools_cfg.buffer.max_tokens),
+            "Core": (pools_cfg.core.percentage, pools_cfg.core.priority, pools_cfg.core.max_tokens, pools_cfg.core.max_items),
+            "ActiveSession": (pools_cfg.active_session.percentage, pools_cfg.active_session.priority, pools_cfg.active_session.max_tokens, pools_cfg.active_session.max_items),
+            "RecentHistory": (pools_cfg.recent_history.percentage, pools_cfg.recent_history.priority, pools_cfg.recent_history.max_tokens, pools_cfg.recent_history.max_items),
+            "Recall": (pools_cfg.recall.percentage, pools_cfg.recall.priority, pools_cfg.recall.max_tokens, pools_cfg.recall.max_items),
+            "Buffer": (pools_cfg.buffer.percentage, pools_cfg.buffer.priority, pools_cfg.buffer.max_tokens, pools_cfg.buffer.max_items),
         }
 
         total_allocated = 0
-        for name, (pct, priority, hard_cap) in pool_defs.items():
+        for name, (pct, priority, hard_cap, max_items) in pool_defs.items():
             base_budget = int(self.global_budget * pct)
             capped = min(base_budget, hard_cap) if hard_cap else base_budget
-            self._pools[name] = Pool(name, capped, hard_cap)
+            self._pools[name] = Pool(name, capped, hard_cap, max_items=max_items)
             self._pool_configs[name] = {"priority": priority, "percentage": pct}
             total_allocated += capped
 
