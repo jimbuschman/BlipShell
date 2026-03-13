@@ -3549,6 +3549,119 @@ def deepseek_conversations(ctx, file, max_count, skip_lessons):
     asyncio.run(_import())
 
 
+# --- Generic Conversation Import ---
+
+@main.command("import-conversation")
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--skip-lessons", is_flag=True, help="Skip lesson extraction (faster)")
+@click.option("--title", default=None, help="Override conversation title from JSON")
+@click.pass_context
+def import_conversation(ctx, file, skip_lessons, title):
+    """Import a conversation from a JSON file through the memory pipeline.
+
+    JSON format: {"conversation_title": "...", "messages": [{"role": "user"|"assistant", "content": "..."}]}
+
+    Messages go through the full pipeline: summarization, ranking, importance,
+    entity extraction, embedding, and lesson extraction — same as regular sessions.
+    """
+    import json
+    from pathlib import Path
+
+    from blipshell.import_common import ParsedConversation, ParsedMessage, import_conversations
+    from blipshell.llm.endpoints import EndpointManager
+    from blipshell.llm.router import LLMRouter
+    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.sqlite_store import SQLiteStore
+    from blipshell.models.config import get_ollama_url
+
+    # Parse JSON
+    file_path = Path(file)
+    try:
+        data = json.loads(file_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        console.print(f"[red]Invalid JSON: {e}[/red]")
+        return
+    except Exception as e:
+        console.print(f"[red]Error reading file: {e}[/red]")
+        return
+
+    # Support both single conversation and array of conversations
+    if isinstance(data, list):
+        conversations_data = data
+    else:
+        conversations_data = [data]
+
+    parsed = []
+    for conv_data in conversations_data:
+        conv_title = title or conv_data.get("conversation_title") or conv_data.get("title") or file_path.stem
+        raw_msgs = conv_data.get("messages", [])
+        if not raw_msgs:
+            console.print(f"[yellow]Skipping '{conv_title}' — no messages.[/yellow]")
+            continue
+
+        messages = []
+        for msg in raw_msgs:
+            role = msg.get("role", "").lower()
+            content = msg.get("content", "").strip()
+            if role in ("user", "assistant") and content:
+                messages.append(ParsedMessage(role=role, content=content))
+
+        if messages:
+            parsed.append(ParsedConversation(title=conv_title, messages=messages))
+            console.print(f"[cyan]{conv_title}[/cyan]: {len(messages)} messages")
+
+    if not parsed:
+        console.print("[yellow]No conversations to import.[/yellow]")
+        return
+
+    console.print(f"\nImporting [bold]{len(parsed)}[/bold] conversation(s) through the memory pipeline...")
+
+    async def _import():
+        from rich.progress import Progress
+
+        config_manager = ConfigManager(ctx.obj.get("config_path"))
+        cfg = config_manager.load()
+
+        sqlite = SQLiteStore(cfg.database.path)
+        await sqlite.initialize()
+
+        chroma = ChromaStore(
+            persist_dir=cfg.database.chroma_path,
+            embedding_model=cfg.models.embedding,
+            ollama_url=get_ollama_url(cfg.endpoints),
+        )
+        chroma.initialize()
+
+        endpoint_manager = EndpointManager(cfg.endpoints, cfg.llm)
+        router = LLMRouter(cfg.models, endpoint_manager)
+
+        with Progress(console=console) as progress:
+            task = progress.add_task("Importing...", total=len(parsed))
+
+            def on_progress(idx, total, conv_title, stats):
+                label = f"[cyan]{conv_title[:40]}[/cyan]"
+                i, s = stats.conversations_imported, stats.conversations_skipped
+                if i or s:
+                    label += f"  [dim]({i} imported, {s} skipped)[/dim]"
+                progress.update(task, completed=idx, description=label)
+
+            stats = await import_conversations(
+                sqlite=sqlite,
+                chroma=chroma,
+                router=router,
+                config=cfg.memory,
+                conversations=parsed,
+                on_progress=on_progress,
+                skip_lessons=skip_lessons,
+            )
+            progress.update(task, completed=len(parsed))
+
+        await sqlite.close()
+        _print_import_summary(stats)
+
+    asyncio.run(_import())
+
+
 # --- Import summary helper ---
 
 def _print_import_summary(stats):
