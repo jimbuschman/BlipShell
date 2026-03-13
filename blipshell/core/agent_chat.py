@@ -611,6 +611,8 @@ class ChatMixin:
                 pool_usage[p] = {"items": 0, "tokens": 0}
             pool_usage[p]["items"] += 1
             pool_usage[p]["tokens"] += item.estimated_tokens
+        total_used_tokens = sum(p["tokens"] for p in pool_usage.values())
+        usage_pct = (total_used_tokens / context_limit * 100) if context_limit > 0 else 0
         self._last_context_stats = {
             "query_profile": profile,
             "context_limit": context_limit,
@@ -618,6 +620,7 @@ class ChatMixin:
             "pool_budgets": pool_budgets,
             "pool_usage": pool_usage,
             "total_context_items": len(memory_items),
+            "usage_pct": usage_pct,
         }
 
         memory_text = ""

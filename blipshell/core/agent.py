@@ -539,6 +539,12 @@ class Agent(
         if prompt_tokens is None and eval_tokens is None:
             return
 
+        # Update context usage percentage from actual prompt size
+        if prompt_tokens and self._last_context_stats:
+            context_limit = self._last_context_stats.get("context_limit", 0)
+            if context_limit > 0:
+                self._last_context_stats["usage_pct"] = prompt_tokens / context_limit * 100
+
         endpoint_name = self._last_endpoint_used or "unknown"
         if endpoint_name not in self._token_usage:
             self._token_usage[endpoint_name] = {
