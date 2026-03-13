@@ -1204,7 +1204,7 @@ class SQLiteStore:
             for r in rows
         ]
 
-    async def get_unsummarized_memories(self, batch_size: int = 50) -> list[Memory]:
+    async def get_unsummarized_memories(self, batch_size: int = 500) -> list[Memory]:
         """Get memories where summary = content (LLM summarization failed during import).
 
         Only returns active memories with content > 200 chars (short messages
@@ -1226,7 +1226,7 @@ class SQLiteStore:
         )
         await self._db.commit()
 
-    async def get_unscored_lessons(self, batch_size: int = 50) -> list[Lesson]:
+    async def get_unscored_lessons(self, batch_size: int = 500) -> list[Lesson]:
         """Get lessons still at default scores (rank=3, importance=0.5)."""
         cursor = await self._db.execute(
             "SELECT * FROM lessons WHERE rank = 3 AND importance = 0.5 "

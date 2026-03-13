@@ -293,14 +293,14 @@ class NightlyRunner:
     async def _job_resummarize(self, on_status) -> dict:
         """Re-summarize memories where summary = content (import failures).
 
-        Processes 50 per run to avoid overwhelming Ollama. At 50/night,
-        the 19K backlog takes ~390 nights, but can be run manually with
-        `blipshell nightly --job resummarize` in a loop to clear faster.
+        Processes 500 per run. At ~1s per memory on Groq, a full run
+        takes ~8 minutes. Run `blipshell nightly --job resummarize`
+        repeatedly to clear the backlog.
         """
         from blipshell.llm.prompts import summarize_memory
         from blipshell.llm.router import TaskType
 
-        memories = await self.sqlite.get_unsummarized_memories(batch_size=50)
+        memories = await self.sqlite.get_unsummarized_memories(batch_size=500)
         if not memories:
             return {"resummarized": 0, "remaining": 0, "total": 0}
 
@@ -488,7 +488,7 @@ class NightlyRunner:
         from blipshell.llm.router import TaskType
         from blipshell.memory.processor import MemoryProcessor
 
-        unscored = await self.sqlite.get_unscored_lessons(batch_size=50)
+        unscored = await self.sqlite.get_unscored_lessons(batch_size=500)
         if not unscored:
             return {"scored": 0, "total": 0}
 
