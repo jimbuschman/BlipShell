@@ -267,7 +267,7 @@ class NightlyRunner:
         """Generate summaries for sessions that were imported without them."""
         from scripts.backfill_session_summaries import summarize_session
 
-        sessions = await self.sqlite.get_sessions_without_summaries(limit=50)
+        sessions = await self.sqlite.get_sessions_without_summaries(limit=500)
         if not sessions:
             return {"processed": 0, "total": 0}
 
@@ -452,7 +452,7 @@ class NightlyRunner:
         """Re-extract lessons from sessions with messages but no lessons."""
         from blipshell.memory.manager import estimate_tokens
 
-        sessions = await self.sqlite.get_sessions_missing_lessons(limit=50)
+        sessions = await self.sqlite.get_sessions_missing_lessons(limit=500)
         if not sessions:
             return {"processed": 0, "total": 0}
 
@@ -567,7 +567,7 @@ class NightlyRunner:
 
     async def _job_session_reflections(self, on_status) -> dict:
         """Generate holistic reflections for unreflected sessions."""
-        sessions = await self.sqlite.get_sessions_missing_reflections(limit=20)
+        sessions = await self.sqlite.get_sessions_missing_reflections(limit=200)
         if not sessions:
             return {"processed": 0, "skipped": 0, "total": 0}
 
@@ -612,7 +612,7 @@ class NightlyRunner:
 
     async def _job_friction_analysis(self, on_status) -> dict:
         """Analyze recent sessions for system-level friction."""
-        sessions = await self.sqlite.get_sessions_missing_friction_analysis(limit=20)
+        sessions = await self.sqlite.get_sessions_missing_friction_analysis(limit=200)
         if not sessions:
             return {"processed": 0, "friction_items": 0, "total": 0}
 
@@ -673,7 +673,7 @@ class NightlyRunner:
 
         extractor = EntityExtractor(
             self.sqlite, self.router, self.chroma,
-            batch_size=100,
+            batch_size=500,
             entity_resolution_enabled=getattr(
                 self.config.memory, "entity_resolution_enabled", False,
             ),

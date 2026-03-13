@@ -3045,8 +3045,9 @@ def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios):
 @main.command("nightly")
 @click.option("--job", default=None, help="Run a specific job only (e.g. centroid_tag, batch_tag)")
 @click.option("--quiet", "-q", is_flag=True, help="JSON output only (for scheduled runs)")
+@click.option("--loop", is_flag=True, help="Repeat until nothing left to process (use with --job)")
 @click.pass_context
-def nightly_cmd(ctx, job, quiet):
+def nightly_cmd(ctx, job, quiet, loop):
     """Run nightly maintenance jobs (backup, tagging, pruning, etc.)."""
     import json as _json
 
@@ -3056,43 +3057,66 @@ def nightly_cmd(ctx, job, quiet):
         runner = await NightlyRunner.create_from_config(ctx.obj.get("config_path"))
         try:
             jobs = [job] if job else None
+            iteration = 0
 
-            if quiet:
-                result = await runner.run(jobs=jobs)
-                print(_json.dumps(result, indent=2, default=str))
-            else:
-                from rich.status import Status
-                from rich.table import Table
+            while True:
+                iteration += 1
 
-                label = f"job: {job}" if job else "all jobs"
-                with Status(f"[bold cyan]Running nightly ({label})...", console=console) as status:
-                    def on_status(msg: str):
-                        status.update(f"[bold cyan]{msg}")
+                if quiet:
+                    result = await runner.run(jobs=jobs)
+                    print(_json.dumps(result, indent=2, default=str))
+                else:
+                    from rich.status import Status
+                    from rich.table import Table
 
-                    result = await runner.run(on_status=on_status, jobs=jobs)
+                    label = f"job: {job}" if job else "all jobs"
+                    loop_label = f" (pass {iteration})" if loop else ""
+                    with Status(f"[bold cyan]Running nightly ({label}{loop_label})...", console=console) as status:
+                        def on_status(msg: str):
+                            status.update(f"[bold cyan]{msg}")
 
-                table = Table(title="Nightly Run Results")
-                table.add_column("Job", style="cyan")
-                table.add_column("Status")
-                table.add_column("Time", justify="right")
-                table.add_column("Details")
+                        result = await runner.run(on_status=on_status, jobs=jobs)
 
-                for name, stats in result.get("jobs", {}).items():
-                    status_str = stats.get("status", "?")
-                    style = "green" if status_str == "ok" else "red"
-                    elapsed = f"{stats.get('elapsed_s', 0):.1f}s"
-                    detail_parts = []
-                    for k, v in stats.items():
-                        if k not in ("status", "elapsed_s", "error"):
-                            detail_parts.append(f"{k}={v}")
-                    details = ", ".join(detail_parts) if detail_parts else ""
-                    if stats.get("error"):
-                        details = f"[red]{stats['error']}[/red]"
-                    table.add_row(name, f"[{style}]{status_str}[/{style}]", elapsed, details)
+                    table = Table(title=f"Nightly Run Results{loop_label}")
+                    table.add_column("Job", style="cyan")
+                    table.add_column("Status")
+                    table.add_column("Time", justify="right")
+                    table.add_column("Details")
 
-                console.print()
-                console.print(table)
-                console.print(f"\n[dim]Total: {result.get('elapsed_s', 0):.0f}s[/dim]")
+                    for name, stats in result.get("jobs", {}).items():
+                        status_str = stats.get("status", "?")
+                        style = "green" if status_str == "ok" else "red"
+                        elapsed = f"{stats.get('elapsed_s', 0):.1f}s"
+                        detail_parts = []
+                        for k, v in stats.items():
+                            if k not in ("status", "elapsed_s", "error"):
+                                detail_parts.append(f"{k}={v}")
+                        details = ", ".join(detail_parts) if detail_parts else ""
+                        if stats.get("error"):
+                            details = f"[red]{stats['error']}[/red]"
+                        table.add_row(name, f"[{style}]{status_str}[/{style}]", elapsed, details)
+
+                    console.print()
+                    console.print(table)
+                    console.print(f"\n[dim]Total: {result.get('elapsed_s', 0):.0f}s[/dim]")
+
+                if not loop:
+                    break
+
+                # Check if the job actually did work — stop if nothing left
+                job_stats = result.get("jobs", {})
+                did_work = False
+                for stats in job_stats.values():
+                    for key in ("resummarized", "scored", "processed", "merged",
+                                "deleted_junk", "deleted_dupes", "pruned", "rebuilt"):
+                        if stats.get(key, 0) > 0:
+                            did_work = True
+                            break
+                if not did_work:
+                    if not quiet:
+                        console.print("[green]Nothing left to process — done.[/green]")
+                    break
+
         finally:
             await runner.close()
 
