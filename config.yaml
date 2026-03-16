@@ -2,9 +2,9 @@
 # This file is self-modifiable by the agent
 
 models:
-  # --- Interactive (cloud via Ollama) ---
-  tool_calling: "glm-5:cloud"            # general chat + tool use
-  coding: "glm-5:cloud"                   # /code command (benchmark winner: 13/13 checks)
+  # --- Interactive (cloud via OpenRouter) ---
+  tool_calling: "minimax/minimax-m2.5"    # general chat + tool use (OpenRouter, $0.25/$1.20 per M tokens)
+  coding: "minimax/minimax-m2.5"          # project mode coding (87% benchmark, tied with glm-5)
   # --- Background processing (local) ---
   reasoning: "qwen3:14b"                 # entity extraction, tag discovery, lessons, contradiction
   summarization: "glm4:latest"           # memory/session summaries (Groq/Gemini tried first via endpoint priority)
@@ -27,6 +27,19 @@ models:
   fallback_think: false                  # disable thinking for fallback models (faster chat)
 
 endpoints:
+  - name: "openrouter"
+    url: "https://openrouter.ai/api/v1"
+    provider: "openai"
+    api_key: "${OPENROUTER_API_KEY}"
+    roles: ["tool_calling", "coding"]
+    priority: 2                          # above local, replaces Ollama cloud for interactive
+    max_concurrent: 5
+    context_tokens: 196608               # MiniMax M2.5 supports 196K
+    pii_sanitize: true                   # data leaves machine via OpenRouter
+    enabled: true
+    models:
+      tool_calling: "minimax/minimax-m2.5"
+      coding: "minimax/minimax-m2.5"
   - name: "groq"
     url: "https://api.groq.com/openai/v1"
     provider: "openai"
@@ -55,13 +68,15 @@ endpoints:
       summarization: "gemini-2.5-flash"
   - name: "local-cloud"
     url: "http://localhost:11434"
-    roles: ["tool_calling", "coding", "session_review"]
+    roles: ["tool_calling", "coding", "session_review"]  # fallback for interactive when OpenRouter is down
     priority: 1
     max_concurrent: 5
     context_tokens: 196608  # 192K — glm-5:cloud supports 198K
-    pii_sanitize: true       # glm-5:cloud relays to remote server — data leaves machine
+    pii_sanitize: true       # cloud models relay to remote server — data leaves machine
     enabled: true
     models:
+      tool_calling: "glm-5:cloud"        # Ollama cloud free tier fallback
+      coding: "glm-5:cloud"
       session_review: "kimi-k2.5:cloud"  # 100% contradiction+dedup, 0.65s avg, large context
   - name: "local"
     url: "http://localhost:11434"
@@ -227,6 +242,9 @@ model_settings:
     extra_instructions: "Be direct. Skip exploration and go straight to implementation."
   glm-5:
     max_tool_calls: 15
+    use_repo_map: true
+  minimax-m2.5:
+    max_tool_calls: 20
     use_repo_map: true
   glm4:
     max_tool_calls: 5
