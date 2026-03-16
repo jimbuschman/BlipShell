@@ -73,6 +73,15 @@ class MemoryPoolsConfig(BaseModel):
     recall: PoolConfig = PoolConfig(percentage=0.30, priority=2)
     buffer: PoolConfig = PoolConfig(percentage=0.10, priority=1)
 
+    def model_post_init(self, __context):
+        """Enforce Core pool max_items cap.
+
+        config.yaml overrides replace the entire PoolConfig object, losing
+        the max_items=150 default. This ensures the cap is always applied.
+        """
+        if self.core.max_items is None:
+            self.core.max_items = 150
+
 
 class DecayRatesConfig(BaseModel):
     """Per-memory-type temporal decay rates.
