@@ -30,7 +30,12 @@ from blipshell.core.tools.memory_tools import (
     SaveCoreMemoryTool,
     SearchMemoriesTool,
 )
-from blipshell.core.tools.project_tools import CreateProjectTool
+from blipshell.core.tools.project_tools import (
+    ActivateProjectTool,
+    CreateProjectTool,
+    DeactivateProjectTool,
+    ListProjectsTool,
+)
 from blipshell.core.tools.shell import CheckProcessTool, ShellTool
 from blipshell.core.tools.task_tools import (
     CheckBackgroundTaskTool,
@@ -100,6 +105,13 @@ class ToolsMixin:
         ), group="memory")
         self.tool_registry.register(ListSessionsTool(self.sqlite), group="memory")
         self.tool_registry.register(CreateProjectTool(self.sqlite), group="general")
+        self.tool_registry.register(ListProjectsTool(self.sqlite), group="general")
+        self.tool_registry.register(ActivateProjectTool(
+            callback=self._activate_project_callback,
+        ), group="general")
+        self.tool_registry.register(DeactivateProjectTool(
+            callback=self._deactivate_project_callback,
+        ), group="general")
 
         # Follow-up queue tools (always available)
         project_name = self.active_project["name"] if self.active_project else None
@@ -186,6 +198,18 @@ class ToolsMixin:
                 )
             except Exception as e:
                 logger.error("Failed to connect MCP server '%s': %s", server_config.name, e)
+
+    async def _activate_project_callback(self, name: str) -> dict:
+        """Callback for ActivateProjectTool — delegates to ProjectMixin."""
+        return await self.activate_project(name)
+
+    async def _deactivate_project_callback(self) -> str | None:
+        """Callback for DeactivateProjectTool — returns deactivated project name."""
+        if not self.active_project:
+            return None
+        name = self.active_project["name"]
+        await self.deactivate_project()
+        return name
 
     def set_ask_user_callback(self, callback):
         """Set the callback for ask_user tool (wired by CLI)."""

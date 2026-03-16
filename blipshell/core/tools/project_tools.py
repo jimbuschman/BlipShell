@@ -1,12 +1,17 @@
-"""Project management tool — allows the LLM to create projects from conversation."""
+"""Project management tools — create, list, activate, deactivate projects."""
 
+import json
+import logging
 import os
 import subprocess
 from pathlib import Path
+from typing import Awaitable, Callable, Optional
 
 from blipshell.core.tools.base import Tool
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
+
+logger = logging.getLogger(__name__)
 
 
 class CreateProjectTool(Tool):
@@ -88,6 +93,137 @@ class CreateProjectTool(Tool):
             parts.append(f"Git: {git_url}")
         parts.append(f"Activate with: /project {name}")
         return ". ".join(parts)
+
+
+class ListProjectsTool(Tool):
+    """Lists all projects so the LLM knows what's available to activate."""
+
+    read_only = True
+
+    def __init__(self, sqlite: SQLiteStore):
+        self.sqlite = sqlite
+
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="list_projects",
+            description=(
+                "List all registered projects with their name, path, and language. "
+                "Use this to find available projects before calling activate_project."
+            ),
+            parameters=[],
+        )
+
+    async def execute(self, **kwargs) -> str:
+        projects = await self.sqlite.list_projects()
+        if not projects:
+            return "No projects found. Use create_project to create one."
+
+        lines = []
+        for p in projects:
+            name = p["name"]
+            root = p.get("root_path", "?")
+            lang = p.get("language", "")
+            desc = p.get("description", "")
+            parts = [f"  {name} — {root}"]
+            if lang:
+                parts[0] += f" ({lang})"
+            if desc:
+                parts.append(f"    {desc[:100]}")
+            lines.extend(parts)
+
+        return f"Projects ({len(projects)}):\n" + "\n".join(lines)
+
+
+class ActivateProjectTool(Tool):
+    """Allows the LLM to activate a project, scoping file tools to its directory."""
+
+    read_only = False
+
+    def __init__(
+        self,
+        callback: Optional[Callable[[str], Awaitable[dict]]] = None,
+    ):
+        self._callback = callback
+
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="activate_project",
+            description=(
+                "Activate a project by name. This scopes file and git tools to the "
+                "project directory, loads project context and digest, and switches "
+                "to the coding model. Use list_projects first to see available projects. "
+                "Call this when the conversation shifts from discussion to implementation."
+            ),
+            parameters=[
+                ToolParameter(
+                    name="name",
+                    type=ToolParameterType.STRING,
+                    description="Project name to activate (use list_projects to see options)",
+                ),
+            ],
+        )
+
+    async def execute(self, name: str, **kwargs) -> str:
+        if not self._callback:
+            return "Error: Project activation not available in this context."
+
+        try:
+            project = await self._callback(name)
+        except KeyError:
+            return (
+                f"Error: Project '{name}' not found. "
+                "Use list_projects to see available projects."
+            )
+
+        root = project.get("root_path", "")
+        lang = project.get("language", "")
+        desc = project.get("description", "")
+
+        # Check for digest
+        metadata = json.loads(project.get("metadata_json") or "{}")
+        digest = metadata.get("digest", {}).get("content", "")
+
+        parts = [f"Activated project '{name}' at {root}."]
+        if lang:
+            parts.append(f"Language: {lang}.")
+        if desc:
+            parts.append(desc[:200])
+        if digest:
+            parts.append(f"\nDigest:\n{digest[:500]}")
+
+        return " ".join(parts) if not digest else parts[0] + " " + " ".join(parts[1:-1]) + parts[-1]
+
+
+class DeactivateProjectTool(Tool):
+    """Allows the LLM to deactivate the current project."""
+
+    read_only = False
+
+    def __init__(
+        self,
+        callback: Optional[Callable[[], Awaitable[Optional[str]]]] = None,
+    ):
+        self._callback = callback
+
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name="deactivate_project",
+            description=(
+                "Deactivate the current project. Removes project root scoping "
+                "from file tools and returns to general conversation mode. "
+                "Use when done working on a project."
+            ),
+            parameters=[],
+        )
+
+    async def execute(self, **kwargs) -> str:
+        if not self._callback:
+            return "Error: Project deactivation not available in this context."
+
+        name = await self._callback()
+        if name:
+            return f"Deactivated project '{name}'. File tools no longer scoped to a project directory."
+        return "No active project to deactivate."
 
 
 def _detect_language(path: Path) -> str:
