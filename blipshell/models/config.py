@@ -319,7 +319,7 @@ class GuardrailsConfig(BaseModel):
     When enabled, adds mid-execution checks to reduce specification drift,
     forgotten requirements, and repeated mistakes.
     """
-    enabled: bool = False
+    enabled: bool = True
     completion_audit: bool = True       # re-check original request before accepting task_complete
     correction_detector: bool = True    # detect user corrections → anti-pattern lessons
     trajectory_monitor: bool = True     # periodic state injection with original task reminder

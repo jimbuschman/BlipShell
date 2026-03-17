@@ -93,7 +93,7 @@ class TestGuardrailsConfig:
 
     def test_defaults(self):
         cfg = GuardrailsConfig()
-        assert cfg.enabled is False
+        assert cfg.enabled is True
         assert cfg.completion_audit is True
         assert cfg.correction_detector is True
         assert cfg.trajectory_monitor is True
