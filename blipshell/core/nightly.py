@@ -219,7 +219,7 @@ class NightlyRunner:
         handler = handlers.get(job_name)
         if not handler:
             raise ValueError(f"Unknown job: {job_name}")
-        return await handler(on_status)
+        return await handler(on_status or (lambda msg: None))
 
     async def _job_backup(self, on_status) -> dict:
         """Run pre-operation backup."""
