@@ -183,16 +183,9 @@ class ChatMixin:
 
         task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
 
-        # Get model (with fallback if primary is known to be down)
+        # Get model for this task type
         model = self.router.get_model(task_type)
         using_fallback = False
-
-        if self.router.is_model_failed(model):
-            fallback = self.router.get_fallback_model(task_type)
-            if fallback:
-                logger.info("Skipping failed model '%s', using fallback '%s'", model, fallback)
-                model = fallback
-                using_fallback = True
 
         tools = self.tool_registry.get_all_ollama_tools() or None
 
@@ -200,15 +193,25 @@ class ChatMixin:
         result = None
         endpoint_name = ""
         full_response = ""
+        last_failed_endpoint: str | None = None
 
-        for attempt in range(2):  # primary + one fallback
-            endpoint = await self.endpoint_manager.get_endpoint_for_role(task_type)
+        # Try endpoints in priority order, then fall back to a different model
+        for attempt in range(3):  # endpoint 1 → endpoint 2 → fallback model
+            endpoint = await self.endpoint_manager.get_endpoint_for_role(
+                task_type, exclude=last_failed_endpoint,
+            )
+
             if not endpoint:
-                if attempt == 0 and not using_fallback:
+                # All endpoints exhausted — try fallback model on any available endpoint
+                if not using_fallback:
                     fallback = self.router.get_fallback_model(task_type)
                     if fallback and fallback != model:
+                        logger.warning("All endpoints failed for '%s', falling back to '%s'", model, fallback)
                         model = fallback
                         using_fallback = True
+                        last_failed_endpoint = None  # Reset — try all endpoints with fallback model
+                        if on_token:
+                            on_token(f"\n\x1b[33m[Falling back to {fallback}]\x1b[0m\n")
                         continue
                 full_response = "Error: No available LLM endpoint."
                 break
@@ -264,19 +267,12 @@ class ChatMixin:
                 else:
                     endpoint.record_failure()
 
-                if attempt == 0 and not using_fallback:
-                    fallback = self.router.get_fallback_model(task_type)
-                    if fallback and fallback != ep_model:
-                        logger.warning("Primary model '%s' failed, falling back to '%s'", ep_model, fallback)
-                        model = fallback
-                        using_fallback = True
-                        if on_token:
-                            on_token(f"\n\x1b[33m[Falling back to {fallback}]\x1b[0m\n")
-                        continue  # Retry with fallback
-
-                logger.error("Chat error: %s", e)
-                full_response = f"Error: {e}"
-                break
+                logger.warning(
+                    "Endpoint '%s' failed with '%s', trying next endpoint",
+                    endpoint.name, ep_model,
+                )
+                last_failed_endpoint = endpoint.name
+                continue  # Try next endpoint
             finally:
                 endpoint.complete_request()
 
