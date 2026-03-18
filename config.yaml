@@ -115,7 +115,7 @@ memory:
   # Only set this if you need to override the endpoint value for memory pool sizing.
   system_prompt_reserve: 2048
   overflow_batch_size: 4
-  recall_search_limit: 40
+  recall_search_limit: 20
   min_importance: 0.25
   importance_recency_bonus: 0.1
   importance_tag_bonus: 0.05

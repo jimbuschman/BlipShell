@@ -425,7 +425,7 @@ class ChatMixin:
             results = await self.search.search(
                 query=user_message,
                 current_session_id=self.session_manager.session_id,
-                n_results=30,
+                n_results=15,
                 active_project=self.active_project["name"] if self.active_project else None,
             )
             if results:
@@ -521,7 +521,7 @@ class ChatMixin:
             results = await self.search.search(
                 query=query,
                 current_session_id=self.session_manager.session_id,
-                n_results=30,
+                n_results=15,
                 active_project=active_proj,
             )
             memory_count = len(results)

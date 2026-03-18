@@ -456,7 +456,7 @@ class MemorySearch:
         all_entity_ids = entity_ids + connected_ids
 
         # Get memory IDs mentioning any of these entities (cap results)
-        MAX_ENTITY_MEMORIES = 100
+        MAX_ENTITY_MEMORIES = 50
         memory_ids = await self.sqlite.get_memory_ids_for_entities(all_entity_ids)
         if len(memory_ids) > MAX_ENTITY_MEMORIES:
             memory_ids = memory_ids[:MAX_ENTITY_MEMORIES]
