@@ -34,6 +34,7 @@ class SearchResult:
     importance: float
     tags: list[str] = None
     tag_boost: float = 0.0
+    timestamp: datetime | None = None
 
     def __post_init__(self):
         if self.tags is None:
@@ -292,6 +293,7 @@ class MemorySearch:
                 importance=memory.importance,
                 tags=memory_tags,
                 tag_boost=tag_boost,
+                timestamp=memory.timestamp,
             ))
 
         # Step 6: Entity graph expansion — find memories connected via entities
@@ -326,6 +328,7 @@ class MemorySearch:
                     boosted_score=entity_score,
                     rank=emem.rank,
                     importance=emem.importance,
+                    timestamp=emem.timestamp,
                 ))
                 existing_ids.add(eid)
         except Exception as e:

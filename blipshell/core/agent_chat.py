@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable, Optional
 
 if TYPE_CHECKING:
@@ -429,8 +430,22 @@ class ChatMixin:
             )
             if results:
                 memory_context = "Relevant memories from past sessions:\n"
+                now_planned = datetime.now(timezone.utc)
                 for r in results:
-                    memory_context += f"- {r.summary}\n"
+                    time_label = ""
+                    if r.timestamp:
+                        ts = r.timestamp if r.timestamp.tzinfo else r.timestamp.replace(tzinfo=timezone.utc)
+                        delta = now_planned - ts
+                        hours = delta.total_seconds() / 3600
+                        if hours < 1:
+                            time_label = f"[{int(delta.total_seconds() / 60)}m ago] "
+                        elif hours < 24:
+                            time_label = f"[{int(hours)}h ago] "
+                        elif delta.days < 7:
+                            time_label = f"[{delta.days}d ago] "
+                        else:
+                            time_label = f"[{ts.strftime('%Y-%m-%d')}] "
+                    memory_context += f"- {time_label}{r.summary}\n"
             # Log search results for /flow observability
             await self._log_event("search_complete", {
                 "memory_results": len(results) if results else 0,
@@ -510,9 +525,24 @@ class ChatMixin:
                 active_project=active_proj,
             )
             memory_count = len(results)
+            now = datetime.now(timezone.utc)
             for r in results:
+                # Include relative timestamp so LLM can answer temporal queries
+                time_label = ""
+                if r.timestamp:
+                    ts = r.timestamp if r.timestamp.tzinfo else r.timestamp.replace(tzinfo=timezone.utc)
+                    delta = now - ts
+                    hours = delta.total_seconds() / 3600
+                    if hours < 1:
+                        time_label = f"[{int(delta.total_seconds() / 60)}m ago] "
+                    elif hours < 24:
+                        time_label = f"[{int(hours)}h ago] "
+                    elif delta.days < 7:
+                        time_label = f"[{delta.days}d ago] "
+                    else:
+                        time_label = f"[{ts.strftime('%Y-%m-%d')}] "
                 self.memory_manager.add_memory("Recall", PoolItem(
-                    text=r.summary,
+                    text=f"{time_label}{r.summary}",
                     session_role="system",
                     priority_score=r.boosted_score,
                 ))
