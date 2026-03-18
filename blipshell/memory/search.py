@@ -253,8 +253,11 @@ class MemorySearch:
                 continue
 
             # Temporal decay — per-type rates so facts persist longer than events
-            mem_ts = memory.timestamp if memory.timestamp.tzinfo else memory.timestamp.replace(tzinfo=timezone.utc)
-            hours_age = (now - mem_ts).total_seconds() / 3600
+            if not memory.timestamp:
+                hours_age = 720.0  # Default to ~30 days if no timestamp
+            else:
+                mem_ts = memory.timestamp if memory.timestamp.tzinfo else memory.timestamp.replace(tzinfo=timezone.utc)
+                hours_age = (now - mem_ts).total_seconds() / 3600
             mem_type = memory.memory_type.value if memory.memory_type else "conversation"
             decay = self.decay_rates.get(mem_type) if self.decay_rates else self.decay_rate
             recency_factor = exp(-decay * hours_age)
@@ -312,8 +315,11 @@ class MemorySearch:
                 if current_session_id and emem.session_id == current_session_id:
                     continue
                 # Score entity hits dynamically using importance/recency, not a fixed score
-                mem_ts = emem.timestamp if emem.timestamp.tzinfo else emem.timestamp.replace(tzinfo=timezone.utc)
-                e_hours_age = (now - mem_ts).total_seconds() / 3600
+                if not emem.timestamp:
+                    e_hours_age = 720.0
+                else:
+                    mem_ts = emem.timestamp if emem.timestamp.tzinfo else emem.timestamp.replace(tzinfo=timezone.utc)
+                    e_hours_age = (now - mem_ts).total_seconds() / 3600
                 e_mem_type = emem.memory_type.value if emem.memory_type else "conversation"
                 e_decay = self.decay_rates.get(e_mem_type) if self.decay_rates else self.decay_rate
                 e_recency_factor = exp(-e_decay * e_hours_age)

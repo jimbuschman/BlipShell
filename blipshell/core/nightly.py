@@ -549,8 +549,13 @@ class NightlyRunner:
             await db.execute("DELETE FROM lessons WHERE id = ?", (lid,))
             try:
                 self.chroma.delete_lesson(lid)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to delete junk lesson %d from ChromaDB: %s", lid, e)
+                from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_LESSONS
+                await queue_failed_op(
+                    self.sqlite, OP_DELETE, COLLECTION_LESSONS,
+                    lid, error=str(e),
+                )
             deleted_junk += 1
         if deleted_junk:
             await db.commit()
@@ -573,8 +578,13 @@ class NightlyRunner:
                         await db.execute("DELETE FROM lessons WHERE id = ?", (other_id,))
                         try:
                             self.chroma.delete_lesson(other_id)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("Failed to delete dupe lesson %d from ChromaDB: %s", other_id, e)
+                            from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_LESSONS
+                            await queue_failed_op(
+                                self.sqlite, OP_DELETE, COLLECTION_LESSONS,
+                                other_id, error=str(e),
+                            )
                         seen_ids.add(other_id)
                         deleted_dupes += 1
             except Exception as e:

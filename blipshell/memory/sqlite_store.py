@@ -741,7 +741,7 @@ class SQLiteStore:
             ("turn_events", "session_id"),
             ("session_messages", "session_id"),
             ("session_reflections", "session_id"),
-            ("friction_entries", "session_id"),
+            ("friction_log", "session_id"),
             ("task_plans", "session_id"),
             ("background_tasks", "session_id"),
             ("tool_approvals", "session_id"),

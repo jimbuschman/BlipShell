@@ -94,15 +94,28 @@ class ChatMixin:
                 on_token("\n\n\x1b[2m[Reflecting...]\x1b[0m\n\n")
             response = await self._reflect_on_response(user_message, response, on_token)
 
-        # Add assistant response to session (skip empty — prevents cascade of
-        # blank responses where an empty assistant message confuses the model)
+        # Add assistant response to session
         if response and response.strip():
+            self.session_manager.add_message(MessageRole.ASSISTANT, response)
+        else:
+            # Empty response — add placeholder so session continuity isn't broken
+            logger.warning("LLM returned empty response for: %s", user_message[:80])
+            response = "[No response generated]"
             self.session_manager.add_message(MessageRole.ASSISTANT, response)
 
         # Background: dump to memory periodically (tracked for clean shutdown)
         task = asyncio.create_task(self._background_memory_processing())
         self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+
+        def _on_task_done(t):
+            self._background_tasks.discard(t)
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc:
+                logger.error("Background memory processing failed: %s", exc)
+
+        task.add_done_callback(_on_task_done)
 
         return response
 
@@ -488,8 +501,14 @@ class ChatMixin:
         # Extract tool call names from executor transcript for programmatic access
         tool_names = []
         for msg in self.task_executor.last_messages:
+            if not isinstance(msg, dict):
+                continue
             for tc in (msg.get("tool_calls") or []):
+                if not isinstance(tc, dict):
+                    continue
                 fn = tc.get("function", {})
+                if not isinstance(fn, dict):
+                    continue
                 name = fn.get("name", "")
                 if name:
                     tool_names.append(name)
@@ -672,7 +691,7 @@ class ChatMixin:
 
         if self.active_project and self._project_context:
             root_path = self.active_project.get("root_path", "")
-            tool_limit = ms.max_tool_calls
+            tool_limit = ms.max_tool_calls if ms else 20
 
             system_prompt += (
                 "\n\n--- PROJECT CONTEXT ---\n"
@@ -692,7 +711,7 @@ class ChatMixin:
             )
 
             # Add model-specific extra instructions
-            if ms.extra_instructions:
+            if ms and ms.extra_instructions:
                 system_prompt += f"MODEL-SPECIFIC INSTRUCTIONS:\n{ms.extra_instructions}\n\n"
 
             system_prompt += self._project_context
