@@ -124,7 +124,9 @@ class MemoryConfig(BaseModel):
     min_rank_threshold: int = 3
     importance_recency_bonus: float = 0.1
     importance_tag_bonus: float = 0.05
-    similarity_threshold: float = 0.3  # lowered from 0.5 — nomic scores are lower but still relevant
+    similarity_threshold: float = 0.35  # industry standard for semantic search (was 0.5, too strict at scale)
+    min_importance: float = 0.25  # replaces min_rank filter — continuous, better predictor of recall relevance
+    fts_baseline_similarity: float = 0.4  # FTS-only hits get this baseline so they can compete on other signals
     importance_boost_weight: float = 0.2
     tag_overlap_boost: float = 0.1
     search_overfetch_multiplier: int = 2

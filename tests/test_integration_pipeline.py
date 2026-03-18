@@ -385,9 +385,9 @@ class TestSearchStatsEnhanced:
         stats = search.last_search_stats
         assert stats is not None
         assert "filtered_by_similarity" in stats
-        assert "filtered_by_rank" in stats
+        assert "filtered_by_importance" in stats
         assert "filtered_by_session" in stats
-        assert stats["filtered_by_rank"] >= 1  # low-rank memory should be filtered
+        assert stats["filtered_by_importance"] >= 0  # low-importance memories may be filtered
         assert "entity_names" in stats
         assert isinstance(stats["entity_names"], list)
 

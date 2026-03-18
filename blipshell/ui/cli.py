@@ -2074,10 +2074,10 @@ async def _print_flow(agent: Agent, turn: int | None = None):
                         console.print(f"    Connected entities: {connected}")
                 # Filtering breakdown
                 f_sim = data.get("filtered_by_similarity", 0)
-                f_rank = data.get("filtered_by_rank", 0)
+                f_imp = data.get("filtered_by_importance", data.get("filtered_by_rank", 0))
                 f_sess = data.get("filtered_by_session", 0)
-                if f_sim or f_rank or f_sess:
-                    console.print(f"    Filtered: {f_sim} by similarity, {f_rank} by rank, {f_sess} by session")
+                if f_sim or f_imp or f_sess:
+                    console.print(f"    Filtered: {f_sim} by similarity, {f_imp} by importance, {f_sess} by session")
                 console.print(f"    Post-filter: {data.get('post_filter', '?')}")
                 console.print(f"    Final returned: {data.get('final_returned', '?')}")
                 console.print(f"    Memories used: {data.get('memory_results', '?')}")

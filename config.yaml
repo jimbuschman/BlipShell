@@ -115,11 +115,11 @@ memory:
   # Only set this if you need to override the endpoint value for memory pool sizing.
   system_prompt_reserve: 2048
   overflow_batch_size: 4
-  recall_search_limit: 20
-  min_rank_threshold: 3
+  recall_search_limit: 40
+  min_importance: 0.25
   importance_recency_bonus: 0.1
   importance_tag_bonus: 0.05
-  similarity_threshold: 0.5
+  similarity_threshold: 0.35
   importance_boost_weight: 0.2
   tag_overlap_boost: 0.1
   search_overfetch_multiplier: 2

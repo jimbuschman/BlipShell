@@ -78,8 +78,8 @@ class MemorySearch:
             self.entity_boost = config.entity_boost
             self.project_boost = getattr(config, "project_boost", 0.15)
             self.recency_boost_weight = getattr(config, "recency_boost_weight", 0.15)
-            self.score_floor_ratio = getattr(config, "score_floor_ratio", 0.6)
-            self.min_score_floor = getattr(config, "min_score_floor", 0.4)
+            self.min_importance = getattr(config, "min_importance", 0.25)
+            self.fts_baseline_similarity = getattr(config, "fts_baseline_similarity", 0.4)
             self.dedup_jaccard_threshold = getattr(config, "dedup_jaccard_threshold", 0.65)
             self.project_session_limit = getattr(config, "project_session_limit", 50)
         else:
@@ -95,8 +95,8 @@ class MemorySearch:
             self.entity_boost = 0.15
             self.project_boost = 0.15
             self.recency_boost_weight = 0.15
-            self.score_floor_ratio = 0.6
-            self.min_score_floor = 0.4
+            self.min_importance = 0.25
+            self.fts_baseline_similarity = 0.4
             self.dedup_jaccard_threshold = 0.65
             self.project_session_limit = 50
         self.last_search_stats: dict | None = None
@@ -199,11 +199,12 @@ class MemorySearch:
             fts_id = fr["id"]
             rrf_scores[fts_id] = rrf_scores.get(fts_id, 0.0) + 1.0 / (rrf_k + rank_pos)
 
-        # Merge FTS-only hits into chroma_results with similarity=0.0
+        # Merge FTS-only hits — keyword match gets baseline similarity so they
+        # can compete on other scoring signals (importance, recency, tags)
         chroma_ids = {cr["id"] for cr in chroma_results}
         for fr in fts_results:
             if fr["id"] not in chroma_ids:
-                chroma_results.append({"id": fr["id"], "similarity": 0.0, "metadata": {}})
+                chroma_results.append({"id": fr["id"], "similarity": self.fts_baseline_similarity, "metadata": {}})
 
         if not chroma_results:
             self.last_search_stats = {"chroma_hits": 0, "fts_hits": len(fts_results), "entity_hits": 0, "project_hits": 0, "post_filter": 0, "floor_dropped": 0, "dedup_dropped": 0, "final_returned": 0}
@@ -223,7 +224,7 @@ class MemorySearch:
         results = []
         filtered_by_similarity = 0
         filtered_by_session = 0
-        filtered_by_rank = 0
+        filtered_by_importance = 0
         now = datetime.now(timezone.utc)
         for cr in chroma_results:
             memory_id = cr["id"]
@@ -245,9 +246,9 @@ class MemorySearch:
             if not memory:
                 continue
 
-            # Filter by rank
-            if memory.rank < self.min_rank:
-                filtered_by_rank += 1
+            # Filter by importance (replaces rank filter — continuous, better at scale)
+            if memory.importance < self.min_importance:
+                filtered_by_importance += 1
                 continue
 
             # Temporal decay — per-type rates so facts persist longer than events
@@ -304,16 +305,25 @@ class MemorySearch:
                 if eid in existing_ids:
                     continue
                 emem = await self.sqlite.get_memory(eid)
-                if not emem or emem.rank < self.min_rank or emem.is_archived:
+                if not emem or emem.importance < self.min_importance or emem.is_archived:
                     continue
                 if current_session_id and emem.session_id == current_session_id:
                     continue
+                # Score entity hits dynamically using importance/recency, not a fixed score
+                mem_ts = emem.timestamp if emem.timestamp.tzinfo else emem.timestamp.replace(tzinfo=timezone.utc)
+                e_hours_age = (now - mem_ts).total_seconds() / 3600
+                e_mem_type = emem.memory_type.value if emem.memory_type else "conversation"
+                e_decay = self.decay_rates.get(e_mem_type) if self.decay_rates else self.decay_rate
+                e_recency_factor = exp(-e_decay * e_hours_age)
+                e_importance_boost = emem.importance * self.importance_boost_weight * e_recency_factor
+                e_recency_boost = self.recency_boost_weight * exp(-e_hours_age / 48)
+                entity_score = self.entity_boost + e_importance_boost + e_recency_boost
                 results.append(SearchResult(
                     memory_id=eid,
                     text=emem.content,
                     summary=emem.summary or emem.content,
                     similarity=0.0,
-                    boosted_score=self.entity_boost,
+                    boosted_score=entity_score,
                     rank=emem.rank,
                     importance=emem.importance,
                 ))
@@ -324,20 +334,11 @@ class MemorySearch:
         # Step 7: Sort by boosted score
         results.sort(key=lambda r: r.boosted_score, reverse=True)
 
-        # Step 8: Score floor — drop low-quality results
+        # Score floor removed — similarity threshold + importance filter provide
+        # sufficient quality filtering. Score floor caused compounding loss at scale.
         floor_dropped = 0
-        if results:
-            top_score = results[0].boosted_score
-            floor = max(top_score * self.score_floor_ratio, self.min_score_floor)
-            floored = []
-            for r in results:
-                if r.boosted_score >= floor:
-                    floored.append(r)
-                else:
-                    floor_dropped += 1
-            results = floored
 
-        # Step 9: Jaccard dedup on summaries — remove near-duplicate results
+        # Step 8: Jaccard dedup on summaries — remove near-duplicate results
         dedup_dropped = 0
         if results and self.dedup_jaccard_threshold < 1.0:
             deduped = []
@@ -378,7 +379,7 @@ class MemorySearch:
             "connected_entities": connected_entity_count,
             "project_hits": project_hits,
             "filtered_by_similarity": filtered_by_similarity,
-            "filtered_by_rank": filtered_by_rank,
+            "filtered_by_importance": filtered_by_importance,
             "filtered_by_session": filtered_by_session,
             "post_filter": len(results) + floor_dropped + dedup_dropped,
             "floor_dropped": floor_dropped,
@@ -452,7 +453,7 @@ class MemorySearch:
         all_entity_ids = entity_ids + connected_ids
 
         # Get memory IDs mentioning any of these entities (cap results)
-        MAX_ENTITY_MEMORIES = 50
+        MAX_ENTITY_MEMORIES = 100
         memory_ids = await self.sqlite.get_memory_ids_for_entities(all_entity_ids)
         if len(memory_ids) > MAX_ENTITY_MEMORIES:
             memory_ids = memory_ids[:MAX_ENTITY_MEMORIES]
