@@ -199,6 +199,8 @@ class PromoteToCoreMemoryTool(Tool):
 
 
 class GetSessionSummaryTool(Tool):
+    read_only = True
+
     def __init__(self, sqlite: SQLiteStore):
         self.sqlite = sqlite
 

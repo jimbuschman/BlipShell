@@ -5,6 +5,7 @@ Same interface as LLMClient (duck-typed) so the router can use either.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 from collections import OrderedDict
@@ -263,7 +264,7 @@ class OpenAICompatClient:
         **kwargs,
     ) -> str:
         """Generate a response (non-chat). Used for summarization, ranking, etc."""
-        cache_key = f"{model}:{system or ''}:{prompt}"
+        cache_key = hashlib.sha256(f"{model}:{system or ''}:{prompt}".encode()).hexdigest()
 
         if use_cache and cache_key in _response_cache:
             _response_cache.move_to_end(cache_key)

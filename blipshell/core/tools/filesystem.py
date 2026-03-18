@@ -23,10 +23,14 @@ def _validate_within_root(resolved: Path, root_path: str | None) -> str | None:
         return f"Error: Path escapes the project root ({root_path}). Access denied."
 
 
-def _check_symlink(resolved: Path) -> str | None:
-    """Reject symlinks to prevent symlink-based path traversal. Returns error or None."""
-    if resolved.is_symlink():
-        return f"Error: '{resolved.name}' is a symlink. Refusing to write through symlinks for safety."
+def _check_symlink(original: Path) -> str | None:
+    """Reject symlinks to prevent symlink-based path traversal. Returns error or None.
+
+    Must be called with the ORIGINAL (unresolved) path — resolve() follows
+    symlinks, so is_symlink() on a resolved path always returns False.
+    """
+    if original.is_symlink():
+        return f"Error: '{original.name}' is a symlink. Refusing to write through symlinks for safety."
     return None
 
 
@@ -212,6 +216,9 @@ class WriteFileTool(Tool):
             return "Error: 'path' argument is required."
         if content is None:
             return "Error: 'content' argument is required — provide the file content to write."
+        original = Path(path) if not Path(path).is_absolute() and self.root_path else Path(path)
+        if not original.is_absolute() and self.root_path:
+            original = Path(self.root_path) / original
         resolved = self._resolve(path)
 
         err = _validate_within_root(resolved, self.root_path)
@@ -219,7 +226,7 @@ class WriteFileTool(Tool):
             return err
         if any(blocked in str(resolved) for blocked in self.blocked_paths):
             return f"Error: Access to '{path}' is blocked."
-        err = _check_symlink(resolved)
+        err = _check_symlink(original)
         if err:
             return err
 
@@ -274,12 +281,15 @@ class EditFileTool(Tool):
             return "Error: 'path' argument is required."
         if not old_text:
             return "Error: 'old_text' argument is required — specify the text to find and replace."
+        original = Path(path)
+        if not original.is_absolute() and self.root_path:
+            original = Path(self.root_path) / original
         resolved = self._resolve(path)
 
         err = _validate_within_root(resolved, self.root_path)
         if err:
             return err
-        err = _check_symlink(resolved)
+        err = _check_symlink(original)
         if err:
             return err
         if not resolved.is_file():
