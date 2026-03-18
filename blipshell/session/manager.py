@@ -60,6 +60,7 @@ class SessionManager:
         self._messages: list[SessionMessage] = []
         self._dumped_indices: set[int] = set()
         self._memory_db_ids: dict[int, int] = {}  # message index → memories row ID
+        self._pending_persists: list[asyncio.Task] = []  # pending save_raw_memory tasks
         self._currently_saving = False
 
     async def start_session(
@@ -115,11 +116,12 @@ class SessionManager:
         )
         self._messages.append(msg)
 
-        # Persist to SQLite immediately (fire-and-forget via background task)
+        # Persist to SQLite immediately (tracked task — awaited before enqueue)
         if self.session_id and role in (MessageRole.USER, MessageRole.ASSISTANT):
-            asyncio.ensure_future(self._persist_message(
+            task = asyncio.ensure_future(self._persist_message(
                 self.session_id, role.value, cleaned, now.isoformat(),
             ))
+            self._pending_persists.append(task)
 
         # Add to memory manager ActiveSession pool
         self.memory_manager.add_memory("ActiveSession", PoolItem(
@@ -140,6 +142,12 @@ class SessionManager:
             self._memory_db_ids[idx] = mem_id
         except Exception as e:
             logger.error("Failed to persist raw memory: %s", e)
+
+    async def flush_pending_persists(self):
+        """Await all pending persist tasks so _memory_db_ids is populated."""
+        if self._pending_persists:
+            await asyncio.gather(*self._pending_persists, return_exceptions=True)
+            self._pending_persists.clear()
 
     def get_messages(self) -> list[SessionMessage]:
         """Get all messages in the current session."""

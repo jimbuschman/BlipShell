@@ -28,15 +28,18 @@ class BackgroundMixin:
         not batched until session close.
         """
         try:
-            self._enqueue_undumped_messages()
+            await self._enqueue_undumped_messages()
         except Exception as e:
             logger.error("Background memory processing error: %s", e)
 
-    def _enqueue_undumped_messages(self):
+    async def _enqueue_undumped_messages(self):
         """Push undumped session messages to the memory worker queue."""
         if not self._memory_worker or not self._memory_worker.is_alive:
             logger.debug("Memory worker not available, skipping enqueue")
             return
+
+        # Wait for pending persist tasks so _memory_db_ids is populated
+        await self.session_manager.flush_pending_persists()
 
         from blipshell.memory.worker import WorkItem, WorkType
 

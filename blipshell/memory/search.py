@@ -77,6 +77,7 @@ class MemorySearch:
             self.fts_weight = config.fts_weight
             self.entity_boost = config.entity_boost
             self.project_boost = getattr(config, "project_boost", 0.15)
+            self.recency_boost_weight = getattr(config, "recency_boost_weight", 0.15)
             self.score_floor_ratio = getattr(config, "score_floor_ratio", 0.6)
             self.min_score_floor = getattr(config, "min_score_floor", 0.4)
             self.dedup_jaccard_threshold = getattr(config, "dedup_jaccard_threshold", 0.65)
@@ -93,6 +94,7 @@ class MemorySearch:
             self.fts_weight = 0.3
             self.entity_boost = 0.15
             self.project_boost = 0.15
+            self.recency_boost_weight = 0.15
             self.score_floor_ratio = 0.6
             self.min_score_floor = 0.4
             self.dedup_jaccard_threshold = 0.65
@@ -258,6 +260,10 @@ class MemorySearch:
             consolidation = 1.0 + 0.1 * tanh(memory.access_count / 5)
             importance_boost = memory.importance * self.importance_boost_weight * recency_factor * consolidation
 
+            # Direct recency boost — recent memories get a score bonus that decays over days
+            # 0.15 for <1 hour old, ~0.10 for 1 day old, ~0.05 for 3 days, ~0 for 7+ days
+            recency_boost = self.recency_boost_weight * exp(-hours_age / 48)
+
             # Tag overlap boost
             memory_tags = tags_by_memory.get(memory_id, [])
             tag_boost = 0.0
@@ -273,7 +279,7 @@ class MemorySearch:
             if project_session_ids and memory.session_id in project_session_ids:
                 project_boost = self.project_boost
 
-            boosted_score = similarity + importance_boost + tag_boost + rrf_boost + project_boost
+            boosted_score = similarity + importance_boost + tag_boost + rrf_boost + project_boost + recency_boost
 
             results.append(SearchResult(
                 memory_id=memory_id,
@@ -382,6 +388,15 @@ class MemorySearch:
 
         return final
 
+    # Common words that exist as entities but are too generic for query matching
+    ENTITY_STOP_WORDS = frozenset({
+        "and", "the", "you", "her", "his", "she", "him", "they", "them",
+        "this", "that", "what", "how", "who", "why", "when", "where",
+        "was", "were", "has", "had", "have", "are", "not", "but", "for",
+        "with", "from", "can", "will", "all", "any", "our", "its",
+        "conversation", "something", "anything", "everything", "someone",
+    })
+
     async def _expand_via_entities(self, query: str) -> tuple[list[int], list[str], int]:
         """Find memory IDs connected to entities mentioned in the query.
 
@@ -400,11 +415,14 @@ class MemorySearch:
 
         # Find entity names present in the query using word-boundary matching.
         # Skip short names (< 3 chars) to prevent "i", "a", "go" matching everything.
+        # Skip common stop words that match too broadly.
         # Use \b word boundaries to prevent "time" matching "sometimes".
         query_lower = query.lower()
         matched_names = []
         for name in entity_names:
             if len(name) < 3:
+                continue
+            if name in self.ENTITY_STOP_WORDS:
                 continue
             # Fast substring pre-filter, then word-boundary regex on candidates only
             if name not in query_lower:
