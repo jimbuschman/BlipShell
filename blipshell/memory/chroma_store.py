@@ -300,7 +300,7 @@ class ChromaStore:
         """Get all document IDs from a ChromaDB collection.
 
         Args:
-            collection: "memories", "core_memories", or "lessons"
+            collection: "memories", "core_memories", "lessons", or "entities"
 
         Returns:
             Set of integer IDs present in the collection.
@@ -309,6 +309,7 @@ class ChromaStore:
             "memories": self._memories,
             "core_memories": self._core_memories,
             "lessons": self._lessons,
+            "entities": self._entities,
         }
         coll = coll_map.get(collection)
         if not coll:
@@ -379,6 +380,11 @@ class ChromaStore:
                 "entity_type": (results["metadatas"][0][i] or {}).get("entity_type", "concept"),
             })
         return formatted
+
+    def delete_entity(self, entity_id: int):
+        """Remove an entity embedding from ChromaDB."""
+        self._require_collections()
+        self._entities.delete(ids=[str(entity_id)])
 
     def get_embeddings_by_ids(self, memory_ids: list[int]) -> dict[int, list[float]]:
         """Retrieve raw embedding vectors for memories by ID.

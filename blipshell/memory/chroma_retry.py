@@ -168,6 +168,8 @@ def _do_delete(chroma, collection: str, item_id: int):
         chroma.delete_core_memory(item_id)
     elif collection == COLLECTION_LESSONS:
         chroma.delete_lesson(item_id)
+    elif collection == COLLECTION_ENTITIES:
+        chroma.delete_entity(item_id)
     else:
         raise ValueError(f"Unknown collection for delete: {collection}")
 
@@ -177,7 +179,7 @@ async def reconcile_stores(
 ) -> dict:
     """Compare SQLite and ChromaDB, queue operations to fix drift.
 
-    Checks three collections: memories, core_memories, lessons.
+    Checks four collections: memories, core_memories, lessons, entities.
     - ChromaDB IDs not in SQLite → queue delete (orphaned embeddings)
     - SQLite IDs not in ChromaDB → queue upsert (missing embeddings)
 
@@ -328,6 +330,51 @@ async def reconcile_stores(
             )
     except Exception as e:
         logger.error("Reconcile lessons failed: %s", e)
+        stats["errors"] += 1
+
+    # --- Entities ---
+    try:
+        chroma_ids = chroma.get_all_ids("entities")
+        cursor = await sqlite._db.execute("SELECT id FROM entities")
+        sqlite_ids = {row[0] for row in await cursor.fetchall()}
+        stats["collections_checked"] += 1
+
+        orphans = chroma_ids - sqlite_ids
+        for oid in list(orphans)[:max_actions]:
+            try:
+                chroma.delete_entity(oid)
+                stats["orphans_deleted"] += 1
+            except Exception as e:
+                logger.warning("Reconcile: failed to delete orphan entity %d: %s", oid, e)
+                stats["errors"] += 1
+
+        missing = sqlite_ids - chroma_ids
+        for mid in list(missing)[:max_actions]:
+            try:
+                cursor = await sqlite._db.execute(
+                    "SELECT name, entity_type FROM entities WHERE id = ?",
+                    (mid,),
+                )
+                row = await cursor.fetchone()
+                if row and row[0]:
+                    await queue_failed_op(
+                        sqlite, OP_UPSERT, COLLECTION_ENTITIES, mid,
+                        document=row[0],
+                        metadata={"entity_type": row[1] or "concept"},
+                        error="reconcile: missing from ChromaDB",
+                    )
+                    stats["missing_queued"] += 1
+            except Exception as e:
+                logger.warning("Reconcile: failed to queue missing entity %d: %s", mid, e)
+                stats["errors"] += 1
+
+        if orphans or missing:
+            logger.info(
+                "Reconcile entities: %d orphans, %d missing",
+                len(orphans), len(missing),
+            )
+    except Exception as e:
+        logger.error("Reconcile entities failed: %s", e)
         stats["errors"] += 1
 
     return stats

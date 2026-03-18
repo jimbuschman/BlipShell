@@ -262,6 +262,19 @@ class EntityExtractor:
             candidates = []
 
         for candidate in candidates:
+            # Validate candidate still exists in SQLite (ChromaDB can have stale IDs)
+            if not await self.sqlite.entity_id_exists(candidate["id"]):
+                logger.warning(
+                    "Stale entity in ChromaDB: id=%d name='%s' — skipping",
+                    candidate["id"], candidate["name"],
+                )
+                from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_ENTITIES
+                await queue_failed_op(
+                    self.sqlite, OP_DELETE, COLLECTION_ENTITIES,
+                    candidate["id"], error="stale: entity deleted from SQLite",
+                )
+                continue
+
             if candidate["similarity"] >= self._auto_merge_threshold:
                 # Auto-merge: high confidence match
                 canonical_id = candidate["id"]

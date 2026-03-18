@@ -731,6 +731,12 @@ class NightlyRunner:
                 await db.execute("DELETE FROM entity_relationships WHERE subject_id = ? OR object_id = ?", (eid, eid))
                 await db.execute("DELETE FROM entity_aliases WHERE canonical_entity_id = ?", (eid,))
                 await db.execute("DELETE FROM entities WHERE id = ?", (eid,))
+                # Also remove from ChromaDB to prevent sync drift
+                if self.chroma:
+                    try:
+                        self.chroma.delete_entity(eid)
+                    except Exception as e:
+                        logger.debug("Failed to delete entity %d from ChromaDB: %s", eid, e)
                 deleted += 1
                 continue
 

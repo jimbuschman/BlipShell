@@ -2309,6 +2309,13 @@ class SQLiteStore:
 
     # --- Entity Resolution (Feature 5) ---
 
+    async def entity_id_exists(self, entity_id: int) -> bool:
+        """Check if an entity ID exists in the entities table."""
+        cursor = await self._db.execute(
+            "SELECT 1 FROM entities WHERE id = ? LIMIT 1", (entity_id,),
+        )
+        return await cursor.fetchone() is not None
+
     async def get_entity_id_by_name(self, name: str) -> int | None:
         """Get entity ID by exact name match (case-insensitive)."""
         cursor = await self._db.execute(
