@@ -467,7 +467,7 @@ class TaskExecutor:
             on_step_start(1)
 
         # Get context limit from the endpoint that will handle this request
-        task_type = "coding" if self.project_name else "tool_calling"
+        task_type = "coding" if self.active_project else "tool_calling"
         try:
             ep = await self.router._endpoint_manager.get_endpoint_for_role(task_type)
             effective_context = ep.context_tokens if ep and ep.context_tokens else 65536
