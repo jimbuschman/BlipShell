@@ -466,6 +466,14 @@ class TaskExecutor:
         if on_step_start:
             on_step_start(1)
 
+        # Get context limit from the endpoint that will handle this request
+        task_type = "coding" if self.project_name else "tool_calling"
+        try:
+            ep = await self.router._endpoint_manager.get_endpoint_for_role(task_type)
+            effective_context = ep.context_tokens if ep and ep.context_tokens else 65536
+        except Exception:
+            effective_context = 65536
+
         # Log executor context info for /flow observability
         if log_event:
             try:
@@ -473,8 +481,8 @@ class TaskExecutor:
                 msg_tokens = estimate_messages_tokens(messages)
                 await log_event("context_built", {
                     "query_profile": "executor",
-                    "context_limit": 65536,
-                    "available_tokens": 65536 - msg_tokens,
+                    "context_limit": effective_context,
+                    "available_tokens": effective_context - msg_tokens,
                     "total_context_items": memory_count + len(chat_history or []),
                     "pool_budgets": {"memory": memory_count, "chat_history": len(chat_history or [])},
                     "pool_usage": {
@@ -498,7 +506,7 @@ class TaskExecutor:
             enable_dedup=self._override_enable_dedup if self._override_enable_dedup is not None else True,
             enable_compaction=self._override_enable_compaction if self._override_enable_compaction is not None else True,
             compaction_threshold=compaction_cfg.compaction_threshold if compaction_cfg else 0.85,
-            context_limit=65536,  # will be updated by _run_chat_loop with endpoint value
+            context_limit=effective_context,
             completion_tool="task_complete",
             capture_inline_text=True,
             tool_provider=_get_current_tools,
