@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -53,7 +54,10 @@ class SessionMixin:
         # Load lessons into Core pool
         await self._load_lessons()
 
-        # Load recent session summaries into RecentHistory
+        # Summarize sessions that never closed properly (crash, Ollama died, etc.)
+        await self._summarize_orphaned_sessions()
+
+        # Load recent session context into RecentHistory
         await self._load_recent_sessions()
 
         # Check for nightly report warnings/errors
@@ -262,15 +266,70 @@ class SessionMixin:
             logger.error("Entity embedding backfill failed: %s", e)
 
     async def _load_recent_sessions(self):
-        """Load recent session summaries into RecentHistory pool."""
-        sessions = await self.sqlite.list_sessions(limit=3)
+        """Load context from recent sessions into RecentHistory pool.
+
+        Two tiers:
+        1. Last substantive session (>= 5 messages): load top memories with timestamps
+        2. Other recent sessions: load summaries only
+        """
+        sessions = await self.sqlite.list_sessions(limit=10)
         current_id = self.session_manager.session_id
+        now = datetime.now(timezone.utc)
+
+        loaded_substantive = False
         for s in sessions:
             if s.id == current_id:
                 continue
+
+            # Tier 1: Load top memories from last substantive session
+            if not loaded_substantive and s.message_count >= 5:
+                memories = await self.sqlite.get_memories_by_session(s.id)
+                good_memories = [
+                    m for m in memories
+                    if m.summary and not m.is_archived and m.importance >= 0.3
+                ]
+                good_memories.sort(key=lambda m: m.importance, reverse=True)
+
+                for m in good_memories[:20]:
+                    ts = m.timestamp
+                    if ts and ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    label = ""
+                    if ts:
+                        delta = now - ts
+                        hours = delta.total_seconds() / 3600
+                        if hours < 1:
+                            label = f"[{int(delta.total_seconds() / 60)}m ago]"
+                        elif hours < 24:
+                            label = f"[{int(hours)}h ago]"
+                        elif delta.days < 7:
+                            label = f"[{delta.days}d ago]"
+                        else:
+                            label = f"[{ts.strftime('%Y-%m-%d')}]"
+                    self.memory_manager.add_memory("RecentHistory", PoolItem(
+                        text=f"{label} {m.summary}",
+                        session_role="system",
+                        priority_score=2.0 + m.importance,
+                        session_id=s.id,
+                    ))
+
+                if s.summary:
+                    self.memory_manager.add_memory("RecentHistory", PoolItem(
+                        text=f"[Previous session summary] {s.summary}",
+                        session_role="system",
+                        priority_score=3.0,
+                        session_id=s.id,
+                    ))
+                loaded_substantive = True
+                logger.info(
+                    "Loaded %d memories from previous session %d into RecentHistory",
+                    min(len(good_memories), 20), s.id,
+                )
+                continue
+
+            # Tier 2: Other recent sessions get summary only
             text = s.summary
             if not text:
-                # Fallback: build summary from memories for sessions missing summaries
                 memories = await self.sqlite.get_memories_by_session(s.id)
                 if not memories:
                     continue
@@ -283,6 +342,53 @@ class SessionMixin:
                 priority_score=2.0,
                 session_id=s.id,
             ))
+
+    async def _summarize_orphaned_sessions(self):
+        """Generate summaries for recent sessions that never closed properly.
+
+        When a session doesn't get end_session() (crash, killed, Ollama died),
+        it has no summary and no title. This detects and fixes those on startup.
+        """
+        from blipshell.llm.prompts import summarize_session_conversation, generate_session_title
+        from blipshell.llm.router import TaskType
+
+        sessions = await self.sqlite.list_sessions(limit=10)
+        current_id = self.session_manager.session_id
+        for s in sessions:
+            if s.id == current_id:
+                continue
+            if s.summary:
+                continue
+            if s.message_count < 3:
+                continue
+
+            memories = await self.sqlite.get_memories_by_session(s.id)
+            summaries = [m.summary for m in memories if m.summary]
+            if not summaries:
+                continue
+
+            try:
+                text = "\n".join(summaries[:20])
+                summary = await self.router.generate(
+                    TaskType.SUMMARIZATION,
+                    summarize_session_conversation(text),
+                )
+                title = await self.router.generate(
+                    TaskType.SUMMARIZATION,
+                    generate_session_title(summary),
+                )
+                title = title.strip().strip('"').strip("'")
+                await self.sqlite.update_session(
+                    s.id, summary=summary, title=title,
+                )
+                logger.info(
+                    "Generated summary for orphaned session %d: %s",
+                    s.id, title[:60],
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to summarize orphaned session %d: %s", s.id, e,
+                )
 
     async def _load_follow_ups(self) -> str:
         """Load pending follow-ups and format for injection into first turn."""
