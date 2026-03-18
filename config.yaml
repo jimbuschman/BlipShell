@@ -31,14 +31,15 @@ endpoints:
     url: "https://openrouter.ai/api/v1"
     provider: "openai"
     api_key: "${OPENROUTER_API_KEY}"
-    roles: ["coding"]
-    priority: 2                          # above local for coding (project mode only)
+    roles: ["coding", "tool_calling"]
+    priority: 2                          # Ollama cloud free tier first, then OpenRouter
     max_concurrent: 5
     context_tokens: 196608               # MiniMax M2.5 supports 196K
     pii_sanitize: true                   # data leaves machine via OpenRouter
     enabled: true
     models:
       coding: "minimax/minimax-m2.5"
+      tool_calling: "minimax/minimax-m2.5"
   - name: "groq"
     url: "https://api.groq.com/openai/v1"
     provider: "openai"
