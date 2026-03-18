@@ -256,6 +256,7 @@ class ChatMixin:
                 )
                 endpoint.record_success(0)
                 full_response = result.response
+                model = ep_model  # Report the actual model used, not the global name
                 break  # Success
             except Exception as e:
                 if is_model_error(e):
