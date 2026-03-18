@@ -627,6 +627,41 @@ Off by default — zero overhead when disabled. Each sub-feature independently t
 
 **Files modified**: `cli.py` (all 3 features), `chat_loop.py` (on_tool_display + Phase 4 pre-exec), `agent_chat.py` (research_mode + system prompt injection), `executor.py` (on_tool_display pass-through)
 
+### 41. Duplicate Message Fix — COMPLETE
+Race condition in session manager caused every assistant message to be saved twice.
+`_persist_message()` was fire-and-forget (`asyncio.ensure_future`), so `_memory_db_ids`
+wasn't populated when `_enqueue_undumped_messages()` ran. Processor got `memory_id=None`
+and created a duplicate row.
+- [x] Track persist tasks in `_pending_persists` list on SessionManager
+- [x] `flush_pending_persists()` awaits all before enqueue reads `_memory_db_ids`
+- [x] `_enqueue_undumped_messages()` made async, awaits flush first
+- [x] Fixed both callers in agent.py (memory flush loop + shutdown)
+- Files: `session/manager.py`, `agent_background.py`, `agent.py`
+
+### 42. Search Pipeline Overhaul — COMPLETE
+Search was designed for small corpus, broke at 31K+ memories. Compounding filters
+(similarity 0.5 → rank >=3 → score floor 60%) removed ~85% of candidates.
+- [x] Replaced rank filter with importance floor (0.25) — continuous, better predictor
+- [x] Lowered similarity threshold 0.5 → 0.35 (industry standard for nomic-embed-text)
+- [x] Removed score floor (redundant with similarity threshold)
+- [x] FTS-only hits get baseline similarity (0.4) instead of 0.0
+- [x] Entity expansion scores dynamically (importance + recency) instead of fixed 0.15
+- [x] Entity stop words filter ("and", "you", "conversation" etc.)
+- [x] Increased search limit 10 → 30, recall_search_limit 20 → 40, entity cap 50 → 100
+- [x] Added recency_boost (0.15 * exp(-hours/48)) to scoring formula
+- [x] Added timestamps to SearchResult and pool items ([4h ago], [2d ago])
+- Files: `search.py`, `config.py`, `config.yaml`, `agent_chat.py`, `cli.py`
+
+### 43. Session Continuity — COMPLETE
+New sessions started with near-zero context about previous conversations.
+`_load_recent_sessions()` loaded last 3 session summaries (118 tokens total).
+Short test sessions pushed real conversations out.
+- [x] `_summarize_orphaned_sessions()` — detects and summarizes sessions that never closed (crash, kill)
+- [x] Two-tier `_load_recent_sessions()`: last substantive session (>=5 msgs) loads top 20 memories with timestamps; other sessions get summary only
+- [x] Memories sorted by importance, timestamped ([4h ago]), scored above session summaries
+- [x] OpenRouter added as fallback for tool_calling when Ollama free tier exhausted
+- Files: `agent_session.py`, `config.yaml`
+
 ### Wish List
 Items worth doing eventually but not prioritized:
 - **Telegram notifications**: Via mcp-communicator-telegram — background tasks notify you on phone, executor can ask_user remotely. Set up @BotFather bot + chat ID.
@@ -653,11 +688,16 @@ Items worth doing eventually but not prioritized:
 - [x] 13 bare `except Exception: pass` blocks replaced with `logger.warning()`/`logger.debug()`
 - [x] Files: agent.py, agent_chat.py, agent_project.py, agent_session.py, executor.py, nightly.py, processor.py
 
-### 33. SQLite/ChromaDB Sync Drift — NOT STARTED
-Deletes/archives in SQLite and ChromaDB happen as separate calls with no transactional guarantee. Over time causes permanent drift between stores.
-- [ ] Queue failed ChromaDB operations for retry
-- [ ] Consider `sync_status` column or reconciliation job (audit_db.py already has a sync check)
-- Files: `processor.py`, `consolidation.py`
+### 33. SQLite/ChromaDB Sync Drift — ENTITY SYNC COMPLETE
+Entity sync drift fixed (entity deletion from SQLite never synced to ChromaDB, causing FK errors).
+- [x] `delete_entity()` added to ChromaStore
+- [x] Entities added to `reconcile_stores()` and `_do_delete()` in chroma_retry.py
+- [x] `_resolve_entity()` validates ChromaDB candidates exist in SQLite before use
+- [x] `_job_entity_cleanup()` now deletes from both SQLite and ChromaDB
+- [x] `entity_id_exists()` method on SQLiteStore for cheap PK validation
+- [ ] Queue failed ChromaDB operations for retry (memories/core/lessons — existing infra, entities added)
+- [ ] Consider `sync_status` column or reconciliation job for non-entity collections
+- Files: `chroma_store.py`, `chroma_retry.py`, `entity_extractor.py`, `sqlite_store.py`, `nightly.py`
 
 ### 34. FTS5 Backfill Runs Every Startup — COMPLETE
 - [x] Tracks `fts5_backfill_done` in `app_metadata` — full-table scan only runs once
