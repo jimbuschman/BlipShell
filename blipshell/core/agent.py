@@ -404,7 +404,7 @@ class Agent(
         while True:
             try:
                 await asyncio.sleep(60)
-                self._enqueue_undumped_messages()
+                await self._enqueue_undumped_messages()
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -640,7 +640,7 @@ class Agent(
             self._friction_probe_task = None
 
         # Enqueue any remaining undumped messages to worker before shutdown
-        self._enqueue_undumped_messages()
+        await self._enqueue_undumped_messages()
 
         # Drain memory worker FIRST — must finish all DB writes before
         # end_session runs summary/lessons on the main loop's connection.
