@@ -387,10 +387,12 @@ def _display_tool_batch(
             if name in ("read_file",):
                 console.print(f"  ⎿  [dim]{line_count} lines[/dim]")
             elif name in ("grep_files", "glob_files"):
-                hits = result.result.strip().split("\n")
+                stripped = result.result.strip()
+                hits = stripped.split("\n") if stripped else []
                 console.print(f"  ⎿  [dim]{len(hits)} results[/dim]")
             elif name == "list_directory":
-                items = result.result.strip().split("\n")
+                stripped = result.result.strip()
+                items = stripped.split("\n") if stripped else []
                 console.print(f"  ⎿  [dim]{len(items)} items[/dim]")
             elif char_count < 80:
                 console.print(f"  ⎿  [dim]{result.result.strip()[:80]}[/dim]")

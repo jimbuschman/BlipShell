@@ -917,7 +917,7 @@ class ChatLoop:
                                 success=False,
                             )
 
-                    await asyncio.gather(*[_run_one(i) for i in par_indices])
+                    await asyncio.gather(*[_run_one(i) for i in par_indices], return_exceptions=True)
 
                 # Phase 7: Append results in order, run callbacks, display
                 for i, (name, arguments, tc_id) in enumerate(parsed_calls):

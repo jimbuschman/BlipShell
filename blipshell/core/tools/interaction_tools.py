@@ -138,7 +138,7 @@ class ConfirmPlanTool(Tool):
                 answer = await self.callback(formatted)
             except Exception as e:
                 logger.error("confirm_plan callback failed: %s", e)
-                answer = "approved"
+                answer = "Plan review failed — proceed with caution and keep changes minimal."
         else:
             answer = "approved"
 

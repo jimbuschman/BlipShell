@@ -117,9 +117,11 @@ class SessionManager:
         self._messages.append(msg)
 
         # Persist to SQLite immediately (tracked task — awaited before enqueue)
+        # Capture index NOW (before another add_message increments _messages)
         if self.session_id and role in (MessageRole.USER, MessageRole.ASSISTANT):
+            msg_idx = len(self._messages) - 1
             task = asyncio.ensure_future(self._persist_message(
-                self.session_id, role.value, cleaned, now.isoformat(),
+                self.session_id, role.value, cleaned, now.isoformat(), msg_idx,
             ))
             self._pending_persists.append(task)
 
@@ -131,15 +133,14 @@ class SessionManager:
             session_id=self.session_id or 0,
         ))
 
-    async def _persist_message(self, session_id: int, role: str, content: str, timestamp: str):
+    async def _persist_message(self, session_id: int, role: str, content: str, timestamp: str, msg_idx: int):
         """Persist a raw message to memories table (is_processed=0)."""
         try:
             mem_id = await self.sqlite.save_raw_memory(
                 session_id, role, content, timestamp,
             )
             # Store the memory ID so the pipeline can update it later
-            idx = len(self._messages) - 1
-            self._memory_db_ids[idx] = mem_id
+            self._memory_db_ids[msg_idx] = mem_id
         except Exception as e:
             logger.error("Failed to persist raw memory: %s", e)
 

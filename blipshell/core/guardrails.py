@@ -131,7 +131,7 @@ class GuardrailsEngine:
             for step in self.checklist:
                 parts.append(f"  - {step}")
 
-        remaining_pct = int((1 - tool_call_count / budget) * 100)
+        remaining_pct = int((1 - tool_call_count / max(budget, 1)) * 100)
         parts.append(
             f"\n{remaining_pct}% budget remaining. "
             "Are you still on task? If done, call task_complete."
