@@ -523,6 +523,16 @@ class ChatMixin:
 
         # Build a clean narrative from the executor transcript and feed through memory
         try:
+            # Debug: log message types to diagnose persistent 'str has no attribute get'
+            for i, m in enumerate(self.task_executor.last_messages):
+                if not isinstance(m, dict):
+                    logger.warning("last_messages[%d] is %s: %r", i, type(m).__name__, str(m)[:200])
+                else:
+                    for tc in (m.get("tool_calls") or []):
+                        if not isinstance(tc, dict):
+                            logger.warning("tool_call in msg[%d] is %s: %r", i, type(tc).__name__, str(tc)[:200])
+                        elif not isinstance(tc.get("function"), dict):
+                            logger.warning("function in msg[%d] tool_call is %s: %r", i, type(tc.get("function")).__name__, str(tc.get("function"))[:200])
             narrative = build_executor_narrative(self.task_executor.last_messages)
             if narrative and narrative.strip():
                 await self.session_manager.processor.process_message(
