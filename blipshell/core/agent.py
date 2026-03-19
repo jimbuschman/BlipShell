@@ -141,6 +141,11 @@ class Agent(
         self._session_notes: dict[str, str] = {}  # persistent notes surviving compaction
         self._repo_map: Optional[RepoMap] = None
 
+        # Set by start_session / chat — initialize here to prevent AttributeError
+        self._pending_follow_ups: str = ""
+        self._nightly_notification: str = ""
+        self._last_tool_calls: list[dict] = []
+
     async def initialize(self, on_status=None):
         """Initialize all subsystems.
 

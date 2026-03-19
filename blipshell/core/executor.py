@@ -530,6 +530,7 @@ class TaskExecutor:
                 on_tool_executed=self._on_tool_executed,
             )
             if result is None:
+                self.last_messages = messages  # Preserve messages for narrative even on failure
                 raise RuntimeError("No available LLM endpoint")
         else:
             # Legacy direct path (kept for backwards compatibility with tests)
