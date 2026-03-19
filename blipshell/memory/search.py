@@ -283,13 +283,18 @@ class MemorySearch:
                 overlap_count = len(query_tags & set(memory_tags))
                 tag_boost = (overlap_count / len(query_tags)) * self.tag_overlap_boost
 
-            # RRF boost from hybrid search fusion
-            rrf_boost = rrf_scores.get(memory_id, 0.0) * self.fts_weight
+            # RRF boost from hybrid search fusion — keyword matches are strong signal.
+            # When a specific term like "OllamaGate" appears literally in content,
+            # that's more reliable than semantic similarity to "contention".
+            rrf_boost = rrf_scores.get(memory_id, 0.0) * self.fts_weight * 2.0
 
-            # Project boost — memories from the active project's sessions score higher
+            # Project boost — memories from the active project's sessions score much higher.
+            # +0.5 ensures project memories dominate over general memories with similar
+            # similarity. A general memory needs ~0.5 higher semantic similarity to outrank
+            # a project memory, which is the right tradeoff when project context is active.
             project_boost = 0.0
             if project_session_ids and memory.session_id in project_session_ids:
-                project_boost = self.project_boost
+                project_boost = 0.5
 
             boosted_score = similarity + importance_boost + recency_boost + rrf_boost + project_boost + tag_boost
 
