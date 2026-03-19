@@ -202,7 +202,10 @@ class ChromaStore:
             metadatas=[meta],
         )
 
-    @_ollama_gated
+    # Search methods are NOT gated — nomic-embed-text (137M params) runs
+    # concurrently with larger chat models without GPU contention. Removing
+    # the gate eliminates 10-20s wait behind background processing.
+    # Write methods (add_memory, add_lesson, etc.) keep the gate.
     def search_memories(
         self,
         query: str,
@@ -228,7 +231,6 @@ class ChromaStore:
 
         return self._format_results(results)
 
-    @_ollama_gated
     def search_core_memories(self, query: str, n_results: int = 10) -> list[dict]:
         """Search core memories by semantic similarity."""
         self._require_collections()
@@ -242,7 +244,6 @@ class ChromaStore:
 
         return self._format_results(results)
 
-    @_ollama_gated
     def search_lessons(self, query: str, n_results: int = 10) -> list[dict]:
         """Search lessons by semantic similarity."""
         self._require_collections()
@@ -350,7 +351,6 @@ class ChromaStore:
             metadatas=[{"entity_type": et} for et in entity_types],
         )
 
-    @_ollama_gated
     def search_similar_entities(
         self, name: str, n_results: int = 5,
     ) -> list[dict]:

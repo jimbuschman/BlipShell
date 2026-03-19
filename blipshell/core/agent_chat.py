@@ -565,15 +565,36 @@ class ChatMixin:
                 return f"[{delta.days}d ago] "
             return f"[{ts.strftime('%Y-%m-%d')}] "
 
-        # Search conversation memories
-        memory_count = 0
-        try:
-            results = await self.search.search(
+        # Run all three searches concurrently — they're independent queries.
+        # With gate removed from search methods, these can hit Ollama in parallel.
+        async def _search_memories():
+            return await self.search.search(
                 query=query,
                 current_session_id=self.session_manager.session_id,
                 n_results=15,
                 active_project=active_proj,
             )
+
+        async def _search_core():
+            return await self.search.search_core_memories(query, n_results=5)
+
+        async def _search_lessons():
+            return await self.search.search_lessons(
+                query, n_results=5, active_project=active_proj,
+            )
+
+        # Gather all three — if one fails, others still return
+        mem_task = asyncio.ensure_future(_search_memories())
+        core_task = asyncio.ensure_future(_search_core())
+        lesson_task = asyncio.ensure_future(_search_lessons())
+        await asyncio.gather(mem_task, core_task, lesson_task, return_exceptions=True)
+
+        # Process memory results
+        memory_count = 0
+        try:
+            results = mem_task.result() if not mem_task.cancelled() else []
+            if isinstance(results, Exception):
+                raise results
             memory_count = len(results)
             for r in results:
                 self.memory_manager.add_memory("Recall", PoolItem(
@@ -584,18 +605,17 @@ class ChatMixin:
         except Exception as e:
             logger.error("Memory search failed: %s", e)
 
-        # Search core memories — personal facts, preferences, stable knowledge.
-        # These are stored separately and weren't being searched before, so queries
-        # like "what is my name" or "where do I work" had no source for answers.
+        # Process core memory results
         core_count = 0
         try:
-            core_results = await self.search.search_core_memories(query, n_results=5)
+            core_results = core_task.result() if not core_task.cancelled() else []
+            if isinstance(core_results, Exception):
+                raise core_results
             for cr in core_results:
                 similarity = cr.get("similarity", 0.0)
                 if similarity < 0.4:
                     continue
                 core_count += 1
-                # Core memories get a priority boost — they're curated facts
                 self.memory_manager.add_memory("Recall", PoolItem(
                     text=f"[Core] {cr.get('document', '')}",
                     session_role="system",
@@ -604,12 +624,12 @@ class ChatMixin:
         except Exception as e:
             logger.error("Core memory search failed: %s", e)
 
-        # Search lessons semantically
+        # Process lesson results
         lesson_count = 0
         try:
-            lesson_results = await self.search.search_lessons(
-                query, n_results=5, active_project=active_proj,
-            )
+            lesson_results = lesson_task.result() if not lesson_task.cancelled() else []
+            if isinstance(lesson_results, Exception):
+                raise lesson_results
             for lr in lesson_results:
                 similarity = lr.get("similarity", 0.0)
                 if similarity < 0.4:
@@ -617,7 +637,7 @@ class ChatMixin:
                 lesson_count += 1
                 self.memory_manager.add_memory("Recall", PoolItem(
                     text=lr.get("document", ""),
-                    session_role="system2",  # labeled as "RelevantLessons" in context
+                    session_role="system2",
                     priority_score=similarity + 0.1,
                 ))
         except Exception as e:
