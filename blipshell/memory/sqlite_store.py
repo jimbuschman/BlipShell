@@ -1089,22 +1089,51 @@ class SQLiteStore:
 
     _FTS5_RESERVED = {'AND', 'OR', 'NOT', 'NEAR'}
 
+    # Stop words — too common to be useful in FTS5 keyword search.
+    # FTS5 defaults to implicit AND, so "how does search work" requires ALL
+    # words in one summary. With OR semantics + stop word removal, each
+    # meaningful keyword contributes independently.
+    _FTS5_STOP_WORDS = frozenset({
+        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could",
+        "should", "may", "might", "shall", "can", "need", "must",
+        "i", "me", "my", "we", "our", "you", "your", "he", "she", "it",
+        "they", "them", "their", "this", "that", "these", "those",
+        "in", "on", "at", "to", "for", "of", "with", "by", "from", "about",
+        "how", "what", "when", "where", "who", "why", "which",
+        "not", "no", "nor", "but", "if", "so", "just", "very",
+        "also", "than", "then", "too", "up", "out", "some", "all", "any",
+    })
+
     @staticmethod
     def _sanitize_fts_query(query: str) -> str:
-        """Strip FTS5 special characters and reserved keywords to prevent syntax errors."""
+        """Sanitize query for FTS5 with OR semantics.
+
+        FTS5 defaults to implicit AND — "how does search work" requires ALL
+        four words in one document. This produced zero results on virtually
+        every conversational query. Fix: join tokens with OR so each keyword
+        contributes independently. Stop words are removed to reduce noise.
+        """
         # Remove characters that FTS5 interprets as operators
         sanitized = query.replace('"', ' ').replace("'", ' ')
         for ch in '?*(){}[]^~:\\/<>!@#$%&+=|,;.-':
             sanitized = sanitized.replace(ch, ' ')
-        # Remove FTS5 reserved keywords (AND, OR, NOT, NEAR)
+        # Remove FTS5 reserved keywords and stop words
         tokens = sanitized.split()
-        tokens = [t for t in tokens if t.upper() not in SQLiteStore._FTS5_RESERVED]
-        return ' '.join(tokens)
+        tokens = [
+            t for t in tokens
+            if t.upper() not in SQLiteStore._FTS5_RESERVED
+            and t.lower() not in SQLiteStore._FTS5_STOP_WORDS
+            and len(t) >= 2
+        ]
+        # OR semantics — each keyword contributes independently
+        return ' OR '.join(tokens) if tokens else ''
 
     async def search_fts(self, query: str, limit: int = 20) -> list[dict]:
         """Full-text search on memory summaries using FTS5.
 
         Returns list of {id, fts_rank} dicts sorted by relevance.
+        Uses OR semantics so partial keyword matches contribute.
         """
         sanitized = self._sanitize_fts_query(query)
         if not sanitized:
@@ -1112,7 +1141,8 @@ class SQLiteStore:
         try:
             cursor = await self._db.execute(
                 """SELECT rowid AS id, rank AS fts_rank
-                   FROM memories_fts WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?""",
+                   FROM memories_fts WHERE memories_fts MATCH ?
+                   ORDER BY rank LIMIT ?""",
                 (sanitized, limit),
             )
             rows = await cursor.fetchall()

@@ -7,9 +7,10 @@ import asyncio
 import functools
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from math import exp, tanh
+from math import exp
 
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.chroma_store import ChromaStore
@@ -144,10 +145,12 @@ class MemorySearch:
                 project_session_ids = all_project_sids
 
         overfetch = n_results * self.search_overfetch_multiplier
+        _t_start = time.monotonic()
 
         # Step 2: ChromaDB semantic search — two-pass when project is active
         # ChromaDB calls are sync + gated (OllamaGate serializes embedding calls).
         # Run in executor so the event loop stays responsive (Esc cancel, etc.).
+        _t_chroma_start = time.monotonic()
         loop = asyncio.get_running_loop()
         chroma_results: list[dict] = []
         if project_session_ids:
@@ -186,10 +189,14 @@ class MemorySearch:
                 ),
             )
 
+        _t_chroma_ms = (time.monotonic() - _t_chroma_start) * 1000
+
         # Step 2b: FTS5 keyword search
+        _t_fts_start = time.monotonic()
         fts_results = await self.sqlite.search_fts(
             query, limit=overfetch,
         )
+        _t_fts_ms = (time.monotonic() - _t_fts_start) * 1000
 
         # Build RRF (Reciprocal Rank Fusion) scores from both result lists
         rrf_k = 60
@@ -252,21 +259,20 @@ class MemorySearch:
                 filtered_by_importance += 1
                 continue
 
-            # Temporal decay — per-type rates so facts persist longer than events
+            # Simplified scoring — importance is intrinsic, not decayed.
+            # Temporal decay was multiplied into importance which crushed
+            # foundational memories after ~30 days. Now importance and recency
+            # are independent additive signals.
+
+            # Importance signal (intrinsic memory quality, no decay)
+            importance_boost = memory.importance * self.importance_boost_weight
+
+            # Recency boost — standalone, decays over 48h half-life
             if not memory.timestamp:
-                hours_age = 720.0  # Default to ~30 days if no timestamp
+                hours_age = 720.0
             else:
                 mem_ts = memory.timestamp if memory.timestamp.tzinfo else memory.timestamp.replace(tzinfo=timezone.utc)
                 hours_age = (now - mem_ts).total_seconds() / 3600
-            mem_type = memory.memory_type.value if memory.memory_type else "conversation"
-            decay = self.decay_rates.get(mem_type) if self.decay_rates else self.decay_rate
-            recency_factor = exp(-decay * hours_age)
-            # Consolidation — frequently accessed memories resist decay
-            consolidation = 1.0 + 0.1 * tanh(memory.access_count / 5)
-            importance_boost = memory.importance * self.importance_boost_weight * recency_factor * consolidation
-
-            # Direct recency boost — recent memories get a score bonus that decays over days
-            # 0.15 for <1 hour old, ~0.10 for 1 day old, ~0.05 for 3 days, ~0 for 7+ days
             recency_boost = self.recency_boost_weight * exp(-hours_age / 48)
 
             # Tag overlap boost
@@ -284,7 +290,7 @@ class MemorySearch:
             if project_session_ids and memory.session_id in project_session_ids:
                 project_boost = self.project_boost
 
-            boosted_score = similarity + importance_boost + tag_boost + rrf_boost + project_boost + recency_boost
+            boosted_score = similarity + importance_boost + recency_boost + rrf_boost + project_boost + tag_boost
 
             results.append(SearchResult(
                 memory_id=memory_id,
@@ -300,32 +306,32 @@ class MemorySearch:
             ))
 
         # Step 6: Entity graph expansion — find memories connected via entities
+        # Capped at 15 results (was 50) — entity results should supplement
+        # semantic search, not dominate it. Batch-loaded to avoid N+1 queries.
+        _t_entity_start = time.monotonic()
         existing_ids = {r.memory_id for r in results}
         entity_memory_ids = []
         matched_entity_names: list[str] = []
         connected_entity_count = 0
         try:
             entity_memory_ids, matched_entity_names, connected_entity_count = await self._expand_via_entities(query)
-            for eid in entity_memory_ids:
-                if eid in existing_ids:
-                    continue
-                emem = await self.sqlite.get_memory(eid)
+            # Filter out already-found IDs before batch loading
+            new_eids = [eid for eid in entity_memory_ids if eid not in existing_ids]
+            entity_batch = await self.sqlite.get_memories_batch(new_eids) if new_eids else {}
+            for eid in new_eids:
+                emem = entity_batch.get(eid)
                 if not emem or emem.importance < self.min_importance or emem.is_archived:
                     continue
                 if current_session_id and emem.session_id == current_session_id:
                     continue
-                # Score entity hits dynamically using importance/recency, not a fixed score
+                # Score: entity boost + importance + recency (no decay multiplication)
                 if not emem.timestamp:
                     e_hours_age = 720.0
                 else:
                     mem_ts = emem.timestamp if emem.timestamp.tzinfo else emem.timestamp.replace(tzinfo=timezone.utc)
                     e_hours_age = (now - mem_ts).total_seconds() / 3600
-                e_mem_type = emem.memory_type.value if emem.memory_type else "conversation"
-                e_decay = self.decay_rates.get(e_mem_type) if self.decay_rates else self.decay_rate
-                e_recency_factor = exp(-e_decay * e_hours_age)
-                e_importance_boost = emem.importance * self.importance_boost_weight * e_recency_factor
                 e_recency_boost = self.recency_boost_weight * exp(-e_hours_age / 48)
-                entity_score = self.entity_boost + e_importance_boost + e_recency_boost
+                entity_score = self.entity_boost + (emem.importance * self.importance_boost_weight) + e_recency_boost
                 results.append(SearchResult(
                     memory_id=eid,
                     text=emem.content,
@@ -339,6 +345,8 @@ class MemorySearch:
                 existing_ids.add(eid)
         except Exception as e:
             logger.warning("Entity expansion failed: %s", e)
+
+        _t_entity_ms = (time.monotonic() - _t_entity_start) * 1000
 
         # Step 7: Sort by boosted score
         results.sort(key=lambda r: r.boosted_score, reverse=True)
@@ -379,7 +387,9 @@ class MemorySearch:
             except Exception as e:
                 logger.warning("Failed to record memory access: %s", e)
 
-        # Populate search stats for observability
+        _t_total_ms = (time.monotonic() - _t_start) * 1000
+
+        # Populate search stats for observability (includes timing)
         self.last_search_stats = {
             "chroma_hits": len(chroma_results),
             "fts_hits": len(fts_results),
@@ -394,6 +404,11 @@ class MemorySearch:
             "floor_dropped": floor_dropped,
             "dedup_dropped": dedup_dropped,
             "final_returned": len(final),
+            # Timing (ms) per component — shows up in /flow output
+            "chroma_ms": round(_t_chroma_ms, 1),
+            "fts_ms": round(_t_fts_ms, 1),
+            "entity_ms": round(_t_entity_ms, 1),
+            "total_ms": round(_t_total_ms, 1),
         }
 
         return final
@@ -461,8 +476,9 @@ class MemorySearch:
             connected_ids = connected_ids[:MAX_CONNECTED]
         all_entity_ids = entity_ids + connected_ids
 
-        # Get memory IDs mentioning any of these entities (cap results)
-        MAX_ENTITY_MEMORIES = 50
+        # Get memory IDs mentioning any of these entities (cap results).
+        # 15 (was 50) — entity results supplement semantic search, not dominate it.
+        MAX_ENTITY_MEMORIES = 15
         memory_ids = await self.sqlite.get_memory_ids_for_entities(all_entity_ids)
         if len(memory_ids) > MAX_ENTITY_MEMORIES:
             memory_ids = memory_ids[:MAX_ENTITY_MEMORIES]
