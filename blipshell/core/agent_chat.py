@@ -541,7 +541,7 @@ class ChatMixin:
                     session_id=self.session_manager.session_id,
                 )
         except Exception as e:
-            logger.error("Failed to process coding narrative into memory: %s", e)
+            logger.error("Failed to process coding narrative into memory: %s", e, exc_info=True)
 
         return result
 
