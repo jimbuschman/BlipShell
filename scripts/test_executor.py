@@ -1310,9 +1310,8 @@ async def run_test(
 
     # Disable memory worker for tests — processing test narratives is wasteful
     # and the drain on shutdown blocks for minutes when cloud endpoints are exhausted.
-    if agent._memory_worker:
-        agent._memory_worker.shutdown(timeout=5)
-        agent._memory_worker = None
+    # Set to None without draining — test process exits anyway.
+    agent._memory_worker = None
 
     # 1b. Apply Phase 2 overrides
     overrides.apply(agent)
