@@ -209,8 +209,8 @@ class EntityExtractor:
             )
             try:
                 await self.sqlite.mark_entities_extracted([memory_id])
-            except Exception:
-                pass
+            except Exception as mark_err:
+                logger.warning("Failed to mark memory %d as extracted: %s", memory_id, mark_err)
 
         return result
 

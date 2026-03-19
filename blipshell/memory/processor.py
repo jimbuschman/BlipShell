@@ -628,8 +628,9 @@ class MemoryProcessor:
                 effectiveness="skipped",
                 reflection_text="Session skipped — insufficient conversation data.",
             )
-        except Exception:
-            pass  # IntegrityError if already exists
+        except Exception as e:
+            if "UNIQUE constraint" not in str(e) and "IntegrityError" not in type(e).__name__:
+                logger.warning("Failed to create session reflection: %s", e)
 
     async def _reflect_on_text(
         self, session_summary: str, conversation_text: str, project: str | None,

@@ -371,11 +371,18 @@ class ChatMixin:
         compaction_cfg = self.config.compaction if self.config.compaction.enabled else None
         compaction_rtr = self.router if (compaction_cfg and compaction_cfg.use_llm) else None
 
+        # Get context limit from endpoint (not hardcoded default)
+        task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
+        simple_context_limit = self.endpoint_manager.get_context_tokens_for_role(
+            task_type, default=65536,
+        ) if self.endpoint_manager else 65536
+
         config = LoopConfig(
             budget=max_iterations,
             enable_dedup=True,
             enable_compaction=self.config.compaction.enabled,
             compaction_threshold=self.config.compaction.compaction_threshold,
+            context_limit=simple_context_limit,
             auto_continue_on_exhaustion=True,
             tool_provider=_get_current_tools,
             on_pause_check=self._pause_check_callback,

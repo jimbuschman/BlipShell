@@ -3630,6 +3630,8 @@ def import_conversation(ctx, file, skip_lessons, title):
 
         messages = []
         for msg in raw_msgs:
+            if not isinstance(msg, dict):
+                continue
             role = msg.get("role", "").lower()
             content = msg.get("content", "").strip()
             if role in ("user", "assistant") and content:

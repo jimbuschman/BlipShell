@@ -227,7 +227,11 @@ class MemoryManager:
                 import asyncio
                 try:
                     loop = asyncio.get_running_loop()
-                    loop.create_task(self._summarize_and_store(combined))
+                    task = loop.create_task(self._summarize_and_store(combined))
+                    task.add_done_callback(
+                        lambda t: logger.error("Overflow summarization failed: %s", t.exception())
+                        if not t.cancelled() and t.exception() else None
+                    )
                 except RuntimeError:
                     logger.warning("No event loop — overflow not summarized")
 

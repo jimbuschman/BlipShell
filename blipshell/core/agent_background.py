@@ -37,6 +37,8 @@ class BackgroundMixin:
         if not self._memory_worker or not self._memory_worker.is_alive:
             logger.debug("Memory worker not available, skipping enqueue")
             return
+        if not self.session_manager:
+            return
 
         # Wait for pending persist tasks so _memory_db_ids is populated
         await self.session_manager.flush_pending_persists()
