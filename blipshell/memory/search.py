@@ -124,11 +124,12 @@ class MemorySearch:
         if n_results is None:
             n_results = self.search_limit
 
-        # Step 1: Noise filter
-        if should_skip_memory(query, max_length=10):
-            self.last_search_stats = {"chroma_hits": 0, "fts_hits": 0, "entity_hits": 0, "post_filter": 0, "final_returned": 0, "skipped": "noise_filter"}
-            return []
-        if should_skip_memory(query, max_length=20) and not contains_signal_words(query):
+        # Step 1: Noise filter — only skip truly empty/noise queries.
+        # The old filter killed valid short queries like "where do I work" (16 chars,
+        # no signal words). Search queries are user intent — they should almost always
+        # proceed. Only skip single-word noise and known greetings.
+        stripped = query.strip()
+        if not stripped or len(stripped) < 3:
             self.last_search_stats = {"chroma_hits": 0, "fts_hits": 0, "entity_hits": 0, "post_filter": 0, "final_returned": 0, "skipped": "noise_filter"}
             return []
 

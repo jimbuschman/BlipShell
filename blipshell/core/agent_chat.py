@@ -546,11 +546,28 @@ class ChatMixin:
         return result
 
     async def _search_relevant_memories(self, query: str):
-        """Search for relevant memories and lessons, add to Recall pool."""
+        """Search for relevant memories, core memories, and lessons, add to Recall pool."""
+        now = datetime.now(timezone.utc)
+        active_proj = self.active_project["name"] if self.active_project else None
+
+        def _time_label(ts) -> str:
+            if not ts:
+                return ""
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            delta = now - ts
+            hours = delta.total_seconds() / 3600
+            if hours < 1:
+                return f"[{int(delta.total_seconds() / 60)}m ago] "
+            elif hours < 24:
+                return f"[{int(hours)}h ago] "
+            elif delta.days < 7:
+                return f"[{delta.days}d ago] "
+            return f"[{ts.strftime('%Y-%m-%d')}] "
+
         # Search conversation memories
         memory_count = 0
         try:
-            active_proj = self.active_project["name"] if self.active_project else None
             results = await self.search.search(
                 query=query,
                 current_session_id=self.session_manager.session_id,
@@ -558,34 +575,38 @@ class ChatMixin:
                 active_project=active_proj,
             )
             memory_count = len(results)
-            now = datetime.now(timezone.utc)
             for r in results:
-                # Include relative timestamp so LLM can answer temporal queries
-                time_label = ""
-                if r.timestamp:
-                    ts = r.timestamp if r.timestamp.tzinfo else r.timestamp.replace(tzinfo=timezone.utc)
-                    delta = now - ts
-                    hours = delta.total_seconds() / 3600
-                    if hours < 1:
-                        time_label = f"[{int(delta.total_seconds() / 60)}m ago] "
-                    elif hours < 24:
-                        time_label = f"[{int(hours)}h ago] "
-                    elif delta.days < 7:
-                        time_label = f"[{delta.days}d ago] "
-                    else:
-                        time_label = f"[{ts.strftime('%Y-%m-%d')}] "
                 self.memory_manager.add_memory("Recall", PoolItem(
-                    text=f"{time_label}{r.summary}",
+                    text=f"{_time_label(r.timestamp)}{r.summary}",
                     session_role="system",
                     priority_score=r.boosted_score,
                 ))
         except Exception as e:
             logger.error("Memory search failed: %s", e)
 
-        # Search lessons semantically (closes the lessons loop)
+        # Search core memories — personal facts, preferences, stable knowledge.
+        # These are stored separately and weren't being searched before, so queries
+        # like "what is my name" or "where do I work" had no source for answers.
+        core_count = 0
+        try:
+            core_results = await self.search.search_core_memories(query, n_results=5)
+            for cr in core_results:
+                similarity = cr.get("similarity", 0.0)
+                if similarity < 0.4:
+                    continue
+                core_count += 1
+                # Core memories get a priority boost — they're curated facts
+                self.memory_manager.add_memory("Recall", PoolItem(
+                    text=f"[Core] {cr.get('document', '')}",
+                    session_role="system",
+                    priority_score=similarity + 0.2,
+                ))
+        except Exception as e:
+            logger.error("Core memory search failed: %s", e)
+
+        # Search lessons semantically
         lesson_count = 0
         try:
-            active_proj = self.active_project["name"] if self.active_project else None
             lesson_results = await self.search.search_lessons(
                 query, n_results=5, active_project=active_proj,
             )
@@ -597,7 +618,7 @@ class ChatMixin:
                 self.memory_manager.add_memory("Recall", PoolItem(
                     text=lr.get("document", ""),
                     session_role="system2",  # labeled as "RelevantLessons" in context
-                    priority_score=similarity + 0.1,  # slight boost for lessons
+                    priority_score=similarity + 0.1,
                 ))
         except Exception as e:
             logger.error("Lesson search failed: %s", e)
@@ -606,6 +627,7 @@ class ChatMixin:
         search_stats = self.search.last_search_stats or {}
         await self._log_event("search_complete", {
             "memory_results": memory_count,
+            "core_results": core_count,
             "lesson_results": lesson_count,
             **search_stats,
         })

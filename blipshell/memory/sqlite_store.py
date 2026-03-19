@@ -281,26 +281,32 @@ CREATE TABLE IF NOT EXISTS session_messages (
 CREATE INDEX IF NOT EXISTS idx_session_messages_unprocessed
     ON session_messages(is_processed) WHERE is_processed = 0;
 
--- FTS5 full-text search on memory summaries
+-- FTS5 full-text search on memory summaries AND raw content.
+-- Indexes both columns so keyword search finds facts in raw messages
+-- (summaries often abstract away specific names, terms, and details).
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-    summary, content=memories, content_rowid=id
+    summary, raw_content, content=memories, content_rowid=id
 );
 
 -- Keep FTS index in sync with memories table
 CREATE TRIGGER IF NOT EXISTS memories_fts_insert AFTER INSERT ON memories
-WHEN NEW.summary IS NOT NULL BEGIN
-    INSERT INTO memories_fts(rowid, summary) VALUES (NEW.id, NEW.summary);
+BEGIN
+    INSERT INTO memories_fts(rowid, summary, raw_content)
+    VALUES (NEW.id, COALESCE(NEW.summary, ''), COALESCE(NEW.content, ''));
 END;
 
-CREATE TRIGGER IF NOT EXISTS memories_fts_update AFTER UPDATE OF summary ON memories
-WHEN NEW.summary IS NOT NULL BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, summary) VALUES('delete', OLD.id, OLD.summary);
-    INSERT INTO memories_fts(rowid, summary) VALUES (NEW.id, NEW.summary);
+CREATE TRIGGER IF NOT EXISTS memories_fts_update AFTER UPDATE OF summary, content ON memories
+BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, summary, raw_content)
+    VALUES('delete', OLD.id, COALESCE(OLD.summary, ''), COALESCE(OLD.content, ''));
+    INSERT INTO memories_fts(rowid, summary, raw_content)
+    VALUES (NEW.id, COALESCE(NEW.summary, ''), COALESCE(NEW.content, ''));
 END;
 
 CREATE TRIGGER IF NOT EXISTS memories_fts_delete AFTER DELETE ON memories
-WHEN OLD.summary IS NOT NULL BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, summary) VALUES('delete', OLD.id, OLD.summary);
+BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, summary, raw_content)
+    VALUES('delete', OLD.id, COALESCE(OLD.summary, ''), COALESCE(OLD.content, ''));
 END;
 
 CREATE TABLE IF NOT EXISTS session_reflections (
@@ -481,6 +487,66 @@ class SQLiteStore:
             await self._db.execute(
                 "INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('fts5_backfill_done', '1')"
             )
+
+        # FTS5 v2 migration: index both summary AND content (raw messages).
+        # Summary-only FTS missed actual facts — summaries say "User asked about X"
+        # but the content has the real information. Keyword search on content finds
+        # specific names, terms, and facts that summaries abstract away.
+        cursor = await self._db.execute(
+            "SELECT value FROM app_metadata WHERE key = 'fts5_v2_done'"
+        )
+        row = await cursor.fetchone()
+        if not row:
+            logger.info("Migrating FTS5 to index both summary and content...")
+            try:
+                # Drop old FTS table and triggers
+                await self._db.execute("DROP TRIGGER IF EXISTS memories_fts_insert")
+                await self._db.execute("DROP TRIGGER IF EXISTS memories_fts_update")
+                await self._db.execute("DROP TRIGGER IF EXISTS memories_fts_delete")
+                await self._db.execute("DROP TABLE IF EXISTS memories_fts")
+                # Create new FTS5 table with both columns
+                await self._db.execute("""
+                    CREATE VIRTUAL TABLE memories_fts USING fts5(
+                        summary, raw_content, content=memories, content_rowid=id
+                    )
+                """)
+                # Create new triggers for both columns
+                await self._db.execute("""
+                    CREATE TRIGGER memories_fts_insert AFTER INSERT ON memories
+                    BEGIN
+                        INSERT INTO memories_fts(rowid, summary, raw_content)
+                        VALUES (NEW.id, COALESCE(NEW.summary, ''), COALESCE(NEW.content, ''));
+                    END
+                """)
+                await self._db.execute("""
+                    CREATE TRIGGER memories_fts_update AFTER UPDATE OF summary, content ON memories
+                    BEGIN
+                        INSERT INTO memories_fts(memories_fts, rowid, summary, raw_content)
+                        VALUES('delete', OLD.id, COALESCE(OLD.summary, ''), COALESCE(OLD.content, ''));
+                        INSERT INTO memories_fts(rowid, summary, raw_content)
+                        VALUES (NEW.id, COALESCE(NEW.summary, ''), COALESCE(NEW.content, ''));
+                    END
+                """)
+                await self._db.execute("""
+                    CREATE TRIGGER memories_fts_delete AFTER DELETE ON memories
+                    BEGIN
+                        INSERT INTO memories_fts(memories_fts, rowid, summary, raw_content)
+                        VALUES('delete', OLD.id, COALESCE(OLD.summary, ''), COALESCE(OLD.content, ''));
+                    END
+                """)
+                # Backfill all existing rows
+                await self._db.execute("""
+                    INSERT INTO memories_fts(rowid, summary, raw_content)
+                    SELECT id, COALESCE(summary, ''), COALESCE(content, '')
+                    FROM memories
+                """)
+                await self._db.execute(
+                    "INSERT OR REPLACE INTO app_metadata (key, value) VALUES ('fts5_v2_done', '1')"
+                )
+                logger.info("FTS5 v2 migration complete — both summary and content indexed")
+            except Exception as e:
+                logger.error("FTS5 v2 migration failed: %s", e)
+
         await self._db.commit()
 
     async def close(self):
