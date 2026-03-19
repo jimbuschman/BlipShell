@@ -50,6 +50,8 @@ def build_executor_narrative(messages: list[dict]) -> str:
     searches: list[str] = []
 
     for msg in messages:
+        if not isinstance(msg, dict):
+            continue
         role = msg.get("role", "")
         content = msg.get("content", "") or ""
         tool_calls = msg.get("tool_calls")
