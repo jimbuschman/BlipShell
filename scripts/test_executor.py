@@ -1308,27 +1308,27 @@ async def run_test(
 
     await agent.initialize(on_status=on_status)
 
-    # Disable memory worker for tests — processing test narratives is wasteful
-    # and the drain on shutdown blocks for minutes when cloud endpoints are exhausted.
+    # Disable memory worker — test narratives don't need memory processing.
     if agent._memory_worker:
         from blipshell.memory.worker import WorkItem, WorkType
-        # Clear all pending items so SHUTDOWN is processed immediately
         while not agent._memory_worker._queue.empty():
             try:
                 agent._memory_worker._queue.get_nowait()
             except Exception:
                 break
         agent._memory_worker._queue.put_nowait(WorkItem(work_type=WorkType.SHUTDOWN, text=""))
-        # Wait briefly for current item to finish, then move on
-        if agent._memory_worker._thread:
-            agent._memory_worker._thread.join(timeout=3)
         agent._memory_worker = None
 
     # 1b. Apply Phase 2 overrides
     overrides.apply(agent)
 
-    # 2. Start session
-    session_id = await agent.start_session(project=project)
+    # 2. Start session — use SessionManager directly to skip expensive Agent
+    # startup tasks (orphan summarization, memory loading, startup sweep) that
+    # make LLM calls and block for minutes. Tests only need a session ID.
+    session_id = await agent.session_manager.start_session(project=project)
+    # Register tools that the executor needs
+    agent._register_memory_tools()
+    agent._register_task_tools()
     if not quiet:
         console.print(f"[bold cyan]Session #{session_id} started[/bold cyan]")
 
