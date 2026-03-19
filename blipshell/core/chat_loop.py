@@ -147,6 +147,8 @@ def estimate_messages_tokens(messages: list[dict]) -> int:
 
     total = 0
     for msg in messages:
+        if not isinstance(msg, dict):
+            continue
         content = msg.get("content", "") or ""
         total += estimate_tokens(content)
         if "tool_calls" in msg:
@@ -564,6 +566,8 @@ def extract_tool_call_info(tc) -> tuple[str, dict, str]:
 
     if isinstance(tc, dict):
         fn = tc.get("function", {})
+        if not isinstance(fn, dict):
+            return str(fn), {}, tc.get("id", "")
         args = fn.get("arguments", {})
         tc_id = tc.get("id", "")
         if isinstance(args, str):

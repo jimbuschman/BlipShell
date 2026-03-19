@@ -175,7 +175,12 @@ class ToolRuleEngine:
 
 def _tool_name(tool_dict: dict) -> str:
     """Extract tool name from an Ollama tool dict."""
-    return tool_dict.get("function", {}).get("name", "")
+    if not isinstance(tool_dict, dict):
+        return ""
+    fn = tool_dict.get("function", {})
+    if not isinstance(fn, dict):
+        return str(fn)
+    return fn.get("name", "")
 
 
 def create_default_rules() -> ToolRuleEngine:
