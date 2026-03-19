@@ -1,19 +1,33 @@
 """Standalone model benchmark — no Agent, no memory, no SQLite, no ChromaDB.
 
-Directly uses LLMClient → ChatLoop → ToolRegistry to benchmark models
-on executor-style tasks. Designed for A/B comparison of two models.
+Directly uses LLMClient/OpenAICompatClient → ChatLoop → ToolRegistry to
+benchmark models on executor-style tasks. Designed for A/B comparison.
 
-Usage:
+Supports both Ollama (local) and OpenAI-compatible APIs (OpenRouter, Groq, etc.).
+
+Usage (Ollama):
     python scripts/benchmark_standalone.py model_a model_b
     python scripts/benchmark_standalone.py model_a model_b --host http://192.168.1.100:11434
-    python scripts/benchmark_standalone.py model_a model_b --suite canned
-    python scripts/benchmark_standalone.py model_a model_b --suite stress
-    python scripts/benchmark_standalone.py model_a model_b --suite all
-    python scripts/benchmark_standalone.py model_a model_b --resume results.json
-    python scripts/benchmark_standalone.py model_a model_b --quiet
-    python scripts/benchmark_standalone.py model_a model_b --budget 30
-    python scripts/benchmark_standalone.py model_a model_b --timeout 180
-    python scripts/benchmark_standalone.py model_a model_b --context 131072
+
+Usage (OpenRouter):
+    python scripts/benchmark_standalone.py openai/gpt-4o anthropic/claude-sonnet-4 \\
+        --provider openai --api-url https://openrouter.ai/api/v1 --api-key $OPENROUTER_API_KEY
+
+Usage (Groq):
+    python scripts/benchmark_standalone.py llama-3.3-70b-versatile mixtral-8x7b-32768 \\
+        --provider openai --api-url https://api.groq.com/openai/v1 --api-key $GROQ_API_KEY
+
+Usage (mixed — model A on Ollama, model B on OpenRouter):
+    python scripts/benchmark_standalone.py qwen3:14b openai/gpt-4o \\
+        --provider-b openai --api-url-b https://openrouter.ai/api/v1 --api-key-b $OPENROUTER_API_KEY
+
+Options:
+    --suite canned|stress|all     Test suite (default: stress)
+    --budget 30                   Tool call budget per test
+    --timeout 180                 LLM timeout in seconds
+    --context 131072              Context window size
+    --resume results.json         Skip already-completed tests
+    --quiet                       JSON output only
 """
 
 import argparse
@@ -49,6 +63,46 @@ from blipshell.core.tools.interaction_tools import TaskCompleteTool, AskUserTool
 from blipshell.models.tools import ToolResult
 
 console = Console(stderr=True)
+
+
+# ---------------------------------------------------------------------------
+# Client factory — creates LLMClient (Ollama) or OpenAICompatClient
+# ---------------------------------------------------------------------------
+
+def create_client(
+    provider: str,
+    host: str = "http://localhost:11434",
+    api_url: str = "",
+    api_key: str = "",
+    timeout: float = 180.0,
+):
+    """Create an LLM client based on provider type.
+
+    Args:
+        provider: "ollama" or "openai"
+        host: Ollama host URL (only for provider="ollama")
+        api_url: Base URL for OpenAI-compatible API (e.g. https://openrouter.ai/api/v1)
+        api_key: API key (only for provider="openai")
+        timeout: Request timeout in seconds
+
+    Returns:
+        LLMClient or OpenAICompatClient (duck-typed, same interface)
+    """
+    if provider == "openai":
+        if not api_url:
+            raise ValueError("--api-url is required when --provider is openai")
+        # Lazy import — openai package only needed when actually using OpenAI provider
+        from blipshell.llm.openai_client import OpenAICompatClient
+        return OpenAICompatClient(
+            base_url=api_url,
+            api_key=api_key,
+            timeout=timeout,
+        )
+    else:
+        return LLMClient(
+            host=host,
+            timeout=timeout,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -504,13 +558,14 @@ def create_tool_registry(sandbox_path: str) -> ToolRegistry:
 
 
 async def run_one_test(
-    client: LLMClient,
+    client,
     model: str,
     test: dict,
     sandbox_path: str,
     budget: int = 30,
     context_tokens: int = 131072,
     quiet: bool = False,
+    is_openai: bool = False,
 ) -> TestResult:
     """Run a single test against a model. Returns structured result."""
 
@@ -544,7 +599,8 @@ async def run_one_test(
     )
 
     collector = StreamCollector(quiet=quiet)
-    chat_kwargs = {"options": {"num_ctx": context_tokens}}
+    # Ollama needs num_ctx; OpenAI-compatible APIs ignore it (stripped by client)
+    chat_kwargs = {"options": {"num_ctx": context_tokens}} if not is_openai else {}
 
     if not quiet:
         console.print(f"\n[bold cyan]─── {test_name} ({model}) ───[/bold cyan]")
@@ -622,7 +678,7 @@ async def run_one_test(
 
 
 async def run_suite(
-    client: LLMClient,
+    client,
     model: str,
     tests: list[dict],
     sandbox_base: str,
@@ -630,6 +686,7 @@ async def run_suite(
     context_tokens: int = 131072,
     quiet: bool = False,
     completed_keys: set[str] | None = None,
+    is_openai: bool = False,
 ) -> list[TestResult]:
     """Run a test suite against one model. Returns list of results."""
 
@@ -648,8 +705,9 @@ async def run_suite(
         if not quiet:
             console.print(f"\n[bold]═══ Test {i}/{total}: {test_name} ═══[/bold]")
 
-        # Fresh sandbox per test
-        sandbox = os.path.join(sandbox_base, f"{model.replace(':', '_')}__{test_name}")
+        # Fresh sandbox per test — sanitize model name for path
+        safe_model = model.replace(":", "_").replace("/", "__")
+        sandbox = os.path.join(sandbox_base, f"{safe_model}__{test_name}")
         os.makedirs(sandbox, exist_ok=True)
 
         try:
@@ -661,8 +719,21 @@ async def run_suite(
                 budget=budget,
                 context_tokens=context_tokens,
                 quiet=quiet,
+                is_openai=is_openai,
             )
             results.append(result)
+
+            # Track token usage for OpenAI clients
+            if is_openai and hasattr(client, 'get_usage'):
+                usage = client.get_usage()
+                if not quiet:
+                    console.print(
+                        f"[dim]  Tokens: {usage['prompt_tokens']}p + "
+                        f"{usage['completion_tokens']}c = "
+                        f"{usage['prompt_tokens'] + usage['completion_tokens']}t "
+                        f"({usage['requests']} requests)[/dim]"
+                    )
+
         except Exception as e:
             console.print(f"[bold red]Test {test_name} crashed: {e}[/bold red]")
             results.append(TestResult(
@@ -807,14 +878,57 @@ def save_results(path: str, model_a: str, model_b: str,
 # Main
 # ---------------------------------------------------------------------------
 
+def resolve_env(val: str) -> str:
+    """Resolve ${ENV_VAR} or $ENV_VAR references in a string."""
+    if not val:
+        return val
+    if val.startswith("${") and val.endswith("}"):
+        return os.environ.get(val[2:-1], val)
+    if val.startswith("$") and not val.startswith("${"):
+        return os.environ.get(val[1:], val)
+    return val
+
+
 async def main():
     parser = argparse.ArgumentParser(
         description="Standalone model benchmark — no Agent/memory/DB required",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  # Two Ollama models\n"
+            "  python scripts/benchmark_standalone.py qwen3:14b glm-5:cloud\n\n"
+            "  # Two OpenRouter models\n"
+            "  python scripts/benchmark_standalone.py openai/gpt-4o anthropic/claude-sonnet-4 \\\n"
+            "      --provider openai --api-url https://openrouter.ai/api/v1 --api-key $OPENROUTER_API_KEY\n\n"
+            "  # Mixed: Ollama model A vs OpenRouter model B\n"
+            "  python scripts/benchmark_standalone.py qwen3:14b openai/gpt-4o \\\n"
+            "      --provider-b openai --api-url-b https://openrouter.ai/api/v1 --api-key-b $OPENROUTER_API_KEY\n"
+        ),
     )
-    parser.add_argument("model_a", help="First model name (e.g. qwen3:14b)")
-    parser.add_argument("model_b", help="Second model name (e.g. glm-5:cloud)")
+    parser.add_argument("model_a", help="First model name (e.g. qwen3:14b or openai/gpt-4o)")
+    parser.add_argument("model_b", help="Second model name")
+
+    # Shared defaults (apply to both models unless overridden)
+    parser.add_argument("--provider", default="ollama", choices=["ollama", "openai"],
+                        help="LLM provider for both models (default: ollama)")
     parser.add_argument("--host", default="http://localhost:11434",
                         help="Ollama host URL (default: localhost:11434)")
+    parser.add_argument("--api-url", default="",
+                        help="OpenAI-compatible API base URL (e.g. https://openrouter.ai/api/v1)")
+    parser.add_argument("--api-key", default="",
+                        help="API key (supports $ENV_VAR syntax)")
+
+    # Per-model overrides (model B can use a different provider)
+    parser.add_argument("--provider-b", default=None, choices=["ollama", "openai"],
+                        help="Override provider for model B (default: same as --provider)")
+    parser.add_argument("--host-b", default=None,
+                        help="Override Ollama host for model B")
+    parser.add_argument("--api-url-b", default=None,
+                        help="Override API URL for model B")
+    parser.add_argument("--api-key-b", default=None,
+                        help="Override API key for model B")
+
+    # Test configuration
     parser.add_argument("--suite", choices=["canned", "stress", "all"],
                         default="stress", help="Test suite to run (default: stress)")
     parser.add_argument("--output", "-o", default="data/benchmark_standalone_results.json",
@@ -834,6 +948,16 @@ async def main():
 
     args = parser.parse_args()
 
+    # Resolve per-model settings (B inherits from shared unless overridden)
+    provider_a = args.provider
+    provider_b = args.provider_b or args.provider
+    host_a = args.host
+    host_b = args.host_b or args.host
+    api_url_a = args.api_url
+    api_url_b = args.api_url_b or args.api_url
+    api_key_a = resolve_env(args.api_key)
+    api_key_b = resolve_env(args.api_key_b or args.api_key)
+
     # Select test suite
     if args.suite == "canned":
         tests = CANNED_TESTS
@@ -844,8 +968,16 @@ async def main():
 
     if not args.quiet:
         console.print(f"[bold]Standalone Model Benchmark[/bold]")
-        console.print(f"  Models: {args.model_a} vs {args.model_b}")
-        console.print(f"  Host: {args.host}")
+        console.print(f"  Model A: {args.model_a} ({provider_a})")
+        console.print(f"  Model B: {args.model_b} ({provider_b})")
+        if provider_a == "openai":
+            console.print(f"  API URL A: {api_url_a}")
+        else:
+            console.print(f"  Host A: {host_a}")
+        if provider_b == "openai":
+            console.print(f"  API URL B: {api_url_b}")
+        elif provider_b != provider_a or host_b != host_a:
+            console.print(f"  Host B: {host_b}")
         console.print(f"  Suite: {args.suite} ({len(tests)} tests)")
         console.print(f"  Budget: {args.budget} tools/test")
         console.print(f"  Timeout: {args.timeout}s")
@@ -859,18 +991,53 @@ async def main():
         if not args.quiet:
             console.print(f"  Resuming: {len(completed_keys)} tests already done")
 
-    # Verify models are available
-    client = LLMClient(host=args.host, timeout=args.timeout)
+    # Create clients for each model
     try:
-        model_names = await client.list_models()  # returns list[str]
-        for model_arg in [args.model_a, args.model_b]:
-            found = any(model_arg in name or name.startswith(model_arg) for name in model_names)
-            if not found:
-                console.print(f"[bold yellow]Warning: model '{model_arg}' not found in Ollama. "
-                              f"Available: {', '.join(model_names[:10])}[/bold yellow]")
-    except Exception as e:
-        console.print(f"[bold red]Cannot connect to Ollama at {args.host}: {e}[/bold red]")
+        client_a = create_client(
+            provider=provider_a, host=host_a,
+            api_url=api_url_a, api_key=api_key_a,
+            timeout=args.timeout,
+        )
+    except ValueError as e:
+        console.print(f"[bold red]Model A client error: {e}[/bold red]")
         sys.exit(1)
+
+    try:
+        client_b = create_client(
+            provider=provider_b, host=host_b,
+            api_url=api_url_b, api_key=api_key_b,
+            timeout=args.timeout,
+        )
+    except ValueError as e:
+        console.print(f"[bold red]Model B client error: {e}[/bold red]")
+        sys.exit(1)
+
+    # Health check
+    for label, client, provider in [("A", client_a, provider_a), ("B", client_b, provider_b)]:
+        try:
+            healthy = await client.check_health()
+            if not healthy:
+                console.print(f"[bold yellow]Warning: Model {label} endpoint health check failed[/bold yellow]")
+        except Exception as e:
+            console.print(f"[bold yellow]Warning: Model {label} health check error: {e}[/bold yellow]")
+
+    # For Ollama clients, verify models exist
+    if provider_a == "ollama":
+        try:
+            model_names = await client_a.list_models()
+            if not any(args.model_a in n or n.startswith(args.model_a) for n in model_names):
+                console.print(f"[bold yellow]Warning: '{args.model_a}' not found in Ollama. "
+                              f"Available: {', '.join(model_names[:10])}[/bold yellow]")
+        except Exception:
+            pass
+    if provider_b == "ollama":
+        try:
+            model_names = await client_b.list_models()
+            if not any(args.model_b in n or n.startswith(args.model_b) for n in model_names):
+                console.print(f"[bold yellow]Warning: '{args.model_b}' not found in Ollama. "
+                              f"Available: {', '.join(model_names[:10])}[/bold yellow]")
+        except Exception:
+            pass
 
     # Create sandbox
     if args.sandbox:
@@ -894,11 +1061,11 @@ async def main():
         # Run model A
         if not args.quiet:
             console.print(f"\n[bold magenta]{'='*60}[/bold magenta]")
-            console.print(f"[bold magenta]  MODEL A: {args.model_a}[/bold magenta]")
+            console.print(f"[bold magenta]  MODEL A: {args.model_a} ({provider_a})[/bold magenta]")
             console.print(f"[bold magenta]{'='*60}[/bold magenta]")
 
         results_a = await run_suite(
-            client=client,
+            client=client_a,
             model=args.model_a,
             tests=tests,
             sandbox_base=sandbox_base,
@@ -906,6 +1073,7 @@ async def main():
             context_tokens=args.context,
             quiet=args.quiet,
             completed_keys=completed_keys,
+            is_openai=(provider_a == "openai"),
         )
         all_results.extend(results_a)
 
@@ -916,11 +1084,11 @@ async def main():
         # Run model B
         if not args.quiet:
             console.print(f"\n[bold magenta]{'='*60}[/bold magenta]")
-            console.print(f"[bold magenta]  MODEL B: {args.model_b}[/bold magenta]")
+            console.print(f"[bold magenta]  MODEL B: {args.model_b} ({provider_b})[/bold magenta]")
             console.print(f"[bold magenta]{'='*60}[/bold magenta]")
 
         results_b = await run_suite(
-            client=client,
+            client=client_b,
             model=args.model_b,
             tests=tests,
             sandbox_base=sandbox_base,
@@ -928,12 +1096,25 @@ async def main():
             context_tokens=args.context,
             quiet=args.quiet,
             completed_keys=completed_keys,
+            is_openai=(provider_b == "openai"),
         )
         all_results.extend(results_b)
 
         # Final save
         save_results(args.output, args.model_a, args.model_b,
                      all_results, previous_results)
+
+        # Token usage summary for OpenAI clients
+        if not args.quiet:
+            for label, client, provider in [("A", client_a, provider_a), ("B", client_b, provider_b)]:
+                if provider == "openai" and hasattr(client, 'get_usage'):
+                    usage = client.get_usage()
+                    total_tokens = usage['prompt_tokens'] + usage['completion_tokens']
+                    console.print(
+                        f"\n[bold]Token usage ({label}):[/bold] "
+                        f"{usage['prompt_tokens']:,}p + {usage['completion_tokens']:,}c "
+                        f"= {total_tokens:,} total ({usage['requests']} requests)"
+                    )
 
         # Comparison table
         if not args.quiet and results_a and results_b:
