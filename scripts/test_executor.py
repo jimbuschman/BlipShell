@@ -1308,6 +1308,12 @@ async def run_test(
 
     await agent.initialize(on_status=on_status)
 
+    # Disable memory worker for tests — processing test narratives is wasteful
+    # and the drain on shutdown blocks for minutes when cloud endpoints are exhausted.
+    if agent._memory_worker:
+        agent._memory_worker.stop()
+        agent._memory_worker = None
+
     # 1b. Apply Phase 2 overrides
     overrides.apply(agent)
 
@@ -1469,9 +1475,10 @@ async def run_test(
         if files_edited:
             console.print(f"  Files edited: {', '.join(files_edited)}")
 
-    # 11. Cleanup
+    # 11. Cleanup — skip session summary/lessons (wasteful for tests)
     try:
-        await agent.end_session()
+        if agent.session_manager:
+            agent.session_manager.session_id = None  # skip end_session processing
     except Exception:
         pass
     try:
