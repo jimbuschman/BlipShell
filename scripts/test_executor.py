@@ -1310,8 +1310,11 @@ async def run_test(
 
     # Disable memory worker for tests — processing test narratives is wasteful
     # and the drain on shutdown blocks for minutes when cloud endpoints are exhausted.
-    # Set to None without draining — test process exits anyway.
-    agent._memory_worker = None
+    if agent._memory_worker:
+        from blipshell.memory.worker import WorkItem, WorkType
+        # Signal shutdown (worker exits after current item) but don't block waiting
+        agent._memory_worker._queue.put_nowait(WorkItem(work_type=WorkType.SHUTDOWN, text=""))
+        agent._memory_worker = None
 
     # 1b. Apply Phase 2 overrides
     overrides.apply(agent)
