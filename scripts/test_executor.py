@@ -1312,8 +1312,16 @@ async def run_test(
     # and the drain on shutdown blocks for minutes when cloud endpoints are exhausted.
     if agent._memory_worker:
         from blipshell.memory.worker import WorkItem, WorkType
-        # Signal shutdown (worker exits after current item) but don't block waiting
+        # Clear all pending items so SHUTDOWN is processed immediately
+        while not agent._memory_worker._queue.empty():
+            try:
+                agent._memory_worker._queue.get_nowait()
+            except Exception:
+                break
         agent._memory_worker._queue.put_nowait(WorkItem(work_type=WorkType.SHUTDOWN, text=""))
+        # Wait briefly for current item to finish, then move on
+        if agent._memory_worker._thread:
+            agent._memory_worker._thread.join(timeout=3)
         agent._memory_worker = None
 
     # 1b. Apply Phase 2 overrides
