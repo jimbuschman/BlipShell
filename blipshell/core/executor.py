@@ -135,6 +135,13 @@ def _summarize_tool_call(
         if isinstance(func, dict):
             name = func.get("name", "")
             args = func.get("arguments", {})
+            # OpenAI returns arguments as JSON string, not dict
+            if isinstance(args, str):
+                try:
+                    import json
+                    args = json.loads(args)
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
         else:
             # Stringified — try to parse
             name = str(func)
