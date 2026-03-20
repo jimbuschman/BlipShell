@@ -21,21 +21,18 @@ class SearchMemoriesTool(Tool):
         return ToolDefinition(
             name="search_memories",
             description=(
-                "Search through past conversation memories using semantic similarity.\n\n"
-                "IMPORTANT: Memories are AUTOMATICALLY searched before every response and loaded into your context. "
-                "Do NOT call this tool unless the user explicitly asks to search for something specific "
-                "(e.g. 'search for what I said about X' or 'find our conversation about Y').\n\n"
-                "When to use:\n"
-                "- User explicitly asks to recall or find a past conversation\n"
-                "- User says 'search memories for...' or 'do you remember when...'\n\n"
-                "When NOT to use:\n"
-                "- To answer a question — your context already has relevant memories\n"
-                "- To 'check' if you know something — just answer from context\n"
-                "- Before responding to any message — the system already did this for you"
+                "Search past conversation memories for specific information.\n\n"
+                "Your context already includes automatically-retrieved memories, but they're "
+                "limited to the top results for the user's current message. Use this tool when:\n"
+                "- You need more detail about a topic than what's in your context\n"
+                "- The user asks about something specific from a past conversation\n"
+                "- You want to verify a fact before stating it\n"
+                "- The automatically-loaded context doesn't cover what the user is asking about\n\n"
+                "Returns full conversation content, not just summaries."
             ),
             parameters=[
                 ToolParameter(name="query", type=ToolParameterType.STRING,
-                              description="Search query describing what you want to recall"),
+                              description="Search query — be specific (e.g. 'cat name' not 'what do you know about me')"),
                 ToolParameter(name="max_results", type=ToolParameterType.INTEGER,
                               description="Maximum results to return (default 5)", required=False),
             ],
@@ -53,9 +50,16 @@ class SearchMemoriesTool(Tool):
 
         output = []
         for r in results:
+            # Return raw content (actual conversation), not one-line summaries.
+            text = r.text if r.text and len(r.text) > len(r.summary or "") else (r.summary or r.text or "")
+            if len(text) > 1200:
+                text = text[:1200] + "..."
+            ts = ""
+            if r.timestamp:
+                ts = f" | {r.timestamp.strftime('%Y-%m-%d')}"
             output.append(
-                f"[Score: {r.boosted_score:.2f} | Rank: {r.rank}]\n"
-                f"{r.summary}\n"
+                f"[Score: {r.boosted_score:.2f}{ts}]\n"
+                f"{text}\n"
             )
         return "\n---\n".join(output)
 
