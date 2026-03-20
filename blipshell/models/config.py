@@ -66,21 +66,29 @@ class PoolConfig(BaseModel):
 
 
 class MemoryPoolsConfig(BaseModel):
-    """All memory pool configurations."""
-    core: PoolConfig = PoolConfig(percentage=0.10, priority=5, max_items=150)
-    active_session: PoolConfig = PoolConfig(percentage=0.35, priority=3)
-    recent_history: PoolConfig = PoolConfig(percentage=0.15, priority=4)
-    recall: PoolConfig = PoolConfig(percentage=0.30, priority=2)
-    buffer: PoolConfig = PoolConfig(percentage=0.10, priority=1)
+    """All memory pool configurations.
+
+    Pool contracts:
+    - Core: Stable personal facts (core_memories table). Always present. Small.
+    - Lessons: Top extracted insights. Always present. Capped at 30.
+    - ActiveSession: Current conversation messages.
+    - RecentHistory: Previous session memories + summaries.
+    - Recall: Search results — most relevant content for the current query. Largest pool.
+    """
+    core: PoolConfig = PoolConfig(percentage=0.05, priority=5, max_items=20)
+    lessons: PoolConfig = PoolConfig(percentage=0.05, priority=4, max_items=30)
+    active_session: PoolConfig = PoolConfig(percentage=0.30, priority=3)
+    recent_history: PoolConfig = PoolConfig(percentage=0.20, priority=2)
+    recall: PoolConfig = PoolConfig(percentage=0.40, priority=1)
+    # Buffer removed — was always empty, wasted 10% of budget.
+    # Legacy config.yaml with buffer key will be ignored (Pydantic extra="ignore").
 
     def model_post_init(self, __context):
-        """Enforce Core pool max_items cap.
-
-        config.yaml overrides replace the entire PoolConfig object, losing
-        the max_items=150 default. This ensures the cap is always applied.
-        """
+        """Enforce pool item caps even when config.yaml overrides lose defaults."""
         if self.core.max_items is None:
-            self.core.max_items = 150
+            self.core.max_items = 20
+        if self.lessons.max_items is None:
+            self.lessons.max_items = 30
 
 
 class DecayRatesConfig(BaseModel):

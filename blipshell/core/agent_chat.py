@@ -589,7 +589,10 @@ class ChatMixin:
         lesson_task = asyncio.ensure_future(_search_lessons())
         await asyncio.gather(mem_task, core_task, lesson_task, return_exceptions=True)
 
-        # Process memory results
+        # Process memory results — inject raw content, not summaries.
+        # Summaries are one-line abstractions ("User asked about X") that lose
+        # the actual information. Raw content carries the real facts.
+        MAX_MEMORY_CHARS = 1200  # ~300 tokens per memory
         memory_count = 0
         try:
             results = mem_task.result() if not mem_task.cancelled() else []
@@ -597,8 +600,12 @@ class ChatMixin:
                 raise results
             memory_count = len(results)
             for r in results:
+                # Use raw content when available and substantial, else summary
+                text = r.text if r.text and len(r.text) > len(r.summary or "") else (r.summary or r.text or "")
+                if len(text) > MAX_MEMORY_CHARS:
+                    text = text[:MAX_MEMORY_CHARS] + "..."
                 self.memory_manager.add_memory("Recall", PoolItem(
-                    text=f"{_time_label(r.timestamp)}{r.summary}",
+                    text=f"{_time_label(r.timestamp)}{text}",
                     session_role="system",
                     priority_score=r.boosted_score,
                 ))
@@ -636,8 +643,8 @@ class ChatMixin:
                     continue
                 lesson_count += 1
                 self.memory_manager.add_memory("Recall", PoolItem(
-                    text=lr.get("document", ""),
-                    session_role="system2",
+                    text=f"[Lesson] {lr.get('document', '')}",
+                    session_role="system",
                     priority_score=similarity + 0.1,
                 ))
         except Exception as e:
@@ -688,19 +695,19 @@ class ChatMixin:
             token_budget=available, pool_budgets=pool_budgets,
         )
 
-        # Build memory context string organized by pool
-        # Order: Core first (stable facts, LLM attends to start), history in
-        # the middle (lowest attention), Recall last (most relevant, LLM
-        # attends to end) — mitigates lost-in-the-middle effect.
+        # Build memory context string organized by pool.
+        # Order: Core (stable facts) → Recall (most relevant search results) first.
+        # These are the highest-signal content and go at the top where LLM
+        # attention is strongest. Lessons and history follow. ActiveSession
+        # (conversation) last — natural position.
         pool_labels = {
-            "Core": "CoreFoundation",
-            "Lessons": "RelevantLessons",
+            "Core": "CoreFacts",
             "Recall": "RelevantMemory",
+            "Lessons": "Lessons",
             "RecentHistory": "RecentHistory",
-            "Buffer": "RecentHistory",
             "ActiveSession": "ActiveSession",
         }
-        pool_order = ["Core", "Lessons", "RecentHistory", "Buffer", "ActiveSession", "Recall"]
+        pool_order = ["Core", "Recall", "Lessons", "RecentHistory", "ActiveSession"]
         context_parts: dict[str, list[str]] = {}
         for item in memory_items:
             pool = item.pool_name

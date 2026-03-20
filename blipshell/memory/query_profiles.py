@@ -7,35 +7,37 @@ differently for recall-heavy, session-heavy, or coding queries.
 
 import re
 
-# Pool percentage presets per query type
+# Pool percentage presets per query type.
+# Core + Lessons are small, always-present context.
+# Recall is the largest — search results with actual content.
 PROFILES: dict[str, dict[str, float]] = {
     "balanced": {
-        "Core": 0.10,
-        "ActiveSession": 0.35,
-        "RecentHistory": 0.15,
-        "Recall": 0.30,
-        "Buffer": 0.10,
+        "Core": 0.05,
+        "Lessons": 0.05,
+        "ActiveSession": 0.30,
+        "RecentHistory": 0.20,
+        "Recall": 0.40,
     },
     "recall": {
-        "Core": 0.10,
-        "ActiveSession": 0.20,
+        "Core": 0.05,
+        "Lessons": 0.05,
+        "ActiveSession": 0.15,
         "RecentHistory": 0.15,
-        "Recall": 0.45,
-        "Buffer": 0.10,
+        "Recall": 0.60,
     },
     "session": {
-        "Core": 0.08,
+        "Core": 0.05,
+        "Lessons": 0.05,
         "ActiveSession": 0.45,
-        "RecentHistory": 0.17,
-        "Recall": 0.20,
-        "Buffer": 0.10,
+        "RecentHistory": 0.20,
+        "Recall": 0.25,
     },
     "coding": {
-        "Core": 0.15,
-        "ActiveSession": 0.30,
-        "RecentHistory": 0.10,
-        "Recall": 0.35,
-        "Buffer": 0.10,
+        "Core": 0.05,
+        "Lessons": 0.05,
+        "ActiveSession": 0.25,
+        "RecentHistory": 0.15,
+        "Recall": 0.50,
     },
 }
 

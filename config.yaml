@@ -95,20 +95,20 @@ endpoints:
 
 memory:
   pools:
-    core:
-      percentage: 0.10
+    core:           # Stable personal facts (core_memories). Always present.
+      percentage: 0.05
       priority: 5
-    active_session:
-      percentage: 0.35
-      priority: 3
-    recent_history:
-      percentage: 0.15
+    lessons:        # Top extracted insights. Always present.
+      percentage: 0.05
       priority: 4
-    recall:
+    active_session: # Current conversation messages.
       percentage: 0.30
+      priority: 3
+    recent_history: # Previous session memories + summaries.
+      percentage: 0.20
       priority: 2
-    buffer:
-      percentage: 0.10
+    recall:         # Search results — most relevant content per query. Largest pool.
+      percentage: 0.40
       priority: 1
 
   # total_context_tokens is now derived from the endpoint's context_tokens automatically.

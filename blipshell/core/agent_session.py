@@ -96,15 +96,22 @@ class SessionMixin:
         logger.info("Loaded %d core memories", len(core_memories))
 
     async def _load_lessons(self):
-        """Load lessons into the Core pool."""
+        """Load top lessons into the Lessons pool.
+
+        Only loads the top 30 by importance — the rest are found via semantic
+        search in _search_relevant_memories() and added to Recall per-query.
+        """
         lessons = await self.sqlite.get_all_lessons()
-        for lesson in lessons:
-            self.memory_manager.add_memory("Core", PoolItem(
+        lessons.sort(key=lambda l: l.importance, reverse=True)
+        loaded = 0
+        for lesson in lessons[:30]:
+            self.memory_manager.add_memory("Lessons", PoolItem(
                 text=lesson.content,
-                session_role="system2",  # marks as lesson for pool labeling
+                session_role="system",
                 priority_score=lesson.importance,
             ))
-        logger.info("Loaded %d lessons", len(lessons))
+            loaded += 1
+        logger.info("Loaded %d/%d lessons (top by importance)", loaded, len(lessons))
 
     async def _auto_prune_memories(self):
         """Prune old low-value memories on startup (disabled when auto_prune_days=0)."""
@@ -306,8 +313,12 @@ class SessionMixin:
                             label = f"[{delta.days}d ago]"
                         else:
                             label = f"[{ts.strftime('%Y-%m-%d')}]"
+                    # Use raw content (actual facts) instead of summary ("User asked about X")
+                    text = m.content if m.content and len(m.content) > len(m.summary or "") else (m.summary or m.content or "")
+                    if len(text) > 500:
+                        text = text[:500] + "..."
                     self.memory_manager.add_memory("RecentHistory", PoolItem(
-                        text=f"{label} {m.summary}",
+                        text=f"{label} {text}",
                         session_role="system",
                         priority_score=2.0 + m.importance,
                         session_id=s.id,

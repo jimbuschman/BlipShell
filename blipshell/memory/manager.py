@@ -1,8 +1,7 @@
-"""Token budget pool system (direct port of MemoryManager.cs).
+"""Token budget pool system.
 
-5 pools: Core (10%/cap 2048), ActiveSession (35%), RecentHistory (15%),
-Recall (30%/cap 8192), Buffer (10%).
-
+5 pools: Core (5%, personal facts), Lessons (5%, top insights),
+ActiveSession (30%), RecentHistory (20%), Recall (40%, search results).
 """
 
 import logging
@@ -50,7 +49,7 @@ class PoolItem:
     estimated_tokens: int = 0
     priority_score: float = 0.0
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    session_role: str = "user"  # user, assistant, system, system2 (lessons)
+    session_role: str = "user"  # user, assistant, system
     pool_name: str = ""
     session_id: int = 0
 
@@ -142,14 +141,22 @@ class MemoryManager:
         self._summarize_callback = callback
 
     def _configure_pools(self):
-        """Configure pools from config."""
+        """Configure pools from config.
+
+        Pool contracts:
+        - Core: Stable personal facts (max 20 items). Always present.
+        - Lessons: Top extracted insights (max 30 items). Always present.
+        - ActiveSession: Current conversation messages.
+        - RecentHistory: Previous session memories + summaries.
+        - Recall: Search results — largest pool, most relevant content per query.
+        """
         pools_cfg = self.config.pools
         pool_defs = {
             "Core": (pools_cfg.core.percentage, pools_cfg.core.priority, pools_cfg.core.max_tokens, pools_cfg.core.max_items),
+            "Lessons": (pools_cfg.lessons.percentage, pools_cfg.lessons.priority, pools_cfg.lessons.max_tokens, pools_cfg.lessons.max_items),
             "ActiveSession": (pools_cfg.active_session.percentage, pools_cfg.active_session.priority, pools_cfg.active_session.max_tokens, pools_cfg.active_session.max_items),
             "RecentHistory": (pools_cfg.recent_history.percentage, pools_cfg.recent_history.priority, pools_cfg.recent_history.max_tokens, pools_cfg.recent_history.max_items),
             "Recall": (pools_cfg.recall.percentage, pools_cfg.recall.priority, pools_cfg.recall.max_tokens, pools_cfg.recall.max_items),
-            "Buffer": (pools_cfg.buffer.percentage, pools_cfg.buffer.priority, pools_cfg.buffer.max_tokens, pools_cfg.buffer.max_items),
         }
 
         total_allocated = 0
@@ -203,7 +210,7 @@ class MemoryManager:
             entries = pool.get_top_entries(remaining, max_override=cap)
             for entry in entries:
                 if remaining >= entry.estimated_tokens:
-                    entry.pool_name = "Lessons" if entry.session_role == "system2" else pool.name
+                    entry.pool_name = pool.name
                     result.append(entry)
                     remaining -= entry.estimated_tokens
 
