@@ -1,0 +1,102 @@
+{
+  "what is my name": {
+    "expected_ids": [21911, 25885, 21931, 19479, 21916, 19476],
+    "notes": "Results about naming the AI 'Echo'. No memory actually contains the user's real name — data gap."
+  },
+  "where do I work": {
+    "expected_ids": [],
+    "notes": "No memory contains where the user works. All results are noise. Data gap."
+  },
+  "what programming languages do I know": {
+    "expected_ids": [2020, 2022, 9965],
+    "notes": "ID 2020 mentions Arduino/Python, 2022 recommends Python for Raspberry Pi, 9965 asks about AI language preference. Most results are about what OTHER things are written in, not what the user knows."
+  },
+  "what computer setup do I have": {
+    "expected_ids": [839, 8691],
+    "notes": "ID 839 has actual specs (11th Gen i5-11400). ID 8691 asks about power supply for main PC. Most results are about Raspberry Pi or Docker setup."
+  },
+  "what are my preferences": {
+    "expected_ids": [12536, 4612],
+    "notes": "ID 12536: user prefers not to get multiple-choice options. ID 4612: discussion about opinions vs preferences. Very few actual preference memories."
+  },
+  "how does entity extraction work": {
+    "expected_ids": [39377, 3425],
+    "notes": "ID 39377: timeout in entity extraction step (BlipShell-specific). ID 3425: Entity Component System in games (not BlipShell). Most high-scoring 40xxx results are stress test artifacts."
+  },
+  "what model do we use for ranking": {
+    "expected_ids": [9077, 6360, 835, 6361, 6359, 901, 873],
+    "notes": "Multiple relevant results about model ranking/comparison. ID 9077: ranked 7 AI models. ID 6360: two-pass ranking system. ID 835: Claude model rankings."
+  },
+  "how does the search pipeline work": {
+    "expected_ids": [],
+    "notes": "No results about BlipShell's actual search pipeline. All 40xxx are stress test noise. Others are about web search. Data gap — search pipeline discussions happened in Claude Code, not in stored memories."
+  },
+  "what is the executor architecture": {
+    "expected_ids": [40961, 40988, 40986, 35006, 11089],
+    "notes": "ID 40961/40988/40986: actual TaskExecutor discussions. ID 35006: explains TaskExecutor class. ID 11089: task engine/executor/evaluator design."
+  },
+  "how does the memory system work": {
+    "expected_ids": [4031, 33309, 11150, 11159, 32376, 9649, 10344, 32724, 8414, 9393, 33312, 10103],
+    "notes": "Many highly relevant results — ChatGPT memory explanation, memory pools, memory management, dedup/scoring. This query works well."
+  },
+  "what did we work on recently": {
+    "expected_ids": [17759, 18966, 20541],
+    "notes": "ID 17759: 'do you remember what we've been working on'. ID 18966: 'what was the last major thing'. Most results are meta-questions, not actual work content. 40xxx are stress test artifacts."
+  },
+  "what was the last bug we fixed": {
+    "expected_ids": [34564, 36523, 5929, 40920],
+    "notes": "ID 34564/36523: two Python bugs fixed. ID 5929: five C# ProcessQueue bugs. ID 40920: stress_test_buggy fixes."
+  },
+  "what changes did we make to the config": {
+    "expected_ids": [],
+    "notes": "40xxx results are stress test noise. No memories about actual config.yaml changes. Data gap."
+  },
+  "what tests did we run": {
+    "expected_ids": [],
+    "notes": "40xxx results are stress test sessions, not discussions about testing. Data gap."
+  },
+  "what models have we benchmarked": {
+    "expected_ids": [9077, 835, 833, 873, 891, 32890, 56],
+    "notes": "Good results about model comparisons and benchmarks. ID 9077: ranked 7 models. ID 835: Claude model rankings. ID 833: comparison table."
+  },
+  "what is BlipShell": {
+    "expected_ids": [40964, 40667, 40944, 40943, 40971, 40870, 40650, 40651],
+    "notes": "40xxx results here are actually relevant — they describe BlipShell classes, architecture, structure. These happen to be from stress tests but contain real code analysis."
+  },
+  "what is the overall architecture": {
+    "expected_ids": [40971, 40664, 40650, 40651],
+    "notes": "Cross-reference results and class analysis. Relevant for understanding architecture."
+  },
+  "what databases does the system use": {
+    "expected_ids": [32376, 11159, 9649],
+    "notes": "ID 32376: SQLite + Entity implementation. ID 11159: memory system storage/dedup/scoring. ID 9649: five memory pools."
+  },
+  "how do sessions work": {
+    "expected_ids": [11150, 11159, 9393],
+    "notes": "Memory system sessions. Most 40xxx results are stress test noise."
+  },
+  "what is the memory processing pipeline": {
+    "expected_ids": [4031, 33309, 32376, 32724, 32898, 9649, 10344],
+    "notes": "Good coverage — ChatGPT memory mechanisms, vector search, memory pools, LLM memory design."
+  },
+  "OllamaGate contention": {
+    "expected_ids": [],
+    "notes": "Term 'OllamaGate' does not exist in any memory. Zero relevant results. Data gap."
+  },
+  "ChromaDB sync drift": {
+    "expected_ids": [],
+    "notes": "Results are about AI drift detection (EchoKernel), not ChromaDB/SQLite sync. Data gap."
+  },
+  "task_complete tool": {
+    "expected_ids": [5997, 6005, 6008, 5719, 5752, 5953],
+    "notes": "Good results about tool_output messaging, tool-calling implementation. BlipShell-relevant."
+  },
+  "PII sanitization Presidio": {
+    "expected_ids": [],
+    "notes": "Terms 'PII' and 'Presidio' do not exist in any memory. Results are about chemical cleaning. Data gap."
+  },
+  "centroid tagger": {
+    "expected_ids": [9039],
+    "notes": "ID 9039: LLM-generated tags integration. Most results are generic. Data gap — centroid tagger discussed in Claude Code, not stored memories."
+  }
+}

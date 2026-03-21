@@ -188,6 +188,39 @@ async def cleanup_stress_tests(db, dry_run=True) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Untag test sessions from projects
+# ---------------------------------------------------------------------------
+
+async def untag_test_sessions(db, dry_run=True) -> dict:
+    """Remove project tags from 2-message sessions that are test/benchmark artifacts.
+
+    The backfill_project_tags step tags sessions containing BlipShell code terms,
+    but stress test benchmark sessions also contain those terms (they run tasks
+    against the codebase). These 2-message sessions pollute project-scoped search.
+    """
+    cursor = await db.execute("""
+        SELECT id FROM sessions
+        WHERE project IS NOT NULL
+          AND message_count <= 2
+    """)
+    rows = await cursor.fetchall()
+    to_untag = [r[0] for r in rows]
+
+    if not dry_run and to_untag:
+        placeholders = ','.join('?' * len(to_untag))
+        await db.execute(
+            f"UPDATE sessions SET project = NULL WHERE id IN ({placeholders})",
+            to_untag,
+        )
+        await db.commit()
+
+    return {
+        "sessions_untagged": len(to_untag),
+        "action": "applied" if not dry_run else "dry_run",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
 
@@ -265,6 +298,10 @@ async def main():
     print(f"\n--- Step 3: Archive stress test artifacts ---")
     r3 = await cleanup_stress_tests(db, dry_run=not args.apply)
     print(f"  Memories to archive: {r3['memories_archived']}")
+
+    print(f"\n--- Step 4: Untag test sessions from projects ---")
+    r4 = await untag_test_sessions(db, dry_run=not args.apply)
+    print(f"  Sessions to untag: {r4['sessions_untagged']}")
 
     if args.apply:
         print("\n--- AFTER ---")
