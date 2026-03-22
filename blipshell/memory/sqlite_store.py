@@ -353,6 +353,70 @@ CREATE TABLE IF NOT EXISTS friction_log (
 
 CREATE INDEX IF NOT EXISTS idx_friction_log_session ON friction_log(session_id);
 CREATE INDEX IF NOT EXISTS idx_friction_log_reviewed ON friction_log(is_reviewed);
+
+-- ===== Alive System Tables =====
+
+CREATE TABLE IF NOT EXISTS thoughts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'observation',
+    confidence REAL NOT NULL DEFAULT 0.5,
+    source_type TEXT NOT NULL DEFAULT 'reflection',
+    source_session_id INTEGER,
+    source_memory_id INTEGER,
+    parent_thought_id INTEGER,
+    is_active BOOLEAN DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (source_session_id) REFERENCES sessions(id),
+    FOREIGN KEY (parent_thought_id) REFERENCES thoughts(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_thoughts_category ON thoughts(category);
+CREATE INDEX IF NOT EXISTS idx_thoughts_active ON thoughts(is_active);
+CREATE INDEX IF NOT EXISTS idx_thoughts_confidence ON thoughts(confidence);
+CREATE INDEX IF NOT EXISTS idx_thoughts_created ON thoughts(created_at);
+
+CREATE TABLE IF NOT EXISTS identity_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    version_number INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    trigger TEXT NOT NULL DEFAULT 'nightly',
+    thought_count INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_versions_version ON identity_versions(version_number);
+
+CREATE TABLE IF NOT EXISTS initiative_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'question',
+    priority REAL NOT NULL DEFAULT 0.5,
+    source_type TEXT NOT NULL DEFAULT 'monologue',
+    source_thought_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending',
+    raised_session_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    raised_at DATETIME,
+    FOREIGN KEY (source_thought_id) REFERENCES thoughts(id),
+    FOREIGN KEY (raised_session_id) REFERENCES sessions(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_initiative_status ON initiative_queue(status);
+CREATE INDEX IF NOT EXISTS idx_initiative_priority ON initiative_queue(priority DESC);
+
+CREATE TABLE IF NOT EXISTS monologue_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cycle_number INTEGER NOT NULL,
+    memories_reviewed INTEGER DEFAULT 0,
+    thoughts_generated INTEGER DEFAULT 0,
+    thoughts_refined INTEGER DEFAULT 0,
+    initiative_items_added INTEGER DEFAULT 0,
+    raw_output TEXT,
+    elapsed_s REAL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -2708,6 +2772,309 @@ class SQLiteStore:
                    WHERE session_id IS NOT NULL AND source = 'nightly'
                )
                ORDER BY s.id DESC LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    # ===== Alive System Methods =====
+
+    async def add_thought(
+        self,
+        content: str,
+        category: str = "observation",
+        confidence: float = 0.5,
+        source_type: str = "reflection",
+        source_session_id: int | None = None,
+        source_memory_id: int | None = None,
+        parent_thought_id: int | None = None,
+    ) -> int:
+        """Insert a thought and return its ID."""
+        cursor = await self._db.execute(
+            """INSERT INTO thoughts
+               (content, category, confidence, source_type,
+                source_session_id, source_memory_id, parent_thought_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (content, category, confidence, source_type,
+             source_session_id, source_memory_id, parent_thought_id),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def deactivate_thought(self, thought_id: int):
+        """Mark a thought as inactive (superseded)."""
+        await self._db.execute(
+            "UPDATE thoughts SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (thought_id,),
+        )
+        await self._db.commit()
+
+    async def get_active_thoughts(
+        self,
+        category: str | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Get active thoughts, optionally filtered by category."""
+        if category:
+            cursor = await self._db.execute(
+                """SELECT * FROM thoughts
+                   WHERE is_active = 1 AND category = ?
+                   ORDER BY confidence DESC, created_at DESC LIMIT ?""",
+                (category, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                """SELECT * FROM thoughts
+                   WHERE is_active = 1
+                   ORDER BY confidence DESC, created_at DESC LIMIT ?""",
+                (limit,),
+            )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_recent_thoughts(self, limit: int = 20) -> list[dict]:
+        """Get most recent active thoughts."""
+        cursor = await self._db.execute(
+            """SELECT * FROM thoughts
+               WHERE is_active = 1
+               ORDER BY created_at DESC LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_thought_count(self, active_only: bool = True) -> int:
+        """Count thoughts."""
+        sql = "SELECT COUNT(*) FROM thoughts"
+        if active_only:
+            sql += " WHERE is_active = 1"
+        cursor = await self._db.execute(sql)
+        row = await cursor.fetchone()
+        return row[0]
+
+    async def prune_thoughts(
+        self,
+        min_confidence: float = 0.3,
+        max_active: int = 500,
+        min_age_days: int = 7,
+    ) -> int:
+        """Deactivate low-confidence and excess thoughts. Returns count pruned."""
+        pruned = 0
+
+        # 1. Low confidence + old enough
+        cursor = await self._db.execute(
+            """UPDATE thoughts SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+               WHERE is_active = 1
+               AND confidence < ?
+               AND created_at < datetime('now', ? || ' days')""",
+            (min_confidence, f"-{min_age_days}"),
+        )
+        pruned += cursor.rowcount
+
+        # 2. Cap total active by deactivating lowest-confidence
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) FROM thoughts WHERE is_active = 1"
+        )
+        total = (await cursor.fetchone())[0]
+        if total > max_active:
+            excess = total - max_active
+            cursor = await self._db.execute(
+                """UPDATE thoughts SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+                   WHERE id IN (
+                       SELECT id FROM thoughts
+                       WHERE is_active = 1
+                       ORDER BY confidence ASC, created_at ASC
+                       LIMIT ?
+                   )""",
+                (excess,),
+            )
+            pruned += cursor.rowcount
+
+        await self._db.commit()
+        return pruned
+
+    # --- Identity Versions ---
+
+    async def add_identity_version(
+        self,
+        content: str,
+        trigger: str = "nightly",
+        thought_count: int = 0,
+    ) -> int:
+        """Insert a new identity version. Returns version ID."""
+        cursor = await self._db.execute(
+            "SELECT COALESCE(MAX(version_number), 0) + 1 FROM identity_versions"
+        )
+        next_version = (await cursor.fetchone())[0]
+
+        cursor = await self._db.execute(
+            """INSERT INTO identity_versions (version_number, content, trigger, thought_count)
+               VALUES (?, ?, ?, ?)""",
+            (next_version, content, trigger, thought_count),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_current_identity(self) -> dict | None:
+        """Get the latest identity version."""
+        cursor = await self._db.execute(
+            """SELECT * FROM identity_versions
+               ORDER BY version_number DESC LIMIT 1"""
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def get_identity_history(self, limit: int = 10) -> list[dict]:
+        """Get identity version history, newest first."""
+        cursor = await self._db.execute(
+            """SELECT * FROM identity_versions
+               ORDER BY version_number DESC LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    # --- Initiative Queue ---
+
+    async def add_initiative_item(
+        self,
+        content: str,
+        category: str = "question",
+        priority: float = 0.5,
+        source_type: str = "monologue",
+        source_thought_id: int | None = None,
+    ) -> int:
+        """Add an initiative item. Returns its ID."""
+        cursor = await self._db.execute(
+            """INSERT INTO initiative_queue
+               (content, category, priority, source_type, source_thought_id)
+               VALUES (?, ?, ?, ?, ?)""",
+            (content, category, priority, source_type, source_thought_id),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_pending_initiative(self, limit: int = 10) -> list[dict]:
+        """Get pending initiative items, highest priority first."""
+        cursor = await self._db.execute(
+            """SELECT * FROM initiative_queue
+               WHERE status = 'pending'
+               ORDER BY priority DESC, created_at ASC LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def consume_initiative(self, item_id: int, session_id: int):
+        """Mark an initiative item as raised in a session."""
+        await self._db.execute(
+            """UPDATE initiative_queue
+               SET status = 'raised', raised_session_id = ?, raised_at = CURRENT_TIMESTAMP
+               WHERE id = ?""",
+            (session_id, item_id),
+        )
+        await self._db.commit()
+
+    async def dismiss_initiative(self, item_id: int):
+        """Dismiss an initiative item."""
+        await self._db.execute(
+            "UPDATE initiative_queue SET status = 'dismissed' WHERE id = ?",
+            (item_id,),
+        )
+        await self._db.commit()
+
+    async def expire_stale_initiative(self, max_age_days: int = 30) -> int:
+        """Expire old pending initiative items. Returns count expired."""
+        cursor = await self._db.execute(
+            """UPDATE initiative_queue SET status = 'expired'
+               WHERE status = 'pending'
+               AND created_at < datetime('now', ? || ' days')""",
+            (f"-{max_age_days}",),
+        )
+        await self._db.commit()
+        return cursor.rowcount
+
+    async def cap_initiative_queue(self, max_size: int = 20) -> int:
+        """Remove lowest-priority items if queue exceeds max size. Returns count removed."""
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) FROM initiative_queue WHERE status = 'pending'"
+        )
+        total = (await cursor.fetchone())[0]
+        if total <= max_size:
+            return 0
+        excess = total - max_size
+        cursor = await self._db.execute(
+            """DELETE FROM initiative_queue WHERE id IN (
+                SELECT id FROM initiative_queue
+                WHERE status = 'pending'
+                ORDER BY priority ASC, created_at ASC
+                LIMIT ?
+            )""",
+            (excess,),
+        )
+        await self._db.commit()
+        return cursor.rowcount
+
+    # --- Monologue Log ---
+
+    async def add_monologue_log(
+        self,
+        cycle_number: int,
+        memories_reviewed: int = 0,
+        thoughts_generated: int = 0,
+        thoughts_refined: int = 0,
+        initiative_items_added: int = 0,
+        raw_output: str | None = None,
+        elapsed_s: float = 0.0,
+    ) -> int:
+        """Log a monologue cycle. Returns log ID."""
+        cursor = await self._db.execute(
+            """INSERT INTO monologue_log
+               (cycle_number, memories_reviewed, thoughts_generated,
+                thoughts_refined, initiative_items_added, raw_output, elapsed_s)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (cycle_number, memories_reviewed, thoughts_generated,
+             thoughts_refined, initiative_items_added, raw_output, elapsed_s),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_monologue_logs(self, limit: int = 5) -> list[dict]:
+        """Get recent monologue logs, newest first."""
+        cursor = await self._db.execute(
+            """SELECT * FROM monologue_log
+               ORDER BY created_at DESC LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_next_monologue_cycle(self) -> int:
+        """Get the next cycle number for the monologue log."""
+        cursor = await self._db.execute(
+            "SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM monologue_log"
+        )
+        return (await cursor.fetchone())[0]
+
+    async def get_random_high_importance_memories(self, limit: int = 3) -> list[dict]:
+        """Get random high-importance memories for monologue review."""
+        cursor = await self._db.execute(
+            """SELECT id, summary, content, importance, timestamp
+               FROM memories
+               WHERE is_archived = 0 AND importance >= 0.5 AND summary IS NOT NULL
+               ORDER BY RANDOM() LIMIT ?""",
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_recently_accessed_memories(self, limit: int = 2) -> list[dict]:
+        """Get recently accessed memories for monologue review."""
+        cursor = await self._db.execute(
+            """SELECT id, summary, content, importance, timestamp
+               FROM memories
+               WHERE is_archived = 0 AND last_accessed IS NOT NULL AND summary IS NOT NULL
+               ORDER BY last_accessed DESC LIMIT ?""",
             (limit,),
         )
         rows = await cursor.fetchall()

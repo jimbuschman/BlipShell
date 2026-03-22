@@ -324,6 +324,49 @@ class NotesConfig(BaseModel):
     max_note_tokens: int = 2000                  # per-note token limit
 
 
+class InnerMonologueConfig(BaseModel):
+    """Configuration for the between-session thinking loop."""
+    enabled: bool = True
+    interval_minutes: int = 30
+    max_thoughts_per_cycle: int = 5
+    memories_per_cycle: int = 10
+
+
+class IdentitySynthesisConfig(BaseModel):
+    """Configuration for self-authored identity synthesis."""
+    synthesis_frequency: str = "nightly"  # "nightly", "per_session", "manual"
+    max_versions: int = 50
+
+
+class InitiativeConfig(BaseModel):
+    """Configuration for the AI's initiative queue."""
+    max_queue_size: int = 20
+    inject_count: int = 3  # how many to show at session start
+
+
+class ThoughtConfig(BaseModel):
+    """Configuration for thought generation and pruning."""
+    categories: list[str] = Field(default_factory=lambda: [
+        "belief", "opinion", "observation", "question", "preference", "pattern",
+    ])
+    min_confidence: float = 0.3
+    max_active_thoughts: int = 500
+
+
+class AliveConfig(BaseModel):
+    """Configuration for the Alive system — self-developing AI identity.
+
+    When enabled, the AI generates thoughts between sessions, synthesizes
+    a self-authored identity, and maintains an initiative queue of topics
+    it wants to bring up.
+    """
+    enabled: bool = False
+    inner_monologue: InnerMonologueConfig = InnerMonologueConfig()
+    identity: IdentitySynthesisConfig = IdentitySynthesisConfig()
+    initiative: InitiativeConfig = InitiativeConfig()
+    thought: ThoughtConfig = ThoughtConfig()
+
+
 class GuardrailsConfig(BaseModel):
     """Toggleable guardrails for instruction adherence.
 
@@ -396,5 +439,6 @@ class BlipShellConfig(BaseModel):
     notes: NotesConfig = NotesConfig()
     guardrails: GuardrailsConfig = GuardrailsConfig()
     worker: WorkerConfig = WorkerConfig()
+    alive: AliveConfig = AliveConfig()
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
     model_settings: dict[str, dict] = Field(default_factory=dict)

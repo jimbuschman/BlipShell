@@ -748,7 +748,17 @@ class ChatMixin:
                 memory_text += f"{label}:\n" + "\n".join(items) + "\n\n"
 
         # Build messages
-        system_prompt = self.config.agent.system_prompt
+        # Alive: inject self-authored identity at the top (strongest attention position)
+        alive_ctx = getattr(self, "_alive_context", {})
+        alive_identity = alive_ctx.get("identity", "")
+        alive_initiative = alive_ctx.get("initiative_items", [])
+        alive_thoughts = alive_ctx.get("recent_thoughts", [])
+
+        system_prompt = ""
+        if alive_identity:
+            system_prompt += alive_identity + "\n\n"
+
+        system_prompt += self.config.agent.system_prompt
 
         # Get per-model settings for the active model
         task_type_for_model = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
@@ -801,6 +811,25 @@ class ChatMixin:
         # Inject pending follow-ups from previous sessions
         if getattr(self, "_pending_follow_ups", "") and self._pending_follow_ups.strip():
             system_prompt += f"\n\n{self._pending_follow_ups}"
+
+        # Alive: inject initiative items and recent thoughts
+        if alive_initiative:
+            items_text = "\n".join(f"- {item['content']}" for item in alive_initiative[:3])
+            system_prompt += (
+                "\n\n--- THINGS ON YOUR MIND ---\n"
+                + items_text
+                + "\nBring these up naturally when relevant. Don't force them.\n"
+            )
+
+        if alive_thoughts:
+            thoughts_text = "\n".join(
+                f"- [{t.get('category', 'observation')}] {t.get('content', '')}"
+                for t in alive_thoughts[:5]
+            )
+            system_prompt += (
+                "\n\n--- YOUR RECENT THINKING ---\n"
+                + thoughts_text + "\n"
+            )
 
         if self._files_read:
             files_list = "\n".join(f"  - {f}" for f in sorted(self._files_read))

@@ -43,6 +43,9 @@ JOB_ORDER = [
     "clean_neutral_tags",
     "tag_discovery",
     "rebuild_digests",
+    "thought_pruning",
+    "identity_synthesis",
+    "initiative_cleanup",
     "health_check",
 ]
 
@@ -214,6 +217,9 @@ class NightlyRunner:
             "clean_neutral_tags": self._job_clean_neutral_tags,
             "tag_discovery": self._job_tag_discovery,
             "rebuild_digests": self._job_rebuild_digests,
+            "thought_pruning": self._job_thought_pruning,
+            "identity_synthesis": self._job_identity_synthesis,
+            "initiative_cleanup": self._job_initiative_cleanup,
             "health_check": self._job_health_check,
         }
         handler = handlers.get(job_name)
@@ -877,6 +883,43 @@ class NightlyRunner:
                 logger.error("Digest rebuild failed for '%s': %s", name, e)
                 skipped += 1
         return {"rebuilt": rebuilt, "skipped": skipped, "total": len(projects)}
+
+    # ===== Alive System Jobs =====
+
+    async def _job_thought_pruning(self, on_status=None):
+        """Prune low-confidence and excess thoughts."""
+        if not self.config.alive.enabled:
+            return {"skipped": True, "reason": "alive not enabled"}
+        pruned = await self.sqlite.prune_thoughts(
+            min_confidence=self.config.alive.thought.min_confidence,
+            max_active=self.config.alive.thought.max_active_thoughts,
+        )
+        return {"pruned": pruned}
+
+    async def _job_identity_synthesis(self, on_status=None):
+        """Synthesize identity from accumulated thoughts."""
+        if not self.config.alive.enabled:
+            return {"skipped": True, "reason": "alive not enabled"}
+        from blipshell.alive.identity import IdentitySynthesizer
+        synthesizer = IdentitySynthesizer(self.sqlite, self.router)
+        version = await synthesizer.synthesize(trigger="nightly")
+        if version:
+            return {
+                "version_number": version.version_number,
+                "thought_count": version.thought_count,
+                "content_length": len(version.content),
+            }
+        return {"skipped": True, "reason": "no thoughts to synthesize"}
+
+    async def _job_initiative_cleanup(self, on_status=None):
+        """Expire stale initiative items and cap queue size."""
+        if not self.config.alive.enabled:
+            return {"skipped": True, "reason": "alive not enabled"}
+        expired = await self.sqlite.expire_stale_initiative(max_age_days=30)
+        capped = await self.sqlite.cap_initiative_queue(
+            max_size=self.config.alive.initiative.max_queue_size,
+        )
+        return {"expired": expired, "capped": capped}
 
     async def close(self):
         """Clean up resources."""

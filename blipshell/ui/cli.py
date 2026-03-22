@@ -856,6 +856,27 @@ async def chat_loop(
                 elif cmd[0] == "project":
                     await _handle_project_command(agent, cmd_args)
                     continue
+                elif cmd[0] == "alive":
+                    await _print_alive_status(agent)
+                    continue
+                elif cmd[0] == "identity":
+                    if cmd_args and cmd_args[0] == "history":
+                        await _print_identity_history(agent)
+                    elif cmd_args and cmd_args[0] == "rebuild":
+                        await _rebuild_identity(agent)
+                    else:
+                        await _print_identity(agent)
+                    continue
+                elif cmd[0] == "thoughts":
+                    category = cmd_args[0] if cmd_args else None
+                    await _print_thoughts(agent, category=category)
+                    continue
+                elif cmd[0] == "initiative":
+                    await _print_initiative(agent)
+                    continue
+                elif cmd[0] == "inner":
+                    await _print_monologue_log(agent)
+                    continue
                 elif cmd[0] in ("help", "commands"):
                     _print_help()
                     continue
@@ -2695,6 +2716,215 @@ def _print_tokens(agent: Agent):
     console.print(table)
 
 
+# --- Alive System Commands ---
+
+
+async def _print_alive_status(agent):
+    """Show alive system status overview."""
+    if not agent.alive_manager:
+        console.print("[yellow]Alive system is not enabled.[/yellow]")
+        return
+
+    status = await agent.alive_manager.get_alive_status()
+
+    lines = []
+    lines.append(f"[bold]Enabled:[/bold]           {'[green]Yes[/green]' if status['enabled'] else '[red]No[/red]'}")
+    lines.append(f"[bold]Active thoughts:[/bold]   {status['thought_count']}")
+    lines.append(f"[bold]Identity version:[/bold]  {status['identity_version'] or 'none'}")
+    if status.get("identity_date"):
+        lines.append(f"[bold]Identity updated:[/bold]  {status['identity_date']} ({status.get('identity_trigger', '?')})")
+    lines.append(f"[bold]Initiative queue:[/bold]  {status['initiative_pending']} pending")
+    if status.get("last_monologue"):
+        lines.append(f"[bold]Last monologue:[/bold]   {status['last_monologue']} ({status['last_monologue_thoughts']} thoughts)")
+    else:
+        lines.append("[bold]Last monologue:[/bold]   never")
+
+    worker_status = "running" if agent._alive_worker and agent._alive_worker.is_alive else "stopped"
+    lines.append(f"[bold]Monologue worker:[/bold] {worker_status}")
+
+    console.print(Panel("\n".join(lines), title="Alive System", border_style="magenta"))
+
+
+async def _print_identity(agent):
+    """Show current self-authored identity."""
+    if not agent.alive_manager:
+        console.print("[yellow]Alive system is not enabled.[/yellow]")
+        return
+
+    identity = await agent.sqlite.get_current_identity()
+    if not identity:
+        console.print("[dim]No identity synthesized yet. Run /identity rebuild to generate one.[/dim]")
+        return
+
+    header = (
+        f"[dim]Version {identity['version_number']} · "
+        f"{identity['created_at']} · "
+        f"trigger: {identity['trigger']} · "
+        f"{identity['thought_count']} thoughts[/dim]\n\n"
+    )
+    console.print(Panel(
+        header + identity["content"],
+        title="Self-Authored Identity",
+        border_style="magenta",
+    ))
+
+
+async def _print_identity_history(agent):
+    """Show identity version history."""
+    if not agent.alive_manager:
+        console.print("[yellow]Alive system is not enabled.[/yellow]")
+        return
+
+    history = await agent.sqlite.get_identity_history(limit=10)
+    if not history:
+        console.print("[dim]No identity versions yet.[/dim]")
+        return
+
+    table = Table(title="Identity History")
+    table.add_column("Ver", style="cyan", justify="right")
+    table.add_column("Date", style="dim")
+    table.add_column("Trigger")
+    table.add_column("Thoughts", justify="right")
+    table.add_column("Length", justify="right")
+
+    for row in history:
+        table.add_row(
+            str(row["version_number"]),
+            str(row["created_at"]),
+            row["trigger"],
+            str(row["thought_count"]),
+            str(len(row["content"])),
+        )
+
+    console.print(table)
+    console.print("[dim]Use /identity to see the current version's full text.[/dim]")
+
+
+async def _rebuild_identity(agent):
+    """Regenerate identity from accumulated thoughts."""
+    if not agent.alive_manager:
+        console.print("[yellow]Alive system is not enabled.[/yellow]")
+        return
+
+    console.print("[bold cyan]Synthesizing identity from thoughts...[/bold cyan]")
+    result = await agent.alive_manager.run_identity_synthesis(trigger="manual")
+    if result:
+        console.print(Panel(result, title="New Identity", border_style="green"))
+    else:
+        console.print("[yellow]No thoughts to synthesize from. Identity not generated.[/yellow]")
+
+
+async def _print_thoughts(agent, category: str | None = None):
+    """Show recent active thoughts."""
+    if not agent.alive_manager:
+        console.print("[yellow]Alive system is not enabled.[/yellow]")
+        return
+
+    valid_categories = {"belief", "opinion", "observation", "question", "preference", "pattern"}
+    if category and category not in valid_categories:
+        console.print(f"[yellow]Unknown category: {category}[/yellow]")
+        console.print(f"[dim]Valid: {', '.join(sorted(valid_categories))}[/dim]")
+        return
+
+    thoughts = await agent.sqlite.get_active_thoughts(category=category, limit=20)
+    if not thoughts:
+        label = f" ({category})" if category else ""
+        console.print(f"[dim]No active thoughts{label}.[/dim]")
+        return
+
+    table = Table(title=f"Active Thoughts{f' ({category})' if category else ''}")
+    table.add_column("ID", style="dim", justify="right")
+    table.add_column("Cat", style="cyan")
+    table.add_column("Conf", justify="right")
+    table.add_column("Content")
+    table.add_column("Date", style="dim")
+
+    for t in thoughts:
+        conf = t.get("confidence", 0.5)
+        conf_style = "green" if conf >= 0.7 else "yellow" if conf >= 0.4 else "red"
+        content = t.get("content", "")
+        if len(content) > 80:
+            content = content[:77] + "..."
+        table.add_row(
+            str(t.get("id", "?")),
+            t.get("category", "?"),
+            f"[{conf_style}]{conf:.1f}[/{conf_style}]",
+            content,
+            str(t.get("created_at", "")),
+        )
+
+    console.print(table)
+
+
+async def _print_initiative(agent):
+    """Show pending initiative items."""
+    if not agent.alive_manager:
+        console.print("[yellow]Alive system is not enabled.[/yellow]")
+        return
+
+    items = await agent.sqlite.get_pending_initiative(limit=20)
+    if not items:
+        console.print("[dim]No pending initiative items.[/dim]")
+        return
+
+    table = Table(title="Initiative Queue")
+    table.add_column("ID", style="dim", justify="right")
+    table.add_column("Cat", style="cyan")
+    table.add_column("Pri", justify="right")
+    table.add_column("Content")
+    table.add_column("Date", style="dim")
+
+    for item in items:
+        pri = item.get("priority", 0.5)
+        pri_style = "green" if pri >= 0.7 else "yellow" if pri >= 0.4 else "dim"
+        content = item.get("content", "")
+        if len(content) > 80:
+            content = content[:77] + "..."
+        table.add_row(
+            str(item.get("id", "?")),
+            item.get("category", "?"),
+            f"[{pri_style}]{pri:.1f}[/{pri_style}]",
+            content,
+            str(item.get("created_at", "")),
+        )
+
+    console.print(table)
+
+
+async def _print_monologue_log(agent):
+    """Show inner monologue cycle history."""
+    if not agent.alive_manager:
+        console.print("[yellow]Alive system is not enabled.[/yellow]")
+        return
+
+    logs = await agent.sqlite.get_monologue_logs(limit=10)
+    if not logs:
+        console.print("[dim]No monologue cycles recorded yet.[/dim]")
+        return
+
+    table = Table(title="Inner Monologue Log")
+    table.add_column("Cycle", style="cyan", justify="right")
+    table.add_column("Date", style="dim")
+    table.add_column("Memories", justify="right")
+    table.add_column("Thoughts", justify="right")
+    table.add_column("Refined", justify="right")
+    table.add_column("Initiative", justify="right")
+    table.add_column("Time", justify="right")
+
+    for log in logs:
+        table.add_row(
+            str(log.get("cycle_number", "?")),
+            str(log.get("created_at", "")),
+            str(log.get("memories_reviewed", 0)),
+            str(log.get("thoughts_generated", 0)),
+            str(log.get("thoughts_refined", 0)),
+            str(log.get("initiative_items_added", 0)),
+            f"{log.get('elapsed_s', 0):.1f}s",
+        )
+
+    console.print(table)
+
+
 def _print_help():
     """Print help for CLI commands."""
     console.print(Panel(
@@ -2741,6 +2971,14 @@ def _print_help():
         "[bold]/project delete <name>[/bold] - Remove project from DB\n"
         "[bold]/project digest[/bold]        - Show project status digest\n"
         "[bold]/project digest rebuild[/bold] - Regenerate digest from scratch\n\n"
+        "[bold cyan]Alive System[/bold cyan]\n"
+        "[bold]/alive[/bold]                  - Status overview (thoughts, identity, monologue)\n"
+        "[bold]/identity[/bold]               - Show current self-authored identity\n"
+        "[bold]/identity history[/bold]       - Identity version history\n"
+        "[bold]/identity rebuild[/bold]       - Regenerate identity from thoughts\n"
+        "[bold]/thoughts[/bold] [dim][category][/dim]     - Show recent thoughts (belief|opinion|observation|...)\n"
+        "[bold]/initiative[/bold]             - Show pending initiative items\n"
+        "[bold]/inner[/bold]                  - Show monologue cycle log\n\n"
         "[bold]/help[/bold]                  - Show this help\n\n"
         "[dim]Press [bold]Esc[/bold] during a response to cancel the LLM call[/dim]\n"
         "[dim]Prefix with !plan to force planning: !plan <message>[/dim]",

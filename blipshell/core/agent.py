@@ -105,6 +105,11 @@ class Agent(
         self.workflow_registry: Optional[WorkflowRegistry] = None
         self.workflow_executor: Optional[WorkflowExecutor] = None
 
+        # Alive system (self-developing identity)
+        self.alive_manager = None
+        self._alive_worker = None
+        self._alive_context: dict = {}  # populated at session start
+
         # MCP (Model Context Protocol) servers
         self.mcp_manager = None
 
@@ -214,6 +219,19 @@ class Agent(
             self.sqlite, self.memory_manager, self.processor, self.router,
             summary_chunk_size=self.config.session.summary_chunk_size,
         )
+
+        # Alive system (self-developing identity)
+        if self.config.alive.enabled:
+            _status("Initializing alive system...")
+            from blipshell.alive.manager import AliveManager
+            self.alive_manager = AliveManager()
+            self.alive_manager.initialize(
+                self.config.alive, self.sqlite, self.chroma, self.router,
+            )
+            if self.config.alive.inner_monologue.enabled:
+                from blipshell.alive.worker import AliveWorker
+                self._alive_worker = AliveWorker(self.config, self.chroma)
+                self._alive_worker.start()
 
         # Task planner + executor
         # NOTE: ComplexityClassifier removed — model decides its own complexity.
@@ -662,6 +680,30 @@ class Agent(
         if self.session_manager:
             await self.session_manager.end_session(on_status=on_status)
 
+            # Alive: extract thoughts from the completed session
+            if self.alive_manager and self.session_manager.session_id:
+                try:
+                    session = await self.sqlite.get_session(self.session_manager.session_id)
+                    summary = session.get("summary", "") if session else ""
+                    if summary:
+                        messages = self.session_manager.get_messages()
+                        conv_text = "\n".join(
+                            f"{m.role.value}: {m.content}"
+                            for m in messages if m.content
+                        )
+                        # Truncate to avoid overwhelming the reasoning model
+                        if len(conv_text) > 8000:
+                            conv_text = conv_text[-8000:]
+                        _status("Extracting thoughts...")
+                        await self.alive_manager.on_session_end(
+                            self.session_manager.session_id, summary, conv_text,
+                        )
+                except Exception as e:
+                    logger.warning("Alive thought extraction failed: %s", e)
+                # Resume monologue worker now that session is over
+                if self._alive_worker:
+                    self._alive_worker.resume()
+
         if self.job_queue:
             await self.job_queue.stop()
         # Close ChromaDB after all writes are done (worker is stopped).
@@ -688,6 +730,10 @@ class Agent(
         # 2. Stop memory worker thread (short timeout for forced cleanup)
         if self._memory_worker:
             self._memory_worker.shutdown(timeout=5.0)
+
+        # 2b. Stop alive worker
+        if self._alive_worker:
+            self._alive_worker.shutdown(timeout=5.0)
 
         if self._nightly_scheduler_task:
             self._nightly_scheduler_task.cancel()

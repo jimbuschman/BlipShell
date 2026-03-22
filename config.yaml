@@ -223,6 +223,30 @@ worker:
     - "analysis"
   poll_interval: 10                  # Seconds between worker polls
 
+alive:
+  enabled: true
+  inner_monologue:
+    enabled: true
+    interval_minutes: 30              # How often to run monologue cycles when idle
+    max_thoughts_per_cycle: 5         # Limit thoughts generated per cycle
+    memories_per_cycle: 10            # How many memories to sample per cycle
+  identity:
+    synthesis_frequency: "nightly"    # "nightly", "per_session", "manual"
+    max_versions: 50                  # Keep this many identity versions
+  initiative:
+    max_queue_size: 20                # Max pending initiative items
+    inject_count: 3                   # How many to inject at session start
+  thought:
+    categories:
+      - "belief"
+      - "opinion"
+      - "observation"
+      - "question"
+      - "preference"
+      - "pattern"
+    min_confidence: 0.3               # Only keep thoughts above this confidence
+    max_active_thoughts: 500          # Prune older thoughts when exceeded
+
 # Per-model behavioral settings (Aider-inspired)
 # Configures how the agent interacts with each model.
 # Model name matching is flexible: exact, base name, or prefix.

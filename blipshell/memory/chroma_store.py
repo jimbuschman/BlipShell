@@ -30,6 +30,7 @@ MEMORIES_COLLECTION = "memories"
 CORE_MEMORIES_COLLECTION = "core_memories"
 LESSONS_COLLECTION = "lessons"
 ENTITIES_COLLECTION = "entities"
+THOUGHTS_COLLECTION = "thoughts"
 
 
 def _ollama_gated(fn):
@@ -61,6 +62,7 @@ class ChromaStore:
         self._core_memories: Optional[chromadb.Collection] = None
         self._lessons: Optional[chromadb.Collection] = None
         self._entities: Optional[chromadb.Collection] = None
+        self._thoughts: Optional[chromadb.Collection] = None
         self._closed = False
 
     def initialize(self):
@@ -105,12 +107,19 @@ class ChromaStore:
             metadata={"hnsw:space": "cosine"},
         )
 
+        self._thoughts = self._client.get_or_create_collection(
+            name=THOUGHTS_COLLECTION,
+            embedding_function=embedding_fn,
+            metadata={"hnsw:space": "cosine"},
+        )
+
         logger.info(
-            "ChromaDB initialized: memories=%d, core=%d, lessons=%d, entities=%d",
+            "ChromaDB initialized: memories=%d, core=%d, lessons=%d, entities=%d, thoughts=%d",
             self._memories.count(),
             self._core_memories.count(),
             self._lessons.count(),
             self._entities.count(),
+            self._thoughts.count(),
         )
 
     def close(self):
@@ -124,6 +133,7 @@ class ChromaStore:
         self._core_memories = None
         self._lessons = None
         self._entities = None
+        self._thoughts = None
         if self._client is not None:
             try:
                 # PersistentClient doesn't expose close(), but clearing
@@ -311,6 +321,7 @@ class ChromaStore:
             "core_memories": self._core_memories,
             "lessons": self._lessons,
             "entities": self._entities,
+            "thoughts": self._thoughts,
         }
         coll = coll_map.get(collection)
         if not coll:
@@ -416,6 +427,46 @@ class ChromaStore:
                 embeddings[int(str_id)] = raw_embeddings[i]
         return embeddings
 
+    # --- Alive System: Thought Embeddings ---
+
+    @_ollama_gated
+    def add_thought(self, thought_id: int, text: str, metadata: dict | None = None):
+        """Add a thought embedding to ChromaDB."""
+        self._require_collections()
+        meta = {**(metadata or {}), "source": "thought"}
+        self._thoughts.upsert(
+            ids=[str(thought_id)],
+            documents=[self._truncate(text)],
+            metadatas=[meta],
+        )
+
+    def search_thoughts(
+        self,
+        query: str,
+        n_results: int = 10,
+    ) -> list[dict]:
+        """Search thoughts by semantic similarity."""
+        self._require_collections()
+        if not self._thoughts:
+            return []
+        try:
+            results = self._thoughts.query(
+                query_texts=[self._truncate(query)], n_results=n_results,
+            )
+        except Exception as e:
+            logger.error("ChromaDB thought search failed: %s", e)
+            return []
+
+        return self._format_results(results)
+
+    def delete_thought(self, thought_id: int):
+        """Remove a thought embedding from ChromaDB."""
+        if self._thoughts:
+            try:
+                self._thoughts.delete(ids=[str(thought_id)])
+            except Exception:
+                logger.warning("ChromaDB delete_thought failed for id=%d", thought_id)
+
     def get_counts(self) -> dict[str, int]:
         """Get document counts for all collections."""
         return {
@@ -423,4 +474,5 @@ class ChromaStore:
             "core_memories": self._core_memories.count(),
             "lessons": self._lessons.count(),
             "entities": self._entities.count() if self._entities else 0,
+            "thoughts": self._thoughts.count() if self._thoughts else 0,
         }

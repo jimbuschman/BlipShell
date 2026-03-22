@@ -69,6 +69,16 @@ class SessionMixin:
         # Load session notes (persistent state surviving compaction)
         await self._load_session_notes()
 
+        # Alive: load identity, initiative items, recent thoughts; pause monologue
+        if hasattr(self, 'alive_manager') and self.alive_manager:
+            try:
+                self._alive_context = await self.alive_manager.on_session_start(session_id)
+            except Exception as e:
+                logger.warning("Alive context load failed: %s", e)
+                self._alive_context = {}
+            if hasattr(self, '_alive_worker') and self._alive_worker:
+                self._alive_worker.pause()
+
         return session_id
 
     async def _retry_chroma_queue(self):
