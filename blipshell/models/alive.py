@@ -82,4 +82,6 @@ class MonologueCycleResult(BaseModel):
     thoughts_generated: int = 0
     thoughts_refined: int = 0
     initiative_items_added: int = 0
+    tool_calls_made: int = 0
+    next_focus: str | None = None
     elapsed_s: float = 0.0

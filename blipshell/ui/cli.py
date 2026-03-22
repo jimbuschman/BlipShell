@@ -1765,6 +1765,8 @@ def _check_alive_cycle(agent: Agent):
         parts.append(f"{result.thoughts_refined} refined")
     if result.initiative_items_added:
         parts.append(f"{result.initiative_items_added} initiative")
+    if result.tool_calls_made:
+        parts.append(f"{result.tool_calls_made} tool call{'s' if result.tool_calls_made != 1 else ''}")
 
     if parts:
         detail = ", ".join(parts)
@@ -1776,6 +1778,11 @@ def _check_alive_cycle(agent: Agent):
         console.print(
             f"\n  [dim magenta]Monologue #{result.cycle_number}: "
             f"nothing new ({result.elapsed_s:.1f}s)[/dim magenta]"
+        )
+    if result.next_focus:
+        console.print(
+            f"  [dim magenta]Next focus: {result.next_focus[:80]}"
+            f"{'...' if len(result.next_focus or '') > 80 else ''}[/dim magenta]"
         )
 
 

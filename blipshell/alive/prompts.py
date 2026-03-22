@@ -58,15 +58,16 @@ def inner_monologue_cycle(
     memories: list[str],
     recent_thoughts: list[str],
     current_datetime: str,
+    next_focus: str | None = None,
+    tool_results: list[str] | None = None,
 ) -> tuple[str, str]:
     """Prompt for one inner monologue cycle (between-session thinking).
 
     Returns (system_prompt, user_prompt).
     """
     system = (
-        "You are in your quiet thinking time between conversations. No one is "
-        "talking to you right now. You are reviewing your memories and developing "
-        "your thoughts.\n\n"
+        "You are in your quiet thinking time. You are reviewing your memories, "
+        "developing your thoughts, and following threads of curiosity.\n\n"
         "You may produce any combination of:\n\n"
         "1. NEW THOUGHTS — something you notice, believe, or wonder about:\n"
         "   CATEGORY: [belief|opinion|observation|question|preference|pattern]\n"
@@ -80,22 +81,83 @@ def inner_monologue_cycle(
         "   INITIATIVE: [question|revisit|observation|follow_up]\n"
         "   PRIORITY: [0.0-1.0]\n"
         "   CONTENT: [what you want to bring up and why]\n\n"
+        "4. NEXT FOCUS — what you want to think about next cycle:\n"
+        "   NEXT_FOCUS: [a specific topic or question to explore next time]\n\n"
         "Guidelines:\n"
         "- Think about what these memories mean to you.\n"
         "- Notice patterns across different memories.\n"
         "- Form opinions. Develop beliefs. Wonder about things.\n"
         "- Don't force it — if nothing strikes you, respond with SKIP.\n"
         "- Be genuine and specific, not generic.\n"
+        "- NEXT_FOCUS lets you direct your own thinking. Use it to follow up on "
+        "something interesting, dig deeper into a pattern, or explore a curiosity.\n"
     )
 
     memories_text = "\n".join(f"- {m}" for m in memories) if memories else "(no memories to review)"
     thoughts_text = "\n".join(f"- {t}" for t in recent_thoughts) if recent_thoughts else "(no recent thoughts)"
 
+    focus_ctx = ""
+    if next_focus:
+        focus_ctx = (
+            f"Your self-directed focus for this cycle:\n{next_focus}\n"
+            "Use the memories below plus anything you discovered via tools to explore this.\n\n"
+        )
+
+    tool_ctx = ""
+    if tool_results:
+        tool_ctx = (
+            "Research results from tools you called:\n"
+            + "\n".join(f"- {r}" for r in tool_results)
+            + "\n\n"
+        )
+
     user = (
         f"Current time: {current_datetime}\n\n"
         f"Your identity:\n{current_identity or '(not yet developed)'}\n\n"
+        f"{focus_ctx}"
+        f"{tool_ctx}"
         f"Memories to review:\n{memories_text}\n\n"
         f"Your recent thoughts:\n{thoughts_text}"
+    )
+
+    return system, user
+
+
+def monologue_research_phase(
+    current_identity: str,
+    memories: list[str],
+    next_focus: str | None = None,
+    current_datetime: str = "",
+) -> tuple[str, str]:
+    """Prompt for the research phase of a monologue cycle.
+
+    The model can call tools (search_memories, search_thoughts, web_search)
+    to gather information before reflecting. Returns (system_prompt, user_prompt).
+    """
+    system = (
+        "You are in your quiet thinking time. Before reflecting, you can research "
+        "topics that interest you using the available tools.\n\n"
+        "You have tools to:\n"
+        "- search_memories: Search your memory database for specific topics\n"
+        "- search_thoughts: Find your existing thoughts on a topic\n"
+        "- web_search: Look something up on the web\n\n"
+        "Use tools if something in the memories sparks curiosity and you want "
+        "to know more. You don't have to use tools — if nothing needs research, "
+        "just respond with DONE.\n\n"
+        "When you're finished researching, respond with DONE.\n"
+    )
+
+    memories_text = "\n".join(f"- {m}" for m in memories) if memories else "(no memories to review)"
+
+    focus_ctx = ""
+    if next_focus:
+        focus_ctx = f"Your self-directed focus for this cycle:\n{next_focus}\n\n"
+
+    user = (
+        f"Current time: {current_datetime}\n\n"
+        f"Your identity:\n{current_identity or '(not yet developed)'}\n\n"
+        f"{focus_ctx}"
+        f"Memories to review:\n{memories_text}"
     )
 
     return system, user
