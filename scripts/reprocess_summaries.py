@@ -6,22 +6,29 @@ that lose key facts, names, and specifics. This script:
 2. Re-embeds in ChromaDB using the new summary
 3. Tracks progress — can be interrupted and resumed
 
-Usage:
-    python scripts/reprocess_summaries.py                     # dry run (show what would change)
-    python scripts/reprocess_summaries.py --apply             # run it
-    python scripts/reprocess_summaries.py --apply --limit 100 # test on 100 memories first
-    python scripts/reprocess_summaries.py --apply --resume    # resume from last checkpoint
-    python scripts/reprocess_summaries.py --apply --embed-only  # skip re-summarize, just re-embed with raw content
+Supports Ollama (local) and OpenAI-compatible APIs (OpenRouter, Groq, etc.)
 
-Options:
-    --db PATH         SQLite database path (default: data/blipshell.db)
-    --chroma PATH     ChromaDB directory (default: data/chroma)
-    --ollama URL      Ollama URL (default: http://localhost:11434)
-    --limit N         Process only N memories (for testing)
-    --resume          Resume from last checkpoint
-    --embed-only      Skip LLM re-summarization, just re-embed with existing content
-    --batch N         Batch size for commits (default: 50)
-    --quiet           Minimal output
+Usage:
+    # Dry run
+    python scripts/reprocess_summaries.py
+
+    # Test 100 on OpenRouter
+    python scripts/reprocess_summaries.py --apply --limit 100 \\
+        --provider openai --api-url https://openrouter.ai/api/v1 \\
+        --api-key $OPENROUTER_API_KEY --model minimax/minimax-m2.7
+
+    # Full run
+    python scripts/reprocess_summaries.py --apply \\
+        --provider openai --api-url https://openrouter.ai/api/v1 \\
+        --api-key $OPENROUTER_API_KEY --model minimax/minimax-m2.7
+
+    # Resume after interruption
+    python scripts/reprocess_summaries.py --apply --resume \\
+        --provider openai --api-url https://openrouter.ai/api/v1 \\
+        --api-key $OPENROUTER_API_KEY --model minimax/minimax-m2.7
+
+    # Just re-embed (no LLM, fast)
+    python scripts/reprocess_summaries.py --apply --embed-only
 """
 
 import argparse
@@ -58,15 +65,30 @@ async def run(args):
     chroma = ChromaStore(persist_dir=args.chroma, ollama_url=args.ollama)
     chroma.initialize()
 
-    # Set up LLM router for summarization (only if not embed-only)
-    router = None
+    # Set up LLM for summarization (only if not embed-only)
+    llm_client = None
+    llm_model = None
     if not args.embed_only:
-        from blipshell.core.config import ConfigManager
-        from blipshell.llm.router import LLMRouter
-        from blipshell.llm.endpoints import EndpointManager
-        config = ConfigManager(args.config).load()
-        ep_mgr = EndpointManager(config.endpoints, config.llm)
-        router = LLMRouter(config.models, ep_mgr, pii_enabled=False)
+        if args.provider == "openai":
+            # Direct OpenAI-compatible client (OpenRouter, Groq, etc.)
+            from blipshell.llm.openai_client import OpenAICompatClient
+            import os
+            api_key = args.api_key
+            if api_key and api_key.startswith("$"):
+                api_key = os.environ.get(api_key.lstrip("$"), api_key)
+            llm_client = OpenAICompatClient(
+                base_url=args.api_url,
+                api_key=api_key,
+                timeout=60.0,
+            )
+            llm_model = args.model
+            logger.info("Using OpenAI-compatible: %s on %s", llm_model, args.api_url)
+        else:
+            # Local Ollama
+            from blipshell.llm.client import LLMClient
+            llm_client = LLMClient(host=args.ollama, timeout=120.0)
+            llm_model = args.model or "glm4:latest"
+            logger.info("Using Ollama: %s on %s", llm_model, args.ollama)
 
     # Get resume checkpoint
     last_id = 0
@@ -138,10 +160,9 @@ async def run(args):
             else:
                 # Re-summarize with improved prompt
                 sum_system, sum_prompt = summarize_memory(content)
-                from blipshell.llm.router import TaskType
-                new_summary = await router.generate(
-                    TaskType.SUMMARIZATION,
-                    sum_prompt,
+                new_summary = await llm_client.generate(
+                    prompt=sum_prompt,
+                    model=llm_model,
                     system=sum_system,
                 )
 
@@ -213,12 +234,35 @@ async def run(args):
 def main():
     parser = argparse.ArgumentParser(
         description="Re-summarize and re-embed all memories with improved prompt",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  # Test 100 memories on OpenRouter\n"
+            "  python scripts/reprocess_summaries.py --apply --limit 100 \\\n"
+            "      --provider openai --api-url https://openrouter.ai/api/v1 \\\n"
+            "      --api-key $OPENROUTER_API_KEY --model minimax/minimax-m2.7\n\n"
+            "  # Full run on local Ollama\n"
+            "  python scripts/reprocess_summaries.py --apply --model glm4:latest\n\n"
+            "  # Resume after interruption\n"
+            "  python scripts/reprocess_summaries.py --apply --resume \\\n"
+            "      --provider openai --api-url https://openrouter.ai/api/v1 \\\n"
+            "      --api-key $OPENROUTER_API_KEY --model minimax/minimax-m2.7\n\n"
+            "  # Just re-embed (no LLM, fast)\n"
+            "  python scripts/reprocess_summaries.py --apply --embed-only\n"
+        ),
     )
     parser.add_argument("--db", default="data/blipshell.db")
     parser.add_argument("--chroma", default="data/chroma")
-    parser.add_argument("--ollama", default="http://localhost:11434")
-    parser.add_argument("--config", default="config.yaml",
-                        help="Config file path for LLM router (default: config.yaml)")
+    parser.add_argument("--ollama", default="http://localhost:11434",
+                        help="Ollama URL for embeddings + local LLM (default: localhost:11434)")
+    parser.add_argument("--provider", default="ollama", choices=["ollama", "openai"],
+                        help="LLM provider for summarization (default: ollama)")
+    parser.add_argument("--api-url", default="",
+                        help="OpenAI-compatible API URL (e.g. https://openrouter.ai/api/v1)")
+    parser.add_argument("--api-key", default="",
+                        help="API key (supports $ENV_VAR syntax)")
+    parser.add_argument("--model", default=None,
+                        help="Model name (default: glm4:latest for ollama)")
     parser.add_argument("--apply", action="store_true", help="Actually process (default: dry run)")
     parser.add_argument("--limit", type=int, default=None, help="Process only N memories")
     parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
