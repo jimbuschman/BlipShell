@@ -185,6 +185,26 @@ async def run(args):
                 )
                 embed_text = new_summary
 
+            # Re-tag based on new summary (regex, no LLM, <1ms)
+            try:
+                from blipshell.memory.tagger import tag_message
+                new_tags = tag_message(new_summary, max_tags=7)
+                # Clear old tags and assign new ones
+                await db.execute("DELETE FROM memory_tags WHERE memory_id = ?", (mem_id,))
+                if new_tags:
+                    for tag_name in new_tags:
+                        await db.execute(
+                            "INSERT OR IGNORE INTO tags (name, category) VALUES (?, 'topic')",
+                            (tag_name,),
+                        )
+                        await db.execute(
+                            """INSERT OR IGNORE INTO memory_tags (memory_id, tag_id, timestamp)
+                               SELECT ?, id, datetime('now') FROM tags WHERE name = ?""",
+                            (mem_id, tag_name),
+                        )
+            except Exception as e:
+                logger.warning("Re-tag failed for %d: %s", mem_id, e)
+
             # Re-embed in ChromaDB
             metadata = {"session_id": str(session_id), "role": role, "source": "memory"}
             try:
