@@ -874,6 +874,12 @@ async def chat_loop(
                     category = cmd_args[0] if cmd_args else None
                     await _print_thoughts(agent, category=category)
                     continue
+                elif cmd[0] == "thought":
+                    if cmd_args:
+                        await _print_thought_detail(agent, cmd_args[0])
+                    else:
+                        console.print("[dim]Usage: /thought <id>[/dim]")
+                    continue
                 elif cmd[0] == "initiative":
                     await _print_initiative(agent)
                     continue
@@ -2893,6 +2899,36 @@ async def _print_thoughts(agent, category: str | None = None):
         )
 
     console.print(table)
+
+
+async def _print_thought_detail(agent, thought_id_str: str):
+    """Show full detail for a single thought."""
+    if not agent.alive_manager:
+        console.print("[yellow]Alive system is not enabled.[/yellow]")
+        return
+    try:
+        tid = int(thought_id_str)
+    except ValueError:
+        console.print("[yellow]Invalid thought ID.[/yellow]")
+        return
+
+    thoughts = await agent.sqlite.get_active_thoughts(limit=500)
+    thought = next((t for t in thoughts if t.get("id") == tid), None)
+    if not thought:
+        console.print(f"[yellow]Thought #{tid} not found.[/yellow]")
+        return
+
+    conf = thought.get("confidence", 0.5)
+    lines = [
+        f"[bold]ID:[/bold]         {tid}",
+        f"[bold]Category:[/bold]   {thought.get('category', '?')}",
+        f"[bold]Confidence:[/bold] {conf:.2f}",
+        f"[bold]Source:[/bold]     {thought.get('source_type', '?')}",
+        f"[bold]Created:[/bold]    {thought.get('created_at', '?')}",
+        "",
+        thought.get("content", ""),
+    ]
+    console.print(Panel("\n".join(lines), title=f"Thought #{tid}", border_style="magenta"))
 
 
 async def _print_initiative(agent):

@@ -204,7 +204,7 @@ class ThoughtEngine:
                 continue
 
             cat_match = re.search(r'CATEGORY:\s*(\w+)', block, re.IGNORECASE)
-            conf_match = re.search(r'CONFIDENCE:\s*([\d.]+)', block, re.IGNORECASE)
+            conf_match = re.search(r'CONFIDEN(?:CE|T):\s*([\d.]+)', block, re.IGNORECASE)
             thought_match = re.search(r'THOUGHT:\s*(.+)', block, re.IGNORECASE | re.DOTALL)
 
             if not thought_match:
@@ -212,7 +212,7 @@ class ThoughtEngine:
 
             content = thought_match.group(1).strip()
             # Clean up — remove any trailing CATEGORY/CONFIDENCE from next block
-            content = re.split(r'\n(?:CATEGORY|CONFIDENCE|THOUGHT|REFINE|INITIATIVE):',
+            content = re.split(r'\n(?:CATEGORY|CONFIDEN(?:CE|T)|THOUGHT|REFINE|INITIATIVE|NEXT_FOCUS):',
                                content)[0].strip()
 
             if len(content) < 10:
