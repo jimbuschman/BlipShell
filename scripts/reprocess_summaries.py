@@ -158,19 +158,25 @@ async def run(args):
                 new_summary = old_summary
                 embed_text = content if content else old_summary
             else:
-                # Re-summarize with improved prompt
-                sum_system, sum_prompt = summarize_memory(content)
-                new_summary = await llm_client.generate(
-                    prompt=sum_prompt,
-                    model=llm_model,
-                    system=sum_system,
-                )
+                # Short messages (under 100 chars) — use raw content as summary.
+                # The LLM adds nothing for "what are claude connectors?" and tends
+                # to fall back to "User asked about X" for short inputs.
+                if len(content.strip()) < 100:
+                    new_summary = content.strip()
+                else:
+                    # Re-summarize with improved prompt
+                    sum_system, sum_prompt = summarize_memory(content)
+                    new_summary = await llm_client.generate(
+                        prompt=sum_prompt,
+                        model=llm_model,
+                        system=sum_system,
+                    )
 
-                if new_summary.strip().upper() == "SKIP":
-                    skipped += 1
-                    if not args.quiet:
-                        logger.debug("Skipped %d (SKIP response)", mem_id)
-                    continue
+                    if new_summary.strip().upper() == "SKIP":
+                        skipped += 1
+                        if not args.quiet:
+                            logger.debug("Skipped %d (SKIP response)", mem_id)
+                        continue
 
                 # Update summary in SQLite
                 await db.execute(
