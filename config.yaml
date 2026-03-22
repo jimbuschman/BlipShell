@@ -165,7 +165,7 @@ alive:
   enabled: true
   inner_monologue:
     enabled: true
-    interval_minutes: 30              # How often to run monologue cycles when idle
+    interval_minutes: 10              # How often to run monologue cycles (cloud LLM, no GPU contention)
     max_thoughts_per_cycle: 5         # Limit thoughts generated per cycle
     memories_per_cycle: 10            # How many memories to sample per cycle
   identity:

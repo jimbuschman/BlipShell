@@ -626,6 +626,9 @@ async def chat_loop(
             # Notify about background tasks that finished
             await _check_completed_tasks(agent)
 
+            # Notify about monologue cycles
+            _check_alive_cycle(agent)
+
             try:
                 prompt = format_chat_prompt(
                     agent.active_project["name"] if agent.active_project else None
@@ -1745,6 +1748,35 @@ async def _check_completed_tasks(agent: Agent):
                 f"\n[bold green]Background task #{task_id} finished![/bold green] "
                 f"[dim]View with /task {task_id}[/dim]"
             )
+
+
+def _check_alive_cycle(agent: Agent):
+    """Check if the monologue worker completed a cycle, show notification."""
+    if not hasattr(agent, '_alive_worker') or not agent._alive_worker:
+        return
+    result = agent._alive_worker.last_result
+    if result is None:
+        return
+
+    parts = []
+    if result.thoughts_generated:
+        parts.append(f"{result.thoughts_generated} new thought{'s' if result.thoughts_generated != 1 else ''}")
+    if result.thoughts_refined:
+        parts.append(f"{result.thoughts_refined} refined")
+    if result.initiative_items_added:
+        parts.append(f"{result.initiative_items_added} initiative")
+
+    if parts:
+        detail = ", ".join(parts)
+        console.print(
+            f"\n  [dim magenta]Monologue #{result.cycle_number}: "
+            f"{detail} ({result.elapsed_s:.1f}s)[/dim magenta]"
+        )
+    else:
+        console.print(
+            f"\n  [dim magenta]Monologue #{result.cycle_number}: "
+            f"nothing new ({result.elapsed_s:.1f}s)[/dim magenta]"
+        )
 
 
 def _print_status(agent: Agent):

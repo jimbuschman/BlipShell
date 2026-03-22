@@ -1,7 +1,8 @@
 """Alive Worker — background thread for the inner monologue loop.
 
 Follows the MemoryWorker pattern: own thread, own event loop, own DB connections.
-Runs the monologue cycle periodically when no session is active.
+Runs the monologue cycle periodically during idle time within a session.
+All LLM calls go to cloud (no local GPU contention).
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import asyncio
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 if TYPE_CHECKING:
     from blipshell.memory.chroma_store import ChromaStore
@@ -23,7 +24,7 @@ class AliveWorker:
     """Background thread for inner monologue processing.
 
     Mirrors MemoryWorker pattern: own thread, own event loop, own DB connections.
-    The monologue only runs when no session is active (paused via pause/resume).
+    Runs continuously during the session — cloud LLM means no GPU contention.
     """
 
     def __init__(self, config: BlipShellConfig, chroma: ChromaStore):
@@ -31,12 +32,27 @@ class AliveWorker:
         self._chroma = chroma
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
-        self._paused = threading.Event()
-        self._paused.set()  # starts paused — resumes when session ends
+        self._on_cycle_complete: Optional[Callable] = None
+        self._last_result = None
 
     @property
     def is_alive(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
+
+    @property
+    def last_result(self):
+        """Last monologue cycle result (for CLI notification)."""
+        result = self._last_result
+        self._last_result = None  # consume on read
+        return result
+
+    def set_on_cycle_complete(self, callback: Optional[Callable]):
+        """Set callback for when a monologue cycle completes.
+
+        Callback receives the MonologueCycleResult. Called from the worker
+        thread — caller must handle thread safety.
+        """
+        self._on_cycle_complete = callback
 
     def start(self):
         """Start the monologue thread."""
@@ -51,20 +67,9 @@ class AliveWorker:
         self._thread.start()
         logger.info("AliveWorker started")
 
-    def pause(self):
-        """Pause the monologue loop (called when session starts)."""
-        self._paused.set()
-        logger.debug("AliveWorker paused (session active)")
-
-    def resume(self):
-        """Resume the monologue loop (called when session ends)."""
-        self._paused.clear()
-        logger.debug("AliveWorker resumed (no session)")
-
     def shutdown(self, timeout: float = 30.0):
         """Signal stop and join the thread."""
         self._stop_event.set()
-        self._paused.clear()  # unblock if waiting on pause
         if self._thread is not None:
             self._thread.join(timeout=timeout)
             if self._thread.is_alive():
@@ -85,7 +90,7 @@ class AliveWorker:
             loop.close()
 
     async def _monologue_loop(self):
-        """Main loop: sleep → check pause → run cycle → maybe synthesize."""
+        """Main loop: sleep → run cycle → notify."""
         from blipshell.alive.monologue import InnerMonologue
         from blipshell.alive.thought_engine import ThoughtEngine
         from blipshell.llm.endpoints import EndpointManager
@@ -119,20 +124,22 @@ class AliveWorker:
             if self._stop_event.is_set():
                 break
 
-            # Wait if paused (session is active — don't compete for GPU)
-            while self._paused.is_set() and not self._stop_event.is_set():
-                time.sleep(2.0)
-
-            if self._stop_event.is_set():
-                break
-
             # Run one monologue cycle
             try:
                 result = await monologue.run_cycle()
                 logger.info(
-                    "Monologue cycle %d complete: %d thoughts, %.1fs",
-                    result.cycle_number, result.thoughts_generated, result.elapsed_s,
+                    "Monologue cycle %d complete: %d thoughts, %d refined, %d initiative (%.1fs)",
+                    result.cycle_number, result.thoughts_generated,
+                    result.thoughts_refined, result.initiative_items_added,
+                    result.elapsed_s,
                 )
+                # Store for CLI polling and fire callback
+                self._last_result = result
+                if self._on_cycle_complete:
+                    try:
+                        self._on_cycle_complete(result)
+                    except Exception as e:
+                        logger.debug("Cycle complete callback failed: %s", e)
             except Exception as e:
                 logger.error("Monologue cycle failed: %s", e)
 

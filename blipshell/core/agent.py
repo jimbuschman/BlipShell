@@ -700,9 +700,7 @@ class Agent(
                         )
                 except Exception as e:
                     logger.warning("Alive thought extraction failed: %s", e)
-                # Resume monologue worker now that session is over
-                if self._alive_worker:
-                    self._alive_worker.resume()
+                # Monologue worker runs continuously — no pause/resume needed
 
         if self.job_queue:
             await self.job_queue.stop()
