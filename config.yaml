@@ -34,12 +34,12 @@ endpoints:
     roles: ["coding", "tool_calling"]
     priority: 2                          # Ollama cloud free tier first, then OpenRouter
     max_concurrent: 5
-    context_tokens: 196608               # MiniMax M2.5 supports 196K
+    context_tokens: 204800               # MiniMax M2.7 supports 204.8K
     pii_sanitize: true                   # data leaves machine via OpenRouter
     enabled: true
     models:
-      coding: "minimax/minimax-m2.5"
-      tool_calling: "minimax/minimax-m2.5"
+      coding: "minimax/minimax-m2.7"
+      tool_calling: "minimax/minimax-m2.7"
   - name: "groq"
     url: "https://api.groq.com/openai/v1"
     provider: "openai"
