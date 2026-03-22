@@ -187,6 +187,11 @@ class ThoughtEngine:
         return False
 
     @staticmethod
+    def _strip_markdown(text: str) -> str:
+        """Strip markdown bold/italic markers from field names."""
+        return re.sub(r'\*+', '', text)
+
+    @staticmethod
     def _parse_thoughts(raw: str) -> list[Thought]:
         """Parse LLM output into Thought objects.
 
@@ -194,9 +199,15 @@ class ThoughtEngine:
         CATEGORY: belief
         CONFIDENCE: 0.8
         THOUGHT: I believe that...
+
+        Also handles markdown-formatted variants like **CATEGORY:** belief
         """
+        # Strip markdown from field names before parsing
+        cleaned = ThoughtEngine._strip_markdown(raw)
+
         thoughts = []
-        blocks = re.split(r'\n(?=CATEGORY:)', raw.strip())
+        # Split on CATEGORY: (with optional leading - or whitespace)
+        blocks = re.split(r'\n(?=-?\s*CATEGORY:)', cleaned.strip())
 
         for block in blocks:
             block = block.strip()
@@ -211,9 +222,11 @@ class ThoughtEngine:
                 continue
 
             content = thought_match.group(1).strip()
-            # Clean up — remove any trailing CATEGORY/CONFIDENCE from next block
-            content = re.split(r'\n(?:CATEGORY|CONFIDEN(?:CE|T)|THOUGHT|REFINE|INITIATIVE|NEXT_FOCUS):',
-                               content)[0].strip()
+            # Clean up — remove any trailing field markers from next block
+            content = re.split(
+                r'\n-?\s*(?:CATEGORY|CONFIDEN(?:CE|T)|THOUGHT|REFINE|INITIATIVE|NEXT_FOCUS):',
+                content, flags=re.IGNORECASE,
+            )[0].strip()
 
             if len(content) < 10:
                 continue

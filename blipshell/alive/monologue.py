@@ -434,6 +434,12 @@ class InnerMonologue:
 
         return unique[:per_cycle]
 
+    @staticmethod
+    def _clean_raw(raw: str) -> str:
+        """Strip markdown formatting from LLM output before parsing."""
+        # Remove ** bold ** and * italic * around field names
+        return re.sub(r'\*+', '', raw)
+
     async def _process_output(
         self, raw: str, cycle_num: int,
     ) -> tuple[int, int, int]:
@@ -441,13 +447,14 @@ class InnerMonologue:
 
         Returns (thoughts_generated, thoughts_refined, initiative_added).
         """
+        cleaned = self._clean_raw(raw)
         thoughts_gen = 0
         thoughts_ref = 0
         initiative_added = 0
 
         # Parse new thoughts (reuse ThoughtEngine parser)
         from blipshell.alive.thought_engine import ThoughtEngine
-        thoughts = ThoughtEngine._parse_thoughts(raw)
+        thoughts = ThoughtEngine._parse_thoughts(raw)  # parser does its own cleaning
 
         for thought in thoughts:
             if thought.confidence < self.config.thought.min_confidence:
@@ -473,8 +480,8 @@ class InnerMonologue:
 
         # Parse refinements: REFINE: <id>
         refine_blocks = re.findall(
-            r'REFINE:\s*(\d+)\s*\nCONFIDENCE:\s*([\d.]+)\s*\nTHOUGHT:\s*(.+?)(?=\n(?:CATEGORY|REFINE|INITIATIVE|NEXT_FOCUS):|$)',
-            raw, re.IGNORECASE | re.DOTALL,
+            r'REFINE:\s*(?:The\s+)?["\']?.*?["\']?\s*\(?(\d+)\)?\s*\n\s*CONFIDEN(?:CE|T):\s*([\d.]+)\s*\n\s*THOUGHT:\s*(.+?)(?=\n\s*(?:CATEGORY|REFINE|INITIATIVE|NEXT_FOCUS):|$)',
+            cleaned, re.IGNORECASE | re.DOTALL,
         )
         for match in refine_blocks:
             try:
@@ -492,8 +499,8 @@ class InnerMonologue:
 
         # Parse initiative items: INITIATIVE: <category>
         initiative_blocks = re.findall(
-            r'INITIATIVE:\s*(\w+)\s*\nPRIORITY:\s*([\d.]+)\s*\nCONTENT:\s*(.+?)(?=\n(?:CATEGORY|REFINE|INITIATIVE|NEXT_FOCUS):|$)',
-            raw, re.IGNORECASE | re.DOTALL,
+            r'INITIATIVE:\s*(\w+)\s*\n\s*PRIORITY:\s*([\d.]+)\s*\n\s*CONTENT:\s*(.+?)(?=\n\s*(?:CATEGORY|REFINE|INITIATIVE|NEXT_FOCUS):|$)',
+            cleaned, re.IGNORECASE | re.DOTALL,
         )
         for match in initiative_blocks:
             try:
@@ -517,9 +524,10 @@ class InnerMonologue:
     @staticmethod
     def _parse_next_focus(raw: str) -> str | None:
         """Parse NEXT_FOCUS from monologue output."""
+        cleaned = InnerMonologue._clean_raw(raw)
         match = re.search(
-            r'NEXT_FOCUS:\s*(.+?)(?=\n(?:CATEGORY|REFINE|INITIATIVE|NEXT_FOCUS):|$)',
-            raw, re.IGNORECASE | re.DOTALL,
+            r'NEXT_FOCUS:\s*(.+?)(?=\n\s*(?:CATEGORY|REFINE|INITIATIVE|NEXT_FOCUS):|$)',
+            cleaned, re.IGNORECASE | re.DOTALL,
         )
         if match:
             focus = match.group(1).strip()

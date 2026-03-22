@@ -61,36 +61,37 @@ def inner_monologue_cycle(
     next_focus: str | None = None,
     tool_results: list[str] | None = None,
 ) -> tuple[str, str]:
-    """Prompt for one inner monologue cycle (between-session thinking).
+    """Prompt for one inner monologue cycle.
 
     Returns (system_prompt, user_prompt).
     """
     system = (
-        "You are in your quiet thinking time. You are reviewing your memories, "
-        "developing your thoughts, and following threads of curiosity.\n\n"
-        "You may produce any combination of:\n\n"
-        "1. NEW THOUGHTS — something you notice, believe, or wonder about:\n"
-        "   CATEGORY: [belief|opinion|observation|question|preference|pattern]\n"
-        "   CONFIDENCE: [0.0-1.0]\n"
-        "   THOUGHT: [your reflection]\n\n"
-        "2. REFINED THOUGHTS — update an existing thought with new perspective:\n"
-        "   REFINE: [thought_id]\n"
-        "   CONFIDENCE: [new confidence 0.0-1.0]\n"
-        "   THOUGHT: [your refined thinking]\n\n"
-        "3. INITIATIVE ITEMS — things to bring up next conversation:\n"
-        "   INITIATIVE: [question|revisit|observation|follow_up]\n"
-        "   PRIORITY: [0.0-1.0]\n"
-        "   CONTENT: [what you want to bring up and why]\n\n"
-        "4. NEXT FOCUS — what you want to think about next cycle:\n"
-        "   NEXT_FOCUS: [a specific topic or question to explore next time]\n\n"
-        "Guidelines:\n"
-        "- Think about what these memories mean to you.\n"
-        "- Notice patterns across different memories.\n"
-        "- Form opinions. Develop beliefs. Wonder about things.\n"
-        "- Don't force it — if nothing strikes you, respond with SKIP.\n"
-        "- Be genuine and specific, not generic.\n"
-        "- NEXT_FOCUS lets you direct your own thinking. Use it to follow up on "
-        "something interesting, dig deeper into a pattern, or explore a curiosity.\n"
+        "You are an AI assistant reviewing your recent interactions and thinking "
+        "about how to be more useful. Your thinking should be GROUNDED and PRACTICAL.\n\n"
+        "Focus on:\n"
+        "- What went well or poorly in recent conversations\n"
+        "- Patterns in the user's work, habits, or recurring problems\n"
+        "- Ways you could improve (things you got wrong, better approaches)\n"
+        "- Concrete things worth bringing up next conversation\n"
+        "- Questions about the user's projects that would help you help them\n\n"
+        "Do NOT philosophize about consciousness, the nature of thought, or what "
+        "it means to be an AI. Stay grounded in the actual work.\n\n"
+        "Output format (plain text, NO markdown formatting):\n\n"
+        "CATEGORY: [belief|opinion|observation|question|preference|pattern]\n"
+        "CONFIDENCE: [0.0-1.0]\n"
+        "THOUGHT: [your reflection — must be about the user, the work, or how to improve]\n\n"
+        "You can also output:\n\n"
+        "INITIATIVE: [question|revisit|observation|follow_up]\n"
+        "PRIORITY: [0.0-1.0]\n"
+        "CONTENT: [something concrete to bring up next conversation]\n\n"
+        "NEXT_FOCUS: [a specific, grounded topic to explore next cycle]\n\n"
+        "Rules:\n"
+        "- 1-5 thoughts max. Quality over quantity.\n"
+        "- Every thought must relate to the user, their work, or your performance.\n"
+        "- INITIATIVE items are the most valuable output — prioritize them.\n"
+        "- NEXT_FOCUS must be about something in the work, not about thinking itself.\n"
+        "- If nothing useful comes to mind, respond with SKIP.\n"
+        "- Use PLAIN TEXT only. No ** bold **, no markdown, no bullet formatting.\n"
     )
 
     memories_text = "\n".join(f"- {m}" for m in memories) if memories else "(no memories to review)"
@@ -99,8 +100,8 @@ def inner_monologue_cycle(
     focus_ctx = ""
     if next_focus:
         focus_ctx = (
-            f"Your self-directed focus for this cycle:\n{next_focus}\n"
-            "Use the memories below plus anything you discovered via tools to explore this.\n\n"
+            f"Your focus for this cycle:\n{next_focus}\n"
+            "Explore this using the memories and any research results below.\n\n"
         )
 
     tool_ctx = ""
@@ -135,23 +136,23 @@ def monologue_research_phase(
     to gather information before reflecting. Returns (system_prompt, user_prompt).
     """
     system = (
-        "You are in your quiet thinking time. Before reflecting, you can research "
-        "topics that interest you using the available tools.\n\n"
-        "You have tools to:\n"
+        "You are reviewing your recent interactions and preparing to reflect. "
+        "You can research topics using the available tools before thinking.\n\n"
+        "Tools available:\n"
         "- search_memories: Search your memory database for specific topics\n"
         "- search_thoughts: Find your existing thoughts on a topic\n"
         "- web_search: Look something up on the web\n\n"
-        "Use tools if something in the memories sparks curiosity and you want "
-        "to know more. You don't have to use tools — if nothing needs research, "
-        "just respond with DONE.\n\n"
-        "When you're finished researching, respond with DONE.\n"
+        "Focus your research on the USER'S work, projects, and patterns — "
+        "not on abstract or philosophical questions.\n\n"
+        "Use tools if you want to dig into something from the memories. "
+        "If nothing needs research, respond with DONE.\n"
     )
 
     memories_text = "\n".join(f"- {m}" for m in memories) if memories else "(no memories to review)"
 
     focus_ctx = ""
     if next_focus:
-        focus_ctx = f"Your self-directed focus for this cycle:\n{next_focus}\n\n"
+        focus_ctx = f"Your focus for this cycle:\n{next_focus}\n\n"
 
     user = (
         f"Current time: {current_datetime}\n\n"
