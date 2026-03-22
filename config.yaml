@@ -2,96 +2,34 @@
 # This file is self-modifiable by the agent
 
 models:
-  # --- Interactive ---
-  tool_calling: "glm-5:cloud"            # general chat (Ollama cloud free tier)
-  coding: "minimax/minimax-m2.5"          # project mode coding via OpenRouter ($0.25/$1.20 per M tokens)
-  # --- Background processing (local) ---
-  reasoning: "qwen3:14b"                 # entity extraction, tag discovery, lessons, contradiction
-  summarization: "glm4:latest"           # memory/session summaries (Groq/Gemini tried first via endpoint priority)
-  ranking: "qwen3:14b"                   # memory ranking 1-5 (was qwen2.5:14b — qwen3:14b matches reasoning, avoids model swap)
-  importance: "qwen3:14b"               # memory importance 0.0-1.0
-  ranking_importance: "qwen3:14b"        # combined rank+importance (was qwen2.5:14b — consolidate on reasoning model)
-  # --- Session Review (local primary, cloud for big sessions) ---
-  session_review: "qwen3:14b"             # whole-session analysis (lessons, reflections)
-  # --- Embedding (local) ---
-  embedding: "nomic-embed-text"          # vector search — snowflake had better quality but too much GPU contention
-  # --- Fallbacks (local, used when cloud is down) ---
-  tool_calling_fallback: "gpt-oss:latest"
-  coding_fallback: "gpt-oss:latest"
-  reasoning_fallback: "gpt-oss:latest"
-  summarization_fallback: "qwen3:14b"    # was glm4; qwen3:14b scores 100/95% vs 92/100%, already loaded
-  ranking_fallback: "qwen3:14b"
-  importance_fallback: "qwen3:14b"
-  ranking_importance_fallback: "qwen3.5:9b"   # was qwen2.5:7b; qwen3.5:9b scores 98/98% vs 92/90%
-  session_review_fallback: "gpt-oss:latest"   # emergency fallback for session review
-  fallback_think: false                  # disable thinking for fallback models (faster chat)
+  # --- All tasks via Ollama cloud (minimax-m2.7, $20/mo flat rate) ---
+  tool_calling: "minimax-m2.7:cloud"
+  coding: "minimax-m2.7:cloud"
+  reasoning: "minimax-m2.7:cloud"
+  summarization: "minimax-m2.7:cloud"
+  ranking: "minimax-m2.7:cloud"
+  importance: "minimax-m2.7:cloud"
+  ranking_importance: "minimax-m2.7:cloud"
+  session_review: "minimax-m2.7:cloud"
+  # --- Embedding (local — tiny model, runs on anything) ---
+  embedding: "nomic-embed-text"
+  # --- No fallbacks — flat rate cloud, nothing local to fall back to ---
 
 endpoints:
-  - name: "openrouter"
-    url: "https://openrouter.ai/api/v1"
-    provider: "openai"
-    api_key: "${OPENROUTER_API_KEY}"
-    roles: ["coding", "tool_calling"]
-    priority: 2                          # Ollama cloud free tier first, then OpenRouter
-    max_concurrent: 5
-    context_tokens: 196608               # MiniMax M2.5 supports 196K
-    pii_sanitize: true                   # data leaves machine via OpenRouter
-    enabled: true
-    models:
-      coding: "minimax/minimax-m2.5"
-      tool_calling: "minimax/minimax-m2.5"
-  - name: "groq"
-    url: "https://api.groq.com/openai/v1"
-    provider: "openai"
-    api_key: "${GROQ_API_KEY}"
-    roles: ["summarization", "ranking_importance"]
-    priority: 2                          # ranking primary (30 RPM), summarization fallback when Gemini rate-limits
-    max_concurrent: 3
-    rate_limit_rpm: 30
-    rate_limit_rpd: 1000
-    rate_limit_tpm: 6000                 # free tier TPM limit — large requests skip to local
-    enabled: true
-    models:
-      summarization: "openai/gpt-oss-120b"
-      ranking_importance: "llama-3.3-70b-versatile"
-  - name: "gemini"
-    url: "https://generativelanguage.googleapis.com/v1beta/openai/"
-    provider: "openai"
-    api_key: "${GEMINI_API_KEY}"
-    roles: ["summarization"]
-    priority: 3                          # tried first for summarization (5 RPM, Groq fallback)
-    max_concurrent: 2
-    rate_limit_rpm: 10                    # free tier: 10 RPM (Google docs say 10, was 5)
-    rate_limit_rpd: 250                  # free tier: 250 RPD (error showed 20 — may be per-interval burst limit)
-    enabled: false                       # disabled: 20-request burst limit makes free tier unreliable
-    models:
-      summarization: "gemini-2.5-flash"
-  - name: "local-cloud"
+  - name: "ollama-cloud"
     url: "http://localhost:11434"
-    roles: ["tool_calling", "coding", "session_review"]  # fallback for interactive when OpenRouter is down
+    roles: ["tool_calling", "coding", "reasoning", "summarization", "ranking", "importance", "ranking_importance", "session_review"]
     priority: 1
     max_concurrent: 5
-    context_tokens: 196608  # 192K — glm-5:cloud supports 198K
-    pii_sanitize: true       # cloud models relay to remote server — data leaves machine
+    context_tokens: 204800               # MiniMax M2.7 supports 204.8K
+    pii_sanitize: true                   # cloud models relay to remote server — data leaves machine
     enabled: true
-    models:
-      tool_calling: "glm-5:cloud"        # Ollama cloud free tier fallback
-      coding: "glm-5:cloud"
-      session_review: "kimi-k2.5:cloud"  # 100% contradiction+dedup, 0.65s avg, large context
   - name: "local"
     url: "http://localhost:11434"
-    roles: ["reasoning", "embedding", "summarization", "ranking", "importance", "ranking_importance", "session_review"]
+    roles: ["embedding"]
     priority: 1
     max_concurrent: 5
-    context_tokens: 32768   # 32K — local models (qwen3:14b, glm4, qwen2.5:14b) don't need more
     enabled: true
-  - name: "old-pc"
-    url: "http://192.168.0.225:11434"
-    roles: ["ranking"]
-    priority: 2
-    max_concurrent: 2
-    context_tokens: 131072
-    enabled: false  # not used for import
 
 memory:
   pools:
@@ -251,25 +189,6 @@ alive:
 # Configures how the agent interacts with each model.
 # Model name matching is flexible: exact, base name, or prefix.
 model_settings:
-  qwen3-coder:
+  minimax-m2.7:
     max_tool_calls: 20
     use_repo_map: true
-    extra_instructions: "Prefer editing existing files over creating new ones. Keep changes minimal."
-  devstral:
-    max_tool_calls: 25
-    use_repo_map: true
-    extra_instructions: "Prefer editing existing files over creating new ones."
-  gpt-oss:
-    max_tool_calls: 10
-    use_repo_map: true
-    think: false
-    extra_instructions: "Be direct. Skip exploration and go straight to implementation."
-  glm-5:
-    max_tool_calls: 15
-    use_repo_map: true
-  minimax-m2.5:
-    max_tool_calls: 20
-    use_repo_map: true
-  glm4:
-    max_tool_calls: 5
-    use_repo_map: false
