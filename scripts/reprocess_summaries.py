@@ -129,11 +129,12 @@ async def run(args):
         await db.close()
         return
 
-    # Process memories in batches
+    # Process memories concurrently
     processed = 0
     errors = 0
     skipped = 0
     batch_start = time.monotonic()
+    sem = asyncio.Semaphore(args.concurrent)
 
     cursor = await db.execute(
         """SELECT id, content, summary, role, session_id
@@ -145,7 +146,11 @@ async def run(args):
     )
     rows = await cursor.fetchall()
 
-    for i, row in enumerate(rows):
+    # DB writes must be serialized (SQLite)
+    db_lock = asyncio.Lock()
+
+    async def process_one(row):
+        nonlocal processed, errors, skipped
         mem_id = row["id"]
         content = row["content"]
         old_summary = row["summary"] or ""
@@ -153,59 +158,55 @@ async def run(args):
         session_id = row["session_id"]
 
         try:
-            if args.embed_only:
-                # Just re-embed with raw content (no LLM call)
-                new_summary = old_summary
-                embed_text = content if content else old_summary
-            else:
-                # Short messages (under 100 chars) — use raw content as summary.
-                # The LLM adds nothing for "what are claude connectors?" and tends
-                # to fall back to "User asked about X" for short inputs.
-                if len(content.strip()) < 100:
-                    new_summary = content.strip()
+            async with sem:
+                if args.embed_only:
+                    new_summary = old_summary
+                    embed_text = content if content else old_summary
                 else:
-                    # Re-summarize with improved prompt
-                    sum_system, sum_prompt = summarize_memory(content)
-                    new_summary = await llm_client.generate(
-                        prompt=sum_prompt,
-                        model=llm_model,
-                        system=sum_system,
+                    if len(content.strip()) < 100:
+                        new_summary = content.strip()
+                    else:
+                        sum_system, sum_prompt = summarize_memory(content)
+                        new_summary = await llm_client.generate(
+                            prompt=sum_prompt,
+                            model=llm_model,
+                            system=sum_system,
+                        )
+
+                        if new_summary.strip().upper() == "SKIP":
+                            skipped += 1
+                            return
+
+                    embed_text = new_summary
+
+            # DB writes serialized
+            async with db_lock:
+                if not args.embed_only:
+                    await db.execute(
+                        "UPDATE memories SET summary = ? WHERE id = ?",
+                        (new_summary, mem_id),
                     )
 
-                    if new_summary.strip().upper() == "SKIP":
-                        skipped += 1
-                        if not args.quiet:
-                            logger.debug("Skipped %d (SKIP response)", mem_id)
-                        continue
+                # Re-tag based on new summary (regex, no LLM, <1ms)
+                try:
+                    from blipshell.memory.tagger import tag_message
+                    new_tags = tag_message(new_summary, max_tags=7)
+                    await db.execute("DELETE FROM memory_tags WHERE memory_id = ?", (mem_id,))
+                    if new_tags:
+                        for tag_name in new_tags:
+                            await db.execute(
+                                "INSERT OR IGNORE INTO tags (name, category) VALUES (?, 'topic')",
+                                (tag_name,),
+                            )
+                            await db.execute(
+                                """INSERT OR IGNORE INTO memory_tags (memory_id, tag_id, timestamp)
+                                   SELECT ?, id, datetime('now') FROM tags WHERE name = ?""",
+                                (mem_id, tag_name),
+                            )
+                except Exception as e:
+                    logger.warning("Re-tag failed for %d: %s", mem_id, e)
 
-                # Update summary in SQLite
-                await db.execute(
-                    "UPDATE memories SET summary = ? WHERE id = ?",
-                    (new_summary, mem_id),
-                )
-                embed_text = new_summary
-
-            # Re-tag based on new summary (regex, no LLM, <1ms)
-            try:
-                from blipshell.memory.tagger import tag_message
-                new_tags = tag_message(new_summary, max_tags=7)
-                # Clear old tags and assign new ones
-                await db.execute("DELETE FROM memory_tags WHERE memory_id = ?", (mem_id,))
-                if new_tags:
-                    for tag_name in new_tags:
-                        await db.execute(
-                            "INSERT OR IGNORE INTO tags (name, category) VALUES (?, 'topic')",
-                            (tag_name,),
-                        )
-                        await db.execute(
-                            """INSERT OR IGNORE INTO memory_tags (memory_id, tag_id, timestamp)
-                               SELECT ?, id, datetime('now') FROM tags WHERE name = ?""",
-                            (mem_id, tag_name),
-                        )
-            except Exception as e:
-                logger.warning("Re-tag failed for %d: %s", mem_id, e)
-
-            # Re-embed in ChromaDB
+            # ChromaDB embed (thread-safe, no lock needed)
             metadata = {"session_id": str(session_id), "role": role, "source": "memory"}
             try:
                 chroma.add_memory(mem_id, embed_text, metadata)
@@ -216,11 +217,12 @@ async def run(args):
 
             # Checkpoint every batch_size memories
             if processed % args.batch == 0:
-                await db.execute(
-                    "INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)",
-                    (CHECKPOINT_KEY, str(mem_id)),
-                )
-                await db.commit()
+                async with db_lock:
+                    await db.execute(
+                        "INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)",
+                        (CHECKPOINT_KEY, str(mem_id)),
+                    )
+                    await db.commit()
                 elapsed = time.monotonic() - batch_start
                 rate = processed / elapsed if elapsed > 0 else 0
                 eta = (total - processed) / rate if rate > 0 else 0
@@ -237,10 +239,15 @@ async def run(args):
             elif errors == 11:
                 logger.error("Suppressing further error logs...")
 
-            # If we're getting rate limited, wait and continue
             if "429" in str(e) or "rate limit" in str(e).lower():
-                logger.warning("Rate limited — waiting 60s before continuing")
+                logger.warning("Rate limited — waiting 60s")
                 await asyncio.sleep(60)
+
+    # Run in chunks to avoid overwhelming memory with 30K+ tasks
+    chunk_size = args.concurrent * 10
+    for i in range(0, len(rows), chunk_size):
+        chunk = rows[i:i + chunk_size]
+        await asyncio.gather(*[process_one(row) for row in chunk])
 
     # Final commit and checkpoint
     await db.execute(
@@ -295,6 +302,8 @@ def main():
     parser.add_argument("--embed-only", action="store_true",
                         help="Skip re-summarization, just re-embed existing content")
     parser.add_argument("--batch", type=int, default=50, help="Checkpoint batch size")
+    parser.add_argument("--concurrent", type=int, default=5,
+                        help="Number of concurrent LLM requests (default: 5)")
     parser.add_argument("--quiet", "-q", action="store_true")
     args = parser.parse_args()
 
