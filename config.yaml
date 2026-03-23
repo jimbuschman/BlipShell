@@ -32,7 +32,7 @@ endpoints:
     provider: "openai"
     api_key: "${OPENROUTER_API_KEY}"
     roles: ["coding", "tool_calling"]
-    priority: 2                          # Ollama cloud free tier first, then OpenRouter
+    priority: 1                          # fallback for chat when Ollama cloud is down; primary for coding
     max_concurrent: 5
     context_tokens: 204800               # MiniMax M2.7 supports 204.8K
     pii_sanitize: true                   # data leaves machine via OpenRouter
@@ -68,8 +68,8 @@ endpoints:
       summarization: "gemini-2.5-flash"
   - name: "local-cloud"
     url: "http://localhost:11434"
-    roles: ["tool_calling", "coding", "session_review"]  # fallback for interactive when OpenRouter is down
-    priority: 1
+    roles: ["tool_calling", "session_review"]             # primary for chat; coding goes to OpenRouter
+    priority: 2                                           # tried first for tool_calling (higher = first)
     max_concurrent: 5
     context_tokens: 196608  # 192K — glm-5:cloud supports 198K
     pii_sanitize: true       # cloud models relay to remote server — data leaves machine
