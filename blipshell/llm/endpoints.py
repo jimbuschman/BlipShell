@@ -305,18 +305,24 @@ class EndpointManager:
         await asyncio.gather(*tasks)
 
     async def _check_endpoint(self, ep: Endpoint):
-        """Check a single endpoint's health."""
+        """Check a single endpoint's health.
+
+        Health checks can only RE-ENABLE disabled endpoints, never disable
+        working ones. Only real request failures (in router/agent_chat)
+        should count toward the 3-strike disable. This prevents flaky health
+        checks (e.g. OpenRouter's huge /models response timing out) from
+        killing a perfectly functional endpoint.
+        """
         try:
             healthy = await ep.client.check_health()
             if healthy and not ep.enabled and ep.failure_count > 0:
                 ep.enabled = True
                 ep.failure_count = 0
                 logger.info("Endpoint %s re-enabled after health check", ep.name)
-            elif not healthy and ep.enabled:
-                ep.record_failure()
+            elif not healthy:
+                logger.debug("Health check unhealthy for %s (not penalizing)", ep.name)
         except Exception as e:
-            logger.debug("Health check failed for %s: %s", ep.name, e)
-            ep.record_failure()
+            logger.debug("Health check failed for %s: %s (not penalizing)", ep.name, e)
 
     async def startup_health_check(self):
         """Run a health check on startup to detect available endpoints.
