@@ -1,7 +1,7 @@
 """Rebuild ChromaDB from SQLite summaries — no LLM calls needed.
 
 Wipes the ChromaDB memories/core_memories/lessons collections and
-re-embeds everything from the current SQLite data using nomic-embed-text.
+re-embeds everything from the current SQLite data.
 
 Usage:
     python scripts/rebuild_chroma.py
@@ -25,7 +25,7 @@ async def main():
     parser.add_argument("--db", default="data/blipshell.db", help="SQLite DB path")
     parser.add_argument("--chroma", default="data/chroma", help="ChromaDB directory")
     parser.add_argument("--ollama-url", default="http://localhost:11434")
-    parser.add_argument("--model", default="nomic-embed-text")
+    parser.add_argument("--model", default="qwen3-embedding:0.6b")
     parser.add_argument("--batch-size", type=int, default=200)
     args = parser.parse_args()
 

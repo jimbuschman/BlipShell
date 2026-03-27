@@ -14,7 +14,7 @@ from chromadb.config import Settings
 
 logger = logging.getLogger(__name__)
 
-# nomic-embed-text has 8192 token context (~16K chars).
+# qwen3-embedding:0.6b has 32K token context (~64K chars).
 # 6000 chars preserves most memory content while staying well within limits.
 MAX_EMBED_CHARS = 6000
 
@@ -51,7 +51,7 @@ def _ollama_gated(fn):
 class ChromaStore:
     """ChromaDB vector storage for semantic memory search."""
 
-    def __init__(self, persist_dir: str, embedding_model: str = "nomic-embed-text",
+    def __init__(self, persist_dir: str, embedding_model: str = "qwen3-embedding:0.6b",
                  ollama_url: str = "http://localhost:11434"):
         self.persist_dir = persist_dir
         self.embedding_model = embedding_model
@@ -202,7 +202,7 @@ class ChromaStore:
             metadatas=[meta],
         )
 
-    # Search methods are NOT gated — nomic-embed-text (137M params) runs
+    # Search methods are NOT gated — embedding models are small enough to run
     # concurrently with larger chat models without GPU contention. Removing
     # the gate eliminates 10-20s wait behind background processing.
     # Write methods (add_memory, add_lesson, etc.) keep the gate.

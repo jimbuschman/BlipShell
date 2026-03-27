@@ -14,7 +14,7 @@ models:
   # --- Session Review (local primary, cloud for big sessions) ---
   session_review: "qwen3:14b"             # whole-session analysis (lessons, reflections)
   # --- Embedding (local) ---
-  embedding: "nomic-embed-text"          # vector search — snowflake had better quality but too much GPU contention
+  embedding: "qwen3-embedding:0.6b"      # vector search — 10% better similarity than nomic, understands domain terms
   # --- Fallbacks (local, used when cloud is down) ---
   tool_calling_fallback: "gpt-oss:latest"
   coding_fallback: "gpt-oss:latest"
