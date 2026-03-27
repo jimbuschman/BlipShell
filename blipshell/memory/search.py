@@ -82,6 +82,10 @@ class MemorySearch:
             self.entity_boost = config.entity_boost
             self.project_boost = getattr(config, "project_boost", 0.15)
             self.recency_boost_weight = getattr(config, "recency_boost_weight", 0.15)
+            self.fadem_enabled = getattr(config, "fadem_enabled", True)
+            self.fadem_base_rate = getattr(config, "fadem_base_rate", 0.001)
+            self.fadem_importance_factor = getattr(config, "fadem_importance_factor", 2.0)
+            self.fadem_access_hours = getattr(config, "fadem_access_hours", 24.0)
             self.min_importance = getattr(config, "min_importance", 0.25)
             self.fts_baseline_similarity = getattr(config, "fts_baseline_similarity", 0.4)
             self.dedup_jaccard_threshold = getattr(config, "dedup_jaccard_threshold", 0.65)
@@ -96,15 +100,20 @@ class MemorySearch:
             self.min_rank = min_rank
             self.search_limit = search_limit
             self.similarity_threshold = 0.5
-            self.importance_boost_weight = 0.2
+            self.importance_boost_weight = 0.4
             self.search_overfetch_multiplier = 2
             self.tag_overlap_boost = 0.1
             self.decay_rate = 0.001
-            self.decay_rates = None
+            from blipshell.models.config import DecayRatesConfig
+            self.decay_rates = DecayRatesConfig()
             self.fts_weight = 0.3
             self.entity_boost = 0.15
             self.project_boost = 0.15
             self.recency_boost_weight = 0.15
+            self.fadem_enabled = True
+            self.fadem_importance_factor = 2.0
+            self.fadem_base_rate = 0.001
+            self.fadem_access_hours = 24.0
             self.min_importance = 0.25
             self.fts_baseline_similarity = 0.4
             self.dedup_jaccard_threshold = 0.65
@@ -275,21 +284,30 @@ class MemorySearch:
                 filtered_by_importance += 1
                 continue
 
-            # Simplified scoring — importance is intrinsic, not decayed.
-            # Temporal decay was multiplied into importance which crushed
-            # foundational memories after ~30 days. Now importance and recency
-            # are independent additive signals.
-
             # Importance signal (intrinsic memory quality, no decay)
             importance_boost = memory.importance * self.importance_boost_weight
 
-            # Recency boost — standalone, decays over 48h half-life
+            # Recency boost — FadeMem or flat.
+            # FadeMem uses per-type decay rates modulated by importance and
+            # access count so important/frequently-recalled memories stay
+            # relevant for weeks/months instead of dying after 48h.
             if not memory.timestamp:
                 hours_age = 720.0
             else:
                 mem_ts = memory.timestamp if memory.timestamp.tzinfo else memory.timestamp.replace(tzinfo=timezone.utc)
                 hours_age = (now - mem_ts).total_seconds() / 3600
-            recency_boost = self.recency_boost_weight * exp(-hours_age / 48)
+
+            if self.fadem_enabled:
+                # Importance-modulated decay: imp=1.0 divides rate by 3x (with factor=2.0)
+                # Uniform base rate — no type differentiation (type classification isn't
+                # reliable enough to weight this heavily; importance is the cleaner signal)
+                effective_rate = self.fadem_base_rate / (1.0 + memory.importance * self.fadem_importance_factor)
+                # Access strengthening: each retrieval subtracts hours from effective age
+                effective_hours = max(0.0, hours_age - memory.access_count * self.fadem_access_hours)
+                recency_boost = self.recency_boost_weight * exp(-effective_rate * effective_hours)
+            else:
+                # Flat 48h half-life fallback
+                recency_boost = self.recency_boost_weight * exp(-hours_age / 48)
 
             # Tag overlap boost
             memory_tags = tags_by_memory.get(memory_id, [])
@@ -345,13 +363,18 @@ class MemorySearch:
                     continue
                 if current_session_id and emem.session_id == current_session_id:
                     continue
-                # Score: entity boost + importance + recency (no decay multiplication)
+                # Score: entity boost + importance + recency (same FadeMem formula)
                 if not emem.timestamp:
                     e_hours_age = 720.0
                 else:
                     mem_ts = emem.timestamp if emem.timestamp.tzinfo else emem.timestamp.replace(tzinfo=timezone.utc)
                     e_hours_age = (now - mem_ts).total_seconds() / 3600
-                e_recency_boost = self.recency_boost_weight * exp(-e_hours_age / 48)
+                if self.fadem_enabled:
+                    e_eff_rate = self.fadem_base_rate / (1.0 + emem.importance * self.fadem_importance_factor)
+                    e_eff_hours = max(0.0, e_hours_age - emem.access_count * self.fadem_access_hours)
+                    e_recency_boost = self.recency_boost_weight * exp(-e_eff_rate * e_eff_hours)
+                else:
+                    e_recency_boost = self.recency_boost_weight * exp(-e_hours_age / 48)
                 entity_score = self.entity_boost + (emem.importance * self.importance_boost_weight) + e_recency_boost
                 results.append(SearchResult(
                     memory_id=eid,

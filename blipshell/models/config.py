@@ -135,11 +135,12 @@ class MemoryConfig(BaseModel):
     similarity_threshold: float = 0.35  # industry standard for semantic search (was 0.5, too strict at scale)
     min_importance: float = 0.25  # replaces min_rank filter — continuous, better predictor of recall relevance
     fts_baseline_similarity: float = 0.4  # FTS-only hits get this baseline so they can compete on other signals
-    importance_boost_weight: float = 0.2
+    importance_boost_weight: float = 0.4  # was 0.2 — too low, importance couldn't overcome similarity gaps
     tag_overlap_boost: float = 0.1
     search_overfetch_multiplier: int = 2
     decay_rate: float = 0.001  # temporal decay rate (~50% after 29 days) — global fallback
     decay_rates: DecayRatesConfig = DecayRatesConfig()
+
     fts_weight: float = 0.3  # weight for FTS5 RRF boost in hybrid search
     auto_prune_days: int = 0  # 0 = disabled; was 90 but archived 1083 imported memories
     prune_max_importance: float = 0.3
@@ -152,7 +153,12 @@ class MemoryConfig(BaseModel):
     entity_extraction_batch_size: int = 50  # memories processed per startup run
     entity_boost: float = 0.15  # boost for memories found via entity graph
     project_boost: float = 0.15  # boost for memories from active project sessions
-    recency_boost_weight: float = 0.15  # direct recency boost (decays over ~7 days)
+    recency_boost_weight: float = 0.15  # max recency boost amplitude
+    # FadeMem: importance-modulated decay (replaces flat 48h half-life)
+    fadem_enabled: bool = True  # use importance-modulated decay instead of flat 48h
+    fadem_base_rate: float = 0.001  # base decay rate (~29 day half-life, modulated by importance)
+    fadem_importance_factor: float = 2.0  # how much importance slows decay (higher = slower for imp=1.0)
+    fadem_access_hours: float = 24.0  # hours subtracted per access_count (strengthening)
     score_floor_ratio: float = 0.6  # results must be within this ratio of top score
     min_score_floor: float = 0.4  # absolute minimum boosted_score to keep
     dedup_jaccard_threshold: float = 0.65  # Jaccard similarity to consider summaries duplicate

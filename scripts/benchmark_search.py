@@ -483,9 +483,19 @@ async def main():
     parser.add_argument("--min-importance", type=float, default=None)
     parser.add_argument("--entity-cap", type=int, default=None,
                         help="Override MAX_ENTITY_MEMORIES in search")
+    parser.add_argument("--importance-weight", type=float, default=None,
+                        help="Importance boost weight (default: 0.4)")
     parser.add_argument("--fts-weight", type=float, default=None)
     parser.add_argument("--recency-boost", type=float, default=None)
     parser.add_argument("--dedup-threshold", type=float, default=None)
+    parser.add_argument("--no-fadem", action="store_true",
+                        help="Disable FadeMem decay (use flat 48h half-life)")
+    parser.add_argument("--fadem-rate", type=float, default=None,
+                        help="FadeMem base decay rate (default: 0.001)")
+    parser.add_argument("--fadem-factor", type=float, default=None,
+                        help="FadeMem importance factor (default: 2.0)")
+    parser.add_argument("--fadem-access-hours", type=float, default=None,
+                        help="FadeMem hours per access (default: 24.0)")
     parser.add_argument("--reranker", action="store_true",
                         help="Enable reranker for B run (A/B comparison)")
     parser.add_argument("--reranker-model", type=str, default=None,
@@ -522,6 +532,9 @@ async def main():
     # Build config overrides
     overrides = {}
     override_label_parts = []
+    if args.importance_weight is not None:
+        overrides["importance_boost_weight"] = args.importance_weight
+        override_label_parts.append(f"iw={args.importance_weight}")
     if args.similarity_threshold is not None:
         overrides["similarity_threshold"] = args.similarity_threshold
         override_label_parts.append(f"sim={args.similarity_threshold}")
@@ -537,6 +550,18 @@ async def main():
     if args.dedup_threshold is not None:
         overrides["dedup_jaccard_threshold"] = args.dedup_threshold
         override_label_parts.append(f"dup={args.dedup_threshold}")
+    if args.no_fadem:
+        overrides["fadem_enabled"] = False
+        override_label_parts.append("fadem=off")
+    if args.fadem_rate is not None:
+        overrides["fadem_base_rate"] = args.fadem_rate
+        override_label_parts.append(f"fr={args.fadem_rate}")
+    if args.fadem_factor is not None:
+        overrides["fadem_importance_factor"] = args.fadem_factor
+        override_label_parts.append(f"ff={args.fadem_factor}")
+    if args.fadem_access_hours is not None:
+        overrides["fadem_access_hours"] = args.fadem_access_hours
+        override_label_parts.append(f"fa={args.fadem_access_hours}")
     if args.reranker:
         overrides["reranker_enabled"] = True
         override_label_parts.append("rerank=on")

@@ -6,14 +6,17 @@ and compares quality (similarity scores, result relevance) and speed.
 Usage:
     python scripts/benchmark_embeds.py
     python scripts/benchmark_embeds.py --sample 200
-    python scripts/benchmark_embeds.py --models nomic-embed-text mxbai-embed-large
+    python scripts/benchmark_embeds.py --models nomic-embed-text qwen3-embedding:0.6b
+    python scripts/benchmark_embeds.py --sample 2000 --output data/embed_bench.json
 """
 
 import argparse
 import asyncio
+import json
 import shutil
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import chromadb
@@ -26,8 +29,7 @@ console = Console()
 
 DEFAULT_MODELS = [
     "nomic-embed-text",
-    "mxbai-embed-large",
-    "snowflake-arctic-embed:335m",
+    "qwen3-embedding:0.6b",
     "bge-m3",
 ]
 
@@ -35,18 +37,33 @@ DEFAULT_MODELS = [
 # 500 chars ≈ 125 tokens, safe for all models.
 EMBED_MAX_CHARS = 500
 
-# Real queries a user would type — mix of recall, topical, and specific
+# Same queries as benchmark_search.py for direct comparability
 TEST_QUERIES = [
-    "python performance profiling",
-    "what does the user prefer for programming",
-    "desk robot design",
-    "Minecraft performance issues",
-    "docker containers and deployment",
-    "memory and conversation architecture",
-    "what programming languages does the user know",
-    "hardware and GPU setup",
-    "debugging problems and frustrations",
-    "ollama and local LLM configuration",
+    "what is my name",
+    "where do I work",
+    "what programming languages do I know",
+    "what computer setup do I have",
+    "what are my preferences",
+    "how does entity extraction work",
+    "what model do we use for ranking",
+    "how does the search pipeline work",
+    "what is the executor architecture",
+    "how does the memory system work",
+    "what did we work on recently",
+    "what was the last bug we fixed",
+    "what changes did we make to the config",
+    "what tests did we run",
+    "what models have we benchmarked",
+    "what is BlipShell",
+    "what is the overall architecture",
+    "what databases does the system use",
+    "how do sessions work",
+    "what is the memory processing pipeline",
+    "OllamaGate contention",
+    "ChromaDB sync drift",
+    "task_complete tool",
+    "PII sanitization Presidio",
+    "centroid tagger",
 ]
 
 
@@ -184,42 +201,62 @@ def print_quality_table(results: list[dict]):
         console.print(table)
 
 
+def compute_summary(r: dict) -> dict:
+    """Compute summary metrics for a model's results."""
+    top1_sims = []
+    all_sims = []
+    above_50 = 0
+    above_30 = 0
+    spread_sum = 0.0  # avg gap between #1 and #5 — higher = more discriminative
+
+    for query in TEST_QUERIES:
+        hits = r["results"][query]
+        if hits:
+            top1_sims.append(hits[0]["sim"])
+        sims = [h["sim"] for h in hits]
+        all_sims.extend(sims)
+        for s in sims:
+            if s >= 0.5:
+                above_50 += 1
+            if s >= 0.3:
+                above_30 += 1
+        if len(sims) >= 5:
+            spread_sum += sims[0] - sims[4]
+
+    total = len(TEST_QUERIES) * 5
+    avg_top1 = sum(top1_sims) / len(top1_sims) if top1_sims else 0
+    avg_all = sum(all_sims) / len(all_sims) if all_sims else 0
+    avg_spread = spread_sum / len(TEST_QUERIES) if TEST_QUERIES else 0
+
+    return {
+        "avg_top1": avg_top1,
+        "avg_top5": avg_all,
+        "hits_above_50": above_50,
+        "hits_above_30": above_30,
+        "total_hits": total,
+        "avg_spread": avg_spread,
+    }
+
+
 def print_summary_table(results: list[dict]):
     """Print average similarity scores across all queries."""
     table = Table(title="Overall Quality (avg similarity of top-5 results)")
     table.add_column("Model")
-    table.add_column("Avg Top-1 Sim", justify="right")
-    table.add_column("Avg Top-5 Sim", justify="right")
+    table.add_column("Avg Top-1", justify="right")
+    table.add_column("Avg Top-5", justify="right")
     table.add_column("Hits >= 0.5", justify="right")
     table.add_column("Hits >= 0.3", justify="right")
+    table.add_column("Avg Spread", justify="right", style="dim")
 
     for r in results:
-        top1_sims = []
-        all_sims = []
-        above_50 = 0
-        above_30 = 0
-
-        for query in TEST_QUERIES:
-            hits = r["results"][query]
-            if hits:
-                top1_sims.append(hits[0]["sim"])
-            for h in hits:
-                all_sims.append(h["sim"])
-                if h["sim"] >= 0.5:
-                    above_50 += 1
-                if h["sim"] >= 0.3:
-                    above_30 += 1
-
-        avg_top1 = sum(top1_sims) / len(top1_sims) if top1_sims else 0
-        avg_all = sum(all_sims) / len(all_sims) if all_sims else 0
-        total = len(TEST_QUERIES) * 5
-
+        s = compute_summary(r)
         table.add_row(
             r["model"],
-            f"{avg_top1:.3f}",
-            f"{avg_all:.3f}",
-            f"{above_50}/{total}",
-            f"{above_30}/{total}",
+            f"{s['avg_top1']:.3f}",
+            f"{s['avg_top5']:.3f}",
+            f"{s['hits_above_50']}/{s['total_hits']}",
+            f"{s['hits_above_30']}/{s['total_hits']}",
+            f"{s['avg_spread']:.3f}",
         )
 
     console.print()
@@ -233,6 +270,8 @@ async def main():
     parser.add_argument("--models", nargs="*", default=DEFAULT_MODELS)
     parser.add_argument("--sample", type=int, default=500)
     parser.add_argument("--batch-size", type=int, default=50)
+    parser.add_argument("--output", default=None,
+                        help="Save JSON results to file (e.g. data/embed_bench.json)")
     args = parser.parse_args()
 
     console.print("[bold]Embedding Model Benchmark[/bold]")
@@ -262,6 +301,28 @@ async def main():
     print_speed_table(results)
     print_summary_table(results)
     print_quality_table(results)
+
+    # Save JSON
+    if args.output:
+        report = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "sample_size": len(memories),
+            "queries": len(TEST_QUERIES),
+            "models": {},
+        }
+        for r in results:
+            summary = compute_summary(r)
+            report["models"][r["model"]] = {
+                "embed_time": round(r["embed_time"], 2),
+                "embed_rate": round(r["embed_rate"], 1),
+                "query_time": round(r["query_time"], 3),
+                "qps": round(r["qps"], 1),
+                "summary": summary,
+                "results": r["results"],
+            }
+        with open(args.output, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+        console.print(f"\n[dim]Results saved to {args.output}[/dim]")
 
 
 if __name__ == "__main__":
