@@ -46,6 +46,19 @@ async def main():
     sqlite = SQLiteStore(args.db)
     await sqlite.initialize()
 
+    # Delete existing collections first — embedding dimension may have changed
+    # (e.g. nomic 768d → qwen3-embedding 1024d). ChromaDB can't mix dimensions.
+    import chromadb
+    from chromadb.config import Settings
+    client = chromadb.PersistentClient(path=args.chroma, settings=Settings(anonymized_telemetry=False))
+    for name in ["memories", "core_memories", "lessons", "entities"]:
+        try:
+            client.delete_collection(name)
+            console.print(f"  Deleted collection: {name}")
+        except Exception:
+            pass  # collection didn't exist
+    del client  # release before ChromaStore reopens
+
     chroma = ChromaStore(
         persist_dir=args.chroma,
         embedding_model=args.model,
@@ -53,8 +66,8 @@ async def main():
     )
     chroma.initialize()
 
-    counts = chroma.get_counts()
-    console.print(f"Current ChromaDB: memories={counts['memories']}, core={counts['core_memories']}, lessons={counts['lessons']}")
+    console.print(f"Embedding model: {args.model}")
+    console.print(f"Collections recreated (fresh)")
 
     # Count what we need to embed
     cursor = await sqlite._db.execute(
