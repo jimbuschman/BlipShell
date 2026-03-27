@@ -100,7 +100,7 @@ class MemorySearch:
             self.min_rank = min_rank
             self.search_limit = search_limit
             self.similarity_threshold = 0.5
-            self.importance_boost_weight = 0.4
+            self.importance_boost_weight = 0.2
             self.search_overfetch_multiplier = 2
             self.tag_overlap_boost = 0.1
             self.decay_rate = 0.001
@@ -284,11 +284,8 @@ class MemorySearch:
                 filtered_by_importance += 1
                 continue
 
-            # Importance signal — multiplicative on similarity so it amplifies
-            # what embedding search found rather than competing with it.
-            # High importance can't override a large similarity gap; it can only
-            # widen or narrow gaps that similarity already established.
-            importance_mult = similarity * memory.importance * self.importance_boost_weight
+            # Importance signal (intrinsic memory quality, no decay)
+            importance_boost = memory.importance * self.importance_boost_weight
 
             # Recency boost — FadeMem or flat.
             # FadeMem uses per-type decay rates modulated by importance and
@@ -332,7 +329,7 @@ class MemorySearch:
             if project_session_ids and memory.session_id in project_session_ids:
                 project_boost = 0.5
 
-            boosted_score = similarity + importance_mult + recency_boost + rrf_boost + project_boost + tag_boost
+            boosted_score = similarity + importance_boost + recency_boost + rrf_boost + project_boost + tag_boost
 
             results.append(SearchResult(
                 memory_id=memory_id,

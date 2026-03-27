@@ -135,7 +135,7 @@ class MemoryConfig(BaseModel):
     similarity_threshold: float = 0.35  # industry standard for semantic search (was 0.5, too strict at scale)
     min_importance: float = 0.25  # replaces min_rank filter — continuous, better predictor of recall relevance
     fts_baseline_similarity: float = 0.4  # FTS-only hits get this baseline so they can compete on other signals
-    importance_boost_weight: float = 0.4  # was 0.2 — too low, importance couldn't overcome similarity gaps
+    importance_boost_weight: float = 0.2
     tag_overlap_boost: float = 0.1
     search_overfetch_multiplier: int = 2
     decay_rate: float = 0.001  # temporal decay rate (~50% after 29 days) — global fallback
@@ -155,7 +155,7 @@ class MemoryConfig(BaseModel):
     project_boost: float = 0.15  # boost for memories from active project sessions
     recency_boost_weight: float = 0.15  # max recency boost amplitude
     # FadeMem: importance-modulated decay (replaces flat 48h half-life)
-    fadem_enabled: bool = True  # use importance-modulated decay instead of flat 48h
+    fadem_enabled: bool = False  # off by default — flat 48h decay is safer on old corpora
     fadem_base_rate: float = 0.001  # base decay rate (~29 day half-life, modulated by importance)
     fadem_importance_factor: float = 2.0  # how much importance slows decay (higher = slower for imp=1.0)
     fadem_access_hours: float = 24.0  # hours subtracted per access_count (strengthening)
