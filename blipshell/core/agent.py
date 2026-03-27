@@ -201,6 +201,7 @@ class Agent(
         self.search = MemorySearch(
             self.sqlite, self.chroma, self.router,
             config=self.config.memory,
+            ollama_url=get_ollama_url(self.config.endpoints),
         )
 
         # Background memory worker (dedicated thread with own event loop + connections)

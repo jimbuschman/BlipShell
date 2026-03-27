@@ -164,6 +164,12 @@ class MemoryConfig(BaseModel):
     batch_tag_max_batches: int = 500  # max LLM batches per nightly run
     dedup: DedupConfig = DedupConfig()
     entity_resolution: EntityResolutionConfig = EntityResolutionConfig()
+    # Reranker — rescores top search results using a cross-encoder model
+    reranker_enabled: bool = False  # off by default (requires model pulled on Ollama)
+    reranker_model: str = "dengcao/Qwen3-Reranker-0.6B:Q8_0"
+    reranker_top_n: int = 15  # rerank this many candidates, return all (sorted by reranker score)
+    reranker_weight: float = 0.4  # blend: (1-w)*boosted_score + w*reranker_score
+    reranker_instruction: str = ""  # custom instruction (empty = use default)
 
 
 class SessionConfig(BaseModel):

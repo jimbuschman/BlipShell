@@ -15,6 +15,7 @@ from math import exp
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.chroma_store import ChromaStore
 from blipshell.memory.noise import contains_signal_words, should_skip_memory
+from blipshell.memory.reranker import Reranker
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.memory.tagger import tag_message
 from blipshell.models.config import MemoryConfig
@@ -62,6 +63,7 @@ class MemorySearch:
         config: MemoryConfig | None = None,
         min_rank: int = 3,
         search_limit: int = 20,
+        ollama_url: str = "http://localhost:11434",
     ):
         self.sqlite = sqlite
         self.chroma = chroma
@@ -84,6 +86,12 @@ class MemorySearch:
             self.fts_baseline_similarity = getattr(config, "fts_baseline_similarity", 0.4)
             self.dedup_jaccard_threshold = getattr(config, "dedup_jaccard_threshold", 0.65)
             self.project_session_limit = getattr(config, "project_session_limit", 50)
+            # Reranker config
+            self.reranker_enabled = getattr(config, "reranker_enabled", False)
+            self.reranker_model = getattr(config, "reranker_model", "dengcao/Qwen3-Reranker-0.6B:Q8_0")
+            self.reranker_top_n = getattr(config, "reranker_top_n", 15)
+            self.reranker_weight = getattr(config, "reranker_weight", 0.4)
+            self.reranker_instruction = getattr(config, "reranker_instruction", "")
         else:
             self.min_rank = min_rank
             self.search_limit = search_limit
@@ -101,7 +109,14 @@ class MemorySearch:
             self.fts_baseline_similarity = 0.4
             self.dedup_jaccard_threshold = 0.65
             self.project_session_limit = 50
+            self.reranker_enabled = False
+            self.reranker_model = "dengcao/Qwen3-Reranker-0.6B:Q8_0"
+            self.reranker_top_n = 15
+            self.reranker_weight = 0.4
+            self.reranker_instruction = ""
         self.last_search_stats: dict | None = None
+        self._ollama_url = ollama_url
+        self._reranker: Reranker | None = None
 
     async def search(
         self,
@@ -354,6 +369,17 @@ class MemorySearch:
 
         _t_entity_ms = (time.monotonic() - _t_entity_start) * 1000
 
+        # Step 6b: Reranker — rescore top candidates using cross-encoder model.
+        # Runs after all boosting signals are applied so it can blend with them.
+        _t_rerank_start = time.monotonic()
+        reranker_hits = 0
+        if self.reranker_enabled and results:
+            try:
+                reranker_hits = await self._apply_reranking(query, results)
+            except Exception as e:
+                logger.warning("Reranking failed, using original scores: %s", e)
+        _t_rerank_ms = (time.monotonic() - _t_rerank_start) * 1000
+
         # Step 7: Sort by boosted score
         results.sort(key=lambda r: r.boosted_score, reverse=True)
 
@@ -403,6 +429,7 @@ class MemorySearch:
             "entity_names": matched_entity_names,
             "connected_entities": connected_entity_count,
             "project_hits": project_hits,
+            "reranker_hits": reranker_hits,
             "filtered_by_similarity": filtered_by_similarity,
             "filtered_by_importance": filtered_by_importance,
             "filtered_by_session": filtered_by_session,
@@ -414,6 +441,7 @@ class MemorySearch:
             "chroma_ms": round(_t_chroma_ms, 1),
             "fts_ms": round(_t_fts_ms, 1),
             "entity_ms": round(_t_entity_ms, 1),
+            "rerank_ms": round(_t_rerank_ms, 1),
             "total_ms": round(_t_total_ms, 1),
         }
 
@@ -489,6 +517,57 @@ class MemorySearch:
         if len(memory_ids) > MAX_ENTITY_MEMORIES:
             memory_ids = memory_ids[:MAX_ENTITY_MEMORIES]
         return memory_ids, matched_names, len(connected_ids)
+
+    async def _apply_reranking(self, query: str, results: list[SearchResult]) -> int:
+        """Rerank the top candidates and blend scores.
+
+        Takes the top reranker_top_n results (by boosted_score), sends them
+        to the reranker model, and blends the reranker score into boosted_score:
+            new_score = (1 - weight) * normalized_boosted + weight * reranker_score
+
+        Scores are normalized to [0, 1] before blending so the reranker signal
+        is on the same scale as the existing boosted_score.
+
+        Returns the number of documents reranked.
+        """
+        if not results:
+            return 0
+
+        # Lazy init reranker
+        if self._reranker is None:
+            self._reranker = Reranker(
+                ollama_url=self._ollama_url,
+                model=self.reranker_model,
+                instruction=self.reranker_instruction or None,
+            )
+
+        # Sort by current boosted_score to pick top candidates
+        results.sort(key=lambda r: r.boosted_score, reverse=True)
+        top_n = min(self.reranker_top_n, len(results))
+        candidates = results[:top_n]
+
+        # Build (memory_id, text) pairs — use summary for speed (shorter text)
+        documents = [(r.memory_id, r.summary) for r in candidates]
+
+        rerank_results = await self._reranker.rerank(query, documents)
+
+        # Build memory_id -> reranker_score map
+        reranker_scores: dict[int, float] = {}
+        for rr in rerank_results:
+            reranker_scores[rr.memory_id] = rr.score
+
+        # Normalize boosted_scores to [0, 1] for blending
+        max_score = max(r.boosted_score for r in candidates) if candidates else 1.0
+        min_score = min(r.boosted_score for r in candidates) if candidates else 0.0
+        score_range = max_score - min_score if max_score > min_score else 1.0
+
+        w = self.reranker_weight
+        for r in candidates:
+            reranker_score = reranker_scores.get(r.memory_id, 0.5)
+            normalized = (r.boosted_score - min_score) / score_range
+            r.boosted_score = (1 - w) * normalized + w * reranker_score
+
+        return len(candidates)
 
     async def search_core_memories(self, query: str, n_results: int = 10) -> list[dict]:
         """Search core memories by semantic similarity."""

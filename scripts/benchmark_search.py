@@ -169,7 +169,7 @@ async def run_benchmark(
     chroma.initialize()
 
     # Create search with no router (not used in search())
-    search = MemorySearch(sqlite=sqlite, chroma=chroma, router=None)
+    search = MemorySearch(sqlite=sqlite, chroma=chroma, router=None, ollama_url=ollama_url)
 
     # Apply config overrides
     if config_overrides:
@@ -486,6 +486,14 @@ async def main():
     parser.add_argument("--fts-weight", type=float, default=None)
     parser.add_argument("--recency-boost", type=float, default=None)
     parser.add_argument("--dedup-threshold", type=float, default=None)
+    parser.add_argument("--reranker", action="store_true",
+                        help="Enable reranker for B run (A/B comparison)")
+    parser.add_argument("--reranker-model", type=str, default=None,
+                        help="Reranker model name (default: dengcao/Qwen3-Reranker-0.6B:Q8_0)")
+    parser.add_argument("--reranker-weight", type=float, default=None,
+                        help="Reranker blend weight 0-1 (default: 0.4)")
+    parser.add_argument("--reranker-top-n", type=int, default=None,
+                        help="Number of candidates to rerank (default: 15)")
 
     args = parser.parse_args()
 
@@ -529,6 +537,18 @@ async def main():
     if args.dedup_threshold is not None:
         overrides["dedup_jaccard_threshold"] = args.dedup_threshold
         override_label_parts.append(f"dup={args.dedup_threshold}")
+    if args.reranker:
+        overrides["reranker_enabled"] = True
+        override_label_parts.append("rerank=on")
+        if args.reranker_model:
+            overrides["reranker_model"] = args.reranker_model
+            override_label_parts.append(f"model={args.reranker_model}")
+        if args.reranker_weight is not None:
+            overrides["reranker_weight"] = args.reranker_weight
+            override_label_parts.append(f"rw={args.reranker_weight}")
+        if args.reranker_top_n is not None:
+            overrides["reranker_top_n"] = args.reranker_top_n
+            override_label_parts.append(f"rn={args.reranker_top_n}")
     override_label = "+".join(override_label_parts) if override_label_parts else "override"
 
     if not args.quiet:
