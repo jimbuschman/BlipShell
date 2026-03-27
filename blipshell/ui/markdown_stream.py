@@ -256,9 +256,9 @@ class MarkdownStreamer:
             return ""
         n = len(self._pending_output)
         self._pending_output = ""
-        # Use cursor-back + space overwrite + cursor-back (most portable).
-        # \x1b[nX (ECH) isn't supported in all terminals (e.g. Windows cmd).
-        return f"\x1b[{n}D" + " " * n + f"\x1b[{n}D"
+        # \r (carriage return) is a plain ASCII char that works on every terminal.
+        # Overwrite with spaces, then \r again to reposition for the formatted line.
+        return "\r" + " " * n + "\r"
 
     def reset_line(self):
         """Discard buffered partial line state.
