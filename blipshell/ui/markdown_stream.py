@@ -256,7 +256,9 @@ class MarkdownStreamer:
             return ""
         n = len(self._pending_output)
         self._pending_output = ""
-        return f"\x1b[{n}D\x1b[{n}X"
+        # Use cursor-back + space overwrite + cursor-back (most portable).
+        # \x1b[nX (ECH) isn't supported in all terminals (e.g. Windows cmd).
+        return f"\x1b[{n}D" + " " * n + f"\x1b[{n}D"
 
     def reset_line(self):
         """Discard buffered partial line state.
