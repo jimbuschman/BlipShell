@@ -38,6 +38,27 @@ from blipshell.ui.input import (
 
 console = Console()
 
+
+def _ensure_vt_processing():
+    """Enable ANSI/VT escape sequence processing on Windows.
+
+    prompt_toolkit restores the original console mode (VT OFF) after each
+    prompt. This must be called before writing raw ANSI to stdout.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        mode = ctypes.c_ulong()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            if not (mode.value & 0x4):  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+                kernel32.SetConsoleMode(handle, mode.value | 0x4)
+    except Exception:
+        pass
+
+
 # Session-level auto-approve set: tools the user has approved for the rest of the session
 _session_approved_tools: set[str] = set()
 
@@ -889,6 +910,7 @@ async def chat_loop(
                     pass
 
             # Stream response with thinking spinner (Esc to cancel)
+            _ensure_vt_processing()  # prompt_toolkit may have disabled VT after input
             response_parts = []
             thinking_status = console.status("[dim]Thinking...[/dim]", spinner="dots")
             thinking_active = True
