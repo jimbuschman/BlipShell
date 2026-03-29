@@ -401,7 +401,7 @@ class SQLiteStore:
     async def initialize(self):
         """Open connection and create schema."""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = await aiosqlite.connect(self.db_path, isolation_level="DEFERRED")
+        self._db = await aiosqlite.connect(self.db_path, timeout=60, isolation_level="DEFERRED")
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA foreign_keys = ON")
         await self._db.execute("PRAGMA journal_mode = WAL")
