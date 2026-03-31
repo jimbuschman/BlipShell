@@ -434,13 +434,14 @@ class MemorySearch:
 
         final = results[:n_results]
 
-        # Record access for returned memories (reinforces frequently recalled items)
+        # Record access for returned memories (reinforces frequently recalled items).
+        # Best-effort — don't block search or spam logs if the worker holds the lock.
         accessed_ids = [r.memory_id for r in final]
         if accessed_ids:
             try:
                 await self.sqlite.record_memory_access(accessed_ids)
-            except Exception as e:
-                logger.warning("Failed to record memory access: %s", e)
+            except Exception:
+                pass  # write lock contention — harmless, access count is non-critical
 
         _t_total_ms = (time.monotonic() - _t_start) * 1000
 

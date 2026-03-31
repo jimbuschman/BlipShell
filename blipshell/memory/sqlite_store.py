@@ -1107,15 +1107,28 @@ class SQLiteStore:
         return [r["session_id"] for r in rows]
 
     async def record_memory_access(self, memory_ids: list[int]):
-        """Increment access_count and set last_accessed for retrieved memories."""
+        """Increment access_count and set last_accessed for retrieved memories.
+
+        Best-effort: uses BEGIN IMMEDIATE to fail fast if the write lock is
+        held (e.g. by the background worker), rather than blocking the search
+        response for up to 60s waiting for the lock.
+        """
         if not memory_ids:
             return
         now = datetime.now(timezone.utc).isoformat()
-        await self._db.executemany(
-            "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
-            [(now, mid) for mid in memory_ids],
-        )
-        await self._db.commit()
+        try:
+            await self._db.execute("BEGIN IMMEDIATE")
+            await self._db.executemany(
+                "UPDATE memories SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
+                [(now, mid) for mid in memory_ids],
+            )
+            await self._db.commit()
+        except Exception:
+            try:
+                await self._db.rollback()
+            except Exception:
+                pass
+            raise
 
     async def get_unconsolidated_memory_ids(self, limit: int = 100) -> list[int]:
         """Get memory IDs that haven't been consolidation-checked yet."""
