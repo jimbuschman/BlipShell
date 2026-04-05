@@ -330,97 +330,102 @@ def _format_tool_arg_summary(name: str, args: dict) -> str:
     return ""
 
 
+def _tool_result_summary(name: str, args: dict, result, blocked: bool) -> str:
+    """One-line result summary for a tool call."""
+    if blocked:
+        return "duplicate — skipped"
+    if not result.success:
+        err = (result.result or "unknown error")[:80].replace("\n", " ")
+        return err
+    if not result.result:
+        return ""
+    if name == "task_complete":
+        return args.get("summary", result.result[:80] if result.result else "")[:80]
+    if name == "edit_file":
+        first_line = result.result.split("\n", 1)[0]
+        return first_line[:80]
+    if name == "run_command":
+        lines = result.result.strip().split("\n")
+        preview = lines[0][:80]
+        if len(lines) > 1:
+            preview += f" (+{len(lines) - 1} lines)"
+        return preview
+    if name == "read_file":
+        return f"{result.result.count(chr(10)) + 1} lines"
+    if name in ("grep_files", "glob_files"):
+        stripped = result.result.strip()
+        hits = stripped.split("\n") if stripped else []
+        return f"{len(hits)} results"
+    if name == "list_directory":
+        stripped = result.result.strip()
+        items = stripped.split("\n") if stripped else []
+        return f"{len(items)} items"
+    if name == "search_memories":
+        stripped = result.result.strip()
+        if not stripped:
+            return "no results"
+        # Count memory entries (each starts with a memory ID pattern or separator)
+        lines = [l for l in stripped.split("\n") if l.strip() and not l.strip().startswith("---")]
+        return f"{len(lines)} results" if lines else "no results"
+    # Generic
+    char_count = len(result.result)
+    if char_count < 60:
+        return result.result.strip()[:60]
+    return f"{char_count} chars"
+
+
 def _display_tool_batch(
     calls: list[tuple[str, dict]],
     results: list[tuple],
 ):
-    """Render a tool batch in Claude Code style — indented tree with continuation lines.
+    """Render a tool batch — compact single-line per tool, Claude Code style.
 
     calls: list of (name, arguments) for each tool in the batch.
     results: list of (ToolResult, is_dedup_blocked) for each tool.
     """
     global _tool_batch_history
     _tool_batch_history.append((calls, results))
-    # Keep last 50 batches
     if len(_tool_batch_history) > 50:
         _tool_batch_history = _tool_batch_history[-50:]
 
-    for i, ((name, args), (result, blocked)) in enumerate(zip(calls, results)):
+    for (name, args), (result, blocked) in zip(calls, results):
         arg_summary = _format_tool_arg_summary(name, args)
+        summary = _tool_result_summary(name, args, result, blocked)
 
+        # Icon by status
         if blocked:
-            line = Text()
-            line.append("  ⎯ ", style="dim")
-            line.append(name, style="dim")
-            line.append(" duplicate — skipped", style="dim italic")
-            console.print(line)
-            continue
+            icon, style = "⎯", "dim"
+        elif not result.success:
+            icon, style = "✗", "red"
+        elif name == "task_complete":
+            icon, style = "●", "green"
+        else:
+            icon, style = "●", "dim"
 
-        # Tool name line — bold name, dim args
         line = Text()
-        line.append("  ", style="")
-        line.append(name, style="bold")
+        line.append(f"  {icon} ", style=style)
+        line.append(name, style="bold" if not blocked else "dim")
         if arg_summary:
             line.append(f" {arg_summary}", style="dim")
+        if summary:
+            line.append(f" — {summary}", style=style)
         console.print(line)
 
-        # Result line — indented with continuation character
-        if not result.success:
-            err = result.result[:200].replace("\n", " ") if result.result else "unknown error"
-            console.print(f"  ⎿  [red]{err}[/red]")
-        elif name == "edit_file" and result.result:
-            if "\x1b[" in result.result:
-                # Colored diff — show status + diff
-                lines = result.result.split("\n", 1)
-                console.print(f"  ⎿  [dim]{lines[0]}[/dim]")
-                if len(lines) > 1 and lines[1].strip():
-                    # Indent diff lines under continuation
-                    diff_text = lines[1].replace("\n", "\n     ")
-                    sys.stdout.write(f"     {diff_text}\n")
-                    sys.stdout.flush()
-            else:
-                console.print(f"  ⎿  [dim]{result.result[:100]}[/dim]")
-        elif name == "task_complete":
-            summary = args.get("summary", result.result[:100] if result.result else "")
-            if summary:
-                console.print(f"  ⎿  [green]{summary[:120]}[/green]")
-        elif name == "run_command" and result.result:
-            # Show first few lines of command output
-            out_lines = result.result.strip().split("\n")
-            if len(out_lines) == 1:
-                console.print(f"  ⎿  [dim]{out_lines[0][:120]}[/dim]")
-            else:
-                preview = out_lines[0][:100]
-                console.print(f"  ⎿  [dim]{preview} (+{len(out_lines) - 1} lines)[/dim]")
-            if _verbose_tools:
-                for extra in out_lines[1:5]:
-                    console.print(f"     [dim]{extra[:120]}[/dim]")
-                if len(out_lines) > 5:
-                    console.print(f"     [dim]... {len(out_lines) - 5} more lines[/dim]")
-        elif _verbose_tools and result.result:
-            # Verbose: show truncated result
-            preview = result.result[:200].replace("\n", " ")
-            console.print(f"  ⎿  [dim]{preview}[/dim]")
-        elif result.result:
-            # Compact: one-line summary
-            line_count = result.result.count("\n") + 1
-            char_count = len(result.result)
-            if name in ("read_file",):
-                console.print(f"  ⎿  [dim]{line_count} lines[/dim]")
-            elif name in ("grep_files", "glob_files"):
-                stripped = result.result.strip()
-                hits = stripped.split("\n") if stripped else []
-                console.print(f"  ⎿  [dim]{len(hits)} results[/dim]")
-            elif name == "list_directory":
-                stripped = result.result.strip()
-                items = stripped.split("\n") if stripped else []
-                console.print(f"  ⎿  [dim]{len(items)} items[/dim]")
-            elif char_count < 80:
-                console.print(f"  ⎿  [dim]{result.result.strip()[:80]}[/dim]")
-            else:
-                console.print(f"  ⎿  [dim]{char_count} chars[/dim]")
+        # Edit diffs always shown (valuable context)
+        if name == "edit_file" and result.success and result.result and "\x1b[" in result.result:
+            diff_lines = result.result.split("\n", 1)
+            if len(diff_lines) > 1 and diff_lines[1].strip():
+                diff_text = diff_lines[1].replace("\n", "\n     ")
+                sys.stdout.write(f"     {diff_text}\n")
+                sys.stdout.flush()
 
-    console.print()  # blank line after batch
+        # Verbose mode: show extra detail for run_command
+        if _verbose_tools and name == "run_command" and result.success and result.result:
+            out_lines = result.result.strip().split("\n")
+            for extra in out_lines[1:5]:
+                console.print(f"     [dim]{extra[:120]}[/dim]")
+            if len(out_lines) > 5:
+                console.print(f"     [dim]... {len(out_lines) - 5} more lines[/dim]")
 
 
 async def _pause_check() -> "PauseResult | None":
