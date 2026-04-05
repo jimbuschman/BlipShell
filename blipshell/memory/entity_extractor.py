@@ -168,39 +168,58 @@ class EntityExtractor:
                 )
 
             triples = self._parse_triples(response)
+
+            # Phase 1: Resolve entities (may call ChromaDB/LLM — keep outside transaction)
+            resolved_triples = []
             for subj, pred, obj, s_type, o_type in triples:
                 try:
                     subj_id = await self._resolve_entity(subj, s_type)
                     obj_id = await self._resolve_entity(obj, o_type)
-                    # Use temporal relationship creation
-                    rel_id = await self.sqlite.create_entity_relationship_temporal(
-                        subj_id, pred, obj_id, memory_id,
-                    )
-                    # Expire contradicting old relationships
-                    if rel_id:
-                        try:
-                            expired = await self.sqlite.expire_contradicting_relationships(
-                                subj_id, obj_id,
-                                CONTRADICTING_PREDICATES,
-                                pred, rel_id,
-                            )
-                            if expired:
-                                logger.info(
-                                    "Expired %d contradicting relationships for %s %s %s",
-                                    expired, subj, pred, obj,
-                                )
-                        except Exception as e:
-                            logger.warning("Failed to expire contradictions: %s", e)
-                    await self.sqlite.create_entity_mention(subj_id, memory_id)
-                    await self.sqlite.create_entity_mention(obj_id, memory_id)
-                    result["triples"] += 1
+                    resolved_triples.append((subj_id, pred, obj_id, subj, obj))
                 except Exception as e:
                     logger.warning(
-                        "Failed to store triple from memory %d: %s", memory_id, e,
+                        "Failed to resolve entities for triple from memory %d: %s", memory_id, e,
                     )
 
-            await self.sqlite.mark_entities_extracted([memory_id])
-            result["extracted"] = 1
+            # Phase 2: Write all relationships/mentions in one transaction.
+            # One lock acquisition instead of ~31 per memory.
+            try:
+                for subj_id, pred, obj_id, subj, obj in resolved_triples:
+                    try:
+                        rel_id = await self.sqlite.create_entity_relationship_temporal(
+                            subj_id, pred, obj_id, memory_id, skip_commit=True,
+                        )
+                        if rel_id:
+                            try:
+                                expired = await self.sqlite.expire_contradicting_relationships(
+                                    subj_id, obj_id,
+                                    CONTRADICTING_PREDICATES,
+                                    pred, rel_id, skip_commit=True,
+                                )
+                                if expired:
+                                    logger.info(
+                                        "Expired %d contradicting relationships for %s %s %s",
+                                        expired, subj, pred, obj,
+                                    )
+                            except Exception as e:
+                                logger.warning("Failed to expire contradictions: %s", e)
+                        await self.sqlite.create_entity_mention(subj_id, memory_id, skip_commit=True)
+                        await self.sqlite.create_entity_mention(obj_id, memory_id, skip_commit=True)
+                        result["triples"] += 1
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to store triple from memory %d: %s", memory_id, e,
+                        )
+
+                await self.sqlite.mark_entities_extracted([memory_id], skip_commit=True)
+                await self.sqlite.commit()
+                result["extracted"] = 1
+            except Exception as e:
+                try:
+                    await self.sqlite.rollback()
+                except Exception:
+                    pass
+                raise
 
         except Exception as e:
             result["errors"] = 1

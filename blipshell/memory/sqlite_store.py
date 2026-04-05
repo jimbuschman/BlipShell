@@ -549,6 +549,14 @@ class SQLiteStore:
 
         await self._db.commit()
 
+    async def commit(self):
+        """Explicitly commit the current transaction."""
+        await self._db.commit()
+
+    async def rollback(self):
+        """Explicitly roll back the current transaction."""
+        await self._db.rollback()
+
     async def close(self):
         """Close the database connection."""
         if self._db:
@@ -2202,7 +2210,7 @@ class SQLiteStore:
 
     # --- Entity Graph ---
 
-    async def get_or_create_entity(self, name: str, entity_type: str = "concept") -> int:
+    async def get_or_create_entity(self, name: str, entity_type: str = "concept", *, skip_commit: bool = False) -> int:
         """Get existing entity ID or create a new one. Names are lowercased."""
         name = name.strip().lower()
         cursor = await self._db.execute(
@@ -2216,7 +2224,8 @@ class SQLiteStore:
             "INSERT INTO entities (name, entity_type) VALUES (?, ?)",
             (name, entity_type),
         )
-        await self._db.commit()
+        if not skip_commit:
+            await self._db.commit()
         return cursor.lastrowid
 
     async def create_entity_relationship(
@@ -2236,13 +2245,14 @@ class SQLiteStore:
             logger.warning("Failed to create relationship: %s", e)
             return None
 
-    async def create_entity_mention(self, entity_id: int, memory_id: int):
+    async def create_entity_mention(self, entity_id: int, memory_id: int, *, skip_commit: bool = False):
         """Record that an entity is mentioned in a memory."""
         await self._db.execute(
             "INSERT OR IGNORE INTO entity_mentions (entity_id, memory_id) VALUES (?, ?)",
             (entity_id, memory_id),
         )
-        await self._db.commit()
+        if not skip_commit:
+            await self._db.commit()
 
     async def get_unextracted_memory_ids(self, limit: int = 50) -> list[int]:
         """Get memory IDs that haven't had entities extracted yet."""
@@ -2256,7 +2266,7 @@ class SQLiteStore:
         rows = await cursor.fetchall()
         return [r["id"] for r in rows]
 
-    async def mark_entities_extracted(self, memory_ids: list[int]):
+    async def mark_entities_extracted(self, memory_ids: list[int], *, skip_commit: bool = False):
         """Set entities_extracted_at timestamp for processed memories."""
         if not memory_ids:
             return
@@ -2265,7 +2275,8 @@ class SQLiteStore:
             "UPDATE memories SET entities_extracted_at = ? WHERE id = ?",
             [(now, mid) for mid in memory_ids],
         )
-        await self._db.commit()
+        if not skip_commit:
+            await self._db.commit()
 
     async def get_entity_ids_by_names(self, names: list[str]) -> list[int]:
         """Get entity IDs matching any of the given names (case-insensitive)."""
@@ -2325,6 +2336,7 @@ class SQLiteStore:
     async def create_entity_relationship_temporal(
         self, subject_id: int, predicate: str, object_id: int,
         memory_id: int | None, valid_from: str | None = None,
+        *, skip_commit: bool = False,
     ) -> int | None:
         """Create a temporal relationship triple. Returns ID or None if duplicate.
 
@@ -2340,7 +2352,8 @@ class SQLiteStore:
                    VALUES (?, ?, ?, ?, ?)""",
                 (subject_id, predicate, object_id, memory_id, valid_from),
             )
-            await self._db.commit()
+            if not skip_commit:
+                await self._db.commit()
             return cursor.lastrowid if cursor.lastrowid else None
         except Exception as e:
             logger.warning("Failed to create temporal relationship: %s", e)
@@ -2350,6 +2363,7 @@ class SQLiteStore:
         self, subject_id: int, object_id: int,
         contradicting_predicates: dict[str, list[str]],
         new_predicate: str, new_relationship_id: int,
+        *, skip_commit: bool = False,
     ) -> int:
         """Expire old relationships that contradict the new one.
 
@@ -2379,7 +2393,8 @@ class SQLiteStore:
             [now, new_relationship_id, subject_id, object_id]
             + contradicts + [new_relationship_id],
         )
-        await self._db.commit()
+        if not skip_commit:
+            await self._db.commit()
         return cursor.rowcount
 
     async def get_active_relationships_for_entity(

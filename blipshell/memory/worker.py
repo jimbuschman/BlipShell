@@ -128,9 +128,11 @@ class MemoryWorker:
                     None, self._queue_get,
                 )
                 if item is None:
-                    # Queue empty — skip idle extraction to avoid DB lock contention
-                    # with the main thread's search. Entity extraction runs on startup
-                    # and in nightly jobs instead.
+                    # Queue empty — chip away at unextracted entities during idle.
+                    # Batched transactions prevent DB lock contention with main thread.
+                    if time.monotonic() - last_idle_extract > idle_extract_interval:
+                        await self._idle_extract_entities(sqlite, router, idle_extract_batch)
+                        last_idle_extract = time.monotonic()
                     continue
 
                 if item.work_type == WorkType.SHUTDOWN:
