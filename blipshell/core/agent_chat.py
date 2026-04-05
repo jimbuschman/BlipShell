@@ -54,6 +54,11 @@ class ChatMixin:
         if not hasattr(self, 'session_manager') or self.session_manager is None:
             raise RuntimeError("No active session — call start_session() before chat()")
 
+        # Sanitize surrogate characters — Windows console/clipboard can produce
+        # unpaired UTF-16 surrogates (U+D800–U+DFFF) that crash UTF-8 encoding
+        # downstream (LLM clients, ChromaDB, SQLite, prompt_toolkit history).
+        user_message = user_message.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
+
         # Track user activity for nightly scheduler
         import time
         self._last_user_activity = time.time()
