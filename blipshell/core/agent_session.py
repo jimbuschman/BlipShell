@@ -205,10 +205,8 @@ class SessionMixin:
 
         from blipshell.memory.worker import WorkItem, WorkType
 
-        # Entity extraction — worker processes in background
-        self._memory_worker.enqueue(
-            WorkItem(work_type=WorkType.EXTRACT_ENTITIES, text="startup")
-        )
+        # Entity extraction skipped at startup — causes DB lock contention
+        # with the main thread. Runs in nightly job instead.
 
         # Unprocessed memory sweep — enqueue each as PROCESS_MESSAGE
         try:
