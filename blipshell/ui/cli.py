@@ -554,12 +554,14 @@ async def chat_loop(
     config_manager = ConfigManager(config_path)
     config = config_manager.load()
 
-    # Create agent with startup progress indicator
+    # Create agent with startup progress
     agent = Agent(config, config_manager)
-    with console.status("[dim]Starting up...[/dim]", spinner="dots") as status:
-        def _on_status(msg: str):
-            status.update(f"[dim]{msg}[/dim]")
-        await agent.initialize(on_status=_on_status)
+    console.print("[dim]Starting up...[/dim]")
+
+    def _on_status(msg: str):
+        console.print(f"[dim]  {msg}[/dim]")
+
+    await agent.initialize(on_status=_on_status)
 
     # Determine session to start/resume
     resume_id = session_id
