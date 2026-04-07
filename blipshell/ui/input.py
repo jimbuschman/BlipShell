@@ -21,6 +21,18 @@ from prompt_toolkit.history import FileHistory, InMemoryHistory
 
 logger = logging.getLogger(__name__)
 
+
+class SafeFileHistory(FileHistory):
+    """FileHistory that sanitizes surrogate characters before writing.
+
+    Windows clipboard can produce unpaired UTF-16 surrogates (e.g. from
+    emoji) that crash prompt_toolkit's UTF-8 encoding in store_string().
+    """
+
+    def store_string(self, string: str) -> None:
+        clean = string.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
+        super().store_string(clean)
+
 # History file lives alongside other BlipShell data
 _DATA_DIR = Path(__file__).parent.parent.parent / "data"
 _HISTORY_FILE = _DATA_DIR / ".blipshell_history"
@@ -37,7 +49,7 @@ def create_chat_session(bottom_toolbar=None) -> Optional[PromptSession]:
     try:
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
         return PromptSession(
-            history=FileHistory(str(_HISTORY_FILE)),
+            history=SafeFileHistory(str(_HISTORY_FILE)),
             enable_history_search=True,
             mouse_support=False,
             multiline=False,

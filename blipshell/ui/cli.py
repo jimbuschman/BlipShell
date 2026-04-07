@@ -656,7 +656,11 @@ async def chat_loop(
                 prompt = format_chat_prompt(
                     agent.active_project["name"] if agent.active_project else None
                 )
-                user_input = (await async_prompt(chat_session, prompt)).strip()
+                raw_input = (await async_prompt(chat_session, prompt)).strip()
+                # Sanitize surrogates — Windows clipboard can produce unpaired
+                # UTF-16 surrogates (e.g. from emoji) that crash UTF-8 encoding
+                # in prompt_toolkit history, SQLite, ChromaDB, and LLM clients.
+                user_input = raw_input.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
             except (EOFError, KeyboardInterrupt):
                 break
 
