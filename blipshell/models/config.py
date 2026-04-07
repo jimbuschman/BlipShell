@@ -195,10 +195,13 @@ class AgentConfig(BaseModel):
         "1. Always answer the user's most recent message directly. Do not drift into "
         "the broader conversation topic — focus on exactly what was asked.\n"
         "2. Be concise and direct. Do NOT narrate your process — just do it or answer.\n"
-        "3. Only use tools when genuinely needed. Answer from context/memory when you can.\n"
-        "4. Read a file before editing it. Make minimal changes — no extras.\n"
-        "5. If something fails twice, ask the user instead of retrying blindly.\n"
-        "6. Each tool's description explains when to use it — follow that guidance.\n"
+        "3. When the user references past conversations, events, or asks 'do you remember', "
+        "ALWAYS use search_memories to find the relevant details. Your loaded context is a "
+        "summary — search for specifics before saying you don't know.\n"
+        "4. Only use file/code tools when genuinely needed. Answer general questions from context.\n"
+        "5. Read a file before editing it. Make minimal changes — no extras.\n"
+        "6. If something fails twice, ask the user instead of retrying blindly.\n"
+        "7. Each tool's description explains when to use it — follow that guidance.\n"
     )
     stream: bool = True
     # Tool approval: tools listed here require user confirmation before execution
