@@ -176,6 +176,9 @@ class Agent(
         )
         self.chroma.initialize()
 
+        # Auto-repair empty ChromaDB collections (e.g. after model switch)
+        await self._repair_chroma_collections(_status)
+
         # Endpoint manager
         self.endpoint_manager = EndpointManager(self.config.endpoints, self.config.llm)
 
@@ -304,6 +307,89 @@ class Agent(
 
         self._initialized = True
         logger.info("Agent initialized")
+
+    async def _repair_chroma_collections(self, _status):
+        """Detect and repair empty ChromaDB collections at startup.
+
+        Compares ChromaDB counts against SQLite. If a collection is empty
+        but SQLite has data, re-embeds automatically. This catches issues
+        from failed rebuilds, model switches, or corrupted HNSW indexes.
+        """
+        try:
+            chroma_counts = self.chroma.get_counts()
+        except Exception as e:
+            logger.warning("Could not check ChromaDB counts: %s", e)
+            return
+
+        # Core memories — small, always auto-repair
+        try:
+            cursor = await self.sqlite._db.execute(
+                "SELECT COUNT(*) FROM core_memories WHERE is_active = 1"
+            )
+            sqlite_core = (await cursor.fetchone())[0]
+            if sqlite_core > 0 and chroma_counts.get("core_memories", 0) == 0:
+                _status(f"Repairing core_memories ({sqlite_core} items)...")
+                logger.warning(
+                    "ChromaDB core_memories empty but SQLite has %d — rebuilding", sqlite_core,
+                )
+                cursor = await self.sqlite._db.execute(
+                    "SELECT id, content FROM core_memories WHERE is_active = 1"
+                )
+                rows = await cursor.fetchall()
+                for row in rows:
+                    try:
+                        self.chroma.add_core_memory(row["id"], row["content"])
+                    except Exception as e:
+                        logger.warning("Failed to re-embed core memory %d: %s", row["id"], e)
+                logger.info("Core memories repair complete")
+        except Exception as e:
+            logger.warning("Core memories repair failed: %s", e)
+
+        # Lessons — medium size, auto-repair
+        try:
+            cursor = await self.sqlite._db.execute("SELECT COUNT(*) FROM lessons")
+            sqlite_lessons = (await cursor.fetchone())[0]
+            if sqlite_lessons > 0 and chroma_counts.get("lessons", 0) == 0:
+                _status(f"Repairing lessons ({sqlite_lessons} items)...")
+                logger.warning(
+                    "ChromaDB lessons empty but SQLite has %d — rebuilding", sqlite_lessons,
+                )
+                cursor = await self.sqlite._db.execute("SELECT id, content FROM lessons")
+                rows = await cursor.fetchall()
+                batch_size = 100
+                for i in range(0, len(rows), batch_size):
+                    batch = rows[i:i + batch_size]
+                    try:
+                        self.chroma._lessons.upsert(
+                            ids=[str(r["id"]) for r in batch],
+                            documents=[self.chroma._truncate(r["content"]) for r in batch],
+                            metadatas=[{"source": "lesson"} for _ in batch],
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to re-embed lesson batch: %s", e)
+                logger.info("Lessons repair complete")
+        except Exception as e:
+            logger.warning("Lessons repair failed: %s", e)
+
+        # Memories — large, just warn (user should run rebuild_chroma.py)
+        try:
+            cursor = await self.sqlite._db.execute(
+                "SELECT COUNT(*) FROM memories WHERE summary IS NOT NULL AND is_archived = 0"
+            )
+            sqlite_mems = (await cursor.fetchone())[0]
+            chroma_mems = chroma_counts.get("memories", 0)
+            if sqlite_mems > 0 and chroma_mems == 0:
+                logger.error(
+                    "ChromaDB memories collection is EMPTY but SQLite has %d memories. "
+                    "Run: python scripts/rebuild_chroma.py", sqlite_mems,
+                )
+            elif sqlite_mems > 0 and chroma_mems < sqlite_mems * 0.5:
+                logger.warning(
+                    "ChromaDB memories (%d) significantly behind SQLite (%d). "
+                    "Consider: python scripts/rebuild_chroma.py", chroma_mems, sqlite_mems,
+                )
+        except Exception as e:
+            logger.warning("Memories sync check failed: %s", e)
 
     async def _maybe_auto_backup(self):
         """Auto-backup if more than 24 hours since last backup.

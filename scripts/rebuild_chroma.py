@@ -178,10 +178,55 @@ async def main():
             console.print(f"[red]Lesson batch error: {e}[/red]")
     console.print(f"  Embedded {len(lesson_rows)} lessons ({lesson_errors} errors)")
 
-    # Final counts
+    # --- Entities ---
+    console.print("[bold]Rebuilding entity embeddings...[/bold]")
+    cursor = await sqlite._db.execute(
+        "SELECT id, name, entity_type FROM entities"
+    )
+    entity_rows = await cursor.fetchall()
+    entity_errors = 0
+    for i in range(0, len(entity_rows), args.batch_size):
+        batch = entity_rows[i:i + args.batch_size]
+        try:
+            coll = chroma._entities
+            coll.upsert(
+                ids=[str(r["id"]) for r in batch],
+                documents=[r["name"] for r in batch],
+                metadatas=[{"entity_type": r["entity_type"] or "concept"} for r in batch],
+            )
+        except Exception as e:
+            entity_errors += len(batch)
+            console.print(f"[red]Entity batch error: {e}[/red]")
+    console.print(f"  Embedded {len(entity_rows)} entities ({entity_errors} errors)")
+
+    # --- Verification ---
     console.print()
+    console.print("[bold]Verifying...[/bold]")
     final = chroma.get_counts()
-    console.print(f"[bold green]Done![/bold green] ChromaDB: memories={final['memories']}, core={final['core_memories']}, lessons={final['lessons']}")
+    ok = True
+
+    checks = [
+        ("memories", final["memories"], mem_count),
+        ("core_memories", final["core_memories"], core_count),
+        ("lessons", final["lessons"], lesson_count),
+        ("entities", final.get("entities", 0), len(entity_rows)),
+    ]
+    for name, chroma_count, sqlite_count in checks:
+        if chroma_count == 0 and sqlite_count > 0:
+            console.print(f"  [bold red]FAIL: {name} — ChromaDB has 0, SQLite has {sqlite_count}[/bold red]")
+            ok = False
+        elif chroma_count < sqlite_count * 0.9:
+            console.print(f"  [yellow]WARN: {name} — ChromaDB={chroma_count}, SQLite={sqlite_count} (mismatch)[/yellow]")
+        else:
+            console.print(f"  [green]OK: {name} — {chroma_count}[/green]")
+
+    console.print()
+    if ok:
+        console.print(f"[bold green]Done![/bold green] All collections verified.")
+    else:
+        console.print(f"[bold red]FAILED — some collections are empty. Check errors above.[/bold red]")
+        await sqlite.close()
+        sys.exit(1)
 
     await sqlite.close()
 
