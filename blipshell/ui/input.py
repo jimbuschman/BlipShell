@@ -30,7 +30,12 @@ class SafeFileHistory(FileHistory):
     """
 
     def store_string(self, string: str) -> None:
-        clean = string.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
+        # Replace surrogates character-by-character — .encode() with
+        # surrogateescape fails on actual surrogates in UTF-8 mode.
+        clean = "".join(
+            c if ord(c) < 0xD800 or ord(c) > 0xDFFF else "\ufffd"
+            for c in string
+        )
         super().store_string(clean)
 
 # History file lives alongside other BlipShell data

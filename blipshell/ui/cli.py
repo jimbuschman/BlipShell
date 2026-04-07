@@ -660,7 +660,10 @@ async def chat_loop(
                 # Sanitize surrogates — Windows clipboard can produce unpaired
                 # UTF-16 surrogates (e.g. from emoji) that crash UTF-8 encoding
                 # in prompt_toolkit history, SQLite, ChromaDB, and LLM clients.
-                user_input = raw_input.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
+                user_input = "".join(
+                    c if ord(c) < 0xD800 or ord(c) > 0xDFFF else "\ufffd"
+                    for c in raw_input
+                )
             except (EOFError, KeyboardInterrupt):
                 break
 

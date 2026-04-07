@@ -57,7 +57,10 @@ class ChatMixin:
         # Sanitize surrogate characters — Windows console/clipboard can produce
         # unpaired UTF-16 surrogates (U+D800–U+DFFF) that crash UTF-8 encoding
         # downstream (LLM clients, ChromaDB, SQLite, prompt_toolkit history).
-        user_message = user_message.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")
+        user_message = "".join(
+            c if ord(c) < 0xD800 or ord(c) > 0xDFFF else "\ufffd"
+            for c in user_message
+        )
 
         # Track user activity for nightly scheduler
         import time
