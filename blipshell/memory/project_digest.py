@@ -21,7 +21,7 @@ from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.sqlite_store import SQLiteStore
 
 if TYPE_CHECKING:
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +36,11 @@ class ProjectDigestManager:
         self,
         sqlite: SQLiteStore,
         router: LLMRouter,
-        chroma: ChromaStore | None = None,
+        vectors: VectorStore | None = None,
     ):
         self.sqlite = sqlite
         self.router = router
-        self.chroma = chroma
+        self.vectors = vectors
 
     async def get_digest(self, project_name: str) -> str | None:
         """Load existing digest from project metadata."""
@@ -87,7 +87,7 @@ class ProjectDigestManager:
                 results.append({"summary": summary, "importance": importance})
 
         # Source 1: ChromaDB semantic search (most powerful — finds related content)
-        if self.chroma:
+        if self.vectors:
             # Split project name for broader search
             parts = re.split(r'[-_\s]+', project_name)
             queries = [project_name]
@@ -98,7 +98,7 @@ class ProjectDigestManager:
 
             for query in queries:
                 try:
-                    chroma_results = self.chroma.search_memories(
+                    chroma_results = self.vectors.search_memories(
                         query=query, n_results=30,
                     )
                     for cr in chroma_results:

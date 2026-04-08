@@ -1,11 +1,11 @@
-"""Rebuild ChromaDB from SQLite summaries — no LLM calls needed.
+"""Rebuild vector embeddings from SQLite summaries — no LLM calls needed.
 
-Wipes the ChromaDB memories/core_memories/lessons collections and
-re-embeds everything from the current SQLite data.
+Drops the sqlite-vec vec0 tables and re-embeds everything from
+the current SQLite data.
 
 Usage:
     python scripts/rebuild_chroma.py
-    python scripts/rebuild_chroma.py --db data/blipshell.db --chroma data/chroma
+    python scripts/rebuild_chroma.py --db data/blipshell.db
     python scripts/rebuild_chroma.py --batch-size 100
 """
 
@@ -21,53 +21,51 @@ console = Console()
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Rebuild ChromaDB from SQLite")
+    parser = argparse.ArgumentParser(description="Rebuild vector embeddings from SQLite")
     parser.add_argument("--db", default="data/blipshell.db", help="SQLite DB path")
-    parser.add_argument("--chroma", default="data/chroma", help="ChromaDB directory")
     parser.add_argument("--ollama-url", default="http://localhost:11434")
     parser.add_argument("--model", default="qwen3-embedding:0.6b")
     parser.add_argument("--batch-size", type=int, default=200)
     args = parser.parse_args()
 
-    # Pre-operation backup (ChromaDB rebuild is destructive)
+    # Pre-operation backup (rebuild is destructive)
     from scripts.backup_db import backup_before_destructive
-    backup_before_destructive("rebuild_chroma", db_path=args.db, chroma_path=args.chroma)
+    backup_before_destructive("rebuild_vectors", db_path=args.db)
 
     # Import after parsing so --help is fast
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
 
     # Connect
     console.print(f"SQLite: {args.db}")
-    console.print(f"ChromaDB: {args.chroma}")
     console.print(f"Embedding model: {args.model}")
     console.print()
 
     sqlite = SQLiteStore(args.db)
     await sqlite.initialize()
 
-    # Delete existing collections first — embedding dimension may have changed
-    # (e.g. nomic 768d → qwen3-embedding 1024d). ChromaDB can't mix dimensions.
-    import chromadb
-    from chromadb.config import Settings
-    client = chromadb.PersistentClient(path=args.chroma, settings=Settings(anonymized_telemetry=False))
-    for name in ["memories", "core_memories", "lessons", "entities"]:
+    # Delete existing vec0 tables to rebuild from scratch
+    import sqlite3
+    conn = sqlite3.connect(args.db)
+    for table in ["vec_memories", "vec_core_memories", "vec_lessons", "vec_entities"]:
         try:
-            client.delete_collection(name)
-            console.print(f"  Deleted collection: {name}")
+            conn.execute(f"DROP TABLE IF EXISTS {table}")
+            console.print(f"  Dropped table: {table}")
         except Exception:
-            pass  # collection didn't exist
-    del client  # release before ChromaStore reopens
+            pass
+    conn.commit()
+    conn.close()
 
-    chroma = ChromaStore(
-        persist_dir=args.chroma,
+    vectors = VectorStore(
+        db_path=args.db,
         embedding_model=args.model,
         ollama_url=args.ollama_url,
+        embedding_dim=1024,
     )
-    chroma.initialize()
+    vectors.initialize()
 
     console.print(f"Embedding model: {args.model}")
-    console.print(f"Collections recreated (fresh)")
+    console.print(f"Vec tables recreated (fresh)")
 
     # Count what we need to embed
     cursor = await sqlite._db.execute(
@@ -117,7 +115,7 @@ async def main():
 
             if len(batch_ids) >= args.batch_size:
                 try:
-                    chroma.add_memories_batch(batch_ids, batch_texts, batch_metas)
+                    vectors.add_memories_batch(batch_ids, batch_texts, batch_metas)
                     embedded += len(batch_ids)
                 except Exception as e:
                     errors += len(batch_ids)
@@ -128,7 +126,7 @@ async def main():
         # Final batch
         if batch_ids:
             try:
-                chroma.add_memories_batch(batch_ids, batch_texts, batch_metas)
+                vectors.add_memories_batch(batch_ids, batch_texts, batch_metas)
                 embedded += len(batch_ids)
             except Exception as e:
                 errors += len(batch_ids)
@@ -148,12 +146,8 @@ async def main():
     for i in range(0, len(core_rows), args.batch_size):
         batch = core_rows[i:i + args.batch_size]
         try:
-            coll = chroma._core_memories
-            coll.upsert(
-                ids=[str(r["id"]) for r in batch],
-                documents=[chroma._truncate(r["content"]) for r in batch],
-                metadatas=[{"source": "core_memory"} for _ in batch],
-            )
+            for r in batch:
+                vectors.add_core_memory(r["id"], r["content"])
         except Exception as e:
             core_errors += len(batch)
             console.print(f"[red]Core memory batch error: {e}[/red]")
@@ -167,12 +161,8 @@ async def main():
     for i in range(0, len(lesson_rows), args.batch_size):
         batch = lesson_rows[i:i + args.batch_size]
         try:
-            coll = chroma._lessons
-            coll.upsert(
-                ids=[str(r["id"]) for r in batch],
-                documents=[chroma._truncate(r["content"]) for r in batch],
-                metadatas=[{"source": "lesson"} for _ in batch],
-            )
+            for r in batch:
+                vectors.add_lesson(r["id"], r["content"])
         except Exception as e:
             lesson_errors += len(batch)
             console.print(f"[red]Lesson batch error: {e}[/red]")
@@ -188,12 +178,8 @@ async def main():
     for i in range(0, len(entity_rows), args.batch_size):
         batch = entity_rows[i:i + args.batch_size]
         try:
-            coll = chroma._entities
-            coll.upsert(
-                ids=[str(r["id"]) for r in batch],
-                documents=[r["name"] for r in batch],
-                metadatas=[{"entity_type": r["entity_type"] or "concept"} for r in batch],
-            )
+            for r in batch:
+                vectors.upsert_entity(r["id"], r["name"], r["entity_type"] or "concept")
         except Exception as e:
             entity_errors += len(batch)
             console.print(f"[red]Entity batch error: {e}[/red]")
@@ -202,7 +188,7 @@ async def main():
     # --- Verification ---
     console.print()
     console.print("[bold]Verifying...[/bold]")
-    final = chroma.get_counts()
+    final = vectors.get_counts()
     ok = True
 
     checks = [
@@ -211,14 +197,14 @@ async def main():
         ("lessons", final["lessons"], lesson_count),
         ("entities", final.get("entities", 0), len(entity_rows)),
     ]
-    for name, chroma_count, sqlite_count in checks:
-        if chroma_count == 0 and sqlite_count > 0:
-            console.print(f"  [bold red]FAIL: {name} — ChromaDB has 0, SQLite has {sqlite_count}[/bold red]")
+    for name, vec_count, sqlite_count in checks:
+        if vec_count == 0 and sqlite_count > 0:
+            console.print(f"  [bold red]FAIL: {name} — vec store has 0, SQLite has {sqlite_count}[/bold red]")
             ok = False
-        elif chroma_count < sqlite_count * 0.9:
-            console.print(f"  [yellow]WARN: {name} — ChromaDB={chroma_count}, SQLite={sqlite_count} (mismatch)[/yellow]")
+        elif vec_count < sqlite_count * 0.9:
+            console.print(f"  [yellow]WARN: {name} — vec={vec_count}, SQLite={sqlite_count} (mismatch)[/yellow]")
         else:
-            console.print(f"  [green]OK: {name} — {chroma_count}[/green]")
+            console.print(f"  [green]OK: {name} — {vec_count}[/green]")
 
     console.print()
     if ok:

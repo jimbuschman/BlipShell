@@ -22,7 +22,7 @@ from blipshell.llm.prompts import (
     summarize_session_summaries,
 )
 from blipshell.llm.router import LLMRouter, TaskType
-from blipshell.memory.chroma_store import ChromaStore
+from blipshell.memory.vector_store import VectorStore
 from blipshell.memory.noise import should_skip_memory
 from blipshell.memory.processor import MemoryProcessor
 from blipshell.memory.sqlite_store import SQLiteStore
@@ -67,7 +67,7 @@ class ImportStats:
 
 async def import_conversations(
     sqlite: SQLiteStore,
-    chroma: ChromaStore,
+    vectors: VectorStore,
     router: LLMRouter,
     config: MemoryConfig,
     conversations: list[ParsedConversation],
@@ -84,7 +84,7 @@ async def import_conversations(
 
     Args:
         sqlite: SQLite store instance
-        chroma: ChromaDB store instance
+        vectors: Vector store instance
         router: LLM router for summarization/ranking
         config: Memory configuration
         conversations: Parsed conversations to import
@@ -96,12 +96,12 @@ async def import_conversations(
     Returns:
         ImportStats with counts of imported items
     """
-    processor = MemoryProcessor(sqlite, chroma, router, config=config)
+    processor = MemoryProcessor(sqlite, vectors, router, config=config)
     stats = ImportStats()
 
     if batch_mode and len(conversations) > 1:
         await _import_global_batch(
-            sqlite, chroma, router, processor, config,
+            sqlite, vectors, router, processor, config,
             conversations, stats, skip_lessons, on_progress,
         )
         return stats
@@ -130,9 +130,6 @@ async def import_conversations(
                     conv.title,
                 )
                 try:
-                    from blipshell.memory.chroma_retry import (
-                        COLLECTION_LESSONS, COLLECTION_MEMORIES, OP_DELETE, queue_failed_op,
-                    )
                     cursor = await sqlite._db.execute(
                         "SELECT id FROM memories WHERE session_id = ?",
                         (session_id,),
@@ -140,11 +137,9 @@ async def import_conversations(
                     old_ids = [row[0] for row in await cursor.fetchall()]
                     for mid in old_ids:
                         try:
-                            chroma.delete_memory(mid)
+                            vectors.delete_memory(mid)
                         except Exception as e:
-                            await queue_failed_op(
-                                sqlite, OP_DELETE, COLLECTION_MEMORIES, mid, error=str(e),
-                            )
+                            logger.warning("Failed to delete memory vector %d: %s", mid, e)
                     cursor = await sqlite._db.execute(
                         "SELECT id FROM lessons WHERE source_session_id = ?",
                         (session_id,),
@@ -152,11 +147,9 @@ async def import_conversations(
                     old_lesson_ids = [row[0] for row in await cursor.fetchall()]
                     for lid in old_lesson_ids:
                         try:
-                            chroma.delete_lesson(lid)
+                            vectors.delete_lesson(lid)
                         except Exception as e:
-                            await queue_failed_op(
-                                sqlite, OP_DELETE, COLLECTION_LESSONS, lid, error=str(e),
-                            )
+                            logger.warning("Failed to delete lesson vector %d: %s", lid, e)
                     await sqlite.delete_session_cascade(session_id, old_ids)
                     stats.conversations_reimported += 1
                 except Exception as e:
@@ -166,7 +159,7 @@ async def import_conversations(
         async with semaphore:
             try:
                 await _import_single_conversation(
-                    sqlite, chroma, router, processor, config, conv, stats,
+                    sqlite, vectors, router, processor, config, conv, stats,
                     skip_lessons,
                 )
                 stats.conversations_imported += 1
@@ -189,12 +182,9 @@ async def import_conversations(
 # ---------------------------------------------------------------------------
 
 async def _cleanup_incomplete_session(
-    sqlite: SQLiteStore, chroma: ChromaStore, session_id: int,
+    sqlite: SQLiteStore, vectors: VectorStore, session_id: int,
 ):
     """Clean up an incomplete session (0 messages saved) for re-import."""
-    from blipshell.memory.chroma_retry import (
-        COLLECTION_LESSONS, COLLECTION_MEMORIES, OP_DELETE, queue_failed_op,
-    )
     cursor = await sqlite._db.execute(
         "SELECT id FROM memories WHERE session_id = ?",
         (session_id,),
@@ -202,11 +192,9 @@ async def _cleanup_incomplete_session(
     old_ids = [row[0] for row in await cursor.fetchall()]
     for mid in old_ids:
         try:
-            chroma.delete_memory(mid)
+            vectors.delete_memory(mid)
         except Exception as e:
-            await queue_failed_op(
-                sqlite, OP_DELETE, COLLECTION_MEMORIES, mid, error=str(e),
-            )
+            logger.warning("Failed to delete memory vector %d: %s", mid, e)
     cursor = await sqlite._db.execute(
         "SELECT id FROM lessons WHERE source_session_id = ?",
         (session_id,),
@@ -214,17 +202,15 @@ async def _cleanup_incomplete_session(
     old_lesson_ids = [row[0] for row in await cursor.fetchall()]
     for lid in old_lesson_ids:
         try:
-            chroma.delete_lesson(lid)
+            vectors.delete_lesson(lid)
         except Exception as e:
-            await queue_failed_op(
-                sqlite, OP_DELETE, COLLECTION_LESSONS, lid, error=str(e),
-            )
+            logger.warning("Failed to delete lesson vector %d: %s", lid, e)
     await sqlite.delete_session_cascade(session_id, old_ids)
 
 
 async def _import_global_batch(
     sqlite: SQLiteStore,
-    chroma: ChromaStore,
+    vectors: VectorStore,
     router: LLMRouter,
     processor: MemoryProcessor,
     config: MemoryConfig | None,
@@ -275,7 +261,7 @@ async def _import_global_batch(
                 # Clean up incomplete import
                 logger.info("Re-importing incomplete '%s'", conv.title)
                 try:
-                    await _cleanup_incomplete_session(sqlite, chroma, session_id)
+                    await _cleanup_incomplete_session(sqlite, vectors, session_id)
                     stats.conversations_reimported += 1
                 except Exception as e:
                     logger.error("Failed to clean up incomplete '%s': %s", conv.title, e)
@@ -408,9 +394,9 @@ async def _import_global_batch(
                         {"session_id": str(session_id), "role": msg.role}
                         for msg, _, _ in surviving
                     ]
-                    chroma.add_memories_batch(memory_ids, texts, metadatas)
+                    vectors.add_memories_batch(memory_ids, texts, metadatas)
                 except Exception as e:
-                    logger.error("ChromaDB batch embed failed: %s", e)
+                    logger.error("Vector batch embed failed: %s", e)
 
             msg_count = len(memory_ids)
             await sqlite.update_session(session_id, message_count=msg_count)
@@ -499,7 +485,7 @@ async def _import_global_batch(
 
 async def _import_single_conversation(
     sqlite: SQLiteStore,
-    chroma: ChromaStore,
+    vectors: VectorStore,
     router: LLMRouter,
     processor: MemoryProcessor,
     config: MemoryConfig | None,
@@ -611,9 +597,9 @@ async def _import_single_conversation(
             {"session_id": str(session_id), "role": msg.role}
             for msg, _tags, _summary in surviving
         ]
-        chroma.add_memories_batch(memory_ids, texts, metadatas)
+        vectors.add_memories_batch(memory_ids, texts, metadatas)
     except Exception as e:
-        logger.error("ChromaDB batch embed failed: %s", e)
+        logger.error("Vector batch embed failed: %s", e)
     print(f"  [{title_short}] Embedded {len(memory_ids)} memories")
 
     # ── Step 6: Importance all + update ranks (one model load) ─────────

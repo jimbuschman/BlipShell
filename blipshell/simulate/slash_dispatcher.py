@@ -364,7 +364,7 @@ class SlashCommandDispatcher:
             from scripts.audit_db import run_audit
             results = await run_audit(
                 self.agent.sqlite,
-                self.agent.chroma,
+                self.agent.vectors,
                 self.config,
                 skip_chroma=quick,
                 skip_endpoints=quick,

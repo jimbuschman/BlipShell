@@ -96,16 +96,17 @@ async def diagnose_routing(router: LLMRouter, endpoint_mgr: EndpointManager):
     print()
 
 
-def create_chroma(config):
-    """Create a ChromaStore with proper config (persist_dir, embedding model, ollama url)."""
-    from blipshell.memory.chroma_store import ChromaStore
-    chroma = ChromaStore(
-        persist_dir=config.database.chroma_path,
+def create_vectors(config):
+    """Create a VectorStore with proper config (db_path, embedding model, ollama url)."""
+    from blipshell.memory.vector_store import VectorStore
+    vectors = VectorStore(
+        db_path=config.database.path,
         embedding_model=config.models.embedding,
         ollama_url=get_ollama_url(config.endpoints),
+        embedding_dim=config.database.embedding_dimensions,
     )
-    chroma.initialize()
-    return chroma
+    vectors.initialize()
+    return vectors
 
 
 async def diagnose_individual_calls(router: LLMRouter, endpoint_mgr: EndpointManager, config):
@@ -151,13 +152,13 @@ async def diagnose_individual_calls(router: LLMRouter, endpoint_mgr: EndpointMan
     print(f"  embedding")
     t0 = time.monotonic()
     try:
-        chroma = create_chroma(config)
-        chroma.add_memory(999999, "Test embedding for diagnostic purposes", {
+        vectors = create_vectors(config)
+        vectors.add_memory(999999, "Test embedding for diagnostic purposes", {
             "session_id": "0", "role": "user",
         })
         elapsed = time.monotonic() - t0
         print(f"    Time: {elapsed:.3f}s")
-        chroma.delete_memory(999999)
+        vectors.delete_memory(999999)
     except Exception as e:
         elapsed = time.monotonic() - t0
         print(f"    FAILED after {elapsed:.2f}s: {e}")
@@ -180,15 +181,15 @@ async def diagnose_full_pipeline(config, num_messages: int):
     router = LLMRouter(config.models, endpoint_mgr)
 
     try:
-        chroma = create_chroma(config)
+        vectors = create_vectors(config)
     except Exception as e:
-        print(f"  ChromaDB unavailable: {e}")
+        print(f"  VectorStore unavailable: {e}")
         await sqlite.close()
         return
 
     from blipshell.memory.processor import MemoryProcessor
     processor = MemoryProcessor(
-        sqlite, chroma, router,
+        sqlite, vectors, router,
         config=config.memory,
         max_tags=config.tagging.max_tags,
     )
@@ -337,7 +338,7 @@ async def diagnose_full_pipeline(config, num_messages: int):
         memories = await sqlite.get_memories_by_session(9999)
         for mem in memories:
             try:
-                chroma.delete_memory(mem.id)
+                vectors.delete_memory(mem.id)
             except Exception:
                 pass
             await sqlite._db.execute("DELETE FROM memories WHERE id = ?", (mem.id,))
@@ -519,16 +520,16 @@ async def diagnose_concurrent_with_llm(config):
     router = LLMRouter(config.models, endpoint_mgr)
 
     try:
-        chroma = create_chroma(config)
+        vectors = create_vectors(config)
     except Exception as e:
-        print(f"  ChromaDB unavailable: {e}")
+        print(f"  VectorStore unavailable: {e}")
         await sqlite1.close()
         await sqlite2.close()
         return
 
     from blipshell.memory.processor import MemoryProcessor
     processor = MemoryProcessor(
-        sqlite2, chroma, router,
+        sqlite2, vectors, router,
         config=config.memory,
         max_tags=config.tagging.max_tags,
     )
@@ -591,7 +592,7 @@ async def diagnose_concurrent_with_llm(config):
         memories = await sqlite1.get_memories_by_session(session_id)
         for mem in memories:
             try:
-                chroma.delete_memory(mem.id)
+                vectors.delete_memory(mem.id)
             except Exception:
                 pass
             await sqlite1._db.execute("DELETE FROM memories WHERE id = ?", (mem.id,))

@@ -23,11 +23,6 @@ from blipshell.llm.prompts import (
     summarize_memory,
 )
 from blipshell.llm.router import LLMRouter, TaskType
-from blipshell.memory.chroma_retry import (
-    OP_DELETE, OP_UPSERT,
-    COLLECTION_CORE, COLLECTION_LESSONS, COLLECTION_MEMORIES,
-    queue_failed_op,
-)
 from blipshell.memory.manager import estimate_tokens
 from blipshell.memory.noise import should_skip_memory
 from blipshell.memory.sqlite_store import SQLiteStore
@@ -36,7 +31,7 @@ from blipshell.models.config import MemoryConfig
 from blipshell.models.memory import CoreMemory, Lesson, Memory, MemoryType
 
 if TYPE_CHECKING:
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -48,15 +43,15 @@ class MemoryProcessor:
     1. Noise check (skip low-value messages)
     2. LLM summarize (generate concise summary)
     3. SQLite insert (persist structured data)
-    4. ChromaDB embed (store vector for semantic search)
+    4. Vector embed (store vector for semantic search)
     5. Tag (extract topic/behavior tags)
     6. LLM rank+importance (combined call: rank 1-5, importance 0.0-1.0)
     """
 
-    def __init__(self, sqlite: SQLiteStore, chroma: ChromaStore, router: LLMRouter,
+    def __init__(self, sqlite: SQLiteStore, vectors: VectorStore, router: LLMRouter,
                  config: MemoryConfig | None = None, max_tags: int = 7):
         self.sqlite = sqlite
-        self.chroma = chroma
+        self.vectors = vectors
         self.router = router
         self._recency_bonus = config.importance_recency_bonus if config else 0.1
         self._tag_bonus = config.importance_tag_bonus if config else 0.05
@@ -133,13 +128,9 @@ class MemoryProcessor:
         t0 = _time.monotonic()
         embed_meta = {"session_id": str(session_id), "role": role}
         try:
-            self.chroma.add_memory(memory_id, summary, embed_meta)
+            self.vectors.add_memory(memory_id, summary, embed_meta)
         except Exception as e:
-            logger.error("ChromaDB embed failed (queued for retry): %s", e)
-            await queue_failed_op(
-                self.sqlite, OP_UPSERT, COLLECTION_MEMORIES,
-                memory_id, summary, embed_meta, str(e),
-            )
+            logger.error("Vector embed failed (will be backfilled): %s", e)
         t_embed = _time.monotonic() - t0
 
         # Step 4b: Dedup check — find similar memories, ask LLM what to do
@@ -152,13 +143,9 @@ class MemoryProcessor:
                     # Redundant — archive and skip further processing
                     await self.sqlite.update_memory(memory_id, is_archived=True)
                     try:
-                        self.chroma.delete_memory(memory_id)
+                        self.vectors.delete_memory(memory_id)
                     except Exception as e:
-                        logger.warning("Failed to delete deduped memory %d from ChromaDB (queued): %s", memory_id, e)
-                        await queue_failed_op(
-                            self.sqlite, OP_DELETE, COLLECTION_MEMORIES,
-                            memory_id, error=str(e),
-                        )
+                        logger.warning("Failed to delete deduped memory %d vector: %s", memory_id, e)
                     logger.info("Dedup: archived redundant memory %d", memory_id)
                     return None
             except Exception as e:
@@ -221,13 +208,9 @@ class MemoryProcessor:
 
         # Embed
         try:
-            self.chroma.add_core_memory(mem_id, text)
+            self.vectors.add_core_memory(mem_id, text)
         except Exception as e:
-            logger.error("Core memory embed failed (queued for retry): %s", e)
-            await queue_failed_op(
-                self.sqlite, OP_UPSERT, COLLECTION_CORE,
-                mem_id, text, error=str(e),
-            )
+            logger.error("Core memory embed failed (will be backfilled): %s", e)
 
         # Tag
         try:
@@ -279,7 +262,7 @@ class MemoryProcessor:
 
         # Dedup: check if a very similar lesson already exists
         try:
-            similar = self.chroma.search_lessons(stripped, n_results=1)
+            similar = self.vectors.search_lessons(stripped, n_results=1)
             if similar and similar[0].get("similarity", 0) > 0.92:
                 logger.debug(
                     "Lesson skipped (near-duplicate of lesson %s, sim=%.3f): %s",
@@ -299,13 +282,9 @@ class MemoryProcessor:
         # Embed (include project in metadata for filtered/boosted search)
         try:
             meta = {"project": project} if project else None
-            self.chroma.add_lesson(lesson_id, lesson_text, metadata=meta)
+            self.vectors.add_lesson(lesson_id, lesson_text, metadata=meta)
         except Exception as e:
-            logger.error("Lesson embed failed (queued for retry): %s", e)
-            await queue_failed_op(
-                self.sqlite, OP_UPSERT, COLLECTION_LESSONS,
-                lesson_id, lesson_text, meta, str(e),
-            )
+            logger.error("Lesson embed failed (will be backfilled): %s", e)
 
         # Tag
         try:
@@ -340,7 +319,7 @@ class MemoryProcessor:
         each pair contradicts. Deactivates older contradicted memories.
         Returns count of deactivated memories.
         """
-        results = self.chroma.search_core_memories(text, n_results=3)
+        results = self.vectors.search_core_memories(text, n_results=3)
 
         deactivated = 0
         for r in results:
@@ -358,13 +337,9 @@ class MemoryProcessor:
             if answer.strip().upper().startswith("YES"):
                 await self.sqlite.deactivate_core_memory(r["id"])
                 try:
-                    self.chroma.delete_core_memory(r["id"])
+                    self.vectors.delete_core_memory(r["id"])
                 except Exception as e:
-                    logger.warning("Failed to delete contradicted core memory %d from ChromaDB (queued): %s", r["id"], e)
-                    await queue_failed_op(
-                        self.sqlite, OP_DELETE, COLLECTION_CORE,
-                        r["id"], error=str(e),
-                    )
+                    logger.warning("Failed to delete contradicted core memory %d vector: %s", r["id"], e)
                 deactivated += 1
                 logger.info(
                     "Deactivated contradicted core memory %d (superseded by %d)",
@@ -382,7 +357,7 @@ class MemoryProcessor:
 
         Returns list of {id, document, similarity} dicts above threshold.
         """
-        results = self.chroma.search_memories(summary, n_results=n_results + 1)
+        results = self.vectors.search_memories(summary, n_results=n_results + 1)
         similar = []
         for r in results:
             if r["id"] == exclude_id:
@@ -420,13 +395,9 @@ class MemoryProcessor:
             await self.sqlite.transfer_memory_tags(old_id, new_memory_id)
             await self.sqlite.update_memory(old_id, is_archived=True)
             try:
-                self.chroma.delete_memory(old_id)
+                self.vectors.delete_memory(old_id)
             except Exception as e:
-                logger.warning("Failed to delete memory %d from ChromaDB during dedup (queued): %s", old_id, e)
-                await queue_failed_op(
-                    self.sqlite, OP_DELETE, COLLECTION_MEMORIES,
-                    old_id, error=str(e),
-                )
+                logger.warning("Failed to delete memory %d vector during dedup: %s", old_id, e)
             logger.info("Dedup: UPDATE — archived old memory %d in favor of %d", old_id, new_memory_id)
             return "UPDATE"
 
@@ -434,13 +405,9 @@ class MemoryProcessor:
             old_id = similar[target_idx]["id"]
             await self.sqlite.update_memory(old_id, is_archived=True)
             try:
-                self.chroma.delete_memory(old_id)
+                self.vectors.delete_memory(old_id)
             except Exception as e:
-                logger.warning("Failed to delete memory %d from ChromaDB during dedup (queued): %s", old_id, e)
-                await queue_failed_op(
-                    self.sqlite, OP_DELETE, COLLECTION_MEMORIES,
-                    old_id, error=str(e),
-                )
+                logger.warning("Failed to delete memory %d vector during dedup: %s", old_id, e)
             logger.info("Dedup: DELETE — archived contradicted memory %d", old_id)
             return "DELETE"
 
@@ -610,13 +577,9 @@ class MemoryProcessor:
             }
             if project:
                 meta["project"] = project
-            self.chroma.add_lesson(reflection_id + 100000, embed_text, metadata=meta)
+            self.vectors.add_lesson(reflection_id + 100000, embed_text, metadata=meta)
         except Exception as e:
-            logger.error("Reflection embed failed (queued for retry): %s", e)
-            await queue_failed_op(
-                self.sqlite, OP_UPSERT, COLLECTION_LESSONS,
-                reflection_id + 100000, embed_text, meta, str(e),
-            )
+            logger.error("Reflection embed failed (will be backfilled): %s", e)
 
         return parsed
 

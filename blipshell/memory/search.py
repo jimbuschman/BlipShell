@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from math import exp
 
 from blipshell.llm.router import LLMRouter, TaskType
-from blipshell.memory.chroma_store import ChromaStore
+from blipshell.memory.vector_store import VectorStore
 from blipshell.memory.noise import contains_signal_words, should_skip_memory
 from blipshell.memory.reranker import Reranker
 from blipshell.memory.sqlite_store import SQLiteStore
@@ -58,7 +58,7 @@ class MemorySearch:
     def __init__(
         self,
         sqlite: SQLiteStore,
-        chroma: ChromaStore,
+        vectors: VectorStore,
         router: LLMRouter,
         config: MemoryConfig | None = None,
         min_rank: int = 3,
@@ -66,7 +66,7 @@ class MemorySearch:
         ollama_url: str = "http://localhost:11434",
     ):
         self.sqlite = sqlite
-        self.chroma = chroma
+        self.vectors = vectors
         self.router = router
         # Use config values if provided, else fall back to explicit params
         if config:
@@ -183,7 +183,7 @@ class MemorySearch:
             project_filter = {"session_id": {"$in": [str(sid) for sid in project_session_ids]}}
             project_chroma = await loop.run_in_executor(
                 None, functools.partial(
-                    self.chroma.search_memories,
+                    self.vectors.search_memories,
                     query=query, n_results=overfetch, where=project_filter,
                 ),
             )
@@ -198,7 +198,7 @@ class MemorySearch:
             # Pass 2: General (unfiltered) — backfill, dedup by ID
             general_chroma = await loop.run_in_executor(
                 None, functools.partial(
-                    self.chroma.search_memories,
+                    self.vectors.search_memories,
                     query=query, n_results=overfetch,
                 ),
             )
@@ -209,7 +209,7 @@ class MemorySearch:
             # No project — single-pass search
             chroma_results = await loop.run_in_executor(
                 None, functools.partial(
-                    self.chroma.search_memories,
+                    self.vectors.search_memories,
                     query=query, n_results=overfetch,
                 ),
             )
@@ -597,7 +597,7 @@ class MemorySearch:
         """Search core memories by semantic similarity."""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None, functools.partial(self.chroma.search_core_memories, query, n_results),
+            None, functools.partial(self.vectors.search_core_memories, query, n_results),
         )
 
     async def search_lessons(
@@ -611,7 +611,7 @@ class MemorySearch:
         """
         loop = asyncio.get_running_loop()
         results = await loop.run_in_executor(
-            None, functools.partial(self.chroma.search_lessons, query, n_results),
+            None, functools.partial(self.vectors.search_lessons, query, n_results),
         )
         if active_project and results:
             for r in results:

@@ -20,7 +20,7 @@ from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.sqlite_store import SQLiteStore
 
 if TYPE_CHECKING:
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class EntityExtractor:
         self,
         sqlite: SQLiteStore,
         router: LLMRouter,
-        chroma: ChromaStore | None = None,
+        vectors: VectorStore | None = None,
         batch_size: int = 50,
         task_type: str = TaskType.REASONING,
         model_override: str | None = None,
@@ -76,7 +76,7 @@ class EntityExtractor:
     ):
         self.sqlite = sqlite
         self.router = router
-        self.chroma = chroma
+        self.vectors = vectors
         self.batch_size = batch_size
         self.task_type = task_type
         self.model_override = model_override
@@ -255,25 +255,20 @@ class EntityExtractor:
             return existing_id
 
         # If resolution is disabled or no ChromaDB, create new entity
-        if not self._resolution_enabled or not self.chroma:
+        if not self._resolution_enabled or not self.vectors:
             entity_id = await self.sqlite.get_or_create_entity(name, entity_type)
             # Upsert into entity embeddings if ChromaDB available
-            if self.chroma:
+            if self.vectors:
                 try:
-                    self.chroma.upsert_entity(entity_id, name, entity_type)
+                    self.vectors.upsert_entity(entity_id, name, entity_type)
                 except Exception as e:
-                    logger.warning("Failed to upsert entity embedding (queued): %s", e)
-                    from blipshell.memory.chroma_retry import queue_failed_op, OP_UPSERT, COLLECTION_ENTITIES
-                    await queue_failed_op(
-                        self.sqlite, OP_UPSERT, COLLECTION_ENTITIES, entity_id,
-                        document=name, metadata={"entity_type": entity_type}, error=str(e),
-                    )
+                    logger.warning("Failed to upsert entity embedding: %s", e)
             self._resolution_cache[name] = entity_id
             return entity_id
 
         # Stage 2: Embedding similarity search
         try:
-            candidates = self.chroma.search_similar_entities(
+            candidates = self.vectors.search_similar_entities(
                 name, n_results=self._max_candidates,
             )
         except Exception as e:
@@ -284,14 +279,13 @@ class EntityExtractor:
             # Validate candidate still exists in SQLite (ChromaDB can have stale IDs)
             if not await self.sqlite.entity_id_exists(candidate["id"]):
                 logger.warning(
-                    "Stale entity in ChromaDB: id=%d name='%s' — skipping",
+                    "Stale entity in vector store: id=%d name='%s' — skipping",
                     candidate["id"], candidate["name"],
                 )
-                from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_ENTITIES
-                await queue_failed_op(
-                    self.sqlite, OP_DELETE, COLLECTION_ENTITIES,
-                    candidate["id"], error="stale: entity deleted from SQLite",
-                )
+                try:
+                    self.vectors.delete_entity(candidate["id"])
+                except Exception:
+                    pass
                 continue
 
             if candidate["similarity"] >= self._auto_merge_threshold:
@@ -325,14 +319,9 @@ class EntityExtractor:
         # No match — create new entity
         entity_id = await self.sqlite.get_or_create_entity(name, entity_type)
         try:
-            self.chroma.upsert_entity(entity_id, name, entity_type)
+            self.vectors.upsert_entity(entity_id, name, entity_type)
         except Exception as e:
-            logger.warning("Failed to upsert entity embedding (queued): %s", e)
-            from blipshell.memory.chroma_retry import queue_failed_op, OP_UPSERT, COLLECTION_ENTITIES
-            await queue_failed_op(
-                self.sqlite, OP_UPSERT, COLLECTION_ENTITIES, entity_id,
-                document=name, metadata={"entity_type": entity_type}, error=str(e),
-            )
+            logger.warning("Failed to upsert entity embedding: %s", e)
         self._resolution_cache[name] = entity_id
         return entity_id
 

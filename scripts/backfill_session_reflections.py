@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from blipshell.core.config import ConfigManager
 from blipshell.llm.endpoints import EndpointManager
 from blipshell.llm.router import LLMRouter
-from blipshell.memory.chroma_store import ChromaStore
+from blipshell.memory.vector_store import VectorStore
 from blipshell.memory.processor import MemoryProcessor
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.models.config import MemoryConfig, get_ollama_url
@@ -43,16 +43,17 @@ async def backfill(
     sqlite = SQLiteStore(config.database.path)
     await sqlite.initialize()
 
-    chroma = ChromaStore(
-        persist_dir=config.database.chroma_path,
+    vectors = VectorStore(
+        db_path=config.database.path,
         embedding_model=config.models.embedding,
         ollama_url=get_ollama_url(config.endpoints),
+        embedding_dim=config.database.embedding_dimensions,
     )
-    chroma.initialize()
+    vectors.initialize()
 
     endpoint_mgr = EndpointManager(config.endpoints, llm_config=config.llm)
     router = LLMRouter(config.models, endpoint_mgr)
-    processor = MemoryProcessor(sqlite, chroma, router, config=config.memory)
+    processor = MemoryProcessor(sqlite, vectors, router, config=config.memory)
 
     # Find sessions needing reflections
     query_limit = limit if limit > 0 else 10000

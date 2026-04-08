@@ -251,7 +251,7 @@ class TaggingConfig(BaseModel):
 class DatabaseConfig(BaseModel):
     """Database paths configuration."""
     path: str = "data/blipshell.db"
-    chroma_path: str = "data/chroma"
+    embedding_dimensions: int = 1024  # qwen3-embedding:0.6b output size
 
 
 class LLMConfig(BaseModel):

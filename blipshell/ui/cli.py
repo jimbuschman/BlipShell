@@ -1118,10 +1118,9 @@ async def _delete_core_item(agent: Agent, args: list[str]):
             return
         await agent.sqlite.delete_lesson(item_id)
         try:
-            agent.chroma.delete_lesson(item_id)
+            agent.vectors.delete_lesson(item_id)
         except Exception as e:
-            from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_LESSONS
-            await queue_failed_op(agent.sqlite, OP_DELETE, COLLECTION_LESSONS, item_id, error=str(e))
+            logging.getLogger(__name__).debug("Lesson vector delete failed: %s", e)
         console.print(f"[green]Lesson #{item_id} deleted.[/green]")
     else:
         cm = await agent.sqlite.get_core_memory(item_id)
@@ -1130,10 +1129,9 @@ async def _delete_core_item(agent: Agent, args: list[str]):
             return
         await agent.sqlite.deactivate_core_memory(item_id)
         try:
-            agent.chroma.delete_core_memory(item_id)
+            agent.vectors.delete_core_memory(item_id)
         except Exception as e:
-            from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_CORE
-            await queue_failed_op(agent.sqlite, OP_DELETE, COLLECTION_CORE, item_id, error=str(e))
+            logging.getLogger(__name__).debug("Core memory vector delete failed: %s", e)
         console.print(f"[green]Core memory #{item_id} deactivated.[/green]")
 
 
@@ -1160,14 +1158,9 @@ async def _save_feedback(agent: Agent, feedback: str):
 
     # Embed so it surfaces in semantic search
     try:
-        agent.chroma.add_lesson(lesson_id, lesson.content)
+        agent.vectors.add_lesson(lesson_id, lesson.content)
     except Exception as e:
-        logging.getLogger(__name__).debug("Feedback embed failed (queued): %s", e)
-        from blipshell.memory.chroma_retry import queue_failed_op, OP_UPSERT, COLLECTION_LESSONS
-        await queue_failed_op(
-            agent.sqlite, OP_UPSERT, COLLECTION_LESSONS, lesson_id,
-            document=lesson.content, error=str(e),
-        )
+        logging.getLogger(__name__).debug("Feedback embed failed: %s", e)
 
     # Tag it
     try:
@@ -1267,7 +1260,7 @@ async def _handle_project_command(agent: Agent, args: list[str]):
         project_name = agent.active_project["name"]
         if len(args) > 1 and args[1].lower() == "rebuild":
             from blipshell.memory.project_digest import ProjectDigestManager
-            digest_mgr = ProjectDigestManager(agent.sqlite, agent.router, agent.chroma)
+            digest_mgr = ProjectDigestManager(agent.sqlite, agent.router, agent.vectors)
             with console.status("[dim]Rebuilding project digest...[/dim]", spinner="dots"):
                 digest = await digest_mgr.bootstrap_digest(project_name)
             if digest:
@@ -1863,8 +1856,7 @@ async def _print_health(agent: Agent, config, quick: bool = False):
     with console.status("[dim]Running health checks...[/dim]", spinner="dots"):
         result = run_audit(
             db_path=config.database.path,
-            chroma_path=config.database.chroma_path,
-            skip_chroma=quick,
+            skip_vectors=quick,
             skip_endpoints=False,
         )
 
@@ -1966,7 +1958,7 @@ async def _run_nightly(agent: Agent, job_name: str | None = None):
     from blipshell.core.nightly import NightlyRunner
 
     runner = NightlyRunner(
-        agent.config, agent.sqlite, agent.chroma,
+        agent.config, agent.sqlite, agent.vectors,
         agent.router, agent.processor,
     )
 
@@ -3240,7 +3232,7 @@ def conversations(ctx, file, max_count, skip_lessons):
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
     from blipshell.models.config import get_ollama_url
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
 
     async def _import():
@@ -3264,10 +3256,11 @@ def conversations(ctx, file, max_count, skip_lessons):
         sqlite = SQLiteStore(cfg.database.path)
         await sqlite.initialize()
 
-        chroma = ChromaStore(
-            persist_dir=cfg.database.chroma_path,
+        chroma = VectorStore(
+            db_path=cfg.database.path,
             embedding_model=cfg.models.embedding,
             ollama_url=get_ollama_url(cfg.endpoints),
+            embedding_dim=cfg.database.embedding_dimensions,
         )
         chroma.initialize()
 
@@ -3287,7 +3280,7 @@ def conversations(ctx, file, max_count, skip_lessons):
 
             stats = await import_conversations(
                 sqlite=sqlite,
-                chroma=chroma,
+                vectors=chroma,
                 router=router,
                 config=cfg.memory,
                 conversations=convs,
@@ -3334,7 +3327,7 @@ def import_memories_cmd(ctx, file):
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
     from blipshell.models.config import get_ollama_url
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
 
     text = Path(file).read_text(encoding="utf-8")
@@ -3352,10 +3345,11 @@ def import_memories_cmd(ctx, file):
         sqlite = SQLiteStore(cfg.database.path)
         await sqlite.initialize()
 
-        chroma = ChromaStore(
-            persist_dir=cfg.database.chroma_path,
+        chroma = VectorStore(
+            db_path=cfg.database.path,
             embedding_model=cfg.models.embedding,
             ollama_url=get_ollama_url(cfg.endpoints),
+            embedding_dim=cfg.database.embedding_dimensions,
         )
         chroma.initialize()
 
@@ -3364,7 +3358,7 @@ def import_memories_cmd(ctx, file):
 
         count = await import_memories_as_core(
             sqlite=sqlite,
-            chroma=chroma,
+            vectors=chroma,
             router=router,
             config=cfg.memory,
             memories_text=text,
@@ -3399,7 +3393,7 @@ def claude_conversations(ctx, file, max_count, skip_lessons):
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
     from blipshell.models.config import get_ollama_url
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
 
     async def _import():
@@ -3421,10 +3415,11 @@ def claude_conversations(ctx, file, max_count, skip_lessons):
         sqlite = SQLiteStore(cfg.database.path)
         await sqlite.initialize()
 
-        chroma = ChromaStore(
-            persist_dir=cfg.database.chroma_path,
+        chroma = VectorStore(
+            db_path=cfg.database.path,
             embedding_model=cfg.models.embedding,
             ollama_url=get_ollama_url(cfg.endpoints),
+            embedding_dim=cfg.database.embedding_dimensions,
         )
         chroma.initialize()
 
@@ -3443,7 +3438,7 @@ def claude_conversations(ctx, file, max_count, skip_lessons):
 
             stats = await import_conversations(
                 sqlite=sqlite,
-                chroma=chroma,
+                vectors=chroma,
                 router=router,
                 config=cfg.memory,
                 conversations=convs,
@@ -3473,7 +3468,7 @@ def claude_scraped(ctx, file, max_count, skip_lessons):
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
     from blipshell.models.config import get_ollama_url
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
 
     async def _import():
@@ -3495,10 +3490,11 @@ def claude_scraped(ctx, file, max_count, skip_lessons):
         sqlite = SQLiteStore(cfg.database.path)
         await sqlite.initialize()
 
-        chroma = ChromaStore(
-            persist_dir=cfg.database.chroma_path,
+        chroma = VectorStore(
+            db_path=cfg.database.path,
             embedding_model=cfg.models.embedding,
             ollama_url=get_ollama_url(cfg.endpoints),
+            embedding_dim=cfg.database.embedding_dimensions,
         )
         chroma.initialize()
 
@@ -3517,7 +3513,7 @@ def claude_scraped(ctx, file, max_count, skip_lessons):
 
             stats = await import_conversations(
                 sqlite=sqlite,
-                chroma=chroma,
+                vectors=chroma,
                 router=router,
                 config=cfg.memory,
                 conversations=convs,
@@ -3555,7 +3551,7 @@ def deepseek_conversations(ctx, file, max_count, skip_lessons):
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
     from blipshell.models.config import get_ollama_url
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
 
     async def _import():
@@ -3577,10 +3573,11 @@ def deepseek_conversations(ctx, file, max_count, skip_lessons):
         sqlite = SQLiteStore(cfg.database.path)
         await sqlite.initialize()
 
-        chroma = ChromaStore(
-            persist_dir=cfg.database.chroma_path,
+        chroma = VectorStore(
+            db_path=cfg.database.path,
             embedding_model=cfg.models.embedding,
             ollama_url=get_ollama_url(cfg.endpoints),
+            embedding_dim=cfg.database.embedding_dimensions,
         )
         chroma.initialize()
 
@@ -3599,7 +3596,7 @@ def deepseek_conversations(ctx, file, max_count, skip_lessons):
 
             stats = await import_conversations(
                 sqlite=sqlite,
-                chroma=chroma,
+                vectors=chroma,
                 router=router,
                 config=cfg.memory,
                 conversations=convs,
@@ -3635,7 +3632,7 @@ def import_conversation(ctx, file, skip_lessons, title):
     from blipshell.import_common import ParsedConversation, ParsedMessage, import_conversations
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
     from blipshell.models.config import get_ollama_url
 
@@ -3692,10 +3689,11 @@ def import_conversation(ctx, file, skip_lessons, title):
         sqlite = SQLiteStore(cfg.database.path)
         await sqlite.initialize()
 
-        chroma = ChromaStore(
-            persist_dir=cfg.database.chroma_path,
+        chroma = VectorStore(
+            db_path=cfg.database.path,
             embedding_model=cfg.models.embedding,
             ollama_url=get_ollama_url(cfg.endpoints),
+            embedding_dim=cfg.database.embedding_dimensions,
         )
         chroma.initialize()
 
@@ -3714,7 +3712,7 @@ def import_conversation(ctx, file, skip_lessons, title):
 
             stats = await import_conversations(
                 sqlite=sqlite,
-                chroma=chroma,
+                vectors=chroma,
                 router=router,
                 config=cfg.memory,
                 conversations=parsed,
@@ -3767,7 +3765,7 @@ def reprocess_memories_cmd(ctx, model, batch_size, skip_embed, no_think):
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
     from blipshell.models.config import get_ollama_url
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
     from blipshell.reprocess import reprocess_memories
 
@@ -3778,10 +3776,11 @@ def reprocess_memories_cmd(ctx, model, batch_size, skip_embed, no_think):
         sqlite = SQLiteStore(cfg.database.path)
         await sqlite.initialize()
 
-        chroma = ChromaStore(
-            persist_dir=cfg.database.chroma_path,
+        chroma = VectorStore(
+            db_path=cfg.database.path,
             embedding_model=cfg.models.embedding,
             ollama_url=get_ollama_url(cfg.endpoints),
+            embedding_dim=cfg.database.embedding_dimensions,
         )
         chroma.initialize()
 
@@ -3810,7 +3809,7 @@ def reprocess_memories_cmd(ctx, model, batch_size, skip_embed, no_think):
 
             stats = await reprocess_memories(
                 sqlite=sqlite,
-                chroma=chroma,
+                vectors=chroma,
                 router=router,
                 batch_size=batch_size,
                 skip_embed=skip_embed,
@@ -3850,7 +3849,7 @@ def reprocess_lessons_cmd(ctx, model, min_messages, no_think):
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
     from blipshell.models.config import get_ollama_url
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
     from blipshell.reprocess import reprocess_lessons
 
@@ -3861,10 +3860,11 @@ def reprocess_lessons_cmd(ctx, model, min_messages, no_think):
         sqlite = SQLiteStore(cfg.database.path)
         await sqlite.initialize()
 
-        chroma = ChromaStore(
-            persist_dir=cfg.database.chroma_path,
+        chroma = VectorStore(
+            db_path=cfg.database.path,
             embedding_model=cfg.models.embedding,
             ollama_url=get_ollama_url(cfg.endpoints),
+            embedding_dim=cfg.database.embedding_dimensions,
         )
         chroma.initialize()
 
@@ -3889,7 +3889,7 @@ def reprocess_lessons_cmd(ctx, model, min_messages, no_think):
 
             stats = await reprocess_lessons(
                 sqlite=sqlite,
-                chroma=chroma,
+                vectors=chroma,
                 router=router,
                 min_messages=min_messages,
                 no_think=no_think,

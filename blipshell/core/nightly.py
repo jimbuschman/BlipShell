@@ -23,8 +23,7 @@ logger = logging.getLogger(__name__)
 # Jobs run in this order. Each is isolated — one failure doesn't abort the rest.
 JOB_ORDER = [
     "backup",
-    "chroma_retry",
-    "reconcile",
+    "backfill_vectors",
     "clean_empty_sessions",
     "cleanup",
     "backfill_summaries",
@@ -50,10 +49,10 @@ JOB_ORDER = [
 class NightlyRunner:
     """Orchestrates nightly maintenance jobs."""
 
-    def __init__(self, config, sqlite, chroma, router, processor):
+    def __init__(self, config, sqlite, vectors, router, processor):
         self.config = config
         self.sqlite = sqlite
-        self.chroma = chroma
+        self.vectors = vectors
         self.router = router
         self.processor = processor
 
@@ -66,7 +65,7 @@ class NightlyRunner:
     ) -> NightlyRunner:
         """Factory: build a NightlyRunner from config without a full Agent.
 
-        Creates its own SQLite, ChromaDB, Router, and Processor instances.
+        Creates its own SQLite, VectorStore, Router, and Processor instances.
         Caller must call close() when done.
 
         Args:
@@ -77,9 +76,9 @@ class NightlyRunner:
         from blipshell.core.config import ConfigManager
         from blipshell.llm.endpoints import EndpointManager
         from blipshell.llm.router import LLMRouter
-        from blipshell.memory.chroma_store import ChromaStore
         from blipshell.memory.processor import MemoryProcessor
         from blipshell.memory.sqlite_store import SQLiteStore
+        from blipshell.memory.vector_store import VectorStore
         from blipshell.models.config import get_ollama_url
 
         config_mgr = ConfigManager(config_path)
@@ -97,18 +96,19 @@ class NightlyRunner:
         sqlite = SQLiteStore(config.database.path)
         await sqlite.initialize()
 
-        chroma = ChromaStore(
-            persist_dir=config.database.chroma_path,
+        vectors = VectorStore(
+            db_path=config.database.path,
             embedding_model=config.models.embedding,
             ollama_url=get_ollama_url(endpoints),
+            embedding_dim=config.database.embedding_dimensions,
         )
-        chroma.initialize()
+        vectors.initialize()
 
         endpoint_mgr = EndpointManager(endpoints, config.llm)
         router = LLMRouter(config.models, endpoint_mgr)
-        processor = MemoryProcessor(sqlite, chroma, router, config=config.memory)
+        processor = MemoryProcessor(sqlite, vectors, router, config=config.memory)
 
-        return cls(config, sqlite, chroma, router, processor)
+        return cls(config, sqlite, vectors, router, processor)
 
     async def run(
         self,
@@ -194,8 +194,7 @@ class NightlyRunner:
         """Run a single job by name. Returns job-specific stats dict."""
         handlers = {
             "backup": self._job_backup,
-            "chroma_retry": self._job_chroma_retry,
-            "reconcile": self._job_reconcile,
+            "backfill_vectors": self._job_backfill_vectors,
             "clean_empty_sessions": self._job_clean_empty_sessions,
             "cleanup": self._job_cleanup,
             "backfill_summaries": self._job_backfill_summaries,
@@ -228,29 +227,22 @@ class NightlyRunner:
             result = backup_before_destructive(
                 "nightly",
                 db_path=self.config.database.path,
-                chroma_path=self.config.database.chroma_path,
             )
             return {"backup_path": str(result) if result else None}
         except Exception as e:
             logger.warning("Backup failed (non-fatal): %s", e)
             return {"backup_path": None, "warning": str(e)}
 
-    async def _job_chroma_retry(self, on_status) -> dict:
-        """Retry failed ChromaDB operations."""
-        from blipshell.memory.chroma_retry import process_retry_queue
-        return await process_retry_queue(self.sqlite, self.chroma)
-
-    async def _job_reconcile(self, on_status) -> dict:
-        """Reconcile SQLite and ChromaDB — find and fix drift."""
-        from blipshell.memory.chroma_retry import reconcile_stores
-        on_status("Comparing SQLite and ChromaDB collections...")
-        stats = await reconcile_stores(self.sqlite, self.chroma)
-        on_status(
-            f"Reconcile: {stats['orphans_deleted']} orphans deleted, "
-            f"{stats['missing_queued']} missing queued, "
-            f"{stats['errors']} errors"
-        )
-        return stats
+    async def _job_backfill_vectors(self, on_status) -> dict:
+        """Backfill any missing vector embeddings."""
+        total = {"succeeded": 0, "failed": 0}
+        for collection in ("memories", "core_memories", "lessons", "entities"):
+            stats = self.vectors.backfill_missing_vectors(collection, limit=500)
+            total["succeeded"] += stats.get("succeeded", 0)
+            total["failed"] += stats.get("failed", 0)
+            if stats.get("succeeded", 0) > 0:
+                on_status(f"Backfilled {stats['succeeded']} {collection} vectors")
+        return total
 
     async def _job_clean_empty_sessions(self, on_status) -> dict:
         """Delete sessions with zero memories (app started but user never chatted)."""
@@ -334,11 +326,11 @@ class NightlyRunner:
                 )
                 if summary and summary.strip().upper() != "SKIP" and summary.strip() != mem.content.strip():
                     await self.sqlite.update_memory(mem.id, summary=summary.strip())
-                    # Update ChromaDB embedding with proper summary
+                    # Update vector store embedding with proper summary
                     try:
-                        self.chroma.add_memory(mem.id, summary.strip())
+                        self.vectors.add_memory(mem.id, summary.strip())
                     except Exception as e:
-                        logger.debug("ChromaDB update failed for memory %d: %s", mem.id, e)
+                        logger.debug("vector store update failed for memory %d: %s", mem.id, e)
                     resummarized += 1
                 else:
                     # Mark it so we don't retry — set summary to truncated content
@@ -365,7 +357,7 @@ class NightlyRunner:
 
     async def _job_centroid_tag(self, on_status) -> dict:
         """Run centroid-based tag assignment."""
-        tagger = CentroidTagger(self.sqlite, self.chroma, self.config.memory)
+        tagger = CentroidTagger(self.sqlite, self.vectors, self.config.memory)
         return await tagger.run(on_status=on_status)
 
     async def _job_batch_tag(self, on_status) -> dict:
@@ -391,14 +383,9 @@ class NightlyRunner:
         )
         for mid in ids_to_archive:
             try:
-                self.chroma.delete_memory(mid)
+                self.vectors.delete_memory(mid)
             except Exception as e:
-                logger.warning("Failed to delete memory %d from ChromaDB during prune (queued): %s", mid, e)
-                from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_MEMORIES
-                await queue_failed_op(
-                    self.sqlite, OP_DELETE, COLLECTION_MEMORIES,
-                    mid, error=str(e),
-                )
+                logger.warning("Failed to delete memory %d vector during prune: %s", mid, e)
         return {"pruned": count}
 
     async def _job_consolidate(self, on_status) -> dict:
@@ -407,7 +394,7 @@ class NightlyRunner:
             return {"merged": 0, "skipped": "consolidation_batch_size=0"}
 
         consolidator = MemoryConsolidator(
-            self.sqlite, self.chroma, self.config.memory,
+            self.sqlite, self.vectors, self.config.memory,
         )
         return await consolidator.consolidate_batch()
 
@@ -548,26 +535,21 @@ class NightlyRunner:
             await db.execute("DELETE FROM lesson_tags WHERE lesson_id = ?", (lid,))
             await db.execute("DELETE FROM lessons WHERE id = ?", (lid,))
             try:
-                self.chroma.delete_lesson(lid)
+                self.vectors.delete_lesson(lid)
             except Exception as e:
-                logger.debug("Failed to delete junk lesson %d from ChromaDB: %s", lid, e)
-                from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_LESSONS
-                await queue_failed_op(
-                    self.sqlite, OP_DELETE, COLLECTION_LESSONS,
-                    lid, error=str(e),
-                )
+                logger.debug("Failed to delete junk lesson %d vector: %s", lid, e)
             deleted_junk += 1
         if deleted_junk:
             await db.commit()
 
-        # Phase 2: Dedup near-identical lessons via ChromaDB similarity
+        # Phase 2: Dedup near-identical lessons via vector store similarity
         lessons = await self.sqlite.get_all_lessons()
         seen_ids = set()
         for lesson in lessons:
             if lesson.id in seen_ids:
                 continue
             try:
-                similar = self.chroma.search_lessons(lesson.content, n_results=5)
+                similar = self.vectors.search_lessons(lesson.content, n_results=5)
                 for s in similar:
                     other_id = s.get("id")
                     if other_id == lesson.id or other_id in seen_ids:
@@ -577,14 +559,9 @@ class NightlyRunner:
                         await db.execute("DELETE FROM lesson_tags WHERE lesson_id = ?", (other_id,))
                         await db.execute("DELETE FROM lessons WHERE id = ?", (other_id,))
                         try:
-                            self.chroma.delete_lesson(other_id)
+                            self.vectors.delete_lesson(other_id)
                         except Exception as e:
-                            logger.debug("Failed to delete dupe lesson %d from ChromaDB: %s", other_id, e)
-                            from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_LESSONS
-                            await queue_failed_op(
-                                self.sqlite, OP_DELETE, COLLECTION_LESSONS,
-                                other_id, error=str(e),
-                            )
+                            logger.debug("Failed to delete dupe lesson %d vector: %s", other_id, e)
                         seen_ids.add(other_id)
                         deleted_dupes += 1
             except Exception as e:
@@ -702,7 +679,7 @@ class NightlyRunner:
         from blipshell.memory.entity_extractor import EntityExtractor
 
         extractor = EntityExtractor(
-            self.sqlite, self.router, self.chroma,
+            self.sqlite, self.router, self.vectors,
             batch_size=500,
             entity_resolution_enabled=getattr(
                 self.config.memory, "entity_resolution_enabled", False,
@@ -741,12 +718,12 @@ class NightlyRunner:
                 await db.execute("DELETE FROM entity_relationships WHERE subject_id = ? OR object_id = ?", (eid, eid))
                 await db.execute("DELETE FROM entity_aliases WHERE canonical_entity_id = ?", (eid,))
                 await db.execute("DELETE FROM entities WHERE id = ?", (eid,))
-                # Also remove from ChromaDB to prevent sync drift
-                if self.chroma:
+                # Also remove from vector store
+                if self.vectors:
                     try:
-                        self.chroma.delete_entity(eid)
+                        self.vectors.delete_entity(eid)
                     except Exception as e:
-                        logger.debug("Failed to delete entity %d from ChromaDB: %s", eid, e)
+                        logger.debug("Failed to delete entity %d vector: %s", eid, e)
                 deleted += 1
                 continue
 
@@ -800,8 +777,7 @@ class NightlyRunner:
 
         result = run_audit(
             db_path=self.config.database.path,
-            chroma_path=self.config.database.chroma_path,
-            skip_chroma=False,
+            skip_vectors=False,
             skip_endpoints=True,  # endpoints may not be available during nightly
         )
         warnings = [f for f in result.findings if f["severity"] == "WARNING"]
@@ -853,7 +829,7 @@ class NightlyRunner:
         """Rebuild project digests only for projects missing one."""
         from blipshell.memory.project_digest import ProjectDigestManager
 
-        digest_mgr = ProjectDigestManager(self.sqlite, self.router, self.chroma)
+        digest_mgr = ProjectDigestManager(self.sqlite, self.router, self.vectors)
         projects = await self.sqlite.list_projects()
         rebuilt = 0
         skipped = 0

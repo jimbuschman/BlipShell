@@ -5,7 +5,7 @@ so background memory work (summarization, ranking, dedup) never competes
 with the main chat event loop for I/O time.
 
 Communication: main thread enqueues WorkItems via thread-safe queue.Queue.
-ChromaDB is shared (synchronous, thread-safe).
+VectorStore is shared (synchronous, thread-safe with internal lock).
 SQLite is safe for concurrent writes (WAL mode).
 """
 
@@ -21,7 +21,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
     from blipshell.models.config import BlipShellConfig
 
 logger = logging.getLogger(__name__)
@@ -53,9 +53,9 @@ class MemoryWorker:
     competes with the main chat event loop for I/O time.
     """
 
-    def __init__(self, config: BlipShellConfig, chroma: ChromaStore):
+    def __init__(self, config: BlipShellConfig, vectors: VectorStore):
         self._config = config
-        self._chroma = chroma
+        self._vectors = vectors
         self._queue: queue.Queue[WorkItem] = queue.Queue()
         self._thread: Optional[threading.Thread] = None
         self._started = threading.Event()
@@ -104,7 +104,7 @@ class MemoryWorker:
 
         # Own MemoryProcessor — uses worker's sqlite + router, shared chroma
         processor = MemoryProcessor(
-            sqlite, self._chroma, router,
+            sqlite, self._vectors, router,
             config=self._config.memory,
             max_tags=self._config.tagging.max_tags,
         )
@@ -209,7 +209,7 @@ class MemoryWorker:
         er_cfg = self._config.memory.entity_resolution
         extractor = EntityExtractor(
             sqlite, router,
-            chroma=self._chroma,
+            vectors=self._vectors,
             batch_size=batch_size,
             entity_resolution_enabled=er_cfg.enabled,
             entity_auto_merge_threshold=er_cfg.embedding_auto_merge_threshold,

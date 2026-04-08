@@ -18,7 +18,7 @@ from blipshell.import_common import (
     import_conversations,
 )
 from blipshell.llm.router import LLMRouter
-from blipshell.memory.chroma_store import ChromaStore
+from blipshell.memory.vector_store import VectorStore
 from blipshell.memory.processor import MemoryProcessor
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.models.config import MemoryConfig
@@ -186,7 +186,7 @@ def import_personality(config_manager: ConfigManager, personality_text: str):
 
 async def import_memories_as_core(
     sqlite: SQLiteStore,
-    chroma: ChromaStore,
+    vectors: VectorStore,
     router: LLMRouter,
     config: MemoryConfig,
     memories_text: str,
@@ -198,7 +198,7 @@ async def import_memories_as_core(
 
     Args:
         sqlite: SQLite store instance
-        chroma: ChromaDB store instance
+        vectors: Vector store instance
         router: LLM router
         config: Memory configuration
         memories_text: Text with one memory per line
@@ -206,7 +206,7 @@ async def import_memories_as_core(
     Returns:
         Count of imported core memories
     """
-    processor = MemoryProcessor(sqlite, chroma, router, config=config)
+    processor = MemoryProcessor(sqlite, vectors, router, config=config)
     count = 0
 
     lines = [line.strip() for line in memories_text.splitlines() if line.strip()]

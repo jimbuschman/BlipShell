@@ -54,16 +54,16 @@ CHECKPOINT_KEY = "reprocess_summaries_last_id"
 
 async def run(args):
     import aiosqlite
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
     from blipshell.llm.prompts import summarize_memory
 
     # Connect to SQLite
     db = await aiosqlite.connect(args.db)
     db.row_factory = aiosqlite.Row
 
-    # Connect to ChromaDB
-    chroma = ChromaStore(persist_dir=args.chroma, ollama_url=args.ollama)
-    chroma.initialize()
+    # Connect to vector store
+    vectors = VectorStore(db_path=args.db, ollama_url=args.ollama, embedding_dim=1024)
+    vectors.initialize()
 
     # Set up LLM for summarization (only if not embed-only)
     llm_client = None
@@ -206,12 +206,12 @@ async def run(args):
                 except Exception as e:
                     logger.warning("Re-tag failed for %d: %s", mem_id, e)
 
-            # ChromaDB embed (thread-safe, no lock needed)
+            # Vector embed (thread-safe, no lock needed)
             metadata = {"session_id": str(session_id), "role": role, "source": "memory"}
             try:
-                chroma.add_memory(mem_id, embed_text, metadata)
+                vectors.add_memory(mem_id, embed_text, metadata)
             except Exception as e:
-                logger.warning("ChromaDB embed failed for %d: %s", mem_id, e)
+                logger.warning("Vector embed failed for %d: %s", mem_id, e)
 
             processed += 1
 
@@ -285,7 +285,6 @@ def main():
         ),
     )
     parser.add_argument("--db", default="data/blipshell.db")
-    parser.add_argument("--chroma", default="data/chroma")
     parser.add_argument("--ollama", default="http://localhost:11434",
                         help="Ollama URL for embeddings + local LLM (default: localhost:11434)")
     parser.add_argument("--provider", default="ollama", choices=["ollama", "openai"],

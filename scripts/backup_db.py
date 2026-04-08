@@ -50,16 +50,15 @@ def backup_sqlite(src_path: str, dst_path: str):
 
 def run_backup(
     db_path: str | Path = _DEFAULT_DB,
-    chroma_path: str | Path = _DEFAULT_CHROMA,
     out_dir: str | Path = _DEFAULT_BACKUP_DIR,
     prefix: str = "",
     quiet: bool = False,
+    chroma_path: str | Path | None = None,  # legacy, ignored
 ) -> Path | None:
     """Run a full backup and return the backup directory path.
 
     Args:
-        db_path: SQLite database file.
-        chroma_path: ChromaDB directory.
+        db_path: SQLite database file (includes vectors via sqlite-vec).
         out_dir: Parent directory for backups.
         prefix: Optional prefix for the backup dir name (e.g. "pre_cleanup_").
         quiet: Suppress console output.
@@ -100,28 +99,8 @@ def run_backup(
         if not quiet:
             console.print(f"[yellow]SQLite not found: {db_src}[/yellow]")
 
-    # ChromaDB backup (directory copy)
-    chroma_src = Path(chroma_path)
-    if chroma_src.exists():
-        chroma_dst = backup_dir / chroma_src.name
-        if not quiet:
-            console.print(f"ChromaDB: {chroma_src} → {chroma_dst}")
-        start = time.perf_counter()
-        try:
-            shutil.copytree(str(chroma_src), str(chroma_dst))
-            total = sum(f.stat().st_size for f in chroma_dst.rglob("*") if f.is_file())
-            size_mb = total / (1024 * 1024)
-            elapsed = time.perf_counter() - start
-            if not quiet:
-                console.print(f"  [green]OK[/green] ({size_mb:.1f} MB, {elapsed:.1f}s)")
-            ok = True
-        except Exception as e:
-            if not quiet:
-                console.print(f"  [red]FAILED: {e}[/red]")
-            logger.error("ChromaDB backup failed: %s", e)
-    else:
-        if not quiet:
-            console.print(f"[yellow]ChromaDB not found: {chroma_src} (skip)[/yellow]")
+    # Note: Vectors are stored in the same SQLite DB (sqlite-vec),
+    # so the SQLite backup above covers everything.
 
     if not quiet:
         console.print()
@@ -189,15 +168,14 @@ def get_last_backup_time(out_dir: str | Path = _DEFAULT_BACKUP_DIR) -> datetime 
 def backup_before_destructive(
     operation_name: str,
     db_path: str | Path = _DEFAULT_DB,
-    chroma_path: str | Path = _DEFAULT_CHROMA,
     out_dir: str | Path = _DEFAULT_BACKUP_DIR,
+    chroma_path: str | Path | None = None,  # legacy, ignored
 ) -> Path | None:
     """Create a pre-operation backup before a destructive script runs.
 
     Args:
         operation_name: Short name for the operation (e.g. "cleanup_entities").
         db_path: SQLite database file.
-        chroma_path: ChromaDB directory.
         out_dir: Parent directory for backups.
 
     Returns:
@@ -206,7 +184,6 @@ def backup_before_destructive(
     console.print(f"[dim]Creating pre-operation backup ({operation_name})...[/dim]")
     result = run_backup(
         db_path=db_path,
-        chroma_path=chroma_path,
         out_dir=out_dir,
         prefix=f"pre_{operation_name}_",
         quiet=False,

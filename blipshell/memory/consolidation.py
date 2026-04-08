@@ -11,7 +11,7 @@ No LLM calls needed — pure vector similarity + SQLite operations.
 import logging
 from typing import Optional
 
-from blipshell.memory.chroma_store import ChromaStore
+from blipshell.memory.vector_store import VectorStore
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.models.config import MemoryConfig
 
@@ -24,11 +24,11 @@ class MemoryConsolidator:
     def __init__(
         self,
         sqlite: SQLiteStore,
-        chroma: ChromaStore,
+        vectors: VectorStore,
         config: Optional[MemoryConfig] = None,
     ):
         self.sqlite = sqlite
-        self.chroma = chroma
+        self.vectors = vectors
         self.similarity_threshold = (
             config.consolidation_similarity if config else 0.85
         )
@@ -101,7 +101,7 @@ class MemoryConsolidator:
         if not memory or not memory.summary:
             return []
 
-        results = self.chroma.search_memories(
+        results = self.vectors.search_memories(
             query=memory.summary,
             n_results=5,
         )
@@ -178,13 +178,8 @@ class MemoryConsolidator:
         # Delete loser from SQLite (FTS5 trigger handles FTS cleanup)
         await self.sqlite.delete_memory(loser_id)
 
-        # Delete loser from ChromaDB
+        # Delete loser from vector store
         try:
-            self.chroma.delete_memory(loser_id)
+            self.vectors.delete_memory(loser_id)
         except Exception as e:
-            logger.warning("Failed to delete memory %d from ChromaDB (queued): %s", loser_id, e)
-            from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_MEMORIES
-            await queue_failed_op(
-                self.sqlite, OP_DELETE, COLLECTION_MEMORIES,
-                loser_id, error=str(e),
-            )
+            logger.warning("Failed to delete memory %d vector: %s", loser_id, e)

@@ -196,7 +196,7 @@ auth:
 
 database:
   path: "data/blipshell.db"
-  chroma_path: "data/chroma"
+  embedding_dimensions: 1024  # qwen3-embedding:0.6b output size
 
 telegram:
   bot_token: "${BLIPSHELL_TELEGRAM_TOKEN}"  # from @BotFather

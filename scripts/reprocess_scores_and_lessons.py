@@ -30,7 +30,7 @@ from blipshell.core.config import ConfigManager
 from blipshell.llm.endpoints import EndpointManager
 from blipshell.llm.prompts import extract_lesson, rank_and_importance
 from blipshell.llm.router import LLMRouter, TaskType
-from blipshell.memory.chroma_store import ChromaStore
+from blipshell.memory.vector_store import VectorStore
 from blipshell.memory.processor import MemoryProcessor
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.models.config import get_ollama_url
@@ -156,7 +156,7 @@ async def reprocess_scores(sqlite: SQLiteStore, router: LLMRouter, config,
 
 
 async def reprocess_lessons(
-    sqlite: SQLiteStore, chroma: ChromaStore, router: LLMRouter,
+    sqlite: SQLiteStore, vectors: VectorStore, router: LLMRouter,
     processor: MemoryProcessor, dry_run: bool = False, progress: dict | None = None,
 ):
     """Delete bad lessons and regenerate them."""
@@ -183,7 +183,7 @@ async def reprocess_lessons(
         try:
             await sqlite.delete_lesson(lesson_id)
             try:
-                chroma.delete_lesson(lesson_id)
+                vectors.delete_lesson(lesson_id)
             except Exception:
                 pass
             deleted += 1
@@ -281,16 +281,17 @@ async def main():
     await sqlite.initialize()
 
     ollama_url = get_ollama_url(config.endpoints)
-    chroma = ChromaStore(
-        persist_dir=config.database.chroma_path,
+    vectors = VectorStore(
+        db_path=config.database.path,
         ollama_url=ollama_url,
         embedding_model=config.models.embedding,
+        embedding_dim=config.database.embedding_dimensions,
     )
-    chroma.initialize()
+    vectors.initialize()
 
     endpoint_mgr = EndpointManager(config.endpoints, llm_config=config.llm)
     router = LLMRouter(config.models, endpoint_mgr)
-    processor = MemoryProcessor(sqlite, chroma, router, config=config.memory)
+    processor = MemoryProcessor(sqlite, vectors, router, config=config.memory)
 
     print(f"Config loaded. Scoring model: {router.get_model(TaskType.RANKING_IMPORTANCE)}")
     print(f"Reasoning model (lessons): {router.get_model(TaskType.REASONING)}")
@@ -303,7 +304,7 @@ async def main():
         await reprocess_scores(sqlite, router, config, dry_run=args.dry_run, progress=progress)
 
     if do_lessons:
-        await reprocess_lessons(sqlite, chroma, router, processor, dry_run=args.dry_run, progress=progress)
+        await reprocess_lessons(sqlite, vectors, router, processor, dry_run=args.dry_run, progress=progress)
 
     print("\nDone.")
 

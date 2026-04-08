@@ -1,6 +1,6 @@
 """Import core memories from a text file into BlipShell.
 
-Inserts into SQLite and embeds in ChromaDB for semantic search.
+Inserts into SQLite and embeds via sqlite-vec for semantic search.
 
 Formats supported:
   - Plain text (one memory per line, category defaults to "general")
@@ -51,7 +51,6 @@ async def main():
     parser = argparse.ArgumentParser(description="Import core memories from text file")
     parser.add_argument("file", help="Path to core memories text file")
     parser.add_argument("--db", default="data/blipshell.db", help="SQLite DB path")
-    parser.add_argument("--chroma", default="data/chroma", help="ChromaDB directory")
     parser.add_argument("--importance", type=float, default=0.8,
                         help="Default importance for imported memories (default: 0.8)")
     parser.add_argument("--dry-run", action="store_true", help="Parse and show without importing")
@@ -90,15 +89,14 @@ async def main():
 
     console.print()
 
-    # Lazy import ChromaDB (breaks on Python 3.14 due to pydantic v1 incompatibility)
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
 
     # Initialize stores
     sqlite = SQLiteStore(args.db)
     await sqlite.initialize()
 
-    chroma = ChromaStore(args.chroma)
-    chroma.initialize()
+    vectors = VectorStore(db_path=args.db, embedding_dim=1024)
+    vectors.initialize()
 
     # Check for duplicates against existing core memories
     existing = await sqlite.get_active_core_memories()
@@ -120,11 +118,11 @@ async def main():
         )
         mem_id = await sqlite.create_core_memory(core_mem)
 
-        # Embed in ChromaDB
+        # Embed in vector store
         try:
-            chroma.add_core_memory(mem_id, content, {"category": category})
+            vectors.add_core_memory(mem_id, content, {"category": category})
         except Exception as e:
-            console.print(f"  [yellow]Warning: ChromaDB embed failed for #{mem_id}: {e}[/yellow]")
+            console.print(f"  [yellow]Warning: Vector embed failed for #{mem_id}: {e}[/yellow]")
 
         # Tag the core memory
         await sqlite.tag_core_memory(mem_id, [category])

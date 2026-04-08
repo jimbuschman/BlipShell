@@ -29,7 +29,7 @@ def search_config():
 def memory_search(sqlite_store, mock_chroma, mock_router, search_config):
     return MemorySearch(
         sqlite=sqlite_store,
-        chroma=mock_chroma,
+        vectors=mock_chroma,
         router=mock_router,
         config=search_config,
     )
@@ -41,7 +41,7 @@ class TestMemorySearch:
         assert result == []
 
     async def test_empty_chroma_returns_empty(self, memory_search):
-        memory_search.chroma.search_memories.return_value = []
+        memory_search.vectors.search_memories.return_value = []
         result = await memory_search.search("tell me about the project architecture")
         assert result == []
 
@@ -52,7 +52,7 @@ class TestMemorySearch:
                      summary="test summary", rank=4, importance=0.8)
         mid = await sqlite_store.create_memory(mem)
 
-        memory_search.chroma.search_memories.return_value = [
+        memory_search.vectors.search_memories.return_value = [
             {"id": mid, "similarity": 0.3, "metadata": {}},  # below threshold
         ]
         result = await memory_search.search("tell me about the project architecture")
@@ -64,7 +64,7 @@ class TestMemorySearch:
                      summary="test summary", rank=1, importance=0.8)
         mid = await sqlite_store.create_memory(mem)
 
-        memory_search.chroma.search_memories.return_value = [
+        memory_search.vectors.search_memories.return_value = [
             {"id": mid, "similarity": 0.8, "metadata": {}},
         ]
         result = await memory_search.search("tell me about the project architecture")
@@ -76,7 +76,7 @@ class TestMemorySearch:
                      summary="We discussed microservice architecture", rank=5, importance=0.9)
         mid = await sqlite_store.create_memory(mem)
 
-        memory_search.chroma.search_memories.return_value = [
+        memory_search.vectors.search_memories.return_value = [
             {"id": mid, "similarity": 0.85, "metadata": {}},
         ]
         result = await memory_search.search("tell me about the project architecture")
@@ -92,7 +92,7 @@ class TestMemorySearch:
                      summary="test", rank=5, importance=0.9)
         mid = await sqlite_store.create_memory(mem)
 
-        memory_search.chroma.search_memories.return_value = [
+        memory_search.vectors.search_memories.return_value = [
             {"id": mid, "similarity": 0.9, "metadata": {"session_id": str(session_id)}},
         ]
         result = await memory_search.search(
@@ -110,7 +110,7 @@ class TestMemorySearch:
                       summary="high importance memory", rank=5, importance=0.9)
         mid2 = await sqlite_store.create_memory(mem2)
 
-        memory_search.chroma.search_memories.return_value = [
+        memory_search.vectors.search_memories.return_value = [
             {"id": mid1, "similarity": 0.70, "metadata": {}},
             {"id": mid2, "similarity": 0.65, "metadata": {}},
         ]
@@ -121,7 +121,7 @@ class TestMemorySearch:
         assert result[0].rank == 5
 
     async def test_search_lessons_delegates(self, memory_search):
-        memory_search.chroma.search_lessons.return_value = [
+        memory_search.vectors.search_lessons.return_value = [
             {"id": 1, "document": "lesson text", "similarity": 0.9, "metadata": {}},
         ]
         result = await memory_search.search_lessons("test query")
@@ -130,7 +130,7 @@ class TestMemorySearch:
     async def test_config_values_applied(self, search_config):
         ms = MemorySearch(
             sqlite=MagicMock(),
-            chroma=MagicMock(),
+            vectors=MagicMock(),
             router=MagicMock(),
             config=search_config,
         )

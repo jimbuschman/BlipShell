@@ -14,7 +14,7 @@ from blipshell.llm.prompts import (
     summarize_memory,
 )
 from blipshell.llm.router import LLMRouter, TaskType
-from blipshell.memory.chroma_store import ChromaStore
+from blipshell.memory.vector_store import VectorStore
 from blipshell.memory.processor import MemoryProcessor
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.memory.tagger import tag_message
@@ -27,7 +27,7 @@ ProgressCallback = Optional[Callable[[int, int], None]]
 
 async def reprocess_memories(
     sqlite: SQLiteStore,
-    chroma: ChromaStore,
+    vectors: VectorStore,
     router: LLMRouter,
     batch_size: int = 50,
     skip_embed: bool = False,
@@ -100,9 +100,9 @@ async def reprocess_memories(
                     importance=importance,
                 )
 
-                # Re-embed in ChromaDB (upsert handles updates)
+                # Re-embed in vector store (upsert handles updates)
                 if not skip_embed:
-                    chroma.add_memory(memory.id, summary, {
+                    vectors.add_memory(memory.id, summary, {
                         "session_id": str(memory.session_id or ""),
                         "role": memory.role,
                     })
@@ -127,7 +127,7 @@ async def reprocess_memories(
 
 async def reprocess_lessons(
     sqlite: SQLiteStore,
-    chroma: ChromaStore,
+    vectors: VectorStore,
     router: LLMRouter,
     min_messages: int = 4,
     no_think: bool = False,
@@ -148,20 +148,15 @@ async def reprocess_lessons(
     }
     think = False if no_think else None
 
-    # Delete all existing lessons from SQLite and ChromaDB
+    # Delete all existing lessons from SQLite and vector store
     old_lessons = await sqlite.get_all_lessons()
     stats["old_lessons_deleted"] = len(old_lessons)
 
-    from blipshell.memory.chroma_retry import (
-        COLLECTION_LESSONS, OP_DELETE, queue_failed_op,
-    )
     for lesson in old_lessons:
         try:
-            chroma.delete_lesson(lesson.id)
+            vectors.delete_lesson(lesson.id)
         except Exception as e:
-            await queue_failed_op(
-                sqlite, OP_DELETE, COLLECTION_LESSONS, lesson.id, error=str(e),
-            )
+            logger.warning("Failed to delete lesson vector %d: %s", lesson.id, e)
         await sqlite.delete_lesson(lesson.id)
 
     # Get distinct session IDs from memories
@@ -235,7 +230,7 @@ async def reprocess_lessons(
                 lesson_id = await sqlite.create_lesson(lesson)
 
                 try:
-                    chroma.add_lesson(lesson_id, stripped)
+                    vectors.add_lesson(lesson_id, stripped)
                 except Exception as e:
                     logger.debug("Lesson embed failed: %s", e)
 

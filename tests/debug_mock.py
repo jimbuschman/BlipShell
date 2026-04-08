@@ -72,7 +72,7 @@ async def main():
             system_prompt_reserve=256,
         )
         processor = MemoryProcessor(
-            sqlite=store, chroma=chroma, router=router, config=config,
+            sqlite=store, vectors=chroma, router=router, config=config,
         )
 
         session_id = await store.create_session("Test")

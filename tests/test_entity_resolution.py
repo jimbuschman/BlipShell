@@ -30,7 +30,7 @@ async def resolution_extractor(sqlite_store, canned_router, mock_chroma_with_ent
     return EntityExtractor(
         sqlite=sqlite_store,
         router=canned_router,
-        chroma=mock_chroma_with_entities,
+        vectors=mock_chroma_with_entities,
         batch_size=10,
         entity_resolution_enabled=True,
         entity_auto_merge_threshold=0.85,
@@ -45,7 +45,7 @@ async def basic_extractor(sqlite_store, canned_router, mock_chroma_with_entities
     return EntityExtractor(
         sqlite=sqlite_store,
         router=canned_router,
-        chroma=mock_chroma_with_entities,
+        vectors=mock_chroma_with_entities,
         batch_size=10,
         entity_resolution_enabled=False,
     )
@@ -67,7 +67,7 @@ class TestExactMatch:
         assert resolved == eid
 
         # Should NOT have searched embeddings
-        resolution_extractor.chroma.search_similar_entities.assert_not_called()
+        resolution_extractor.vectors.search_similar_entities.assert_not_called()
 
     async def test_exact_match_case_insensitive(
         self, resolution_extractor, sqlite_store,
@@ -90,7 +90,7 @@ class TestEmbeddingSimilarity:
         eid = await sqlite_store.get_or_create_entity("postgresql", "technology")
 
         # Mock embedding search to return a high-similarity match
-        resolution_extractor.chroma.search_similar_entities.return_value = [
+        resolution_extractor.vectors.search_similar_entities.return_value = [
             {"id": eid, "name": "postgresql", "similarity": 0.90, "entity_type": "technology"},
         ]
 
@@ -112,7 +112,7 @@ class TestEmbeddingSimilarity:
         """Entity with similarity below 0.70 should create a new entity."""
         eid = await sqlite_store.get_or_create_entity("java", "technology")
 
-        resolution_extractor.chroma.search_similar_entities.return_value = [
+        resolution_extractor.vectors.search_similar_entities.return_value = [
             {"id": eid, "name": "java", "similarity": 0.50, "entity_type": "technology"},
         ]
 
@@ -121,7 +121,7 @@ class TestEmbeddingSimilarity:
         assert resolved != eid
 
         # Should have upserted the new entity into embeddings
-        resolution_extractor.chroma.upsert_entity.assert_called()
+        resolution_extractor.vectors.upsert_entity.assert_called()
 
 
 # --- Stage 3: LLM arbitration ---
@@ -134,7 +134,7 @@ class TestLLMArbitration:
         """Entity with 0.70-0.85 similarity triggers LLM, which says YES → merge."""
         eid = await sqlite_store.get_or_create_entity("react", "technology")
 
-        resolution_extractor.chroma.search_similar_entities.return_value = [
+        resolution_extractor.vectors.search_similar_entities.return_value = [
             {"id": eid, "name": "react", "similarity": 0.78, "entity_type": "technology"},
         ]
 
@@ -158,7 +158,7 @@ class TestLLMArbitration:
         """LLM says NO → create new entity."""
         eid = await sqlite_store.get_or_create_entity("react", "technology")
 
-        resolution_extractor.chroma.search_similar_entities.return_value = [
+        resolution_extractor.vectors.search_similar_entities.return_value = [
             {"id": eid, "name": "react", "similarity": 0.75, "entity_type": "technology"},
         ]
 
@@ -209,7 +209,7 @@ class TestDisabledResolution:
         assert resolved is not None
 
         # Should still upsert entity embedding if chroma available
-        basic_extractor.chroma.upsert_entity.assert_called()
+        basic_extractor.vectors.upsert_entity.assert_called()
 
 
 # --- Entity alias recording ---

@@ -170,7 +170,7 @@ class ChatMixin:
             meta = {}
             if self.active_project:
                 meta["project"] = self.active_project["name"]
-            self.chroma.add_lesson(lesson_id, anti_pattern, metadata=meta or None)
+            self.vectors.add_lesson(lesson_id, anti_pattern, metadata=meta or None)
 
             # Tag with anti-pattern for identification
             await self.sqlite.tag_lesson(lesson_id, ["anti-pattern"])

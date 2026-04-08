@@ -55,7 +55,7 @@ class TestStoreAndSearch:
         # Search for it
         search = MemorySearch(
             sqlite=sqlite_store,
-            chroma=mock_chroma,
+            vectors=mock_chroma,
             router=canned_router,
             config=memory_config,
         )
@@ -88,7 +88,7 @@ class TestStoreAndSearch:
 
         search = MemorySearch(
             sqlite=sqlite_store,
-            chroma=mock_chroma,
+            vectors=mock_chroma,
             router=canned_router,
             config=memory_config,
         )
@@ -148,7 +148,7 @@ class TestEntityExpansion:
 
         search = MemorySearch(
             sqlite=sqlite_store,
-            chroma=mock_chroma,
+            vectors=mock_chroma,
             router=canned_router,
             config=memory_config,
         )
@@ -172,7 +172,7 @@ class TestSessionLifecycle:
     ):
         """dump_to_memory should process messages through the full pipeline."""
         processor = MemoryProcessor(
-            sqlite=sqlite_store, chroma=mock_chroma,
+            sqlite=sqlite_store, vectors=mock_chroma,
             router=canned_router, config=memory_config,
         )
         mm = MemoryManager(memory_config)
@@ -208,7 +208,7 @@ class TestSessionLifecycle:
     ):
         """end_session should generate a session summary and extract lessons."""
         processor = MemoryProcessor(
-            sqlite=sqlite_store, chroma=mock_chroma,
+            sqlite=sqlite_store, vectors=mock_chroma,
             router=canned_router, config=memory_config,
         )
         mm = MemoryManager(memory_config)
@@ -278,7 +278,7 @@ class TestTagOverlapBoost:
 
         search = MemorySearch(
             sqlite=sqlite_store,
-            chroma=mock_chroma,
+            vectors=mock_chroma,
             router=canned_router,
             config=memory_config,
         )
@@ -372,7 +372,7 @@ class TestSearchStatsEnhanced:
 
         search = MemorySearch(
             sqlite=sqlite_store,
-            chroma=mock_chroma,
+            vectors=mock_chroma,
             router=canned_router,
             config=memory_config,
         )
@@ -402,7 +402,7 @@ class TestFullConversationFlow:
         from blipshell.memory.processor import MemoryProcessor
 
         processor = MemoryProcessor(
-            sqlite=sqlite_store, chroma=mock_chroma,
+            sqlite=sqlite_store, vectors=mock_chroma,
             router=canned_router, config=memory_config,
         )
 
@@ -433,7 +433,7 @@ class TestFullConversationFlow:
 
         search = MemorySearch(
             sqlite=sqlite_store,
-            chroma=mock_chroma,
+            vectors=mock_chroma,
             router=canned_router,
             config=memory_config,
         )

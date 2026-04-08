@@ -38,7 +38,7 @@ from blipshell.llm.endpoints import EndpointManager
 from blipshell.llm.job_queue import LLMJobQueue
 from blipshell.llm.model_settings import ModelSettingsRegistry
 from blipshell.llm.router import LLMRouter, TaskType
-from blipshell.memory.chroma_store import ChromaStore
+from blipshell.memory.vector_store import VectorStore
 from blipshell.memory.manager import MemoryManager, estimate_tokens
 from blipshell.memory.processor import MemoryProcessor
 from blipshell.memory.search import MemorySearch
@@ -77,7 +77,7 @@ class Agent(
 
         # Infrastructure
         self.sqlite: Optional[SQLiteStore] = None
-        self.chroma: Optional[ChromaStore] = None
+        self.vectors: Optional[VectorStore] = None
         self.endpoint_manager: Optional[EndpointManager] = None
         self.router: Optional[LLMRouter] = None
         self.job_queue: Optional[LLMJobQueue] = None
@@ -168,16 +168,14 @@ class Agent(
         self.sqlite = SQLiteStore(self.config.database.path)
         await self.sqlite.initialize()
 
-        _status("Connecting to ChromaDB...")
-        self.chroma = ChromaStore(
-            persist_dir=self.config.database.chroma_path,
+        _status("Initializing vector store...")
+        self.vectors = VectorStore(
+            db_path=self.config.database.path,
             embedding_model=self.config.models.embedding,
             ollama_url=get_ollama_url(self.config.endpoints),
+            embedding_dim=self.config.database.embedding_dimensions,
         )
-        self.chroma.initialize()
-
-        # Auto-repair empty ChromaDB collections (e.g. after model switch)
-        await self._repair_chroma_collections(_status)
+        self.vectors.initialize()
 
         # Endpoint manager
         self.endpoint_manager = EndpointManager(self.config.endpoints, self.config.llm)
@@ -197,12 +195,12 @@ class Agent(
         self.memory_manager.set_summarize_callback(self._summarize_overflow)
 
         # Processor
-        self.processor = MemoryProcessor(self.sqlite, self.chroma, self.router,
+        self.processor = MemoryProcessor(self.sqlite, self.vectors, self.router,
                                          config=self.config.memory)
 
         # Search
         self.search = MemorySearch(
-            self.sqlite, self.chroma, self.router,
+            self.sqlite, self.vectors, self.router,
             config=self.config.memory,
             ollama_url=get_ollama_url(self.config.endpoints),
         )
@@ -210,7 +208,7 @@ class Agent(
         # Background memory worker (dedicated thread with own event loop + connections)
         _status("Starting memory worker...")
         from blipshell.memory.worker import MemoryWorker
-        self._memory_worker = MemoryWorker(self.config, self.chroma)
+        self._memory_worker = MemoryWorker(self.config, self.vectors)
         self._memory_worker.start()
 
         # Session manager
@@ -308,88 +306,20 @@ class Agent(
         self._initialized = True
         logger.info("Agent initialized")
 
-    async def _repair_chroma_collections(self, _status):
-        """Detect and repair empty ChromaDB collections at startup.
+    async def _backfill_missing_vectors(self, _status):
+        """Backfill any memories/lessons/entities missing vectors.
 
-        Compares ChromaDB counts against SQLite. If a collection is empty
-        but SQLite has data, re-embeds automatically. This catches issues
-        from failed rebuilds, model switches, or corrupted HNSW indexes.
+        Replaces the old ChromaDB repair + retry queue system.
+        With sqlite-vec, missing vectors are detected by LEFT JOIN.
         """
         try:
-            chroma_counts = self.chroma.get_counts()
+            for collection in ("core_memories", "lessons", "memories", "entities"):
+                stats = self.vectors.backfill_missing_vectors(collection, limit=200)
+                if stats.get("succeeded", 0) > 0:
+                    _status(f"Backfilled {stats['succeeded']} {collection} vectors")
+                    logger.info("Vector backfill %s: %s", collection, stats)
         except Exception as e:
-            logger.warning("Could not check ChromaDB counts: %s", e)
-            return
-
-        # Core memories — small, always auto-repair
-        try:
-            cursor = await self.sqlite._db.execute(
-                "SELECT COUNT(*) FROM core_memories WHERE is_active = 1"
-            )
-            sqlite_core = (await cursor.fetchone())[0]
-            if sqlite_core > 0 and chroma_counts.get("core_memories", 0) == 0:
-                _status(f"Repairing core_memories ({sqlite_core} items)...")
-                logger.warning(
-                    "ChromaDB core_memories empty but SQLite has %d — rebuilding", sqlite_core,
-                )
-                cursor = await self.sqlite._db.execute(
-                    "SELECT id, content FROM core_memories WHERE is_active = 1"
-                )
-                rows = await cursor.fetchall()
-                for row in rows:
-                    try:
-                        self.chroma.add_core_memory(row["id"], row["content"])
-                    except Exception as e:
-                        logger.warning("Failed to re-embed core memory %d: %s", row["id"], e)
-                logger.info("Core memories repair complete")
-        except Exception as e:
-            logger.warning("Core memories repair failed: %s", e)
-
-        # Lessons — medium size, auto-repair
-        try:
-            cursor = await self.sqlite._db.execute("SELECT COUNT(*) FROM lessons")
-            sqlite_lessons = (await cursor.fetchone())[0]
-            if sqlite_lessons > 0 and chroma_counts.get("lessons", 0) == 0:
-                _status(f"Repairing lessons ({sqlite_lessons} items)...")
-                logger.warning(
-                    "ChromaDB lessons empty but SQLite has %d — rebuilding", sqlite_lessons,
-                )
-                cursor = await self.sqlite._db.execute("SELECT id, content FROM lessons")
-                rows = await cursor.fetchall()
-                batch_size = 100
-                for i in range(0, len(rows), batch_size):
-                    batch = rows[i:i + batch_size]
-                    try:
-                        self.chroma._lessons.upsert(
-                            ids=[str(r["id"]) for r in batch],
-                            documents=[self.chroma._truncate(r["content"]) for r in batch],
-                            metadatas=[{"source": "lesson"} for _ in batch],
-                        )
-                    except Exception as e:
-                        logger.warning("Failed to re-embed lesson batch: %s", e)
-                logger.info("Lessons repair complete")
-        except Exception as e:
-            logger.warning("Lessons repair failed: %s", e)
-
-        # Memories — large, just warn (user should run rebuild_chroma.py)
-        try:
-            cursor = await self.sqlite._db.execute(
-                "SELECT COUNT(*) FROM memories WHERE summary IS NOT NULL AND is_archived = 0"
-            )
-            sqlite_mems = (await cursor.fetchone())[0]
-            chroma_mems = chroma_counts.get("memories", 0)
-            if sqlite_mems > 0 and chroma_mems == 0:
-                logger.error(
-                    "ChromaDB memories collection is EMPTY but SQLite has %d memories. "
-                    "Run: python scripts/rebuild_chroma.py", sqlite_mems,
-                )
-            elif sqlite_mems > 0 and chroma_mems < sqlite_mems * 0.5:
-                logger.warning(
-                    "ChromaDB memories (%d) significantly behind SQLite (%d). "
-                    "Consider: python scripts/rebuild_chroma.py", chroma_mems, sqlite_mems,
-                )
-        except Exception as e:
-            logger.warning("Memories sync check failed: %s", e)
+            logger.warning("Vector backfill error (non-fatal): %s", e)
 
     async def _maybe_auto_backup(self):
         """Auto-backup if more than 24 hours since last backup.
@@ -412,7 +342,6 @@ class Agent(
                 None,
                 lambda: run_backup(
                     db_path=self.config.database.path,
-                    chroma_path=self.config.database.chroma_path,
                     quiet=True,
                 ),
             )
@@ -480,7 +409,7 @@ class Agent(
         from blipshell.core.nightly import NightlyRunner
 
         runner = NightlyRunner(
-            self.config, self.sqlite, self.chroma,
+            self.config, self.sqlite, self.vectors,
             self.router, self.processor,
         )
         jobs = [job] if job else None
@@ -751,19 +680,17 @@ class Agent(
 
         if self.job_queue:
             await self.job_queue.stop()
-        # Close ChromaDB after all writes are done (worker is stopped).
-        # If the worker didn't exit in time, skip — the daemon thread is still
-        # using ChromaDB and closing it causes errors. Process exit kills it.
-        if self.chroma:
+        # Close vector store after all writes are done (worker is stopped).
+        if self.vectors:
             if self._memory_worker and self._memory_worker.is_alive:
-                logger.warning("Memory worker still alive, deferring ChromaDB close to process exit")
+                logger.warning("Memory worker still alive, deferring vector store close to process exit")
             else:
-                self.chroma.close()
+                self.vectors.close()
 
     async def force_cleanup(self):
         """Cancel all background tasks so the process can exit cleanly.
 
-        Order matters: cancel in-flight writes → stop worker → close ChromaDB → close SQLite.
+        Order matters: cancel in-flight writes → stop worker → close vector store → close SQLite.
         """
         # 0. Kill background shell processes
         from blipshell.core.tools.shell import cleanup_background_processes
@@ -799,12 +726,12 @@ class Agent(
                 await self.mcp_manager.disconnect_all()
             except Exception as e:
                 logger.debug("MCP disconnect error: %s", e)
-        # 3. Close ChromaDB before SQLite (ChromaDB may reference SQLite data)
-        if self.chroma:
+        # 3. Close vector store before SQLite
+        if self.vectors:
             try:
-                self.chroma.close()
+                self.vectors.close()
             except Exception as e:
-                logger.debug("ChromaDB close error: %s", e)
+                logger.debug("Vector store close error: %s", e)
         # 4. Close SQLite last
         if self.sqlite:
             try:

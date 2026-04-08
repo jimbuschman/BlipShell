@@ -46,7 +46,7 @@ class SessionMixin:
         self._register_task_tools()
 
         # Retry any failed ChromaDB operations from previous sessions
-        await self._retry_chroma_queue()
+        await self._backfill_vectors_startup()
 
         # Load core memories into Core pool
         await self._load_core_memories()
@@ -71,18 +71,15 @@ class SessionMixin:
 
         return session_id
 
-    async def _retry_chroma_queue(self):
-        """Retry failed ChromaDB operations queued from previous sessions."""
+    async def _backfill_vectors_startup(self):
+        """Backfill any missing vectors at session start."""
         try:
-            from blipshell.memory.chroma_retry import process_retry_queue
-            stats = await process_retry_queue(self.sqlite, self.chroma, limit=100)
-            if stats["processed"] > 0:
-                logger.info(
-                    "ChromaDB retry queue: %d processed, %d succeeded, %d still failing",
-                    stats["processed"], stats["succeeded"], stats["failed"],
-                )
+            for collection in ("core_memories", "lessons"):
+                stats = self.vectors.backfill_missing_vectors(collection, limit=100)
+                if stats.get("succeeded", 0) > 0:
+                    logger.info("Startup vector backfill %s: %s", collection, stats)
         except Exception as e:
-            logger.debug("ChromaDB retry queue processing failed: %s", e)
+            logger.debug("Vector backfill at startup failed: %s", e)
 
     async def _load_core_memories(self):
         """Load active core memories into the Core pool."""
@@ -131,17 +128,12 @@ class SessionMixin:
                 max_importance=cfg.prune_max_importance,
                 max_rank=cfg.prune_max_rank,
             )
-            # Remove from ChromaDB
+            # Remove from vector store
             for mid in ids_to_archive:
                 try:
-                    self.chroma.delete_memory(mid)
+                    self.vectors.delete_memory(mid)
                 except Exception as e:
-                    logger.warning("Failed to delete memory %d from ChromaDB (queued): %s", mid, e)
-                    from blipshell.memory.chroma_retry import queue_failed_op, OP_DELETE, COLLECTION_MEMORIES
-                    await queue_failed_op(
-                        self.sqlite, OP_DELETE, COLLECTION_MEMORIES,
-                        mid, error=str(e),
-                    )
+                    logger.warning("Failed to delete memory %d vector: %s", mid, e)
             if count:
                 logger.info("Auto-pruned %d memories", count)
         except Exception as e:
@@ -153,7 +145,7 @@ class SessionMixin:
             return
         try:
             consolidator = MemoryConsolidator(
-                self.sqlite, self.chroma, self.config.memory,
+                self.sqlite, self.vectors, self.config.memory,
             )
             stats = await consolidator.consolidate_batch()
             if stats["merged"] > 0:
@@ -258,18 +250,12 @@ class SessionMixin:
                 names = [r["name"] for r in chunk]
                 types = [r["entity_type"] for r in chunk]
                 try:
-                    self.chroma.upsert_entities_batch(ids, names, types)
+                    self.vectors.upsert_entities_batch(ids, names, types)
                 except Exception as e:
-                    logger.warning("Entity backfill batch failed (queueing individually): %s", e)
-                    from blipshell.memory.chroma_retry import queue_failed_op, OP_UPSERT, COLLECTION_ENTITIES
-                    for eid, ename, etype in zip(ids, names, types):
-                        await queue_failed_op(
-                            self.sqlite, OP_UPSERT, COLLECTION_ENTITIES, eid,
-                            document=ename, metadata={"entity_type": etype}, error=str(e),
-                        )
+                    logger.warning("Entity backfill batch failed: %s", e)
 
             await self.sqlite.set_metadata("entity_embeddings_backfilled", "1")
-            logger.info("Backfilled %d entity embeddings into ChromaDB", total)
+            logger.info("Backfilled %d entity embeddings into vector store", total)
         except Exception as e:
             logger.error("Entity embedding backfill failed: %s", e)
 

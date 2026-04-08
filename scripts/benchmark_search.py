@@ -1,12 +1,12 @@
 """Standalone search quality benchmark — no Agent, no Router, no LLM calls.
 
-Connects directly to SQLite + ChromaDB to measure search precision, recall,
+Connects directly to SQLite + sqlite-vec to measure search precision, recall,
 and timing. Designed for A/B testing search config changes.
 
 Usage:
     # Discover mode — prints top results for manual ground truth creation
     python scripts/benchmark_search.py --discover
-    python scripts/benchmark_search.py --discover --db data/blipshell.db --chroma data/chroma
+    python scripts/benchmark_search.py --discover --db data/blipshell.db
 
     # Benchmark mode — measures against ground truth
     python scripts/benchmark_search.py
@@ -20,7 +20,6 @@ Usage:
 
 Options:
     --db PATH              SQLite database path (default: data/blipshell.db)
-    --chroma PATH          ChromaDB directory (default: data/chroma)
     --ollama URL           Ollama URL for embeddings (default: http://localhost:11434)
     --output PATH          Output JSON report path
     --discover             Print top results per query (for ground truth creation)
@@ -123,7 +122,6 @@ class BenchmarkReport:
     """Full benchmark report."""
     timestamp: str = ""
     db_path: str = ""
-    chroma_path: str = ""
     config_label: str = "baseline"
     query_results: list[QueryResult] = field(default_factory=list)
     # Aggregates
@@ -143,7 +141,6 @@ class BenchmarkReport:
 
 async def run_benchmark(
     db_path: str,
-    chroma_path: str,
     ollama_url: str,
     queries: list[dict],
     ground_truth: dict | None = None,
@@ -153,23 +150,24 @@ async def run_benchmark(
 ) -> BenchmarkReport:
     """Run the search benchmark against the real database."""
 
-    # Lazy imports — ChromaDB may not be available on dev machine
+    # Lazy imports
     from blipshell.memory.sqlite_store import SQLiteStore
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.search import MemorySearch
 
     # Initialize stores
     sqlite = SQLiteStore(db_path)
     await sqlite.initialize()
 
-    chroma = ChromaStore(
-        persist_dir=chroma_path,
+    vectors = VectorStore(
+        db_path=db_path,
         ollama_url=ollama_url,
+        embedding_dim=1024,
     )
-    chroma.initialize()
+    vectors.initialize()
 
     # Create search with no router (not used in search())
-    search = MemorySearch(sqlite=sqlite, chroma=chroma, router=None, ollama_url=ollama_url)
+    search = MemorySearch(sqlite=sqlite, vectors=vectors, router=None, ollama_url=ollama_url)
 
     # Apply config overrides
     if config_overrides:
@@ -180,7 +178,6 @@ async def run_benchmark(
     report = BenchmarkReport(
         timestamp=datetime.now(timezone.utc).isoformat(),
         db_path=db_path,
-        chroma_path=chroma_path,
         config_label=config_label,
         total_queries=len(queries),
     )
@@ -457,8 +454,6 @@ async def main():
     )
     parser.add_argument("--db", default="data/blipshell.db",
                         help="SQLite database path (default: data/blipshell.db)")
-    parser.add_argument("--chroma", default="data/chroma",
-                        help="ChromaDB directory (default: data/chroma)")
     parser.add_argument("--ollama", default="http://localhost:11434",
                         help="Ollama URL for embeddings (default: localhost:11434)")
     parser.add_argument("--output", "-o", default="data/benchmark_search_results.json",
@@ -510,9 +505,6 @@ async def main():
     # Validate paths
     if not os.path.exists(args.db):
         console.print(f"[bold red]Database not found: {args.db}[/bold red]")
-        sys.exit(1)
-    if not os.path.exists(args.chroma):
-        console.print(f"[bold red]ChromaDB directory not found: {args.chroma}[/bold red]")
         sys.exit(1)
 
     # Load queries
@@ -579,7 +571,6 @@ async def main():
     if not args.quiet:
         console.print(f"[bold]Search Quality Benchmark[/bold]")
         console.print(f"  DB: {args.db}")
-        console.print(f"  ChromaDB: {args.chroma}")
         console.print(f"  Ollama: {args.ollama}")
         console.print(f"  Queries: {len(queries)}")
         console.print(f"  Project: {args.project or 'none'}")
@@ -596,7 +587,6 @@ async def main():
 
     report_a = await run_benchmark(
         db_path=args.db,
-        chroma_path=args.chroma,
         ollama_url=args.ollama,
         queries=queries,
         ground_truth=ground_truth,
@@ -623,7 +613,6 @@ async def main():
 
         report_b = await run_benchmark(
             db_path=args.db,
-            chroma_path=args.chroma,
             ollama_url=args.ollama,
             queries=queries,
             ground_truth=ground_truth,

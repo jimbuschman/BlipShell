@@ -1,7 +1,7 @@
 """One-time migration from EchoFrontendV2's MemoryDatabase.db to BlipShell.
 
 Reads existing SQLite database, imports memories/core memories/lessons/sessions
-into the new schema, and populates ChromaDB for semantic search.
+into the new schema, and populates sqlite-vec for semantic search.
 
 Usage:
     python -m scripts.migrate_from_echo --source MemoryDatabase.db
@@ -24,10 +24,9 @@ def dequantize(blob: bytes) -> list[float]:
     return [(b - 128.0) / 127.0 for b in blob]
 
 
-async def migrate(source_db: str, target_db: str = "data/blipshell.db",
-                  chroma_path: str = "data/chroma"):
+async def migrate(source_db: str, target_db: str = "data/blipshell.db"):
     """Run the migration."""
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
     from blipshell.memory.tagger import tag_message
     from blipshell.models.memory import CoreMemory, Lesson, Memory, MemoryType
@@ -41,8 +40,8 @@ async def migrate(source_db: str, target_db: str = "data/blipshell.db",
     target = SQLiteStore(target_db)
     await target.initialize()
 
-    chroma = ChromaStore(chroma_path)
-    chroma.initialize()
+    vectors = VectorStore(db_path=target_db, embedding_dim=1024)
+    vectors.initialize()
 
     # --- Migrate Sessions ---
     logger.info("Migrating sessions...")
@@ -79,12 +78,12 @@ async def migrate(source_db: str, target_db: str = "data/blipshell.db",
         # Embed in ChromaDB (use summary for better search)
         summary = row["SummaryText"] or row["Text"]
         try:
-            chroma.add_memory(new_id, summary, {
+            vectors.add_memory(new_id, summary, {
                 "session_id": str(session_id or 0),
                 "role": row["Speaker"] or "user",
             })
         except Exception as e:
-            logger.warning("  ChromaDB embed failed for memory %d: %s", new_id, e)
+            logger.warning("  Vector embed failed for memory %d: %s", new_id, e)
 
         # Migrate tags
         try:
@@ -110,7 +109,7 @@ async def migrate(source_db: str, target_db: str = "data/blipshell.db",
             new_id = await target.create_core_memory(cm)
 
             try:
-                chroma.add_core_memory(new_id, row["Content"])
+                vectors.add_core_memory(new_id, row["Content"])
             except Exception:
                 pass
 
@@ -137,7 +136,7 @@ async def migrate(source_db: str, target_db: str = "data/blipshell.db",
             new_id = await target.create_lesson(lesson)
 
             try:
-                chroma.add_lesson(new_id, row["Text"])
+                vectors.add_lesson(new_id, row["Text"])
             except Exception:
                 pass
 
@@ -164,10 +163,9 @@ def main():
     parser = argparse.ArgumentParser(description="Migrate from EchoFrontendV2 to BlipShell")
     parser.add_argument("--source", required=True, help="Path to MemoryDatabase.db")
     parser.add_argument("--target", default="data/blipshell.db", help="Target SQLite path")
-    parser.add_argument("--chroma", default="data/chroma", help="ChromaDB persist path")
     args = parser.parse_args()
 
-    asyncio.run(migrate(args.source, args.target, args.chroma))
+    asyncio.run(migrate(args.source, args.target))
 
 
 if __name__ == "__main__":

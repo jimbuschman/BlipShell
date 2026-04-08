@@ -75,18 +75,18 @@ async def sqlite_store(temp_db_path):
 
 @pytest.fixture
 def mock_chroma():
-    """Mock ChromaStore."""
-    chroma = MagicMock()
-    chroma.search_memories.return_value = []
-    chroma.search_core_memories.return_value = []
-    chroma.search_lessons.return_value = []
-    chroma.add_memory = MagicMock()
-    chroma.add_core_memory = MagicMock()
-    chroma.add_lesson = MagicMock()
-    chroma.delete_memory = MagicMock()
-    chroma.delete_lesson = MagicMock()
-    chroma.get_counts.return_value = {"memories": 0, "core_memories": 0, "lessons": 0}
-    return chroma
+    """Mock VectorStore (kept as mock_chroma for test compatibility)."""
+    vectors = MagicMock()
+    vectors.search_memories.return_value = []
+    vectors.search_core_memories.return_value = []
+    vectors.search_lessons.return_value = []
+    vectors.add_memory = MagicMock()
+    vectors.add_core_memory = MagicMock()
+    vectors.add_lesson = MagicMock()
+    vectors.delete_memory = MagicMock()
+    vectors.delete_lesson = MagicMock()
+    vectors.get_counts.return_value = {"memories": 0, "core_memories": 0, "lessons": 0, "entities": 0}
+    return vectors
 
 
 @pytest.fixture
@@ -174,7 +174,7 @@ async def memory_processor(sqlite_store, mock_chroma, canned_router, memory_conf
     from blipshell.memory.processor import MemoryProcessor
     return MemoryProcessor(
         sqlite=sqlite_store,
-        chroma=mock_chroma,
+        vectors=mock_chroma,
         router=canned_router,
         config=memory_config,
     )

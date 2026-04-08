@@ -302,83 +302,61 @@ def check_entity_quality(db_path: str, result: AuditResult):
         conn.close()
 
 
-def check_chroma_sync(db_path: str, chroma_path: str, result: AuditResult):
-    """Check ChromaDB collection counts vs SQLite."""
-    if not Path(chroma_path).exists():
-        result.add("ChromaDB", "exists", "warn", f"ChromaDB directory not found: {chroma_path}")
+def check_vector_sync(db_path: str, result: AuditResult):
+    """Check sqlite-vec vector counts vs SQLite source tables."""
+    try:
+        import sqlite_vec
+    except ImportError:
+        result.add("Vectors", "import", "warn", "sqlite-vec not installed, skipping sync check")
         return
 
+    conn = sqlite3.connect(db_path)
     try:
-        import chromadb
-        from chromadb.config import Settings
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
 
-        client = chromadb.PersistentClient(
-            path=chroma_path,
-            settings=Settings(anonymized_telemetry=False),
-        )
+        checks = [
+            ("memories", "vec_memories",
+             "SELECT COUNT(*) FROM memories WHERE summary IS NOT NULL AND is_archived = 0"),
+            ("core_memories", "vec_core_memories",
+             "SELECT COUNT(*) FROM core_memories WHERE is_active = 1"),
+            ("lessons", "vec_lessons",
+             "SELECT COUNT(*) FROM lessons"),
+            ("entities", "vec_entities",
+             "SELECT COUNT(*) FROM entities"),
+        ]
 
-        conn = sqlite3.connect(db_path)
-        try:
-            # Memories collection
+        for name, vec_table, sql_query in checks:
             try:
-                memories_col = client.get_collection("memories")
-                chroma_mem_count = memories_col.count()
+                vec_count = conn.execute(f"SELECT COUNT(*) FROM {vec_table}").fetchone()[0]
             except Exception:
-                chroma_mem_count = 0
-                result.add("ChromaDB", "memories_collection", "error",
-                           "Cannot access memories collection")
+                vec_count = 0
+                result.add("Vectors", f"{name}_table", "error",
+                           f"{vec_table} table not found or inaccessible")
+                continue
 
-            # SQLite memories with summaries (should be embedded)
-            sqlite_mem_count = conn.execute(
-                "SELECT COUNT(*) FROM memories WHERE summary IS NOT NULL AND is_archived = 0"
-            ).fetchone()[0]
+            sql_count = conn.execute(sql_query).fetchone()[0]
+            diff = abs(vec_count - sql_count)
+            pct = diff / sql_count * 100 if sql_count else 0
 
-            if chroma_mem_count > 0:
-                diff = abs(chroma_mem_count - sqlite_mem_count)
-                pct = diff / sqlite_mem_count * 100 if sqlite_mem_count else 0
-                if pct < 1:
-                    result.add("ChromaDB", "memories_sync", "ok",
-                               f"Memories: ChromaDB={chroma_mem_count}, SQLite={sqlite_mem_count}")
-                elif pct < 5:
-                    result.add("ChromaDB", "memories_sync", "info",
-                               f"Memories: ChromaDB={chroma_mem_count}, SQLite={sqlite_mem_count} (diff={diff})")
-                else:
-                    result.add("ChromaDB", "memories_sync", "warn",
-                               f"Memories out of sync: ChromaDB={chroma_mem_count}, SQLite={sqlite_mem_count} (diff={diff})")
+            if sql_count == 0:
+                result.add("Vectors", f"{name}_sync", "ok",
+                           f"{name}: empty (vectors={vec_count}, SQLite={sql_count})")
+            elif pct < 1:
+                result.add("Vectors", f"{name}_sync", "ok",
+                           f"{name}: vectors={vec_count}, SQLite={sql_count}")
+            elif pct < 10:
+                result.add("Vectors", f"{name}_sync", "info",
+                           f"{name}: vectors={vec_count}, SQLite={sql_count} (diff={diff})")
+            else:
+                result.add("Vectors", f"{name}_sync", "warn",
+                           f"{name} out of sync: vectors={vec_count}, SQLite={sql_count} (diff={diff})")
 
-            # Core memories collection
-            try:
-                core_col = client.get_collection("core_memories")
-                chroma_core = core_col.count()
-            except Exception:
-                chroma_core = 0
-
-            sqlite_core = conn.execute(
-                "SELECT COUNT(*) FROM core_memories WHERE is_active = 1"
-            ).fetchone()[0]
-            result.add("ChromaDB", "core_sync", "info",
-                       f"Core: ChromaDB={chroma_core}, SQLite={sqlite_core}")
-
-            # Lessons collection
-            try:
-                lessons_col = client.get_collection("lessons")
-                chroma_lessons = lessons_col.count()
-            except Exception:
-                chroma_lessons = 0
-
-            sqlite_lessons = conn.execute(
-                "SELECT COUNT(*) FROM lessons"
-            ).fetchone()[0]
-            result.add("ChromaDB", "lessons_sync", "info",
-                       f"Lessons: ChromaDB={chroma_lessons}, SQLite={sqlite_lessons}")
-
-        finally:
-            conn.close()
-
-    except ImportError:
-        result.add("ChromaDB", "import", "warn", "chromadb not installed, skipping sync check")
     except Exception as e:
-        result.add("ChromaDB", "error", "error", f"ChromaDB check failed: {e}")
+        result.add("Vectors", "error", "error", f"Vector sync check failed: {e}")
+    finally:
+        conn.close()
 
 
 def check_sessions(db_path: str, result: AuditResult):
@@ -511,18 +489,12 @@ def check_fts_sync(db_path: str, result: AuditResult):
         conn.close()
 
 
-def check_db_size(db_path: str, chroma_path: str, result: AuditResult):
+def check_db_size(db_path: str, _unused: str, result: AuditResult):
     """Report database file sizes."""
     db = Path(db_path)
     if db.exists():
         size_mb = db.stat().st_size / (1024 * 1024)
         result.add("Storage", "sqlite_size", "info", f"SQLite: {size_mb:.1f} MB")
-
-    chroma = Path(chroma_path)
-    if chroma.exists():
-        total = sum(f.stat().st_size for f in chroma.rglob("*") if f.is_file())
-        size_mb = total / (1024 * 1024)
-        result.add("Storage", "chroma_size", "info", f"ChromaDB: {size_mb:.1f} MB")
 
 
 def check_endpoint_health(result: AuditResult, config_path: str | None = None):
@@ -640,18 +612,19 @@ def check_endpoint_health(result: AuditResult, config_path: str | None = None):
 
 def run_audit(
     db_path: str = "data/blipshell.db",
-    chroma_path: str = "data/chroma",
     config_path: str | None = None,
-    skip_chroma: bool = False,
+    skip_vectors: bool = False,
     skip_endpoints: bool = False,
+    # Legacy compat — ignored
+    chroma_path: str | None = None,
+    skip_chroma: bool = False,
 ) -> AuditResult:
     """Run the full audit programmatically and return the result.
 
     Args:
         db_path: Path to SQLite database.
-        chroma_path: Path to ChromaDB directory.
         config_path: Path to config.yaml (for endpoint checks).
-        skip_chroma: Skip the slow ChromaDB sync check.
+        skip_vectors: Skip the vector sync check.
         skip_endpoints: Skip endpoint health checks.
 
     Returns:
@@ -663,7 +636,7 @@ def run_audit(
         result.add("SQLite", "exists", "error", f"Database not found: {db_path}")
         return result
 
-    check_db_size(db_path, chroma_path, result)
+    check_db_size(db_path, "", result)
     check_sqlite_integrity(db_path, result)
     check_memory_pipeline(db_path, result)
     check_entity_quality(db_path, result)
@@ -671,8 +644,8 @@ def run_audit(
     check_tags(db_path, result)
     check_fts_sync(db_path, result)
 
-    if not skip_chroma:
-        check_chroma_sync(db_path, chroma_path, result)
+    if not skip_vectors and not skip_chroma:
+        check_vector_sync(db_path, result)
 
     if not skip_endpoints:
         check_endpoint_health(result, config_path)
@@ -683,10 +656,9 @@ def run_audit(
 def main():
     parser = argparse.ArgumentParser(description="BlipShell database health check")
     parser.add_argument("--db", default="data/blipshell.db", help="SQLite DB path")
-    parser.add_argument("--chroma", default="data/chroma", help="ChromaDB directory")
     parser.add_argument("--config", default=None, help="Path to config.yaml")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
-    parser.add_argument("--skip-chroma", action="store_true", help="Skip ChromaDB sync check")
+    parser.add_argument("--skip-vectors", action="store_true", help="Skip vector sync check")
     parser.add_argument("--skip-endpoints", action="store_true", help="Skip endpoint health checks")
     args = parser.parse_args()
 
@@ -698,9 +670,8 @@ def main():
 
     result = run_audit(
         db_path=args.db,
-        chroma_path=args.chroma,
         config_path=args.config,
-        skip_chroma=args.skip_chroma,
+        skip_vectors=args.skip_vectors,
         skip_endpoints=args.skip_endpoints,
     )
 

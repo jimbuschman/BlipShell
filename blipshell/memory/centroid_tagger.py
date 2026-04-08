@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 import numpy as np
 
 if TYPE_CHECKING:
-    from blipshell.memory.chroma_store import ChromaStore
+    from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
     from blipshell.models.config import MemoryConfig
 
@@ -25,11 +25,11 @@ class CentroidTagger:
     def __init__(
         self,
         sqlite: SQLiteStore,
-        chroma: ChromaStore,
+        vectors: VectorStore,
         config: MemoryConfig,
     ):
         self.sqlite = sqlite
-        self.chroma = chroma
+        self.vectors = vectors
         self.config = config
 
     async def build_centroids(
@@ -58,7 +58,7 @@ class CentroidTagger:
             if not memory_ids:
                 continue
 
-            embeddings = self.chroma.get_embeddings_by_ids(memory_ids)
+            embeddings = self.vectors.get_embeddings_by_ids(memory_ids)
             if not embeddings:
                 continue
 
@@ -112,7 +112,7 @@ class CentroidTagger:
         chunk_size = 500
         for i in range(0, len(memory_ids), chunk_size):
             chunk_ids = memory_ids[i:i + chunk_size]
-            embeddings = self.chroma.get_embeddings_by_ids(chunk_ids)
+            embeddings = self.vectors.get_embeddings_by_ids(chunk_ids)
 
             for mid in chunk_ids:
                 if mid not in embeddings:
