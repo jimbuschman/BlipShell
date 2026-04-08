@@ -153,7 +153,7 @@ async def _migrate_from_chroma(chroma_path, vectors, sqlite, args):
         ids = result.get("ids", [])
         embeddings = result.get("embeddings", [])
 
-        if not ids or not embeddings:
+        if not ids or embeddings is None or len(embeddings) == 0:
             console.print(f"  [yellow]{coll_name}: no embeddings retrieved[/yellow]")
             continue
 
