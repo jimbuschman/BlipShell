@@ -3607,6 +3607,76 @@ def claude_code(ctx, path, max_count, skip_lessons):
     asyncio.run(_import())
 
 
+@import_claude_group.command("memories")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--dry-run", is_flag=True, help="Show what would be imported without writing")
+@click.pass_context
+def claude_memories(ctx, path, dry_run):
+    """Import memory files from Claude Code's memory system.
+
+    PATH can be ~/.claude/projects (all projects), a single project dir,
+    or a project's memory/ subdirectory.
+    """
+    from blipshell.import_claude_code_memories import (
+        MemoryImportStats, import_memories, parse_claude_code_memories,
+    )
+    from blipshell.llm.endpoints import EndpointManager
+    from blipshell.models.config import get_ollama_url
+    from blipshell.memory.vector_store import VectorStore
+    from blipshell.memory.sqlite_store import SQLiteStore
+
+    async def _import():
+        console.print(f"[cyan]Scanning {path} for Claude Code memory files...[/cyan]")
+        memories = parse_claude_code_memories(path)
+        console.print(f"Found [bold]{len(memories)}[/bold] memory files.")
+
+        if not memories:
+            console.print("[yellow]No memory files to import.[/yellow]")
+            return
+
+        if dry_run:
+            console.print("\n[bold]Dry run — would import:[/bold]")
+            for mem in memories:
+                console.print(
+                    f"  {mem.memory_type.value:12s} "
+                    f"[cyan]{mem.name}[/cyan]"
+                    f"  [dim]({mem.project_name or 'global'})[/dim]"
+                )
+
+        config_manager = ConfigManager(ctx.obj.get("config_path"))
+        cfg = config_manager.load()
+
+        sqlite = SQLiteStore(cfg.database.path)
+        await sqlite.initialize()
+
+        vectors = VectorStore(
+            db_path=cfg.database.path,
+            embedding_model=cfg.models.embedding,
+            ollama_url=get_ollama_url(cfg.endpoints),
+            embedding_dim=cfg.database.embedding_dimensions,
+        )
+        vectors.initialize()
+
+        stats = MemoryImportStats(projects_scanned=len(set(
+            m.project_name for m in memories if m.project_name
+        )))
+
+        await import_memories(sqlite, vectors, memories, stats, dry_run=dry_run)
+
+        await sqlite.close()
+
+        # Summary
+        console.print(f"\n[bold]{'Dry run results' if dry_run else 'Import complete'}:[/bold]")
+        console.print(f"  Projects scanned: {stats.projects_scanned}")
+        console.print(f"  Files scanned:    {stats.files_scanned}")
+        console.print(f"  Imported:         [green]{stats.memories_imported}[/green]")
+        console.print(f"  Skipped (dupes):  [yellow]{stats.memories_skipped}[/yellow]")
+        if stats.parse_errors:
+            console.print(f"  Parse errors:     [red]{stats.parse_errors}[/red]")
+
+    asyncio.run(_import())
+
+
 # --- DeepSeek Import ---
 
 @main.group("import-deepseek")
