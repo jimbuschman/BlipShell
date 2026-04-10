@@ -3528,6 +3528,85 @@ def claude_scraped(ctx, file, max_count, skip_lessons):
     asyncio.run(_import())
 
 
+@import_claude_group.command("code")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--max", "max_count", type=int, default=None,
+              help="Only import the first N sessions (for testing)")
+@click.option("--skip-lessons", is_flag=True, help="Skip lesson extraction (faster)")
+@click.pass_context
+def claude_code(ctx, path, max_count, skip_lessons):
+    """Import conversations from Claude Code JSONL session logs.
+
+    PATH can be a single .jsonl file, a project directory, or the top-level
+    ~/.claude/projects directory to import all sessions at once.
+    """
+    from rich.progress import Progress
+
+    from blipshell.import_claude_code import parse_claude_code_sessions
+    from blipshell.import_common import import_conversations
+    from blipshell.llm.endpoints import EndpointManager
+    from blipshell.llm.router import LLMRouter
+    from blipshell.models.config import get_ollama_url
+    from blipshell.memory.vector_store import VectorStore
+    from blipshell.memory.sqlite_store import SQLiteStore
+
+    async def _import():
+        console.print(f"[cyan]Scanning {path} for Claude Code sessions...[/cyan]")
+        convs = parse_claude_code_sessions(path)
+        console.print(f"Found [bold]{len(convs)}[/bold] sessions.")
+
+        if max_count:
+            convs = convs[:max_count]
+            console.print(f"Importing first [bold]{max_count}[/bold].")
+
+        if not convs:
+            console.print("[yellow]No sessions to import.[/yellow]")
+            return
+
+        config_manager = ConfigManager(ctx.obj.get("config_path"))
+        cfg = config_manager.load()
+
+        sqlite = SQLiteStore(cfg.database.path)
+        await sqlite.initialize()
+
+        chroma = VectorStore(
+            db_path=cfg.database.path,
+            embedding_model=cfg.models.embedding,
+            ollama_url=get_ollama_url(cfg.endpoints),
+            embedding_dim=cfg.database.embedding_dimensions,
+        )
+        chroma.initialize()
+
+        endpoint_manager = EndpointManager(cfg.endpoints, cfg.llm)
+        router = LLMRouter(cfg.models, endpoint_manager)
+
+        with Progress(console=console) as progress:
+            task = progress.add_task("Importing...", total=len(convs))
+
+            def on_progress(idx, total, title, stats):
+                label = f"[cyan]{title[:40]}[/cyan]"
+                i, s = stats.conversations_imported, stats.conversations_skipped
+                if i or s:
+                    label += f"  [dim]({i} imported, {s} skipped)[/dim]"
+                progress.update(task, completed=idx, description=label)
+
+            stats = await import_conversations(
+                sqlite=sqlite,
+                vectors=chroma,
+                router=router,
+                config=cfg.memory,
+                conversations=convs,
+                on_progress=on_progress,
+                skip_lessons=skip_lessons,
+            )
+            progress.update(task, completed=len(convs))
+
+        await sqlite.close()
+        _print_import_summary(stats)
+
+    asyncio.run(_import())
+
+
 # --- DeepSeek Import ---
 
 @main.group("import-deepseek")
