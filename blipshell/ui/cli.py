@@ -3533,8 +3533,10 @@ def claude_scraped(ctx, file, max_count, skip_lessons):
 @click.option("--max", "max_count", type=int, default=None,
               help="Only import the first N sessions (for testing)")
 @click.option("--skip-lessons", is_flag=True, help="Skip lesson extraction (faster)")
+@click.option("--concurrent", "max_concurrent", type=int, default=3,
+              help="Number of conversations to process in parallel (default 3)")
 @click.pass_context
-def claude_code(ctx, path, max_count, skip_lessons):
+def claude_code(ctx, path, max_count, skip_lessons, max_concurrent):
     """Import conversations from Claude Code JSONL session logs.
 
     PATH can be a single .jsonl file, a project directory, or the top-level
@@ -3598,6 +3600,7 @@ def claude_code(ctx, path, max_count, skip_lessons):
                 conversations=convs,
                 on_progress=on_progress,
                 skip_lessons=skip_lessons,
+                max_concurrent=max_concurrent,
             )
             progress.update(task, completed=len(convs))
 

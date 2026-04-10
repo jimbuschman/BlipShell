@@ -103,6 +103,7 @@ async def import_conversations(
         await _import_global_batch(
             sqlite, vectors, router, processor, config,
             conversations, stats, skip_lessons, on_progress,
+            max_concurrent=max_concurrent,
         )
         return stats
 
@@ -218,6 +219,7 @@ async def _import_global_batch(
     stats: ImportStats,
     skip_lessons: bool,
     on_progress: Optional[Callable] = None,
+    max_concurrent: int = 3,
 ):
     """Global batch pipeline — processes each conversation fully before the next.
 
@@ -272,7 +274,6 @@ async def _import_global_batch(
     if not work_convs:
         return
 
-    max_concurrent = 3
     print(f"\nGlobal batch: {len(work_convs)} conversations to process "
           f"({stats.conversations_skipped} skipped, {max_concurrent} concurrent)")
 
