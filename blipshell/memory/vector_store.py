@@ -199,15 +199,20 @@ class VectorStore:
         )
         return response["embeddings"][0]
 
-    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for multiple texts in one Ollama call."""
+    def _embed_batch(self, texts: list[str], chunk_size: int = 32) -> list[list[float]]:
+        """Generate embeddings for multiple texts, chunked to avoid overwhelming Ollama."""
         if self._ollama_client is None:
             raise RuntimeError("Ollama client not available — cannot generate embeddings")
-        response = self._ollama_client.embed(
-            model=self.embedding_model,
-            input=[self._truncate(t) for t in texts],
-        )
-        return response["embeddings"]
+        truncated = [self._truncate(t) for t in texts]
+        all_embeddings: list[list[float]] = []
+        for i in range(0, len(truncated), chunk_size):
+            chunk = truncated[i:i + chunk_size]
+            response = self._ollama_client.embed(
+                model=self.embedding_model,
+                input=chunk,
+            )
+            all_embeddings.extend(response["embeddings"])
+        return all_embeddings
 
     # --- Write methods (OllamaGate serialized) ---
 
