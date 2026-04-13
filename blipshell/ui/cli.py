@@ -3209,6 +3209,118 @@ def review_cmd(ctx, lessons, reflections, limit, quiet):
     asyncio.run(_run())
 
 
+@main.command("repair")
+@click.option("--restore-imports", is_flag=True,
+              help="Unarchive memories from imported sessions ([project]-prefixed titles).")
+@click.option("--sweep-orphans", is_flag=True,
+              help="Delete vectors whose memories are archived or missing.")
+@click.option("--dry-run", is_flag=True, help="Show counts without making changes.")
+@click.option("--all", "do_all", is_flag=True,
+              help="Run all repairs (restore-imports + sweep-orphans).")
+@click.pass_context
+def repair_cmd(ctx, restore_imports, sweep_orphans, dry_run, do_all):
+    """Repair DB damage caused by prune racing with imports.
+
+    --restore-imports unarchives memories from sessions whose titles look
+    like imports (e.g. "[BlipShell] ..."), which were typically pruned
+    because they were old and scored low even though the user wants them.
+
+    --sweep-orphans removes vector rows whose memories are archived or
+    no longer exist (residue from failed deletes during lock contention).
+    """
+    if not (restore_imports or sweep_orphans or do_all):
+        console.print("[yellow]Nothing to do. Pass --restore-imports, --sweep-orphans, or --all.[/yellow]")
+        return
+    if do_all:
+        restore_imports = True
+        sweep_orphans = True
+
+    from blipshell.memory.vector_store import VectorStore
+    from blipshell.memory.sqlite_store import SQLiteStore
+    from blipshell.models.config import get_ollama_url
+
+    async def _run():
+        config_manager = ConfigManager(ctx.obj.get("config_path"))
+        cfg = config_manager.load()
+
+        sqlite = SQLiteStore(cfg.database.path)
+        await sqlite.initialize()
+
+        vectors = VectorStore(
+            db_path=cfg.database.path,
+            embedding_model=cfg.models.embedding,
+            ollama_url=get_ollama_url(cfg.endpoints),
+            embedding_dim=cfg.database.embedding_dimensions,
+        )
+        vectors.initialize()
+
+        try:
+            if restore_imports:
+                cursor = await sqlite._db.execute(
+                    """
+                    SELECT COUNT(*) FROM memories m
+                     JOIN sessions s ON s.id = m.session_id
+                     WHERE m.is_archived = 1
+                       AND (s.title LIKE '[%' OR s.title LIKE '[Claude Code Memory]%')
+                    """
+                )
+                row = await cursor.fetchone()
+                count = row[0] if row else 0
+                console.print(f"[cyan]Imported memories archived:[/cyan] [bold]{count}[/bold]")
+
+                if count and not dry_run:
+                    await sqlite._db.execute(
+                        """
+                        UPDATE memories
+                           SET is_archived = 0
+                         WHERE is_archived = 1
+                           AND session_id IN (
+                                 SELECT id FROM sessions
+                                  WHERE title LIKE '[%'
+                                     OR title LIKE '[Claude Code Memory]%'
+                           )
+                        """
+                    )
+                    await sqlite._db.commit()
+                    console.print(f"[green]Restored {count} memories.[/green]")
+                elif dry_run:
+                    console.print("[dim](dry-run; no changes)[/dim]")
+
+            if sweep_orphans:
+                if dry_run:
+                    # Inspect counts without deleting
+                    cur = vectors._conn.execute(
+                        """
+                        SELECT COUNT(*) FROM vec_memories vm
+                         JOIN memories m ON m.id = vm.rowid
+                         WHERE m.is_archived = 1
+                        """
+                    )
+                    arch = cur.fetchone()[0]
+                    cur = vectors._conn.execute(
+                        """
+                        SELECT COUNT(*) FROM vec_memories vm
+                         WHERE vm.rowid NOT IN (SELECT id FROM memories)
+                        """
+                    )
+                    miss = cur.fetchone()[0]
+                    console.print(
+                        f"[cyan]Orphan vectors:[/cyan] "
+                        f"archived=[bold]{arch}[/bold] missing=[bold]{miss}[/bold] "
+                        "[dim](dry-run; no changes)[/dim]"
+                    )
+                else:
+                    result = vectors.cleanup_orphan_vectors()
+                    console.print(
+                        f"[green]Orphan vectors swept:[/green] "
+                        f"archived={result['archived']} missing={result['missing']}"
+                    )
+        finally:
+            await sqlite.close()
+
+    asyncio.run(_run())
+
+
 # --- ChatGPT Import ---
 
 @main.group("import-chatgpt")
@@ -3544,6 +3656,7 @@ def claude_code(ctx, path, max_count, skip_lessons, max_concurrent):
     """
     from rich.progress import Progress
 
+    from blipshell.core.import_lock import import_lock
     from blipshell.import_claude_code import parse_claude_code_sessions
     from blipshell.import_common import import_conversations
     from blipshell.llm.endpoints import EndpointManager
@@ -3582,27 +3695,28 @@ def claude_code(ctx, path, max_count, skip_lessons, max_concurrent):
         endpoint_manager = EndpointManager(cfg.endpoints, cfg.llm)
         router = LLMRouter(cfg.models, endpoint_manager)
 
-        with Progress(console=console) as progress:
-            task = progress.add_task("Importing...", total=len(convs))
+        with import_lock(cfg.database.path, operation="import-claude-code"):
+            with Progress(console=console) as progress:
+                task = progress.add_task("Importing...", total=len(convs))
 
-            def on_progress(idx, total, title, stats):
-                label = f"[cyan]{title[:40]}[/cyan]"
-                i, s = stats.conversations_imported, stats.conversations_skipped
-                if i or s:
-                    label += f"  [dim]({i} imported, {s} skipped)[/dim]"
-                progress.update(task, completed=idx, description=label)
+                def on_progress(idx, total, title, stats):
+                    label = f"[cyan]{title[:40]}[/cyan]"
+                    i, s = stats.conversations_imported, stats.conversations_skipped
+                    if i or s:
+                        label += f"  [dim]({i} imported, {s} skipped)[/dim]"
+                    progress.update(task, completed=idx, description=label)
 
-            stats = await import_conversations(
-                sqlite=sqlite,
-                vectors=chroma,
-                router=router,
-                config=cfg.memory,
-                conversations=convs,
-                on_progress=on_progress,
-                skip_lessons=skip_lessons,
-                max_concurrent=max_concurrent,
-            )
-            progress.update(task, completed=len(convs))
+                stats = await import_conversations(
+                    sqlite=sqlite,
+                    vectors=chroma,
+                    router=router,
+                    config=cfg.memory,
+                    conversations=convs,
+                    on_progress=on_progress,
+                    skip_lessons=skip_lessons,
+                    max_concurrent=max_concurrent,
+                )
+                progress.update(task, completed=len(convs))
 
         await sqlite.close()
         _print_import_summary(stats)
@@ -3620,6 +3734,7 @@ def claude_memories(ctx, path, dry_run):
     PATH can be ~/.claude/projects (all projects), a single project dir,
     or a project's memory/ subdirectory.
     """
+    from blipshell.core.import_lock import import_lock
     from blipshell.import_claude_code_memories import (
         MemoryImportStats, import_memories, parse_claude_code_memories,
     )
@@ -3664,7 +3779,8 @@ def claude_memories(ctx, path, dry_run):
             m.project_name for m in memories if m.project_name
         )))
 
-        await import_memories(sqlite, vectors, memories, stats, dry_run=dry_run)
+        with import_lock(cfg.database.path, operation="import-claude-memories"):
+            await import_memories(sqlite, vectors, memories, stats, dry_run=dry_run)
 
         await sqlite.close()
 

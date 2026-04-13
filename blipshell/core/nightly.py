@@ -12,6 +12,7 @@ import logging
 import time
 from typing import Callable, Optional
 
+from blipshell.core.import_lock import is_import_active, read_lock_info
 from blipshell.memory.batch_tagger import BatchTagger
 from blipshell.memory.centroid_tagger import CentroidTagger
 from blipshell.memory.consolidation import MemoryConsolidator
@@ -114,9 +115,11 @@ class NightlyRunner:
         self,
         on_status: Optional[Callable[[str], None]] = None,
         jobs: Optional[list[str]] = None,
+        force: bool = False,
     ) -> dict:
         """Run all (or specified) nightly jobs in sequence.
 
+        Skips automatically if an import lock is present (force=True overrides).
         Returns stats dict with per-job results.
         """
         run_jobs = jobs or JOB_ORDER
@@ -127,6 +130,20 @@ class NightlyRunner:
             if on_status:
                 on_status(msg)
             logger.info("Nightly: %s", msg)
+
+        # Skip if an import is in progress — both writers fight for the
+        # same SQLite file and create orphan vectors.
+        db_path = getattr(getattr(self.config, "database", None), "path", None)
+        if db_path and not force and is_import_active(db_path):
+            info = read_lock_info(db_path) or {}
+            op = info.get("operation", "import")
+            _status(f"Skipping nightly: {op} in progress (use force=True to override)")
+            return {
+                "skipped": True,
+                "reason": f"{op} in progress",
+                "lock_info": info,
+                "started_at": started_at,
+            }
 
         _status(f"Starting nightly run ({len(run_jobs)} jobs)...")
 
@@ -381,12 +398,20 @@ class NightlyRunner:
             max_importance=cfg.prune_max_importance,
             max_rank=cfg.prune_max_rank,
         )
+        delete_failures = 0
         for mid in ids_to_archive:
             try:
                 self.vectors.delete_memory(mid)
             except Exception as e:
+                delete_failures += 1
                 logger.warning("Failed to delete memory %d vector during prune: %s", mid, e)
-        return {"pruned": count}
+        # Sweep any orphan vectors left behind by failed deletes (this run or prior).
+        sweep = self.vectors.cleanup_orphan_vectors()
+        return {
+            "pruned": count,
+            "vector_delete_failures": delete_failures,
+            "orphan_sweep": sweep,
+        }
 
     async def _job_consolidate(self, on_status) -> dict:
         """Merge near-duplicate memories."""

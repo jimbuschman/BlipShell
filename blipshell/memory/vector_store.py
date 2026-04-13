@@ -13,6 +13,7 @@ import logging
 import sqlite3
 import struct
 import threading
+import time
 from typing import Optional
 
 import httpx
@@ -83,6 +84,39 @@ def _ollama_gated(fn):
         with gate.gate(gate.infer_priority()):
             return fn(self, *args, **kwargs)
     return wrapper
+
+
+def _retry_on_lock(fn=None, *, attempts: int = 5, base_delay: float = 0.5):
+    """Retry a sqlite-vec write on `database is locked` errors.
+
+    The vector tables share the main blipshell.db file, so writes from
+    other processes (or background tasks) can briefly block them. With
+    busy_timeout=60s already set this is rare, but we still occasionally
+    see lock contention; retry with exponential backoff.
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_err = None
+            delay = base_delay
+            for attempt in range(attempts):
+                try:
+                    return func(*args, **kwargs)
+                except sqlite3.OperationalError as e:
+                    if "locked" not in str(e).lower():
+                        raise
+                    last_err = e
+                    if attempt < attempts - 1:
+                        logger.warning(
+                            "sqlite-vec write locked (attempt %d/%d), retrying in %.1fs",
+                            attempt + 1, attempts, delay,
+                        )
+                        time.sleep(delay)
+                        delay *= 2
+            assert last_err is not None
+            raise last_err
+        return wrapper
+    return decorator(fn) if fn else decorator
 
 
 def _serialize_f32(vector: list[float]) -> bytes:
@@ -528,29 +562,65 @@ class VectorStore:
 
     # --- Delete methods ---
 
+    @_retry_on_lock
     def delete_memory(self, memory_id: int):
         """Remove a memory vector."""
         with self._lock:
             self._conn.execute("DELETE FROM vec_memories WHERE rowid = ?", [memory_id])
             self._conn.commit()
 
+    @_retry_on_lock
     def delete_core_memory(self, core_memory_id: int):
         """Remove a core memory vector."""
         with self._lock:
             self._conn.execute("DELETE FROM vec_core_memories WHERE rowid = ?", [core_memory_id])
             self._conn.commit()
 
+    @_retry_on_lock
     def delete_lesson(self, lesson_id: int):
         """Remove a lesson vector."""
         with self._lock:
             self._conn.execute("DELETE FROM vec_lessons WHERE rowid = ?", [lesson_id])
             self._conn.commit()
 
+    @_retry_on_lock
     def delete_entity(self, entity_id: int):
         """Remove an entity vector."""
         with self._lock:
             self._conn.execute("DELETE FROM vec_entities WHERE rowid = ?", [entity_id])
             self._conn.commit()
+
+    def cleanup_orphan_vectors(self) -> dict:
+        """Remove vec_memories rows whose memories are archived or missing.
+
+        These accumulate when the prune job archives memories but the
+        accompanying vector delete fails (e.g. lock contention). Run
+        after a known race or as part of nightly maintenance.
+
+        Returns dict with counts of deleted orphan vectors.
+        """
+        with self._lock:
+            # Vectors whose memory was archived
+            archived = self._conn.execute(
+                """
+                DELETE FROM vec_memories
+                 WHERE rowid IN (
+                       SELECT vm.rowid
+                         FROM vec_memories vm
+                         JOIN memories m ON m.id = vm.rowid
+                        WHERE m.is_archived = 1
+                )
+                """
+            ).rowcount or 0
+            # Vectors whose memory row no longer exists
+            missing = self._conn.execute(
+                """
+                DELETE FROM vec_memories
+                 WHERE rowid NOT IN (SELECT id FROM memories)
+                """
+            ).rowcount or 0
+            self._conn.commit()
+        return {"archived": archived, "missing": missing}
 
     # --- Utility methods ---
 
