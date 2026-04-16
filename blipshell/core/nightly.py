@@ -383,33 +383,29 @@ class NightlyRunner:
         return await tagger.tag_all(on_status=on_status)
 
     async def _job_prune(self, on_status) -> dict:
-        """Archive old low-value memories."""
+        """Archive old low-value memories, then sweep their vectors.
+
+        Previous approach deleted vectors one-by-one immediately after
+        archiving, but the async SQLite connection (aiosqlite) and the
+        sync vector connection (sqlite3) both write to the same DB file
+        and race for the write lock. Now: archive first, commit, then
+        sweep all orphan vectors in one batch through a single connection.
+        """
         cfg = self.config.memory
         if cfg.auto_prune_days <= 0:
             return {"pruned": 0, "skipped": "auto_prune_days=0"}
 
-        ids_to_archive = await self.sqlite.get_archived_memory_ids(
-            days_old=cfg.auto_prune_days,
-            max_importance=cfg.prune_max_importance,
-            max_rank=cfg.prune_max_rank,
-        )
         count = await self.sqlite.archive_old_memories(
             days_old=cfg.auto_prune_days,
             max_importance=cfg.prune_max_importance,
             max_rank=cfg.prune_max_rank,
         )
-        delete_failures = 0
-        for mid in ids_to_archive:
-            try:
-                self.vectors.delete_memory(mid)
-            except Exception as e:
-                delete_failures += 1
-                logger.warning("Failed to delete memory %d vector during prune: %s", mid, e)
-        # Sweep any orphan vectors left behind by failed deletes (this run or prior).
+
+        # Sweep orphan vectors in one batch — no per-ID delete loop, no
+        # lock contention between aiosqlite and sync sqlite3 connections.
         sweep = self.vectors.cleanup_orphan_vectors()
         return {
             "pruned": count,
-            "vector_delete_failures": delete_failures,
             "orphan_sweep": sweep,
         }
 
