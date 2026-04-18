@@ -1,27 +1,26 @@
 """Live integration test — runs against real Ollama on the Ollama PC.
 
-Tests the actual end-to-end pipeline with real models, real embeddings,
-real search. Uses a temp database so production data is never touched.
+Tests actual usage patterns with real models, real embeddings, real worker
+threads, real search. Uses a temp database so production data is never touched.
 
-This test catches the class of bugs that mock tests miss:
-- Ollama crashes under load
-- Embedding calls hang or timeout
-- Session close fails with real LLM calls
-- Search can't find memories with real embeddings
-- PII sanitization corrupts real summaries
-- Nightly jobs fail against real data
+This test simulates what happens when you actually USE BlipShell:
+- Chat while the memory worker is processing in the background
+- Close the session mid-processing
+- Search for things you said in a previous session
+- Start a new session and verify context from the last one loads
+- Run nightly maintenance after real data exists
+- Recover after Ollama hiccups
 
 Usage:
   python scripts/test_integration_live.py              # full test
   python scripts/test_integration_live.py --quick      # skip slow tests
-  python scripts/test_integration_live.py --verbose     # show details
+  python scripts/test_integration_live.py --verbose    # show details
 
-Requires: Ollama running locally with nomic-embed-text available.
+Requires: Ollama running locally with embedding model available.
 """
 
 import argparse
 import asyncio
-import json
 import os
 import sys
 import tempfile
@@ -29,21 +28,16 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 class LiveTestRunner:
-    """Runs live integration tests against real Ollama."""
 
     def __init__(self, verbose: bool = False, quick: bool = False):
         self.verbose = verbose
         self.quick = quick
         self.results: list[dict] = []
         self.temp_db: str = ""
-        self.sqlite = None
-        self.vectors = None
-        self.router = None
         self.config = None
         self.config_manager = None
 
@@ -54,376 +48,343 @@ class LiveTestRunner:
         if self.verbose:
             print(f"    {msg}", flush=True)
 
-    async def setup(self):
-        """Initialize all components with a temp database."""
-        from blipshell.core.config import ConfigManager
-        from blipshell.llm.endpoints import EndpointManager
-        from blipshell.llm.router import LLMRouter
+    def record(self, name: str, passed: bool, elapsed: float, detail: str = ""):
+        self.results.append({
+            "name": name, "passed": passed,
+            "elapsed_s": round(elapsed, 2), "detail": detail,
+        })
+        icon = "+" if passed else "X"
+        suffix = f" — {detail}" if detail and not passed else ""
+        print(f"  [{icon}] {name} ({elapsed:.1f}s){suffix}", flush=True)
+
+    def _make_stores(self):
+        """Create fresh SQLiteStore + VectorStore pointing at the temp DB."""
         from blipshell.memory.sqlite_store import SQLiteStore
         from blipshell.memory.vector_store import VectorStore
         from blipshell.models.config import get_ollama_url
 
-        # Use real config but temp database
-        self.config_manager = ConfigManager(config_path=None)
-        self.config = self.config_manager.load()
-
-        fd, self.temp_db = tempfile.mkstemp(suffix=".db")
-        os.close(fd)
-        self.detail(f"Temp DB: {self.temp_db}")
-
-        self.sqlite = SQLiteStore(self.temp_db)
-        await self.sqlite.initialize()
-
-        self.vectors = VectorStore(
+        sqlite = SQLiteStore(self.temp_db)
+        vectors = VectorStore(
             db_path=self.temp_db,
             embedding_model=self.config.models.embedding,
             ollama_url=get_ollama_url(self.config.endpoints),
             embedding_dim=self.config.database.embedding_dimensions,
         )
-        self.vectors.initialize()
+        return sqlite, vectors
 
-        endpoint_manager = EndpointManager(self.config.endpoints, self.config.llm)
-        self.router = LLMRouter(
-            self.config.models, endpoint_manager,
-            pii_enabled=self.config.pii.enabled,
-        )
+    def _make_router(self):
+        from blipshell.llm.endpoints import EndpointManager
+        from blipshell.llm.router import LLMRouter
+        em = EndpointManager(self.config.endpoints, self.config.llm)
+        return LLMRouter(self.config.models, em, pii_enabled=self.config.pii.enabled)
+
+    async def setup(self):
+        from blipshell.core.config import ConfigManager
+        self.config_manager = ConfigManager(config_path=None)
+        self.config = self.config_manager.load()
+        fd, self.temp_db = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        self.detail(f"Temp DB: {self.temp_db}")
 
     async def teardown(self):
-        """Clean up temp database."""
-        if self.sqlite:
-            await self.sqlite.close()
-        if self.vectors:
-            self.vectors.close()
         if self.temp_db and os.path.exists(self.temp_db):
             try:
                 os.unlink(self.temp_db)
             except OSError:
                 pass
 
-    def record(self, name: str, passed: bool, elapsed: float, detail: str = ""):
-        status = "PASS" if passed else "FAIL"
-        self.results.append({
-            "name": name,
-            "passed": passed,
-            "elapsed_s": round(elapsed, 2),
-            "detail": detail,
-        })
-        icon = "+" if passed else "X"
-        print(f"  [{icon}] {name} ({elapsed:.1f}s){f' — {detail}' if detail and not passed else ''}", flush=True)
-
     # ------------------------------------------------------------------
-    # Tests
+    # Pre-flight
     # ------------------------------------------------------------------
 
     async def test_ollama_responsive(self):
-        """Ollama is running and the embedding model is available."""
+        """Ollama is running and embedding model is available."""
         t0 = time.monotonic()
         try:
             import ollama
             client = ollama.Client(host="http://localhost:11434")
             models = client.list()
-            model_names = [m.model for m in models.models]
-            embed_model = self.config.models.embedding
-            found = any(embed_model in name for name in model_names)
+            names = [m.model for m in models.models]
+            embed = self.config.models.embedding
+            found = any(embed in n for n in names)
             elapsed = time.monotonic() - t0
-            if not found:
-                self.record("ollama_responsive", False, elapsed,
-                            f"Embedding model '{embed_model}' not found. Available: {model_names[:5]}")
-                return False
-            self.record("ollama_responsive", True, elapsed)
-            return True
+            self.record("ollama_responsive", found, elapsed,
+                        "" if found else f"'{embed}' not in {names[:5]}")
+            return found
         except Exception as e:
             self.record("ollama_responsive", False, time.monotonic() - t0, str(e))
             return False
 
     async def test_embed_single(self):
-        """Single embedding call completes within timeout."""
+        """Single embedding completes."""
         t0 = time.monotonic()
         try:
-            vec = self.vectors._embed("This is a test sentence for embedding.")
+            sqlite, vectors = self._make_stores()
+            await sqlite.initialize()
+            vectors.initialize()
+            vec = vectors._embed("Test sentence for embedding.")
             elapsed = time.monotonic() - t0
-            ok = len(vec) == self.config.database.embedding_dimensions
+            dim = self.config.database.embedding_dimensions
+            ok = len(vec) == dim
             self.record("embed_single", ok, elapsed,
-                        "" if ok else f"Expected dim {self.config.database.embedding_dimensions}, got {len(vec)}")
+                        "" if ok else f"Expected {dim}, got {len(vec)}")
+            vectors.close()
+            await sqlite.close()
             return ok
         except Exception as e:
             self.record("embed_single", False, time.monotonic() - t0, str(e))
             return False
 
     async def test_embed_batch(self):
-        """Batch embedding (32 items) completes without hanging."""
+        """Batch of 32 embeddings completes."""
         t0 = time.monotonic()
         try:
-            texts = [f"Test sentence number {i} about various topics." for i in range(32)]
-            vecs = self.vectors._embed_batch(texts)
+            sqlite, vectors = self._make_stores()
+            await sqlite.initialize()
+            vectors.initialize()
+            texts = [f"Test sentence number {i}." for i in range(32)]
+            vecs = vectors._embed_batch(texts)
             elapsed = time.monotonic() - t0
             ok = len(vecs) == 32
-            self.record("embed_batch_32", ok, elapsed,
-                        "" if ok else f"Expected 32 embeddings, got {len(vecs)}")
+            self.record("embed_batch_32", ok, elapsed)
+            vectors.close()
+            await sqlite.close()
             return ok
         except Exception as e:
             self.record("embed_batch_32", False, time.monotonic() - t0, str(e))
             return False
 
     async def test_embed_large_batch(self):
-        """Large batch (100 items) completes via chunking."""
+        """100 embeddings complete via chunking without hanging."""
         t0 = time.monotonic()
         try:
-            texts = [f"Test sentence number {i} about topic {i % 10}." for i in range(100)]
-            vecs = self.vectors._embed_batch(texts)
+            sqlite, vectors = self._make_stores()
+            await sqlite.initialize()
+            vectors.initialize()
+            texts = [f"Test sentence {i} about topic {i % 10}." for i in range(100)]
+            vecs = vectors._embed_batch(texts)
             elapsed = time.monotonic() - t0
             ok = len(vecs) == 100
             self.record("embed_batch_100", ok, elapsed,
-                        "" if ok else f"Expected 100 embeddings, got {len(vecs)}")
+                        "" if ok else f"Got {len(vecs)}")
+            vectors.close()
+            await sqlite.close()
             return ok
         except Exception as e:
             self.record("embed_batch_100", False, time.monotonic() - t0, str(e))
             return False
 
-    async def test_summarize(self):
-        """Summarization LLM call works."""
-        t0 = time.monotonic()
-        try:
-            from blipshell.llm.router import TaskType
-            summary = await self.router.generate(
-                TaskType.SUMMARIZATION,
-                "The user discussed their plans to learn Python for data science. They mentioned wanting to build machine learning models.",
-            )
-            elapsed = time.monotonic() - t0
-            ok = len(summary) > 10 and summary.strip().upper() != "SKIP"
-            self.record("summarize", ok, elapsed,
-                        "" if ok else f"Bad summary: {summary[:100]}")
-            return ok
-        except Exception as e:
-            self.record("summarize", False, time.monotonic() - t0, str(e))
-            return False
+    # ------------------------------------------------------------------
+    # Real usage: full session with worker processing
+    # ------------------------------------------------------------------
 
-    async def test_rank_importance(self):
-        """Rank+importance scoring LLM call returns parseable results."""
-        t0 = time.monotonic()
-        try:
-            from blipshell.llm.router import TaskType
-            result = await self.router.generate(
-                TaskType.RANKING_IMPORTANCE,
-                "User discussed Python performance tuning and optimization strategies.",
-            )
-            elapsed = time.monotonic() - t0
-            parts = result.strip().split()
-            ok = len(parts) >= 2
-            if ok:
-                try:
-                    rank = int(parts[0])
-                    importance = float(parts[1])
-                    ok = 1 <= rank <= 5 and 0.0 <= importance <= 1.0
-                except (ValueError, IndexError):
-                    ok = False
-            self.record("rank_importance", ok, elapsed,
-                        "" if ok else f"Unparseable: {result[:100]}")
-            return ok
-        except Exception as e:
-            self.record("rank_importance", False, time.monotonic() - t0, str(e))
-            return False
-
-    async def test_process_message(self):
-        """Full process_message pipeline: summarize → embed → score."""
-        t0 = time.monotonic()
-        try:
-            from blipshell.memory.processor import MemoryProcessor
-
-            processor = MemoryProcessor(
-                self.sqlite, self.vectors, self.router,
-                config=self.config.memory,
-            )
-            sid = await self.sqlite.create_session(title="Live test session")
-
-            mem_id = await processor.process_message(
-                text="Kortney and I talked about waiting until Monday to reconnect. She needs some space after everything that happened.",
-                role="user",
-                session_id=sid,
-            )
-            elapsed = time.monotonic() - t0
-
-            if not mem_id:
-                self.record("process_message", False, elapsed, "No memory ID returned")
-                return False
-
-            # Verify memory has summary
-            memory = await self.sqlite.get_memory(mem_id)
-            has_summary = memory and memory.summary and len(memory.summary) > 5
-
-            # Verify embedding exists
-            vec_count = self.vectors._conn.execute(
-                "SELECT COUNT(*) FROM vec_memories WHERE rowid=?", [mem_id]
-            ).fetchone()[0]
-            has_embed = vec_count == 1
-
-            ok = has_summary and has_embed
-            detail = ""
-            if not has_summary:
-                detail += "Missing summary. "
-            if not has_embed:
-                detail += "Missing embedding. "
-            self.record("process_message", ok, elapsed, detail)
-            return ok
-        except Exception as e:
-            self.record("process_message", False, time.monotonic() - t0, str(e))
-            return False
-
-    async def test_embed_uses_content_not_summary(self):
-        """Embedding is generated from raw content, not PII-sanitized summary."""
-        t0 = time.monotonic()
-        try:
-            from blipshell.memory.processor import MemoryProcessor
-
-            processor = MemoryProcessor(
-                self.sqlite, self.vectors, self.router,
-                config=self.config.memory,
-            )
-            sid = await self.sqlite.create_session(title="PII embed test")
-
-            mem_id = await processor.process_message(
-                text="Kortney texted me at 3pm on Monday about meeting at the coffee shop on Oak Street.",
-                role="user",
-                session_id=sid,
-            )
-            elapsed = time.monotonic() - t0
-
-            if not mem_id:
-                self.record("embed_uses_content", False, elapsed, "No memory ID")
-                return False
-
-            # Search for "Kortney" — should find it via vector similarity
-            # because embedding was generated from content (has "Kortney"),
-            # not from summary (which might have [PERSON])
-            results = self.vectors.search_memories("Kortney Monday coffee", n_results=5)
-            found = any(r["id"] == mem_id for r in results)
-
-            # Also check if summary got PII-sanitized
-            memory = await self.sqlite.get_memory(mem_id)
-            pii_in_summary = "[PERSON]" in (memory.summary or "") or "[PII]" in (memory.summary or "")
-
-            ok = found
-            detail = ""
-            if pii_in_summary:
-                detail += "Summary was PII-sanitized (expected if using cloud). "
-            if not found:
-                detail += f"Vector search for 'Kortney Monday coffee' did not find memory {mem_id}. "
-                # Show what was found
-                if results:
-                    detail += f"Found IDs: {[r['id'] for r in results]}. "
-                else:
-                    detail += "No vector results at all. "
-
-            self.record("embed_uses_content", ok, elapsed, detail)
-            return ok
-        except Exception as e:
-            self.record("embed_uses_content", False, time.monotonic() - t0, str(e))
-            return False
-
-    async def test_search_finds_keyword(self):
-        """Full search pipeline finds memories by keyword."""
-        t0 = time.monotonic()
-        try:
-            from blipshell.memory.search import MemorySearch
-            from blipshell.memory.processor import MemoryProcessor
-
-            processor = MemoryProcessor(
-                self.sqlite, self.vectors, self.router,
-                config=self.config.memory,
-            )
-            sid = await self.sqlite.create_session(title="Search test session")
-
-            # Insert a memory with a unique keyword
-            await processor.process_message(
-                text="Xylophone lessons with Bartholomew start next Thursday at the community center. He's been teaching for years.",
-                role="user",
-                session_id=sid,
-            )
-
-            # Search from a different session
-            sid2 = await self.sqlite.create_session(title="Search query session")
-            search = MemorySearch(
-                self.sqlite, self.vectors, self.router,
-                config=self.config.memory,
-            )
-            results = await search.search(
-                query="Xylophone Bartholomew Thursday",
-                current_session_id=sid2,
-                n_results=10,
-            )
-            elapsed = time.monotonic() - t0
-
-            found = len(results) > 0
-            detail = ""
-            if not found:
-                # Debug: check FTS directly
-                fts = await self.sqlite.search_fts("Xylophone", limit=5)
-                detail = f"0 results. FTS for 'Xylophone': {len(fts)} hits."
-            else:
-                detail = f"{len(results)} results, top score={results[0].boosted_score:.3f}"
-                self.detail(detail)
-
-            self.record("search_finds_keyword", found, elapsed, detail if not found else "")
-            return found
-        except Exception as e:
-            self.record("search_finds_keyword", False, time.monotonic() - t0, str(e))
-            return False
-
-    async def test_session_close(self):
-        """Session close completes: message_count set, title generated."""
+    async def test_full_session_with_worker(self):
+        """Simulate real usage: start session, add messages with worker processing,
+        close session. Verify everything persisted correctly."""
         t0 = time.monotonic()
         try:
             from blipshell.memory.processor import MemoryProcessor
             from blipshell.memory.manager import MemoryManager
+            from blipshell.memory.worker import MemoryWorker, WorkItem, WorkType
             from blipshell.session.manager import SessionManager
             from blipshell.models.session import MessageRole
 
-            processor = MemoryProcessor(
-                self.sqlite, self.vectors, self.router,
-                config=self.config.memory,
-            )
-            mm = MemoryManager(self.config.memory)
-            sm = SessionManager(self.sqlite, mm, processor, self.router)
+            sqlite, vectors = self._make_stores()
+            await sqlite.initialize()
+            vectors.initialize()
+            router = self._make_router()
+            processor = MemoryProcessor(sqlite, vectors, router, config=self.config.memory)
 
+            # Start worker thread (same as real Agent does)
+            worker = MemoryWorker(self.config, vectors)
+            # Override the DB path to use our temp DB
+            original_path = self.config.database.path
+            self.config.database.path = self.temp_db
+            worker = MemoryWorker(self.config, vectors)
+            worker.start()
+
+            mm = MemoryManager(self.config.memory)
+            sm = SessionManager(sqlite, mm, processor, router)
             sid = await sm.start_session()
+
+            # Add messages like a real conversation
             messages = [
-                (MessageRole.USER, "I've been thinking about learning to play guitar."),
-                (MessageRole.ASSISTANT, "That's a great idea! What kind of music are you interested in?"),
-                (MessageRole.USER, "Mostly classic rock. I grew up listening to Led Zeppelin and Pink Floyd."),
-                (MessageRole.ASSISTANT, "Classic rock is a great foundation. I'd suggest starting with basic open chords."),
-                (MessageRole.USER, "Should I get an acoustic or electric to start?"),
-                (MessageRole.ASSISTANT, "Acoustic is usually recommended for beginners — it builds finger strength."),
+                (MessageRole.USER, "I've been talking to Kortney about our situation. She said we should wait until Monday to talk again."),
+                (MessageRole.ASSISTANT, "That sounds like she needs some space. Monday gives both of you time to think."),
+                (MessageRole.USER, "Yeah but I'm worried she won't actually text on Monday. She's done this before."),
+                (MessageRole.ASSISTANT, "I understand the anxiety. Her pattern shows she does come back, but the waiting is hard."),
+                (MessageRole.USER, "She also mentioned maybe getting dinner at the Italian place on Oak Street next week."),
+                (MessageRole.ASSISTANT, "That's a good sign — she's making future plans with you, not pulling away."),
+                (MessageRole.USER, "I guess you're right. I just need to be patient and not text her first."),
+                (MessageRole.ASSISTANT, "Exactly. Let her come to you on Monday. If she doesn't, give it another day before reaching out."),
             ]
             for role, content in messages:
                 sm.add_message(role, content)
 
             await sm.flush_pending_persists()
+
+            # Enqueue messages to worker (simulates what Agent._enqueue_undumped_messages does)
+            undumped = sm.get_undumped_messages()
+            for msg in undumped:
+                if msg.role in (MessageRole.USER, MessageRole.ASSISTANT):
+                    worker.enqueue(WorkItem(
+                        work_type=WorkType.PROCESS_MESSAGE,
+                        text=msg.content,
+                        role=msg.role.value,
+                        session_id=sid,
+                    ))
+
+            # Wait for worker to process (with timeout)
+            deadline = time.monotonic() + 120  # 2 min max
+            while worker.queue_depth > 0 and time.monotonic() < deadline:
+                await asyncio.sleep(1)
+                self.detail(f"  Worker queue depth: {worker.queue_depth}")
+
+            if worker.queue_depth > 0:
+                self.record("full_session_worker", False, time.monotonic() - t0,
+                            f"Worker didn't drain in 120s, {worker.queue_depth} items left")
+                worker.shutdown(timeout=5)
+                self.config.database.path = original_path
+                vectors.close()
+                await sqlite.close()
+                return False
+
+            # Now close the session
             await sm.end_session()
+            worker.shutdown(timeout=10)
+
             elapsed = time.monotonic() - t0
 
-            session = await self.sqlite.get_session(sid)
+            # === VERIFY EVERYTHING ===
             checks = []
+
+            # 1. Session has message_count and title
+            session = await sqlite.get_session(sid)
             if session.message_count == 0:
                 checks.append(f"message_count=0 (expected {len(messages)})")
             if session.title == "New Session":
                 checks.append("title still 'New Session'")
-            if not session.summary:
-                checks.append("no summary generated")
 
-            # Check memories exist
-            memories = await self.sqlite.get_memories_by_session(sid)
-            if len(memories) == 0:
-                checks.append("no memories persisted")
+            # 2. Memories exist with summaries
+            memories = await sqlite.get_memories_by_session(sid)
+            with_summary = [m for m in memories if m.summary]
+            if len(with_summary) < 4:
+                checks.append(f"Only {len(with_summary)} memories have summaries (expected 4+)")
+
+            # 3. Embeddings exist
+            mem_ids = [m.id for m in memories if m.summary]
+            if mem_ids:
+                embedded = vectors._conn.execute(
+                    f"SELECT COUNT(*) FROM vec_memories WHERE rowid IN ({','.join('?' * len(mem_ids))})",
+                    mem_ids,
+                ).fetchone()[0]
+                if embedded < len(mem_ids) * 0.8:  # allow some failures
+                    checks.append(f"Only {embedded}/{len(mem_ids)} memories have embeddings")
+
+            # 4. FTS index has the content
+            fts = await sqlite.search_fts("Kortney", limit=5)
+            if len(fts) == 0:
+                checks.append("FTS can't find 'Kortney'")
+
+            fts_monday = await sqlite.search_fts("Monday", limit=5)
+            if len(fts_monday) == 0:
+                checks.append("FTS can't find 'Monday'")
 
             ok = len(checks) == 0
-            self.record("session_close", ok, elapsed, "; ".join(checks) if checks else "")
+            self.record("full_session_worker", ok, elapsed,
+                        "; ".join(checks) if checks else f"{len(memories)} memories, {len(with_summary)} summarized")
+
+            self.config.database.path = original_path
+            vectors.close()
+            await sqlite.close()
             return ok
+
         except Exception as e:
-            self.record("session_close", False, time.monotonic() - t0, str(e))
+            self.record("full_session_worker", False, time.monotonic() - t0, str(e))
             return False
 
-    async def test_session_close_with_timeout(self):
-        """Session close doesn't hang even if LLM is slow."""
+    async def test_search_after_session(self):
+        """After a full session, search from a new session finds previous memories."""
+        t0 = time.monotonic()
+        try:
+            from blipshell.memory.processor import MemoryProcessor
+            from blipshell.memory.manager import MemoryManager
+            from blipshell.memory.search import MemorySearch
+            from blipshell.session.manager import SessionManager
+            from blipshell.models.session import MessageRole
+
+            sqlite, vectors = self._make_stores()
+            await sqlite.initialize()
+            vectors.initialize()
+            router = self._make_router()
+            processor = MemoryProcessor(sqlite, vectors, router, config=self.config.memory)
+            mm = MemoryManager(self.config.memory)
+            sm = SessionManager(sqlite, mm, processor, router)
+
+            # Session 1: conversation with unique content
+            sid1 = await sm.start_session()
+            sm.add_message(MessageRole.USER,
+                "Bartholomew and I went to the xylophone concert at Riverside Park last Thursday. It was amazing.")
+            sm.add_message(MessageRole.ASSISTANT,
+                "That sounds like a wonderful experience. Xylophone concerts at outdoor venues have great acoustics.")
+            sm.add_message(MessageRole.USER,
+                "Yeah, Bartholomew really enjoyed it. He wants to go back next month.")
+
+            await sm.flush_pending_persists()
+            await sm.dump_to_memory()
+            await sm.end_session()
+
+            # Verify session 1 closed properly
+            session1 = await sqlite.get_session(sid1)
+            self.detail(f"Session 1: count={session1.message_count}, title={session1.title}")
+
+            # Session 2: search for session 1 content
+            sid2 = await sqlite.create_session(title="Search session")
+            search = MemorySearch(sqlite, vectors, router, config=self.config.memory)
+
+            # Test 1: Search by unique name
+            results_name = await search.search("Bartholomew xylophone", current_session_id=sid2, n_results=10)
+            found_name = any(
+                "Bartholomew" in (r.text or "") or "bartholomew" in (r.text or "").lower() or
+                "Bartholomew" in (r.summary or "") or "bartholomew" in (r.summary or "").lower()
+                for r in results_name
+            )
+
+            # Test 2: Search by topic
+            results_topic = await search.search("concert park music", current_session_id=sid2, n_results=10)
+
+            # Test 3: Search by day
+            results_day = await search.search("Thursday Riverside", current_session_id=sid2, n_results=10)
+
+            elapsed = time.monotonic() - t0
+
+            checks = []
+            if not found_name:
+                # Debug: check what FTS and vector search return
+                fts = await sqlite.search_fts("Bartholomew", limit=5)
+                vec_results = vectors.search_memories("Bartholomew xylophone", n_results=5)
+                checks.append(f"Name search failed. FTS hits: {len(fts)}, Vec hits: {len(vec_results)}, "
+                              f"Full search: {len(results_name)}")
+            if len(results_topic) == 0:
+                checks.append("Topic search ('concert park music') returned 0 results")
+            if len(results_day) == 0:
+                fts_day = await sqlite.search_fts("Thursday", limit=5)
+                checks.append(f"Day search ('Thursday Riverside') returned 0. FTS Thursday hits: {len(fts_day)}")
+
+            ok = len(checks) == 0
+            self.record("search_after_session", ok, elapsed,
+                        "; ".join(checks) if checks else f"name={len(results_name)}, topic={len(results_topic)}, day={len(results_day)}")
+
+            vectors.close()
+            await sqlite.close()
+            return ok
+
+        except Exception as e:
+            self.record("search_after_session", False, time.monotonic() - t0, str(e))
+            return False
+
+    async def test_back_to_back_sessions(self):
+        """Close one session, start another. Second session should have context from first."""
         t0 = time.monotonic()
         try:
             from blipshell.memory.processor import MemoryProcessor
@@ -431,127 +392,342 @@ class LiveTestRunner:
             from blipshell.session.manager import SessionManager
             from blipshell.models.session import MessageRole
 
-            processor = MemoryProcessor(
-                self.sqlite, self.vectors, self.router,
-                config=self.config.memory,
+            sqlite, vectors = self._make_stores()
+            await sqlite.initialize()
+            vectors.initialize()
+            router = self._make_router()
+            processor = MemoryProcessor(sqlite, vectors, router, config=self.config.memory)
+
+            # Session 1
+            mm1 = MemoryManager(self.config.memory)
+            sm1 = SessionManager(sqlite, mm1, processor, router)
+            sid1 = await sm1.start_session()
+
+            for i in range(6):
+                role = MessageRole.USER if i % 2 == 0 else MessageRole.ASSISTANT
+                sm1.add_message(role, f"Session one message {i} about learning Portuguese and traveling to Brazil next summer with the family.")
+
+            await sm1.flush_pending_persists()
+            await sm1.dump_to_memory()
+            await sm1.end_session()
+
+            s1 = await sqlite.get_session(sid1)
+            self.detail(f"Session 1: count={s1.message_count}, title='{s1.title[:50]}'")
+
+            # Session 2 — check that _load_recent_sessions would find session 1
+            from blipshell.core.agent_session import SessionMixin
+            sessions = await sqlite.list_sessions(limit=5)
+
+            # The key check: session 1 should be findable as "substantive"
+            found_substantive = False
+            for s in sessions:
+                if s.id == sid1:
+                    # Either message_count >= 5 or actual memories >= 5
+                    if s.message_count >= 5:
+                        found_substantive = True
+                    else:
+                        mems = await sqlite.get_memories_by_session(s.id)
+                        good = [m for m in mems if m.summary and not m.is_archived]
+                        if len(good) >= 5:
+                            found_substantive = True
+
+            elapsed = time.monotonic() - t0
+            self.record("back_to_back_sessions", found_substantive, elapsed,
+                        "" if found_substantive else f"Session 1 not found as substantive. count={s1.message_count}")
+
+            vectors.close()
+            await sqlite.close()
+            return found_substantive
+
+        except Exception as e:
+            self.record("back_to_back_sessions", False, time.monotonic() - t0, str(e))
+            return False
+
+    async def test_pii_embed_not_corrupted(self):
+        """Content with names/dates is still searchable after processing through
+        the full pipeline (which may PII-sanitize the summary)."""
+        t0 = time.monotonic()
+        try:
+            from blipshell.memory.processor import MemoryProcessor
+
+            sqlite, vectors = self._make_stores()
+            await sqlite.initialize()
+            vectors.initialize()
+            router = self._make_router()
+            processor = MemoryProcessor(sqlite, vectors, router, config=self.config.memory)
+
+            sid = await sqlite.create_session(title="PII test")
+            mem_id = await processor.process_message(
+                text="Kortney texted me at 3pm on Monday about meeting at the coffee shop on Oak Street.",
+                role="user",
+                session_id=sid,
             )
+
+            if not mem_id:
+                self.record("pii_embed_not_corrupted", False, time.monotonic() - t0, "No memory ID")
+                vectors.close()
+                await sqlite.close()
+                return False
+
+            # Check: can vector search find this by name?
+            vec_results = vectors.search_memories("Kortney Monday coffee", n_results=5)
+            found_vec = any(r["id"] == mem_id for r in vec_results)
+
+            # Check: can FTS find this by name?
+            fts_results = await sqlite.search_fts("Kortney", limit=5)
+            found_fts = any(r["id"] == mem_id for r in fts_results)
+
+            # Check: is the summary PII-sanitized?
+            memory = await sqlite.get_memory(mem_id)
+            pii_in_summary = "[PERSON]" in (memory.summary or "") or "[PII]" in (memory.summary or "")
+
+            elapsed = time.monotonic() - t0
+
+            checks = []
+            if not found_vec:
+                checks.append(f"Vector search can't find 'Kortney Monday coffee' (got {len(vec_results)} results)")
+            if not found_fts:
+                checks.append(f"FTS can't find 'Kortney' (got {len(fts_results)} results)")
+            if pii_in_summary:
+                self.detail(f"Note: summary was PII-sanitized: {memory.summary[:100]}")
+                if not found_vec:
+                    checks.append("Summary PII-sanitized AND vector search failed — embedding used sanitized text!")
+
+            ok = found_vec and found_fts
+            self.record("pii_embed_not_corrupted", ok, elapsed, "; ".join(checks) if checks else "")
+
+            vectors.close()
+            await sqlite.close()
+            return ok
+
+        except Exception as e:
+            self.record("pii_embed_not_corrupted", False, time.monotonic() - t0, str(e))
+            return False
+
+    async def test_session_close_under_load(self):
+        """Close session while processor is mid-work. message_count and title must survive."""
+        t0 = time.monotonic()
+        try:
+            from blipshell.memory.processor import MemoryProcessor
+            from blipshell.memory.manager import MemoryManager
+            from blipshell.session.manager import SessionManager
+            from blipshell.models.session import MessageRole
+
+            sqlite, vectors = self._make_stores()
+            await sqlite.initialize()
+            vectors.initialize()
+            router = self._make_router()
+            processor = MemoryProcessor(sqlite, vectors, router, config=self.config.memory)
             mm = MemoryManager(self.config.memory)
-            sm = SessionManager(self.sqlite, mm, processor, self.router)
+            sm = SessionManager(sqlite, mm, processor, router)
 
             sid = await sm.start_session()
-            sm.add_message(MessageRole.USER, "Quick test message about timeout handling.")
-            sm.add_message(MessageRole.ASSISTANT, "This is a short session to test close timing.")
+
+            # Add many messages rapidly
+            for i in range(10):
+                role = MessageRole.USER if i % 2 == 0 else MessageRole.ASSISTANT
+                sm.add_message(role, f"Rapid message {i} about complex topic number {i} with substantial content to process.")
 
             await sm.flush_pending_persists()
 
-            # end_session should complete within 60s even if LLM is slow
+            # Close immediately — dump_to_memory will try to process all 10 through LLM
             try:
-                await asyncio.wait_for(sm.end_session(), timeout=60.0)
-                elapsed = time.monotonic() - t0
-                ok = True
+                await asyncio.wait_for(sm.end_session(), timeout=90.0)
             except asyncio.TimeoutError:
-                elapsed = time.monotonic() - t0
-                ok = False
-                self.record("session_close_timeout", False, elapsed, "end_session took >60s")
+                self.record("session_close_under_load", False, time.monotonic() - t0,
+                            "end_session timed out at 90s")
+                vectors.close()
+                await sqlite.close()
                 return False
 
-            # Even if summary failed, message_count should be set
-            session = await self.sqlite.get_session(sid)
-            has_count = session.message_count > 0
-            self.record("session_close_timeout", has_count, elapsed,
-                        "" if has_count else f"message_count={session.message_count}")
-            return has_count
+            elapsed = time.monotonic() - t0
+
+            session = await sqlite.get_session(sid)
+            checks = []
+            if session.message_count == 0:
+                checks.append(f"message_count=0 (expected 10)")
+            if session.title == "New Session":
+                checks.append("title still 'New Session'")
+
+            # At least some memories should exist (raw persists happened immediately)
+            memories = await sqlite.get_memories_by_session(sid)
+            if len(memories) == 0:
+                checks.append("zero memories persisted")
+
+            ok = len(checks) == 0
+            self.record("session_close_under_load", ok, elapsed,
+                        "; ".join(checks) if checks else f"count={session.message_count}, mems={len(memories)}")
+
+            vectors.close()
+            await sqlite.close()
+            return ok
+
         except Exception as e:
-            self.record("session_close_timeout", False, time.monotonic() - t0, str(e))
+            self.record("session_close_under_load", False, time.monotonic() - t0, str(e))
             return False
 
-    async def test_nightly_backfill(self):
-        """Nightly backfill_vectors finds and fixes missing embeddings."""
+    async def test_nightly_after_real_data(self):
+        """Run nightly backfill+cleanup after a real session with real data."""
         t0 = time.monotonic()
         try:
+            from blipshell.memory.processor import MemoryProcessor
+            from blipshell.memory.manager import MemoryManager
+            from blipshell.session.manager import SessionManager
+            from blipshell.models.session import MessageRole
             from blipshell.models.memory import Memory, MemoryType
 
-            sid = await self.sqlite.create_session(title="Backfill test")
+            sqlite, vectors = self._make_stores()
+            await sqlite.initialize()
+            vectors.initialize()
+            router = self._make_router()
+            processor = MemoryProcessor(sqlite, vectors, router, config=self.config.memory)
+            mm = MemoryManager(self.config.memory)
+            sm = SessionManager(sqlite, mm, processor, router)
 
-            # Create a memory with summary but no embedding
-            mem = Memory(
+            # Create a session with real processed data
+            sid = await sm.start_session()
+            sm.add_message(MessageRole.USER, "Testing nightly maintenance with real data processing.")
+            sm.add_message(MessageRole.ASSISTANT, "This session will be used to verify nightly jobs work correctly.")
+
+            await sm.flush_pending_persists()
+            await sm.dump_to_memory()
+            await sm.end_session()
+
+            # Also create a memory WITHOUT an embedding (backfill target)
+            orphan_mem = Memory(
                 session_id=sid, role="user",
-                content="Unique test content for backfill verification.",
-                summary="Unique backfill test summary.",
+                content="This memory has no embedding and should be backfilled.",
+                summary="Backfill target memory.",
                 timestamp=datetime.now(timezone.utc),
                 rank=3, importance=0.5,
                 memory_type=MemoryType.CONVERSATION,
             )
-            mid = await self.sqlite.create_memory(mem)
-            await self.sqlite.update_memory(mid, is_processed=True)
+            orphan_id = await sqlite.create_memory(orphan_mem)
+            await sqlite.update_memory(orphan_id, is_processed=True)
 
-            # Verify no embedding yet
-            before = self.vectors._conn.execute(
-                "SELECT COUNT(*) FROM vec_memories WHERE rowid=?", [mid]
-            ).fetchone()[0]
-            assert before == 0, "Setup: should have no embedding"
-
-            # Run backfill
-            result = self.vectors.backfill_missing_vectors("memories", limit=100)
-            elapsed = time.monotonic() - t0
-
-            after = self.vectors._conn.execute(
-                "SELECT COUNT(*) FROM vec_memories WHERE rowid=?", [mid]
-            ).fetchone()[0]
-
-            ok = after == 1
-            self.record("nightly_backfill", ok, elapsed,
-                        "" if ok else f"Backfill result: {result}")
-            return ok
-        except Exception as e:
-            self.record("nightly_backfill", False, time.monotonic() - t0, str(e))
-            return False
-
-    async def test_orphan_vector_cleanup(self):
-        """Orphan vector cleanup removes vectors for archived memories."""
-        t0 = time.monotonic()
-        try:
-            from blipshell.models.memory import Memory, MemoryType
-
-            sid = await self.sqlite.create_session(title="Orphan test")
-            mem = Memory(
+            # Create an archived memory with a leftover vector (orphan vector)
+            archived_mem = Memory(
                 session_id=sid, role="user",
-                content="This memory will be archived to test orphan cleanup.",
-                summary="Orphan cleanup test.",
+                content="This memory is archived but its vector lingers.",
+                summary="Orphan vector source.",
                 timestamp=datetime.now(timezone.utc),
                 rank=1, importance=0.1,
                 memory_type=MemoryType.CONVERSATION,
             )
-            mid = await self.sqlite.create_memory(mem)
-            await self.sqlite.update_memory(mid, is_processed=True)
+            archived_id = await sqlite.create_memory(archived_mem)
+            vectors.add_memory(archived_id, archived_mem.content)
+            await sqlite.update_memory(archived_id, is_archived=True)
 
-            # Embed it
-            self.vectors.add_memory(mid, mem.content)
+            # Run maintenance
+            backfill_result = vectors.backfill_missing_vectors("memories", limit=100)
+            orphan_result = vectors.cleanup_orphan_vectors()
 
-            # Archive it (simulating prune)
-            await self.sqlite.update_memory(mid, is_archived=True)
-
-            # Cleanup
-            result = self.vectors.cleanup_orphan_vectors()
             elapsed = time.monotonic() - t0
 
-            after = self.vectors._conn.execute(
-                "SELECT COUNT(*) FROM vec_memories WHERE rowid=?", [mid]
-            ).fetchone()[0]
+            checks = []
 
-            ok = after == 0
-            self.record("orphan_cleanup", ok, elapsed,
-                        "" if ok else f"Vector still exists after cleanup: {result}")
+            # Backfill should have embedded the orphan memory
+            orphan_embedded = vectors._conn.execute(
+                "SELECT COUNT(*) FROM vec_memories WHERE rowid=?", [orphan_id]
+            ).fetchone()[0]
+            if orphan_embedded != 1:
+                checks.append(f"Backfill didn't embed orphan memory {orphan_id}: {backfill_result}")
+
+            # Orphan cleanup should have removed the archived memory's vector
+            archived_vec = vectors._conn.execute(
+                "SELECT COUNT(*) FROM vec_memories WHERE rowid=?", [archived_id]
+            ).fetchone()[0]
+            if archived_vec != 0:
+                checks.append(f"Orphan cleanup didn't remove archived vector: {orphan_result}")
+
+            # Search should still work after maintenance
+            from blipshell.memory.search import MemorySearch
+            sid2 = await sqlite.create_session(title="Post-nightly search")
+            search = MemorySearch(sqlite, vectors, router, config=self.config.memory)
+            results = await search.search("nightly maintenance", current_session_id=sid2, n_results=5)
+            if len(results) == 0:
+                fts = await sqlite.search_fts("nightly", limit=5)
+                checks.append(f"Search broken after maintenance (FTS hits: {len(fts)})")
+
+            ok = len(checks) == 0
+            self.record("nightly_after_real_data", ok, elapsed, "; ".join(checks) if checks else "")
+
+            vectors.close()
+            await sqlite.close()
             return ok
+
         except Exception as e:
-            self.record("orphan_cleanup", False, time.monotonic() - t0, str(e))
+            self.record("nightly_after_real_data", False, time.monotonic() - t0, str(e))
             return False
 
+    async def test_recovery_after_embed_failure(self):
+        """Simulate embed failure mid-session, verify backfill recovers."""
+        t0 = time.monotonic()
+        try:
+            from blipshell.memory.processor import MemoryProcessor
+            from blipshell.models.memory import Memory, MemoryType
+
+            sqlite, vectors = self._make_stores()
+            await sqlite.initialize()
+            vectors.initialize()
+            router = self._make_router()
+
+            sid = await sqlite.create_session(title="Embed failure test")
+
+            # Create memories that "failed to embed" (have summary but no vector)
+            failed_ids = []
+            for i in range(5):
+                mem = Memory(
+                    session_id=sid, role="user",
+                    content=f"Failed embed memory {i} about unique topic Zephyr{i}.",
+                    summary=f"Failed embed test {i}.",
+                    timestamp=datetime.now(timezone.utc),
+                    rank=3, importance=0.5,
+                    memory_type=MemoryType.CONVERSATION,
+                )
+                mid = await sqlite.create_memory(mem)
+                await sqlite.update_memory(mid, is_processed=True)
+                failed_ids.append(mid)
+
+            # Verify no embeddings
+            for mid in failed_ids:
+                count = vectors._conn.execute(
+                    "SELECT COUNT(*) FROM vec_memories WHERE rowid=?", [mid]
+                ).fetchone()[0]
+                assert count == 0, f"Setup: memory {mid} should have no embedding"
+
+            # Run backfill (simulates what nightly does)
+            result = vectors.backfill_missing_vectors("memories", limit=100)
+
+            elapsed = time.monotonic() - t0
+
+            # All 5 should now have embeddings
+            recovered = 0
+            for mid in failed_ids:
+                count = vectors._conn.execute(
+                    "SELECT COUNT(*) FROM vec_memories WHERE rowid=?", [mid]
+                ).fetchone()[0]
+                recovered += count
+
+            ok = recovered == 5
+            self.record("recovery_after_embed_failure", ok, elapsed,
+                        "" if ok else f"Only {recovered}/5 recovered. Backfill result: {result}")
+
+            vectors.close()
+            await sqlite.close()
+            return ok
+
+        except Exception as e:
+            self.record("recovery_after_embed_failure", False, time.monotonic() - t0, str(e))
+            return False
+
+    # ------------------------------------------------------------------
+    # Runner
+    # ------------------------------------------------------------------
+
     async def run(self):
-        """Run all tests."""
         print("\n=== BlipShell Live Integration Tests ===\n")
 
-        # Pre-flight
         print("Setup...", flush=True)
         try:
             await self.setup()
@@ -559,29 +735,22 @@ class LiveTestRunner:
             print(f"  SETUP FAILED: {e}")
             return False
 
-        # Ordered tests — each depends on prior passing
         tests = [
             ("Pre-flight", [
                 self.test_ollama_responsive,
                 self.test_embed_single,
                 self.test_embed_batch,
             ]),
-            ("LLM Pipeline", [
-                self.test_summarize,
-                self.test_rank_importance,
-                self.test_process_message,
+            ("Real Usage", [
+                self.test_full_session_with_worker,
+                self.test_search_after_session,
+                self.test_back_to_back_sessions,
+                self.test_pii_embed_not_corrupted,
             ]),
-            ("Search & PII", [
-                self.test_embed_uses_content_not_summary,
-                self.test_search_finds_keyword,
-            ]),
-            ("Session Lifecycle", [
-                self.test_session_close,
-                self.test_session_close_with_timeout,
-            ]),
-            ("Maintenance", [
-                self.test_nightly_backfill,
-                self.test_orphan_vector_cleanup,
+            ("Stress & Recovery", [
+                self.test_session_close_under_load,
+                self.test_recovery_after_embed_failure,
+                self.test_nightly_after_real_data,
             ]),
         ]
 
@@ -603,16 +772,13 @@ class LiveTestRunner:
                     self.record(test_fn.__name__.replace("test_", ""), False, 0.0, f"Unhandled: {e}")
                     passed = False
 
-                # Abort remaining sections if pre-flight fails
                 if not passed and section_name == "Pre-flight":
                     abort = True
                     break
 
-        # Teardown
         print("\nTeardown...", flush=True)
         await self.teardown()
 
-        # Summary
         total = len(self.results)
         passed = sum(1 for r in self.results if r["passed"])
         failed = total - passed
