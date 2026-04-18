@@ -59,6 +59,7 @@ class MemoryWorker:
         self._queue: queue.Queue[WorkItem] = queue.Queue()
         self._thread: Optional[threading.Thread] = None
         self._started = threading.Event()
+        self._shutting_down = threading.Event()  # signal to skip idle work
 
     def start(self):
         """Start the worker thread. Call from the main thread."""
@@ -128,9 +129,12 @@ class MemoryWorker:
                     None, self._queue_get,
                 )
                 if item is None:
-                    # Queue empty — chip away at unextracted entities during idle.
-                    # Batched transactions prevent DB lock contention with main thread.
-                    if time.monotonic() - last_idle_extract > idle_extract_interval:
+                    # Queue empty — chip away at unextracted entities during idle,
+                    # but ONLY if we're not shutting down. Entity extraction is
+                    # slow and uses the shared VectorStore which gets closed
+                    # shortly after shutdown.
+                    if (not self._shutting_down.is_set()
+                            and time.monotonic() - last_idle_extract > idle_extract_interval):
                         await self._idle_extract_entities(sqlite, router, idle_extract_batch)
                         last_idle_extract = time.monotonic()
                     continue
@@ -182,10 +186,11 @@ class MemoryWorker:
                 )
 
             elif item.work_type == WorkType.EXTRACT_ENTITIES:
-                await self._run_entity_extraction(
-                    sqlite, router,
-                    batch_size=self._config.memory.entity_extraction_batch_size,
-                )
+                if not self._shutting_down.is_set():
+                    await self._run_entity_extraction(
+                        sqlite, router,
+                        batch_size=self._config.memory.entity_extraction_batch_size,
+                    )
 
             elapsed = time.monotonic() - t0
             logger.info(
@@ -244,7 +249,13 @@ class MemoryWorker:
         self._queue.put_nowait(item)
 
     def shutdown(self, timeout: float = 30.0):
-        """Signal shutdown and wait for the worker thread to finish."""
+        """Signal shutdown and wait for the worker thread to finish.
+
+        Sets _shutting_down first so idle entity extraction stops immediately
+        (it checks this flag every loop iteration). Then sends the SHUTDOWN
+        work item so the loop breaks after its current task finishes.
+        """
+        self._shutting_down.set()
         self._queue.put(WorkItem(work_type=WorkType.SHUTDOWN, text=""))
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=timeout)

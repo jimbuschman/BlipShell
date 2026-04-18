@@ -680,7 +680,15 @@ class Agent(
 
         if self.job_queue:
             await self.job_queue.stop()
-        # Close vector store after all writes are done (worker is stopped).
+
+        # Second shutdown attempt if worker is still alive (entity extraction
+        # may have been running during first shutdown). Give it one more try
+        # before closing the VectorStore it depends on.
+        if self._memory_worker and self._memory_worker.is_alive:
+            logger.info("Worker still alive after session close, waiting 10s more...")
+            self._memory_worker.shutdown(timeout=10.0)
+
+        # Close vector store after worker is confirmed dead.
         if self.vectors:
             if self._memory_worker and self._memory_worker.is_alive:
                 logger.warning("Memory worker still alive, deferring vector store close to process exit")
