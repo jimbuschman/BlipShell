@@ -124,11 +124,16 @@ class MemoryProcessor:
             )
             memory_id = await self.sqlite.create_memory(memory)
 
-        # Step 4: ChromaDB embed (use summary for better semantic matching)
+        # Step 4: Embed for vector search.
+        # Use raw content (not summary) because summaries from cloud-routed
+        # models may be PII-sanitized ([PERSON], [PII]), making names and
+        # dates unsearchable. Raw content preserves the original text.
+        # Fall back to summary if content is unavailable.
         t0 = _time.monotonic()
+        embed_text = text or summary
         embed_meta = {"session_id": str(session_id), "role": role}
         try:
-            self.vectors.add_memory(memory_id, summary, embed_meta)
+            self.vectors.add_memory(memory_id, embed_text, embed_meta)
         except Exception as e:
             logger.error("Vector embed failed (will be backfilled): %s", e)
         t_embed = _time.monotonic() - t0

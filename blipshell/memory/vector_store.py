@@ -46,9 +46,10 @@ _VEC_TABLES = {
 _SOURCE_TABLES = {
     MEMORIES_COLLECTION: {
         "table": "memories",
-        "text_col": "summary",
+        "text_col": "content",
+        "text_col_fallback": "summary",
         "meta_cols": ["session_id", "role"],
-        "active_filter": "is_archived = 0 AND summary IS NOT NULL",
+        "active_filter": "is_archived = 0 AND (content IS NOT NULL OR summary IS NOT NULL)",
     },
     CORE_MEMORIES_COLLECTION: {
         "table": "core_memories",
@@ -692,11 +693,18 @@ class VectorStore:
         if not source or not vec_table:
             return {"processed": 0, "succeeded": 0, "failed": 0, "error": "unknown collection"}
 
-        # Find IDs in source table but not in vec table
-        where = f"WHERE {source['active_filter']}" if source["active_filter"] else ""
+        # Find IDs in source table but not in vec table.
+        # Use COALESCE for tables with a fallback text column (memories
+        # uses content with fallback to summary so raw unsanitized text
+        # is preferred for embedding).
+        fallback = source.get("text_col_fallback")
+        if fallback:
+            text_expr = f"COALESCE(s.{source['text_col']}, s.{fallback})"
+        else:
+            text_expr = f"s.{source['text_col']}"
         with self._lock:
             rows = self._conn.execute(
-                f"SELECT s.id, s.{source['text_col']} FROM {source['table']} s "
+                f"SELECT s.id, {text_expr} FROM {source['table']} s "
                 f"LEFT JOIN {vec_table} v ON v.rowid = s.id "
                 f"WHERE v.rowid IS NULL "
                 + (f"AND s.{source['active_filter']} " if source["active_filter"] else "")
@@ -735,6 +743,59 @@ class VectorStore:
                 stats["succeeded"] += len(batch)
             except Exception as e:
                 logger.error("Backfill batch failed for %s: %s", collection, e)
+                stats["failed"] += len(batch)
+
+        return stats
+
+    def re_embed_pii_damaged(self) -> dict:
+        """Re-embed memories whose summaries contain PII placeholders.
+
+        These memories were summarized through a PII-sanitizing cloud endpoint,
+        producing summaries with [PERSON]/[PII] instead of real names/dates.
+        The original content is intact — re-embed from content to fix search.
+        """
+        self._require_open()
+        if self._ollama_client is None:
+            return {"processed": 0, "succeeded": 0, "failed": 0, "error": "no ollama"}
+
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT id, content FROM memories
+                 WHERE is_archived = 0
+                   AND content IS NOT NULL
+                   AND (summary LIKE '%[PERSON]%' OR summary LIKE '%[PII]%')
+                """
+            ).fetchall()
+
+        if not rows:
+            return {"processed": 0, "succeeded": 0, "failed": 0}
+
+        stats = {"processed": len(rows), "succeeded": 0, "failed": 0}
+        batch_size = 32
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i:i + batch_size]
+            ids = [r[0] for r in batch]
+            texts = [self._truncate(r[1]) for r in batch]
+            try:
+                from blipshell.llm.ollama_gate import get_gate
+                gate = get_gate()
+                with gate.gate(gate.infer_priority()):
+                    vectors = self._embed_batch(texts)
+
+                with self._lock:
+                    for item_id, vec in zip(ids, vectors):
+                        self._conn.execute(
+                            "DELETE FROM vec_memories WHERE rowid = ?", [item_id]
+                        )
+                        self._conn.execute(
+                            "INSERT INTO vec_memories(rowid, embedding) VALUES (?, ?)",
+                            [item_id, _serialize_f32(vec)],
+                        )
+                    self._conn.commit()
+                stats["succeeded"] += len(batch)
+            except Exception as e:
+                logger.error("PII re-embed batch failed: %s", e)
                 stats["failed"] += len(batch)
 
         return stats

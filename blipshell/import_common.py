@@ -386,11 +386,12 @@ async def _import_global_batch(
                 except Exception as e:
                     logger.error("Score update failed: %s", e)
 
-            # Batch embed
+            # Batch embed — use raw content, not summary, because summaries
+            # from PII-sanitizing endpoints replace names/dates with [PERSON]/[PII].
             if surviving:
                 print(f"{prefix} Embedding...", flush=True)
                 try:
-                    texts = [summary for _, _, summary in surviving]
+                    texts = [msg.content or summary for msg, _, summary in surviving]
                     metadatas = [
                         {"session_id": str(session_id), "role": msg.role}
                         for msg, _, _ in surviving
@@ -591,9 +592,9 @@ async def _import_single_conversation(
             logger.error("Tagging failed: %s", e)
     print(f"  [{title_short}] Saved {len(memory_ids)} memories to DB")
 
-    # ── Step 5: Embed all (single batch call) ──────────────────────────
+    # ── Step 5: Embed all — use raw content, not PII-sanitized summary.
     try:
-        texts = [summary for _msg, _tags, summary in surviving]
+        texts = [msg.content or summary for msg, _tags, summary in surviving]
         metadatas = [
             {"session_id": str(session_id), "role": msg.role}
             for msg, _tags, _summary in surviving

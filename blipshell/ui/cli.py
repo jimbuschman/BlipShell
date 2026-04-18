@@ -3216,24 +3216,28 @@ def review_cmd(ctx, lessons, reflections, limit, quiet):
               help="Delete vectors whose memories are archived or missing.")
 @click.option("--fix-sessions", is_flag=True,
               help="Fix sessions with message_count=0 and title='New Session' that have memories.")
+@click.option("--fix-pii-embeds", is_flag=True,
+              help="Re-embed memories whose summaries were PII-sanitized ([PERSON]/[PII]).")
 @click.option("--dry-run", is_flag=True, help="Show counts without making changes.")
 @click.option("--all", "do_all", is_flag=True,
               help="Run all repairs.")
 @click.pass_context
-def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, dry_run, do_all):
+def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds, dry_run, do_all):
     """Repair common DB issues.
 
     --restore-imports unarchives memories from imported sessions.
     --sweep-orphans removes orphan vector rows.
     --fix-sessions fixes sessions where end_session() failed (count=0, no title).
+    --fix-pii-embeds re-embeds memories with PII-sanitized summaries.
     """
-    if not (restore_imports or sweep_orphans or fix_sessions or do_all):
-        console.print("[yellow]Nothing to do. Pass --restore-imports, --sweep-orphans, --fix-sessions, or --all.[/yellow]")
+    if not (restore_imports or sweep_orphans or fix_sessions or fix_pii_embeds or do_all):
+        console.print("[yellow]Nothing to do. Pass --restore-imports, --sweep-orphans, --fix-sessions, --fix-pii-embeds, or --all.[/yellow]")
         return
     if do_all:
         restore_imports = True
         sweep_orphans = True
         fix_sessions = True
+        fix_pii_embeds = True
 
     from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
@@ -3353,6 +3357,25 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, dry_run, do_al
                         f"[green]Orphan vectors swept:[/green] "
                         f"archived={result['archived']} missing={result['missing']}"
                     )
+
+            if fix_pii_embeds:
+                # Count affected
+                cursor = await sqlite._db.execute(
+                    "SELECT COUNT(*) FROM memories WHERE is_archived=0 AND content IS NOT NULL AND (summary LIKE '%[PERSON]%' OR summary LIKE '%[PII]%')"
+                )
+                row = await cursor.fetchone()
+                count = row[0] if row else 0
+                console.print(f"[cyan]Memories with PII-sanitized summaries:[/cyan] [bold]{count}[/bold]")
+
+                if count and not dry_run:
+                    console.print("[cyan]Re-embedding from raw content (this may take a minute)...[/cyan]")
+                    result = vectors.re_embed_pii_damaged()
+                    console.print(
+                        f"[green]Re-embedded:[/green] "
+                        f"{result['succeeded']} succeeded, {result['failed']} failed"
+                    )
+                elif dry_run:
+                    console.print("[dim](dry-run; no changes)[/dim]")
         finally:
             await sqlite.close()
 
