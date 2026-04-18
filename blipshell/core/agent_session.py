@@ -275,8 +275,15 @@ class SessionMixin:
             if s.id == current_id:
                 continue
 
-            # Tier 1: Load top memories from last substantive session
-            if not loaded_substantive and s.message_count >= 5:
+            # Tier 1: Load top memories from last substantive session.
+            # Check both message_count (set at session close) AND actual memory
+            # count (set during chat) — if end_session() failed, message_count
+            # stays 0 but memories still exist.
+            actual_memory_count = s.message_count
+            if actual_memory_count < 5:
+                mems = await self.sqlite.get_memories_by_session(s.id)
+                actual_memory_count = len([m for m in mems if m.summary and not m.is_archived])
+            if not loaded_substantive and actual_memory_count >= 5:
                 memories = await self.sqlite.get_memories_by_session(s.id)
                 good_memories = [
                     m for m in memories

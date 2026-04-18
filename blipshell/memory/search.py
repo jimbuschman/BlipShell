@@ -233,11 +233,13 @@ class MemorySearch:
             rrf_scores[fts_id] = rrf_scores.get(fts_id, 0.0) + 1.0 / (rrf_k + rank_pos)
 
         # Merge FTS-only hits — keyword match gets baseline similarity so they
-        # can compete on other scoring signals (importance, recency, tags)
+        # can compete on other scoring signals (importance, recency, tags).
+        # FTS hits are flagged so they bypass the similarity threshold filter —
+        # a keyword match is a strong signal regardless of embedding distance.
         chroma_ids = {cr["id"] for cr in chroma_results}
         for fr in fts_results:
             if fr["id"] not in chroma_ids:
-                chroma_results.append({"id": fr["id"], "similarity": self.fts_baseline_similarity, "metadata": {}})
+                chroma_results.append({"id": fr["id"], "similarity": self.fts_baseline_similarity, "metadata": {}, "fts_match": True})
 
         if not chroma_results:
             self.last_search_stats = {"chroma_hits": 0, "fts_hits": len(fts_results), "entity_hits": 0, "project_hits": 0, "post_filter": 0, "floor_dropped": 0, "dedup_dropped": 0, "final_returned": 0}
@@ -263,8 +265,9 @@ class MemorySearch:
             memory_id = cr["id"]
             similarity = cr["similarity"]
 
-            # Skip if similarity too low
-            if similarity < self.similarity_threshold:
+            # Skip if similarity too low — but never drop FTS keyword matches,
+            # which are strong recall signals regardless of embedding distance.
+            if similarity < self.similarity_threshold and not cr.get("fts_match"):
                 filtered_by_similarity += 1
                 continue
 

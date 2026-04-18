@@ -222,6 +222,10 @@ class SessionManager:
         No artificial timeouts — each step runs to completion. OllamaGate
         serializes local calls, so waits can be long but work gets done.
         User can Ctrl+C if they need to bail early.
+
+        Critical: message_count and a fallback title are saved FIRST so
+        that even if LLM calls (summary, lessons) fail, the session is
+        still identifiable and recent-session loading works correctly.
         """
         if not self.session_id:
             return
@@ -233,6 +237,19 @@ class SessionManager:
 
         undumped_count = len(self._messages) - len(self._dumped_indices)
 
+        # Save message_count and fallback title FIRST — before any LLM calls.
+        # This ensures the session is identifiable even if everything else fails.
+        try:
+            fallback_title = self._make_fallback_title()
+            await self.sqlite.update_session(
+                self.session_id,
+                message_count=len(self._messages),
+                title=fallback_title,
+                last_active=datetime.now(timezone.utc).isoformat(),
+            )
+        except Exception as e:
+            logger.error("Failed to save session bookkeeping: %s", e)
+
         # Dump any remaining messages
         _status(f"Saving {undumped_count} messages...")
         try:
@@ -240,7 +257,7 @@ class SessionManager:
         except Exception as e:
             logger.error("dump_to_memory failed: %s", e)
 
-        # Generate session summary
+        # Generate session summary (overwrites fallback title with LLM-generated one)
         _status("Generating session summary...")
         try:
             await self._create_session_summary()
@@ -263,6 +280,20 @@ class SessionManager:
                 logger.error("Project digest update failed: %s", e)
 
         logger.info("Session %d ended", self.session_id)
+
+    def _make_fallback_title(self) -> str:
+        """Create a fallback title from the first user message.
+
+        Used as a placeholder before the LLM generates a proper title.
+        Better than 'New Session' for identification and search.
+        """
+        for msg in self._messages:
+            if msg.role == MessageRole.USER and msg.content.strip():
+                text = msg.content.strip().replace("\n", " ")
+                if len(text) > 80:
+                    text = text[:77] + "..."
+                return text
+        return f"Session {self.session_id}"
 
     async def _update_project_digest(self):
         """Update the project digest with this session's summary."""

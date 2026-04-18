@@ -3214,26 +3214,26 @@ def review_cmd(ctx, lessons, reflections, limit, quiet):
               help="Unarchive memories from imported sessions ([project]-prefixed titles).")
 @click.option("--sweep-orphans", is_flag=True,
               help="Delete vectors whose memories are archived or missing.")
+@click.option("--fix-sessions", is_flag=True,
+              help="Fix sessions with message_count=0 and title='New Session' that have memories.")
 @click.option("--dry-run", is_flag=True, help="Show counts without making changes.")
 @click.option("--all", "do_all", is_flag=True,
-              help="Run all repairs (restore-imports + sweep-orphans).")
+              help="Run all repairs.")
 @click.pass_context
-def repair_cmd(ctx, restore_imports, sweep_orphans, dry_run, do_all):
-    """Repair DB damage caused by prune racing with imports.
+def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, dry_run, do_all):
+    """Repair common DB issues.
 
-    --restore-imports unarchives memories from sessions whose titles look
-    like imports (e.g. "[BlipShell] ..."), which were typically pruned
-    because they were old and scored low even though the user wants them.
-
-    --sweep-orphans removes vector rows whose memories are archived or
-    no longer exist (residue from failed deletes during lock contention).
+    --restore-imports unarchives memories from imported sessions.
+    --sweep-orphans removes orphan vector rows.
+    --fix-sessions fixes sessions where end_session() failed (count=0, no title).
     """
-    if not (restore_imports or sweep_orphans or do_all):
-        console.print("[yellow]Nothing to do. Pass --restore-imports, --sweep-orphans, or --all.[/yellow]")
+    if not (restore_imports or sweep_orphans or fix_sessions or do_all):
+        console.print("[yellow]Nothing to do. Pass --restore-imports, --sweep-orphans, --fix-sessions, or --all.[/yellow]")
         return
     if do_all:
         restore_imports = True
         sweep_orphans = True
+        fix_sessions = True
 
     from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
@@ -3284,6 +3284,44 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, dry_run, do_all):
                     await sqlite._db.commit()
                     console.print(f"[green]Restored {count} memories.[/green]")
                 elif dry_run:
+                    console.print("[dim](dry-run; no changes)[/dim]")
+
+            if fix_sessions:
+                cursor = await sqlite._db.execute(
+                    """
+                    SELECT s.id,
+                           (SELECT COUNT(*) FROM memories m WHERE m.session_id = s.id) as mem_count,
+                           (SELECT substr(m.content, 1, 80)
+                              FROM memories m
+                             WHERE m.session_id = s.id AND m.role = 'user'
+                             ORDER BY m.id LIMIT 1) as first_user
+                      FROM sessions s
+                     WHERE s.message_count = 0
+                       AND EXISTS (SELECT 1 FROM memories m WHERE m.session_id = s.id)
+                    """
+                )
+                broken = await cursor.fetchall()
+                console.print(f"[cyan]Broken sessions (count=0 but have memories):[/cyan] [bold]{len(broken)}[/bold]")
+
+                if broken and not dry_run:
+                    fixed = 0
+                    for sid, mem_count, first_user in broken:
+                        title = first_user.replace("\n", " ").strip()[:80] if first_user else f"Session {sid}"
+                        if len(title) > 77:
+                            title = title[:77] + "..."
+                        await sqlite._db.execute(
+                            "UPDATE sessions SET message_count = ?, title = CASE WHEN title = 'New Session' THEN ? ELSE title END WHERE id = ?",
+                            (mem_count, title, sid),
+                        )
+                        fixed += 1
+                    await sqlite._db.commit()
+                    console.print(f"[green]Fixed {fixed} sessions (set message_count + fallback title).[/green]")
+                elif dry_run and broken:
+                    for sid, mem_count, first_user in broken[:5]:
+                        title = (first_user or "").replace("\n", " ").strip()[:60]
+                        console.print(f"  #{sid} mems={mem_count} [dim]{title}[/dim]")
+                    if len(broken) > 5:
+                        console.print(f"  [dim]...and {len(broken) - 5} more[/dim]")
                     console.print("[dim](dry-run; no changes)[/dim]")
 
             if sweep_orphans:
