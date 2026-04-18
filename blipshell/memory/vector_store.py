@@ -26,7 +26,9 @@ logger = logging.getLogger(__name__)
 MAX_EMBED_CHARS = 6000
 
 # Timeout for Ollama embedding requests (seconds).
-EMBED_TIMEOUT = 300.0
+# nomic-embed-text completes in <5s normally. 30s is generous enough
+# for batch calls while preventing hung workers on session close.
+EMBED_TIMEOUT = 30.0
 
 # Collection names (match ChromaDB collection names for migration compatibility)
 MEMORIES_COLLECTION = "memories"
