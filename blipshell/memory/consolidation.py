@@ -175,11 +175,8 @@ class MemoryConsolidator:
         )
         await self.sqlite._db.commit()
 
-        # Delete loser from SQLite (FTS5 trigger handles FTS cleanup)
+        # Delete loser from SQLite (FTS5 trigger handles FTS cleanup).
+        # The orphan vector will be cleaned up by cleanup_orphan_vectors()
+        # in the prune job — no per-ID vector delete here to avoid lock
+        # contention between async SQLite and sync vector connections.
         await self.sqlite.delete_memory(loser_id)
-
-        # Delete loser from vector store
-        try:
-            self.vectors.delete_memory(loser_id)
-        except Exception as e:
-            logger.warning("Failed to delete memory %d vector: %s", loser_id, e)

@@ -7,6 +7,7 @@ or headless via `blipshell nightly`.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -46,6 +47,18 @@ JOB_ORDER = [
     "health_check",
 ]
 
+# Jobs that require Ollama (LLM calls or embedding). Skipped if Ollama is down.
+_OLLAMA_JOBS = {
+    "backfill_vectors", "backfill_summaries", "resummarize",
+    "backfill_lessons", "score_lessons", "clean_junk_lessons",
+    "session_reflections", "friction_analysis",
+    "entity_extraction", "batch_tag",
+    "rebuild_digests",
+}
+
+# Max time per job (seconds). Prevents a single hung job from burning hours.
+_JOB_TIMEOUT = 300  # 5 minutes per job
+
 
 class NightlyRunner:
     """Orchestrates nightly maintenance jobs."""
@@ -56,6 +69,24 @@ class NightlyRunner:
         self.vectors = vectors
         self.router = router
         self.processor = processor
+
+    async def _check_ollama_health(self, timeout: float = 10.0) -> bool:
+        """Quick check: is Ollama responding? Returns False if down."""
+        try:
+            import ollama
+            from blipshell.models.config import get_ollama_url
+            url = get_ollama_url(self.config.endpoints)
+            client = ollama.Client(host=url)
+            # list() is a cheap API call — if it hangs, Ollama is wedged
+            loop = asyncio.get_event_loop()
+            await asyncio.wait_for(
+                loop.run_in_executor(None, client.list),
+                timeout=timeout,
+            )
+            return True
+        except Exception as e:
+            logger.warning("Ollama health check failed: %s", e)
+            return False
 
     @classmethod
     async def create_from_config(
@@ -147,21 +178,45 @@ class NightlyRunner:
 
         _status(f"Starting nightly run ({len(run_jobs)} jobs)...")
 
+        # Pre-flight: check if Ollama is responsive before running LLM jobs.
+        # If it's down, skip LLM-dependent jobs instead of timing out on each.
+        ollama_ok = await self._check_ollama_health()
+        if not ollama_ok:
+            _status("Ollama not responding — LLM-dependent jobs will be skipped")
+
         for job_name in run_jobs:
             if job_name not in JOB_ORDER:
                 _status(f"Unknown job: {job_name}, skipping.")
                 results[job_name] = {"status": "skipped", "error": "unknown job"}
                 continue
 
+            # Skip LLM jobs if Ollama is down
+            if not ollama_ok and job_name in _OLLAMA_JOBS:
+                _status(f"  {job_name} skipped (Ollama down)")
+                results[job_name] = {"status": "skipped", "error": "Ollama not responding"}
+                continue
+
             _status(f"Running job: {job_name}...")
             t0 = time.monotonic()
             try:
-                job_result = await self.run_job(job_name, on_status=on_status)
+                job_result = await asyncio.wait_for(
+                    self.run_job(job_name, on_status=on_status),
+                    timeout=_JOB_TIMEOUT,
+                )
                 elapsed = time.monotonic() - t0
                 job_result["status"] = "ok"
                 job_result["elapsed_s"] = round(elapsed, 1)
                 results[job_name] = job_result
                 _status(f"  {job_name} completed in {elapsed:.1f}s")
+            except asyncio.TimeoutError:
+                elapsed = time.monotonic() - t0
+                logger.error("Nightly job %s timed out after %ds", job_name, _JOB_TIMEOUT)
+                results[job_name] = {
+                    "status": "timeout",
+                    "error": f"Timed out after {_JOB_TIMEOUT}s",
+                    "elapsed_s": round(elapsed, 1),
+                }
+                _status(f"  {job_name} TIMED OUT after {_JOB_TIMEOUT}s")
             except Exception as e:
                 elapsed = time.monotonic() - t0
                 logger.error("Nightly job %s failed: %s", job_name, e, exc_info=True)
