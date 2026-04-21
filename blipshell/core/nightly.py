@@ -777,6 +777,7 @@ class NightlyRunner:
         deleted = 0
         type_fixed = 0
         renamed = 0
+        deleted_entity_ids: list[int] = []
         for row in all_rows:
             eid, name, etype = row["id"], row["name"], row["entity_type"]
             name_lower = name.strip().lower()
@@ -794,12 +795,7 @@ class NightlyRunner:
                 await db.execute("DELETE FROM entity_relationships WHERE subject_id = ? OR object_id = ?", (eid, eid))
                 await db.execute("DELETE FROM entity_aliases WHERE canonical_entity_id = ?", (eid,))
                 await db.execute("DELETE FROM entities WHERE id = ?", (eid,))
-                # Also remove from vector store
-                if self.vectors:
-                    try:
-                        self.vectors.delete_entity(eid)
-                    except Exception as e:
-                        logger.debug("Failed to delete entity %d vector: %s", eid, e)
+                deleted_entity_ids.append(eid)
                 deleted += 1
                 continue
 
@@ -817,6 +813,19 @@ class NightlyRunner:
 
         if deleted or type_fixed or renamed:
             await db.commit()
+
+        # Batch-delete entity vectors AFTER async commit releases the lock.
+        # Per-ID deletes during the loop caused lock contention between
+        # aiosqlite and sync sqlite3 connections on the same DB file.
+        if deleted_entity_ids and self.vectors:
+            vec_deleted = 0
+            for eid in deleted_entity_ids:
+                try:
+                    self.vectors.delete_entity(eid)
+                    vec_deleted += 1
+                except Exception:
+                    pass  # orphan, will be cleaned eventually
+            logger.info("Deleted %d/%d entity vectors", vec_deleted, len(deleted_entity_ids))
 
         # Clean orphaned relationships/mentions
         cursor = await db.execute(
