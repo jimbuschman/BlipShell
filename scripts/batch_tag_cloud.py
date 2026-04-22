@@ -53,35 +53,32 @@ async def run(max_batches: int, dry_run: bool, model: str):
         await sqlite.close()
         return
 
-    # Create router with cloud endpoint
+    # Create router, then patch generate to use Ollama cloud directly.
+    # This avoids the normal routing logic and sends all calls to the
+    # specified cloud model via the Ollama API.
     endpoint_manager = EndpointManager(config.endpoints, config.llm)
     router = LLMRouter(config.models, endpoint_manager, pii_enabled=False)
 
-    # Override: force routing to the cloud model for RANKING task type
-    # by temporarily patching the generate call
+    import ollama as ollama_sdk
+
+    ollama_client = ollama_sdk.AsyncClient(host="http://localhost:11434")
+
     original_generate = router.generate
 
     async def cloud_generate(task_type, prompt="", system=None, **kwargs):
-        """Route through local-cloud endpoint with specified model."""
-        # Find the local-cloud endpoint
-        for ep in endpoint_manager._endpoints:
-            if ep.name == "local-cloud":
-                from blipshell.llm.openai_client import OpenAIClient
-                client = OpenAIClient(
-                    base_url=ep.url + "/v1" if not ep.url.endswith("/v1") else ep.url,
-                    api_key="ollama",
-                )
-                messages = []
-                if system:
-                    messages.append({"role": "system", "content": system})
-                messages.append({"role": "user", "content": prompt})
-                response = await client.generate(
-                    model=model,
-                    messages=messages,
-                )
-                return response
-        # Fallback to normal routing
-        return await original_generate(task_type, prompt, system=system, **kwargs)
+        """Route all calls through Ollama cloud model."""
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        try:
+            response = await ollama_client.chat(
+                model=model,
+                messages=messages,
+            )
+            return response["message"]["content"]
+        except Exception as e:
+            raise RuntimeError(f"Cloud call failed: {e}") from e
 
     router.generate = cloud_generate
 
