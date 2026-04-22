@@ -121,6 +121,36 @@ async def run(max_batches: int, dry_run: bool, model: str, verbose: bool = False
                 pass
         return stats
 
+    # Override the prompt to allow new tag creation
+    import blipshell.llm.prompts as prompts
+    _original_batch_assign = prompts.batch_assign_tags
+
+    def _creative_batch_assign(summaries, available_tags):
+        system = (
+            "You assign topic tags to memories. For each numbered memory, assign 1-5 "
+            "relevant tags.\n\n"
+            "PREFER tags from the available list when they fit. If no existing tag fits, "
+            "CREATE a new descriptive tag using lowercase-with-hyphens format "
+            "(e.g., 'guitar-lessons', 'relationship-anxiety', 'work-stress').\n\n"
+            "Tags should be SPECIFIC and DESCRIPTIVE — not vague like 'general' or 'note'. "
+            "Good: 'fitness-routine', 'kortney', 'python-debugging', 'family-dynamics'\n"
+            "Bad: 'general', 'note', 'misc', 'other'\n\n"
+            "Output format (one line per memory):\n"
+            "1: tag1, tag2, tag3\n"
+            "2: tag1, tag4\n\n"
+            "If a memory is truly untaggable, write: N: NONE\n"
+            "Do NOT add commentary or explanations."
+        )
+        tags_str = ", ".join(sorted(available_tags))
+        summaries_str = "\n".join(f"{i + 1}. {s}" for i, (_, s) in enumerate(summaries))
+        user = (
+            f"Available tags (prefer these when they fit):\n{tags_str}\n\n"
+            f"Memories to tag:\n{summaries_str}"
+        )
+        return system, user
+
+    prompts.batch_assign_tags = _creative_batch_assign
+
     if verbose:
         tagger.tag_batch = debug_tag_batch
 
