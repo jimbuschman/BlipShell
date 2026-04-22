@@ -82,7 +82,7 @@ async def run(max_batches: int, dry_run: bool, model: str):
 
     router.generate = cloud_generate
 
-    tagger = BatchTagger(sqlite, router, config.memory)
+    tagger = BatchTagger(sqlite, router, config.memory, allow_new_tags=True)
 
     actual_batches = min(max_batches, batches_needed)
     print(f"\nRunning {actual_batches} batches via {model}...\n")

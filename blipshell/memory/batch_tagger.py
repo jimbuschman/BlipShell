@@ -29,10 +29,12 @@ class BatchTagger:
         sqlite: SQLiteStore,
         router: LLMRouter,
         config: MemoryConfig,
+        allow_new_tags: bool = False,
     ):
         self.sqlite = sqlite
         self.router = router
         self.config = config
+        self.allow_new_tags = allow_new_tags
 
     async def _get_available_tags(self) -> list[str]:
         """Get all known tag names for the prompt."""
@@ -62,11 +64,15 @@ class BatchTagger:
         text: str,
         summaries: list[tuple[int, str]],
         valid_tags: set[str],
+        allow_new_tags: bool = False,
     ) -> dict[int, list[str]]:
         """Parse LLM response into {memory_id: [tags]}.
 
         Expected format: "1: tag1, tag2, tag3"
-        Lenient parsing: handles extra whitespace, ignores invalid tags.
+        Lenient parsing: handles extra whitespace.
+
+        When allow_new_tags is False (default), only tags in valid_tags are kept.
+        When True, any well-formed tag is accepted (enables vocabulary growth).
         """
         assignments: dict[int, list[str]] = {}
         lines = text.strip().splitlines()
@@ -93,7 +99,11 @@ class BatchTagger:
             tags = []
             for tag in re.split(r"[,;]+", tags_str):
                 tag = tag.strip().lower()
-                if tag in valid_tags:
+                # Sanitize: only keep reasonable tag names
+                tag = re.sub(r"[^a-z0-9\-_]", "", tag)
+                if not tag or len(tag) < 2 or len(tag) > 40:
+                    continue
+                if allow_new_tags or tag in valid_tags:
                     tags.append(tag)
 
             if tags:
@@ -137,7 +147,7 @@ class BatchTagger:
             stats["error"] = str(e)
             return stats
 
-        assignments = self._parse_response(response, summaries, valid_tags)
+        assignments = self._parse_response(response, summaries, valid_tags, allow_new_tags=self.allow_new_tags)
 
         for memory_id, tags in assignments.items():
             try:
