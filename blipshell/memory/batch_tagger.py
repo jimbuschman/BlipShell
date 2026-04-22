@@ -75,15 +75,20 @@ class BatchTagger:
         When True, any well-formed tag is accepted (enables vocabulary growth).
         """
         assignments: dict[int, list[str]] = {}
-        lines = text.strip().splitlines()
+        # Strip thinking tokens if present (qwen3 and some cloud models)
+        cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+        lines = cleaned.splitlines()
 
         for line in lines:
             line = line.strip()
             if not line:
                 continue
+            # Strip markdown bold/formatting
+            line = re.sub(r"\*+", "", line)
+            line = line.strip()
 
-            # Match "N: tag1, tag2" or "N. tag1, tag2"
-            match = re.match(r"^(\d+)[.:]\s*(.+)$", line)
+            # Match "N: tag1, tag2" or "N. tag1, tag2" or "N) tag1, tag2"
+            match = re.match(r"^(\d+)[.:\-)]\s*(.+)$", line)
             if not match:
                 continue
 
