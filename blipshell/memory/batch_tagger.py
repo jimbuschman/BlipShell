@@ -154,13 +154,26 @@ class BatchTagger:
 
         assignments = self._parse_response(response, summaries, valid_tags, allow_new_tags=self.allow_new_tags)
 
+        tagged_ids = set()
         for memory_id, tags in assignments.items():
             try:
                 await self.sqlite.tag_memory(memory_id, tags)
                 stats["memories_tagged"] += 1
                 stats["tags_assigned"] += len(tags)
+                tagged_ids.add(memory_id)
             except Exception as e:
                 logger.error("Failed to tag memory %d: %s", memory_id, e)
+
+        # Mark untagged memories with _skip so they leave the poorly-tagged
+        # pool and don't cycle through every batch forever. These are either
+        # too short/generic to tag or the model returned NONE for them.
+        if self.allow_new_tags:
+            for mid, _ in summaries:
+                if mid not in tagged_ids:
+                    try:
+                        await self.sqlite.tag_memory(mid, ["_skip"])
+                    except Exception:
+                        pass
 
         return stats
 
