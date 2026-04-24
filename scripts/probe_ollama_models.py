@@ -48,6 +48,7 @@ DEFAULT_CANDIDATES = [
     "gpt-oss:120b-cloud",
     "qwen3.5:397b-cloud",
     "qwen3-coder:480b-cloud",
+    "mistral-large-3:675b-cloud",
     "kimi-k2.5:cloud",
     "glm-4.7:cloud",
     "nemotron-3-nano:30b-cloud",
