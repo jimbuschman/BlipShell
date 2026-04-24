@@ -46,12 +46,11 @@ DEFAULT_CANDIDATES = [
     # Cloud — new
     "kimi-k2.6:cloud",
     "deepseek-v4-flash:cloud",
-    "qwen3.6:27b-cloud",
-    "qwen3.6:35b-cloud",
-    "gemma4:26b-cloud",
     "gemma4:31b-cloud",
-    "nemotron-3-super:120b-cloud",
+    "nemotron-3-super:cloud",
     "minimax-m2.7:cloud",
+    "ministral-3:14b-cloud",
+    "ministral-3:8b-cloud",
     # Cloud — previously benched / baselines
     "glm-5.1:cloud",
     "gpt-oss:120b-cloud",
@@ -63,11 +62,11 @@ DEFAULT_CANDIDATES = [
     "devstral-small-2:24b-cloud",
     "gemini-3-flash-preview:cloud",
     "minimax-m2.5:cloud",
-    # Local — RTX 3060 12GB friendly
+    # Local — RTX 3060 12GB friendly (pull first with `ollama pull <name>`)
     "qwen3:14b",
     "gpt-oss:latest",
-    "qwen3.5:14b",
     "ministral-3:14b",
+    "gemma4:e4b",
 ]
 
 # ---------------------------------------------------------------------------
