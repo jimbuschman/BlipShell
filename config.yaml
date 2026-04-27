@@ -239,6 +239,7 @@ model_settings:
     use_repo_map: true
     think: false
     extra_instructions: "Be direct. Skip exploration and go straight to implementation."
+    chat_instructions: "Match the user's tone and emotional register. For casual or emotional conversation, respond in brief plain prose — no tables, headers, bullet lists, emojis, or trailing 'let me know if...' CTAs. Use straight quotes and regular hyphens. Keep responses concise unless the user asks for depth."
   minimax-m2.7:
     max_tool_calls: 20
     use_repo_map: true

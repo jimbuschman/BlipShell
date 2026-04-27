@@ -33,7 +33,8 @@ _DEFAULTS = {
     "max_tool_calls": 15,
     "use_repo_map": True,
     "think": None,  # None = use agent-level toggle
-    "extra_instructions": "",
+    "extra_instructions": "",       # applied in project/coding mode only
+    "chat_instructions": "",        # applied in plain chat mode only
     "num_ctx_buffer": 8192,  # extra tokens added to context for overhead
 }
 
@@ -44,7 +45,8 @@ class ModelSettings:
     max_tool_calls: int = 15
     use_repo_map: bool = True
     think: bool | None = None  # None = defer to agent toggle
-    extra_instructions: str = ""
+    extra_instructions: str = ""    # applied in project/coding mode only
+    chat_instructions: str = ""     # applied in plain chat mode only
     num_ctx_buffer: int = 8192
 
     @classmethod

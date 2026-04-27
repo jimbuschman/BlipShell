@@ -789,6 +789,10 @@ class ChatMixin:
                 system_prompt += f"MODEL-SPECIFIC INSTRUCTIONS:\n{ms.extra_instructions}\n\n"
 
             system_prompt += self._project_context
+        else:
+            # Plain chat mode — apply chat-specific behavioral instructions
+            if ms and ms.chat_instructions:
+                system_prompt += f"\n\nMODEL-SPECIFIC INSTRUCTIONS:\n{ms.chat_instructions}\n\n"
 
         # Consolidate all context into a single system message (CC approach)
         scratchpad = self._read_scratchpad()
