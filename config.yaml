@@ -76,7 +76,6 @@ endpoints:
     enabled: true
     models:
       tool_calling: "mistral-large-3:675b-cloud"  # Ollama cloud free tier
-      coding: "mistral-large-3:675b-cloud"
       session_review: "kimi-k2.5:cloud"  # 100% contradiction+dedup, 0.65s avg, large context
   - name: "local"
     url: "http://localhost:11434"
