@@ -3,7 +3,7 @@
 
 models:
   # --- Interactive ---
-  tool_calling: "mistral-large-3:675b-cloud"  # general chat — re-trying after earlier 500s/slowness
+  tool_calling: "glm-4.7:cloud"  # general chat — same family as 5.1, free tier (mistral-large-3 had high prefill latency)
   coding: "minimax/minimax-m2.7"          # project mode coding via OpenRouter (2.3x faster than m2.5, same quality)
   # --- Background processing (local) ---
   reasoning: "qwen3:14b"                 # entity extraction, tag discovery, lessons, contradiction
@@ -75,7 +75,7 @@ endpoints:
     pii_sanitize: true       # cloud models relay to remote server — data leaves machine
     enabled: true
     models:
-      tool_calling: "mistral-large-3:675b-cloud"  # Ollama cloud free tier
+      tool_calling: "glm-4.7:cloud"  # Ollama cloud free tier
       session_review: "kimi-k2.5:cloud"  # 100% contradiction+dedup, 0.65s avg, large context
   - name: "local"
     url: "http://localhost:11434"
