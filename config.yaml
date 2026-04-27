@@ -3,7 +3,7 @@
 
 models:
   # --- Interactive ---
-  tool_calling: "mistral-large-3:675b-cloud"  # general chat — 100% tool pass, 1.0s avg (benchmark 2026-04-24)
+  tool_calling: "gpt-oss:120b-cloud"  # general chat — 100% tool pass, 1.4s avg (mistral-large-3 too slow / 500s in practice)
   coding: "minimax/minimax-m2.7"          # project mode coding via OpenRouter (2.3x faster than m2.5, same quality)
   # --- Background processing (local) ---
   reasoning: "qwen3:14b"                 # entity extraction, tag discovery, lessons, contradiction
@@ -71,11 +71,11 @@ endpoints:
     roles: ["tool_calling", "session_review"]             # primary for chat; coding goes to OpenRouter
     priority: 2                                           # tried first for tool_calling (higher = first)
     max_concurrent: 5
-    context_tokens: 131072  # 128K — mistral-large-3 context window
+    context_tokens: 131072  # 128K — gpt-oss:120b-cloud context window
     pii_sanitize: true       # cloud models relay to remote server — data leaves machine
     enabled: true
     models:
-      tool_calling: "mistral-large-3:675b-cloud"  # Ollama cloud free tier
+      tool_calling: "gpt-oss:120b-cloud"  # Ollama cloud free tier
       session_review: "kimi-k2.5:cloud"  # 100% contradiction+dedup, 0.65s avg, large context
   - name: "local"
     url: "http://localhost:11434"
@@ -239,9 +239,6 @@ model_settings:
     use_repo_map: true
     think: false
     extra_instructions: "Be direct. Skip exploration and go straight to implementation."
-  mistral-large-3:
-    max_tool_calls: 15
-    use_repo_map: true
   minimax-m2.7:
     max_tool_calls: 20
     use_repo_map: true
