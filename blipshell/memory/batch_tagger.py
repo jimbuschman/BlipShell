@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import TYPE_CHECKING, Callable, Optional
 
 if TYPE_CHECKING:
@@ -181,8 +182,17 @@ class BatchTagger:
         self,
         max_batches: Optional[int] = None,
         on_status: Optional[Callable[[str], None]] = None,
+        time_budget_seconds: Optional[float] = None,
     ) -> dict:
         """Process multiple batches until no poorly-tagged memories remain.
+
+        Args:
+            max_batches: hard cap on batches per run (defaults to config).
+            on_status: progress callback.
+            time_budget_seconds: if set, exit cleanly before this many seconds
+                elapse. Reserves a margin for the next batch + safety so we
+                don't get killed by an outer wait_for. Stats include
+                ``stopped_early`` and ``stop_reason`` when triggered.
 
         Returns combined stats.
         """
@@ -194,16 +204,46 @@ class BatchTagger:
             "memories_tagged": 0,
             "tags_assigned": 0,
             "errors": 0,
+            "stopped_early": False,
+            "stop_reason": None,
         }
 
+        deadline: Optional[float] = None
+        if time_budget_seconds is not None:
+            deadline = time.monotonic() + time_budget_seconds
+
+        # Running estimate of per-batch cost; refined each iteration so the
+        # budget check adapts to whichever endpoint actually serves the job.
+        avg_batch_seconds = 0.0  # unset until first real measurement
+        safety_margin_seconds = 5.0
+
         for batch_num in range(max_batches):
+            # Time-budget gate: leave room for ~one more batch + safety.
+            # Skip on the first iteration — we always run at least one
+            # batch so we have a real measurement and make some progress
+            # even on tight budgets.
+            if deadline is not None and total_stats["batches"] > 0:
+                remaining = deadline - time.monotonic()
+                if remaining < avg_batch_seconds + safety_margin_seconds:
+                    total_stats["stopped_early"] = True
+                    total_stats["stop_reason"] = (
+                        f"time budget reached after {total_stats['batches']} "
+                        f"batches ({remaining:.1f}s remaining < "
+                        f"{avg_batch_seconds:.1f}s avg + {safety_margin_seconds:.1f}s margin)"
+                    )
+                    if on_status:
+                        on_status(total_stats["stop_reason"])
+                    break
+
             if on_status and batch_num % 10 == 0:
                 on_status(
                     f"Batch {batch_num + 1}/{max_batches}: "
                     f"{total_stats['memories_tagged']} tagged so far..."
                 )
 
+            batch_start = time.monotonic()
             batch_stats = await self.tag_batch()
+            batch_elapsed = time.monotonic() - batch_start
             total_stats["batches"] += 1
 
             if batch_stats["memories_in_batch"] == 0:
@@ -216,11 +256,20 @@ class BatchTagger:
             if batch_stats["error"]:
                 total_stats["errors"] += 1
 
+            # Refine running average: first measurement seeds the estimate,
+            # then EWMA so rate-limit slowdowns reflect quickly in the gate.
+            if avg_batch_seconds == 0.0:
+                avg_batch_seconds = batch_elapsed
+            else:
+                avg_batch_seconds = 0.5 * avg_batch_seconds + 0.5 * batch_elapsed
+
         if on_status:
             on_status(
                 f"Batch tagging complete: {total_stats['batches']} batches, "
                 f"{total_stats['memories_tagged']} memories tagged, "
                 f"{total_stats['tags_assigned']} tags assigned, "
                 f"{total_stats['errors']} errors."
+                + (f" (stopped early: {total_stats['stop_reason']})"
+                   if total_stats["stopped_early"] else "")
             )
         return total_stats

@@ -433,9 +433,18 @@ class NightlyRunner:
         return await tagger.run(on_status=on_status)
 
     async def _job_batch_tag(self, on_status) -> dict:
-        """Run LLM batch tag assignment."""
+        """Run LLM batch tag assignment.
+
+        Passes a time budget that's slightly less than the per-job timeout
+        so the tagger exits cleanly with partial progress instead of being
+        killed mid-batch by the outer ``wait_for``. Remaining work resumes
+        the next nightly run.
+        """
         tagger = BatchTagger(self.sqlite, self.router, self.config.memory)
-        return await tagger.tag_all(on_status=on_status)
+        return await tagger.tag_all(
+            on_status=on_status,
+            time_budget_seconds=_JOB_TIMEOUT - 30,
+        )
 
     async def _job_prune(self, on_status) -> dict:
         """Archive old low-value memories, then sweep their vectors.
