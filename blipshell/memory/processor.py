@@ -80,126 +80,148 @@ class MemoryProcessor:
         """
         import time as _time
 
-        # Step 1: Noise check
-        if should_skip_memory(text):
-            logger.debug("Skipping noise: %s", text[:50])
-            if memory_id:
-                await self.sqlite.update_memory(memory_id, is_archived=True, is_processed=True)
-            return None
-
-        # Step 2: Summarize
-        t0 = _time.monotonic()
+        # `step` is updated inline as we move through the pipeline. The outer
+        # try/except wraps the bubbling exception in a RuntimeError tagging
+        # the failing step so worker error logs identify which DB operation
+        # actually failed (e.g. FK violation on create_memory vs tag_memory).
+        step = "noise_check"
         try:
-            sum_system, sum_prompt = summarize_memory(text)
-            summary = await self.router.generate(
-                TaskType.SUMMARIZATION,
-                sum_prompt,
-                system=sum_system,
-            )
-            # LLM signals this is self-referential / meta content
-            if summary.strip().upper() == "SKIP":
-                logger.debug("Memory skipped (meta/self-referential): %s", text[:50])
+            # Step 1: Noise check
+            if should_skip_memory(text):
+                logger.debug("Skipping noise: %s", text[:50])
                 if memory_id:
+                    step = "noise_archive_update"
                     await self.sqlite.update_memory(memory_id, is_archived=True, is_processed=True)
                 return None
-        except Exception as e:
-            logger.error("Summarization failed, using raw text: %s", e)
-            summary = text
-        t_summarize = _time.monotonic() - t0
-        logger.info("process_message: summarize=%.1fs", t_summarize)
 
-        # Step 3: SQLite insert or update
-        if memory_id:
-            # Update existing raw memory row with processed data
-            await self.sqlite.update_memory(memory_id, summary=summary)
-        else:
-            # Create new row (import path, crash recovery reprocess)
-            memory = Memory(
-                session_id=session_id,
-                role=role,
-                content=text,
-                summary=summary,
-                timestamp=timestamp or datetime.now(timezone.utc),
-                memory_type=MemoryType.CONVERSATION,
-            )
-            memory_id = await self.sqlite.create_memory(memory)
-
-        # Step 4: Embed for vector search.
-        # Use raw content (not summary) because summaries from cloud-routed
-        # models may be PII-sanitized ([PERSON], [PII]), making names and
-        # dates unsearchable. Raw content preserves the original text.
-        # Fall back to summary if content is unavailable.
-        t0 = _time.monotonic()
-        embed_text = text or summary
-        embed_meta = {"session_id": str(session_id), "role": role}
-        try:
-            self.vectors.add_memory(memory_id, embed_text, embed_meta)
-        except Exception as e:
-            logger.error("Vector embed failed (will be backfilled): %s", e)
-        t_embed = _time.monotonic() - t0
-
-        # Step 4b: Dedup check — find similar memories, ask LLM what to do
-        t_dedup = 0.0
-        if self._dedup_enabled:
+            # Step 2: Summarize
+            step = "summarize"
             t0 = _time.monotonic()
             try:
-                action = await self._decide_and_apply_action(memory_id, summary)
-                if action == "NONE":
-                    # Redundant — archive and skip further processing
-                    await self.sqlite.update_memory(memory_id, is_archived=True)
-                    try:
-                        self.vectors.delete_memory(memory_id)
-                    except Exception as e:
-                        logger.warning("Failed to delete deduped memory %d vector: %s", memory_id, e)
-                    logger.info("Dedup: archived redundant memory %d", memory_id)
+                sum_system, sum_prompt = summarize_memory(text)
+                summary = await self.router.generate(
+                    TaskType.SUMMARIZATION,
+                    sum_prompt,
+                    system=sum_system,
+                )
+                # LLM signals this is self-referential / meta content
+                if summary.strip().upper() == "SKIP":
+                    logger.debug("Memory skipped (meta/self-referential): %s", text[:50])
+                    if memory_id:
+                        step = "skip_archive_update"
+                        await self.sqlite.update_memory(memory_id, is_archived=True, is_processed=True)
                     return None
             except Exception as e:
-                logger.error("Dedup check failed (continuing): %s", e)
-            t_dedup = _time.monotonic() - t0
+                logger.error("Summarization failed, using raw text: %s", e)
+                summary = text
+            t_summarize = _time.monotonic() - t0
+            logger.info("process_message: summarize=%.1fs", t_summarize)
 
-        # Step 5: Tag
-        try:
-            tags = tag_message(text, max_tags=self._max_tags)
-            await self.sqlite.tag_memory(memory_id, tags)
-        except Exception as e:
-            logger.error("Tagging failed: %s", e)
-            tags = []
+            # Step 3: SQLite insert or update
+            if memory_id:
+                step = "update_memory_summary"
+                await self.sqlite.update_memory(memory_id, summary=summary)
+            else:
+                step = "create_memory"
+                memory = Memory(
+                    session_id=session_id,
+                    role=role,
+                    content=text,
+                    summary=summary,
+                    timestamp=timestamp or datetime.now(timezone.utc),
+                    memory_type=MemoryType.CONVERSATION,
+                )
+                memory_id = await self.sqlite.create_memory(memory)
 
-        # Step 6+7: Combined rank (1-5) + importance (0.0-1.0) + type in one LLM call
-        t0 = _time.monotonic()
-        try:
-            ri_system, ri_prompt = rank_importance_and_classify(text)
-            ri_text = await self.router.generate(
-                TaskType.RANKING_IMPORTANCE,
-                ri_prompt,
-                system=ri_system,
+            # Step 4: Embed for vector search.
+            # Use raw content (not summary) because summaries from cloud-routed
+            # models may be PII-sanitized ([PERSON], [PII]), making names and
+            # dates unsearchable. Raw content preserves the original text.
+            # Fall back to summary if content is unavailable.
+            step = "vector_embed"
+            t0 = _time.monotonic()
+            embed_text = text or summary
+            embed_meta = {"session_id": str(session_id), "role": role}
+            try:
+                self.vectors.add_memory(memory_id, embed_text, embed_meta)
+            except Exception as e:
+                logger.error("Vector embed failed (will be backfilled): %s", e)
+            t_embed = _time.monotonic() - t0
+
+            # Step 4b: Dedup check — find similar memories, ask LLM what to do
+            t_dedup = 0.0
+            if self._dedup_enabled:
+                step = "dedup"
+                t0 = _time.monotonic()
+                try:
+                    action = await self._decide_and_apply_action(memory_id, summary)
+                    if action == "NONE":
+                        # Redundant — archive and skip further processing
+                        step = "dedup_archive_update"
+                        await self.sqlite.update_memory(memory_id, is_archived=True)
+                        try:
+                            self.vectors.delete_memory(memory_id)
+                        except Exception as e:
+                            logger.warning("Failed to delete deduped memory %d vector: %s", memory_id, e)
+                        logger.info("Dedup: archived redundant memory %d", memory_id)
+                        return None
+                except Exception as e:
+                    logger.error("Dedup check failed (continuing): %s", e)
+                t_dedup = _time.monotonic() - t0
+
+            # Step 5: Tag
+            step = "tag_memory"
+            try:
+                tags = tag_message(text, max_tags=self._max_tags)
+                await self.sqlite.tag_memory(memory_id, tags)
+            except Exception as e:
+                logger.error("Tagging failed (memory_id=%s): %s", memory_id, e)
+                tags = []
+
+            # Step 6+7: Combined rank (1-5) + importance (0.0-1.0) + type in one LLM call
+            step = "rank_importance_classify"
+            t0 = _time.monotonic()
+            try:
+                ri_system, ri_prompt = rank_importance_and_classify(text)
+                ri_text = await self.router.generate(
+                    TaskType.RANKING_IMPORTANCE,
+                    ri_prompt,
+                    system=ri_system,
+                )
+                rank, importance, memory_type = self._parse_rank_importance_type(ri_text)
+                logger.debug("Classification: raw=%r → rank=%d imp=%.2f type=%s", ri_text.strip(), rank, importance, memory_type)
+
+                # Apply bonuses
+                importance += self._recency_bonus
+                if len(tags) > 6:
+                    importance += self._tag_bonus
+                importance = min(importance, 1.0)
+
+                step = "update_memory_scores"
+                await self.sqlite.update_memory(
+                    memory_id, rank=rank, importance=importance,
+                    memory_type=memory_type,
+                )
+            except Exception as e:
+                logger.error("Rank+importance+classify failed: %s", e)
+            t_rank = _time.monotonic() - t0
+
+            # Mark as fully processed
+            step = "mark_processed"
+            await self.sqlite.mark_memory_processed(memory_id)
+
+            logger.info(
+                "process_message: summarize=%.1fs embed=%.1fs dedup=%.1fs rank=%.1fs total=%.1fs",
+                t_summarize, t_embed, t_dedup, t_rank,
+                t_summarize + t_embed + t_dedup + t_rank,
             )
-            rank, importance, memory_type = self._parse_rank_importance_type(ri_text)
-            logger.debug("Classification: raw=%r → rank=%d imp=%.2f type=%s", ri_text.strip(), rank, importance, memory_type)
+            return memory_id
 
-            # Apply bonuses
-            importance += self._recency_bonus
-            if len(tags) > 6:
-                importance += self._tag_bonus
-            importance = min(importance, 1.0)
-
-            await self.sqlite.update_memory(
-                memory_id, rank=rank, importance=importance,
-                memory_type=memory_type,
-            )
         except Exception as e:
-            logger.error("Rank+importance+classify failed: %s", e)
-        t_rank = _time.monotonic() - t0
-
-        # Mark as fully processed
-        await self.sqlite.mark_memory_processed(memory_id)
-
-        logger.info(
-            "process_message: summarize=%.1fs embed=%.1fs dedup=%.1fs rank=%.1fs total=%.1fs",
-            t_summarize, t_embed, t_dedup, t_rank,
-            t_summarize + t_embed + t_dedup + t_rank,
-        )
-        return memory_id
+            raise RuntimeError(
+                f"process_message failed at step={step} "
+                f"memory_id={memory_id} session_id={session_id}: {e}"
+            ) from e
 
     async def process_core_memory(
         self, text: str, session_id: int | None = None

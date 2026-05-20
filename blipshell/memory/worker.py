@@ -200,9 +200,12 @@ class MemoryWorker:
 
         except Exception as e:
             elapsed = time.monotonic() - t0
+            preview = (item.text or "")[:60].replace("\n", " ")
             logger.error(
-                "Worker: %s failed after %.1fs: %s",
+                "Worker: %s failed after %.1fs: %s "
+                "(session_id=%s memory_id=%s role=%s text=%r)",
                 item.work_type.value, elapsed, e,
+                item.session_id, item.memory_id, item.role, preview,
             )
 
     # --- Entity extraction helpers ---
