@@ -141,6 +141,10 @@ class Agent(
         self._session_notes: dict[str, str] = {}  # persistent notes surviving compaction
         self._repo_map: Optional[RepoMap] = None
 
+        # Memory filesystem backends — built on initialize() when sqlite/vectors ready.
+        self._memory_fs_backend = None   # persistent tiers (lessons/core/digests/...)
+        self._notes_backend = None       # /memories/notes/ view over session_notes
+
         # Set by start_session / chat — initialize here to prevent AttributeError
         self._pending_follow_ups: str = ""
         self._nightly_notification: str = ""
@@ -204,6 +208,12 @@ class Agent(
             config=self.config.memory,
             ollama_url=get_ollama_url(self.config.endpoints),
         )
+
+        # Memory filesystem persistent backend (needs sqlite + vectors for
+        # core-memory write sync). Notes backend is built per-session in
+        # _register_memory_tools (it needs the session id + shared notes dict).
+        from blipshell.memory.fs_backend import MemoryFSBackend
+        self._memory_fs_backend = MemoryFSBackend(self.sqlite, self.vectors)
 
         # Background memory worker (dedicated thread with own event loop + connections)
         _status("Starting memory worker...")

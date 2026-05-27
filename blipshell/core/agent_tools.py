@@ -24,6 +24,12 @@ from blipshell.core.tools.followup_tools import (
     ListFollowUpsTool,
     ResolveFollowUpTool,
 )
+from blipshell.core.tools.memory_fs import (
+    MemoryCreateTool,
+    MemoryDeleteTool,
+    MemoryStrReplaceTool,
+    MemoryViewTool,
+)
 from blipshell.core.tools.memory_tools import (
     ListSessionsTool,
     PromoteToCoreMemoryTool,
@@ -124,6 +130,51 @@ class ToolsMixin:
         self.tool_registry.register(ResolveFollowUpTool(
             self.sqlite, session_id,
         ), group="memory")
+
+        # Memory filesystem tools — exposes lessons/core/digests/sessions/
+        # friction/notes as a navigable /memories/... tree. Only core memories
+        # and notes are writable; core writes go through the agent's approval
+        # callback (path-based, not name-based). The notes tier shares the same
+        # session_notes store as the save_note/get_notes tools.
+        if self._memory_fs_backend is not None:
+            from blipshell.memory.fs_notes import NotesBackend
+
+            def _session_id_provider():
+                return self.session_manager.session_id if self.session_manager else None
+
+            self._notes_backend = NotesBackend(
+                self.sqlite, self._session_notes, _session_id_provider,
+                max_notes=self.config.notes.max_notes,
+            )
+
+            mfs_approval = getattr(self, "_ask_user_callback", None)
+
+            async def _memory_approval(name, args):
+                """Wrap ask_user as a yes/no approval for memory_fs core writes."""
+                if mfs_approval is None:
+                    return False
+                op = args.get("_operation", "edit")
+                prompt = (
+                    f"The agent wants to {op} a core memory at "
+                    f"{args.get('path', '?')}. Approve? (yes/no)"
+                )
+                response = await mfs_approval(prompt)
+                if isinstance(response, str):
+                    return response.strip().lower().startswith("y")
+                return bool(response)
+
+            self.tool_registry.register(MemoryViewTool(
+                self._memory_fs_backend, self._notes_backend,
+            ), group="memory_fs")
+            self.tool_registry.register(MemoryCreateTool(
+                self._memory_fs_backend, self._notes_backend, _memory_approval,
+            ), group="memory_fs")
+            self.tool_registry.register(MemoryStrReplaceTool(
+                self._memory_fs_backend, self._notes_backend, _memory_approval,
+            ), group="memory_fs")
+            self.tool_registry.register(MemoryDeleteTool(
+                self._memory_fs_backend, self._notes_backend, _memory_approval,
+            ), group="memory_fs")
 
         # Session notes tools (persistent state surviving compaction)
         if self.config.notes.enabled and session_id:

@@ -449,6 +449,12 @@ def executor_system_prompt() -> str:
         "7. Do NOT narrate your thinking — just call tools or answer directly.\n"
         "8. For complex multi-file tasks, use enter_plan_mode to explore and design "
         "your approach before making changes. Call exit_plan_mode with your plan.\n"
+        "9. Memory filesystem: memory_view browses your knowledge as /memories/... "
+        "paths (lessons, core, digests, sessions, friction — all read-only; "
+        "notes — read/write). Use memory_view to deliberately browse a tier; use "
+        "search_memories for semantic lookup. Save mid-task working state to "
+        "/memories/notes/<name>.md (survives context compaction). Creating or "
+        "editing a core memory (/memories/core/) requires user approval.\n"
     )
 
 
