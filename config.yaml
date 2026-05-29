@@ -230,6 +230,7 @@ robotics:
   host: "127.0.0.1"
   port: 8765
   invoke_timeout: 10.0               # seconds to await a remote cube's result
+  idle_seconds: 30.0                 # quiet time before a truthful system_idle event fires
 
 # Per-model behavioral settings (Aider-inspired)
 # Configures how the agent interacts with each model.

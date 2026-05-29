@@ -318,6 +318,7 @@ class RoboticsConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8765
     invoke_timeout: float = 10.0  # seconds to await a remote cube's action result
+    idle_seconds: float = 30.0    # quiet time before a truthful system_idle event fires
 
 
 class CompactionConfig(BaseModel):

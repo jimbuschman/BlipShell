@@ -111,6 +111,7 @@ class Agent(
         # Robotics — modular cube system (inert until a cube connects)
         self.robotics = None
         self._cube_server = None  # transport server for cubes (if robotics enabled)
+        self._robot_idle_task = None  # emits truthful system_idle occasions
 
         self._health_check_task: Optional[asyncio.Task] = None
         self._nightly_scheduler_task: Optional[asyncio.Task] = None
@@ -297,6 +298,8 @@ class Agent(
             except Exception as e:
                 logger.warning("Failed to start cube server: %s", e)
                 self._cube_server = None
+            # Idle occasion emitter — fires system_idle when the user goes quiet.
+            self._robot_idle_task = asyncio.create_task(self._robot_idle_loop())
 
         # Connect MCP servers (if configured)
         if self.config.mcp_servers:
@@ -524,6 +527,30 @@ class Agent(
             except Exception as e:
                 logger.warning("Nightly scheduler error: %s", e)
 
+    async def _robot_idle_loop(self):
+        """Emit a truthful system_idle occasion when the user has been quiet.
+
+        BlipShell may author a system_idle behavior (e.g. clear / ambient); this
+        gives it the occasion to act on. We only state the fact (it's idle) —
+        the reaction is BlipShell's own authored behavior. Fires once per idle
+        period and re-arms when activity resumes.
+        """
+        fired = False
+        while True:
+            try:
+                await asyncio.sleep(5)
+                idle = time.time() - self._last_user_activity
+                if idle >= self.config.robotics.idle_seconds:
+                    if not fired:
+                        self._emit_robot_event("system_idle")
+                        fired = True
+                else:
+                    fired = False
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("Robot idle loop error: %s", e)
+
     async def _friction_probe_loop(self):
         """Background task: fire one idle friction probe per session.
 
@@ -696,6 +723,9 @@ class Agent(
             except Exception as e:
                 logger.debug("Cube server stop error: %s", e)
             self._cube_server = None
+        if self._robot_idle_task is not None:
+            self._robot_idle_task.cancel()
+            self._robot_idle_task = None
 
         # Cancel asyncio background tasks (lightweight, main-loop only)
         await self._cancel_background_tasks()
