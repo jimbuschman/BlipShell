@@ -89,10 +89,11 @@ class ChatMixin:
             "route": "planned" if needs_planning else "simple",
         })
 
-        # True occasions for a connected cube. We only state what's happening;
-        # BlipShell's own authored behaviors decide what (if anything) to do.
-        self._emit_robot_event("speech_detected")   # the user just spoke to it
-        self._emit_robot_event("thinking_started")  # it's about to process
+        # True occasion for a connected cube: it's about to process this turn.
+        # (In a text chat "the user spoke" and "I'm thinking" are the same
+        # instant, so we don't emit a separate speech_detected — it would only
+        # flash. That occasion returns when there's real voice input.)
+        self._emit_robot_event("thinking_started")
 
         if needs_planning:
             logger.info("Message classified as complex — using planned execution")
