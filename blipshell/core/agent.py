@@ -108,6 +108,9 @@ class Agent(
         # MCP (Model Context Protocol) servers
         self.mcp_manager = None
 
+        # Robotics — modular cube system (inert until a cube connects)
+        self.robotics = None
+
         self._health_check_task: Optional[asyncio.Task] = None
         self._nightly_scheduler_task: Optional[asyncio.Task] = None
         self._memory_flush_task: Optional[asyncio.Task] = None
@@ -263,6 +266,15 @@ class Agent(
 
         # Register tools
         self._register_tools()
+
+        # Robotics core — actions from connected cubes auto-register as tools,
+        # and the LLM authors behaviors per cube. Inert until a cube connects.
+        from blipshell.robotics import RoboticsCore
+
+        async def _robotics_generate(system: str, user: str) -> str:
+            return await self.router.generate(TaskType.REASONING, user, system=system)
+
+        self.robotics = RoboticsCore(self.tool_registry, generate_fn=_robotics_generate)
 
         # Connect MCP servers (if configured)
         if self.config.mcp_servers:

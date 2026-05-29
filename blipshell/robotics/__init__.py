@@ -12,9 +12,12 @@ anything is soldered.
 """
 
 from blipshell.robotics.capability import ActionSpec, CubeMetadata
+from blipshell.robotics.core import RoboticsCore
 from blipshell.robotics.cube import Cube
 from blipshell.robotics.eventbus import EventBus
+from blipshell.robotics.profile import CapabilityProfile
 from blipshell.robotics.registry import CapabilityRegistry
+from blipshell.robotics.rules import Behavior, BehaviorAction, RulesEngine
 
 __all__ = [
     "ActionSpec",
@@ -22,4 +25,9 @@ __all__ = [
     "Cube",
     "EventBus",
     "CapabilityRegistry",
+    "RoboticsCore",
+    "RulesEngine",
+    "Behavior",
+    "BehaviorAction",
+    "CapabilityProfile",
 ]
