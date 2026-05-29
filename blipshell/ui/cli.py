@@ -1954,9 +1954,10 @@ def _print_mcp_status(agent: Agent, args: list[str]):
 
 
 async def _handle_cube_command(agent: Agent, args: list[str]):
-    """Show connected cubes or disconnect one. Connection is automatic.
+    """Show connected cubes, inspect one, or disconnect one. Connection is automatic.
 
-    /cube            — list connected cubes + server status
+    /cube              — list connected cubes + server status
+    /cube <cube_id>    — show what BlipShell authored for that cube (its behaviors)
     /cube disconnect <cube_id>
     """
     from rich.console import Console
@@ -1974,6 +1975,33 @@ async def _handle_cube_command(agent: Agent, args: list[str]):
         return
 
     registry = agent.robotics.registry
+
+    # /cube <cube_id> — show the profile/behaviors BlipShell authored for it.
+    if args and args[0] != "disconnect" and registry.is_connected(args[0]):
+        cube_id = args[0]
+        profile = agent.robotics.get_profile(cube_id)
+        if profile is None:
+            console.print(f"[dim]'{cube_id}' connected, but no profile authored "
+                          "(LLM authoring may have failed or is disabled).[/dim]")
+            return
+        console.print(f"\n[bold cyan]{cube_id}[/bold cyan] — what BlipShell decided")
+        if profile.semantic_role:
+            console.print(f"  [bold]role:[/bold] {profile.semantic_role}")
+        if profile.intended_uses:
+            console.print(f"  [bold]uses:[/bold] {', '.join(profile.intended_uses)}")
+        if profile.usage_guidance:
+            console.print(f"  [bold]note:[/bold] {profile.usage_guidance}")
+        console.print(f"  [bold]behaviors ({len(profile.behaviors)}):[/bold]")
+        for b in profile.behaviors:
+            acts = "; ".join(
+                f"{a.action}({', '.join(f'{k}={v!r}' for k, v in a.args.items())})"
+                for a in b.actions
+            )
+            console.print(f"    • on [yellow]{b.trigger}[/yellow] → {acts or '(nothing)'}")
+        if profile.unresolved_issues:
+            console.print(f"  [red]unresolved: {profile.unresolved_issues[0]}[/red]")
+        console.print()
+        return
 
     # /cube disconnect <cube_id>
     if args and args[0] == "disconnect":
