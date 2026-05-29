@@ -100,6 +100,10 @@ class CubeWindow:
             self.status_var.set(f"could not connect to {host}:{port} — {e}. "
                                 "Is BlipShell running with robotics.enabled?")
             return False
+        # The 5s timeout was only for establishing the connection. Clear it so
+        # reads block indefinitely — a passive cube may sit idle for a long time
+        # between actions, and a read timeout would look like a disconnect.
+        self.sock.settimeout(None)
         self.sockfile = self.sock.makefile("rb")
         self._send({"type": "hello", "metadata": self.cube.describe().model_dump()})
         self.status_var.set(f"connected to {host}:{port} as {self.cube.cube_id}")
