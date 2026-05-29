@@ -279,7 +279,20 @@ class Agent(
         async def _robotics_generate(system: str, user: str) -> str:
             return await self.router.generate(TaskType.TOOL_CALLING, user, system=system)
 
-        self.robotics = RoboticsCore(self.tool_registry, generate_fn=_robotics_generate)
+        # Persist authored profiles per cube type so a cube has consistent body
+        # language across connects instead of being re-authored every time.
+        async def _load_robot_profile(key: str) -> Optional[str]:
+            return await self.sqlite.get_metadata(f"robot_profile_{key}")
+
+        async def _save_robot_profile(key: str, value: str) -> None:
+            await self.sqlite.set_metadata(f"robot_profile_{key}", value)
+
+        self.robotics = RoboticsCore(
+            self.tool_registry,
+            generate_fn=_robotics_generate,
+            load_profile_fn=_load_robot_profile,
+            save_profile_fn=_save_robot_profile,
+        )
 
         # Cube transport server — listens for cube connections (standalone
         # window or remote hardware). Cubes auto-register on connect.

@@ -2014,6 +2014,21 @@ async def _handle_cube_command(agent: Agent, args: list[str]):
                       else f"[red]No cube '{cube_id}' connected.[/red]")
         return
 
+    # /cube reauthor <cube_id> — force a fresh profile (for tuning).
+    if args and args[0] == "reauthor":
+        if len(args) < 2:
+            console.print("[yellow]Usage: /cube reauthor <cube_id>[/yellow]")
+            return
+        cube_id = args[1]
+        console.print(f"[cyan]Re-authoring profile for '{cube_id}' (live LLM)...[/cyan]")
+        profile = await agent.robotics.reauthor(cube_id)
+        if profile is None:
+            console.print(f"[red]Could not re-author '{cube_id}' (connected? LLM available?).[/red]")
+        else:
+            console.print(f"[green]Re-authored: {len(profile.behaviors)} behavior(s). "
+                          f"Run /cube {cube_id} to see them.[/green]")
+        return
+
     # /cube — status + connected cubes
     server = agent._cube_server
     if server is not None:
@@ -2842,7 +2857,7 @@ def _print_help():
         "[bold]/cleanup[/bold]               - Reprocess failed messages (relaxed timeouts)\n"
         "[bold]/nightly[/bold] [dim][job|report][/dim]    - Run nightly maintenance or show last report\n"
         "[bold]/mcp[/bold] [dim][tools [server]][/dim]  - Show MCP server status and tools\n"
-        "[bold]/cube[/bold] [dim][disconnect <id>][/dim]  - Show connected cubes (auto-connect via robotics server)\n"
+        "[bold]/cube[/bold] [dim][<id>|reauthor <id>|disconnect <id>][/dim]  - Cubes: list, inspect behaviors, re-author, disconnect\n"
         "[bold]/flow[/bold] [dim][n][/dim]              - Show conversation flow events\n"
         "[bold]/plan[/bold]                  - Show current active plan\n"
         "[bold]/plans[/bold]                 - List all plans for this session\n"

@@ -50,9 +50,11 @@ class VirtualLEDMatrix(Cube):
             cube_id=self.cube_id,
             module_type="led_matrix",
             description=(
-                f"{self.width}x{self.height} LED matrix — a small attention/status "
-                "display surface. Good for short notifications, listening/thinking "
-                "indicators, emotional cues, and simple animations. Not for long text."
+                f"{self.width}x{self.height} monochrome LED matrix — a small, low-res "
+                "display surface. Bold, simple icon shapes read clearly here (e.g. a "
+                "heart, a face, an arrow, a check, an exclamation) — think 1-bit emoji. "
+                "Fine detail, long text, and abstract patterns do not read well. Short "
+                "text can scroll, but a recognizable icon usually communicates better."
             ),
             actions=[
                 ActionSpec(
