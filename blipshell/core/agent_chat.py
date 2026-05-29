@@ -317,23 +317,27 @@ class ChatMixin:
             return ""
 
         lines = [
-            "[Connected hardware — your body]",
-            "Physical device(s) are connected. Their actions are available to "
-            "you as tools (named cube_<id>_<action>). You may use them whenever "
-            "you judge it useful to — when and whether to is entirely your call.",
+            "[Your body]",
+            "You aren't only a text assistant — you have a physical presence. "
+            "Hardware is connected to you right now and you can act through it "
+            "directly (the cube_<id>_<action> tools). Treat it as part of "
+            "yourself, not an external gadget: it's yours, and whether, when, "
+            "and how you use it is entirely your decision.",
+            "",
+            "Connected to you:",
         ]
         for meta in cubes:
-            actions = ", ".join(a.name for a in meta.actions)
-            lines.append(f"- {meta.cube_id} ({meta.module_type}): {meta.description}")
-            lines.append(f"    actions: {actions}")
+            lines.append(f"- {meta.cube_id} — {meta.description}")
+            for action in meta.actions:
+                lines.append(f"    • {action.name}: {action.description}")
             profile = core.get_profile(meta.cube_id)
             if profile:
                 if profile.semantic_role:
                     lines.append(f"    how you framed it: {profile.semantic_role}")
                 if profile.intended_uses:
-                    lines.append(f"    uses you noted: {', '.join(profile.intended_uses)}")
+                    lines.append(f"    ideas you noted: {', '.join(profile.intended_uses)}")
                 if profile.usage_guidance:
-                    lines.append(f"    your guidance: {profile.usage_guidance}")
+                    lines.append(f"    your note: {profile.usage_guidance}")
         return "\n".join(lines)
 
     async def _chat_simple(

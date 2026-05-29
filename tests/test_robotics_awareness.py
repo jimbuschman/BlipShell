@@ -36,8 +36,9 @@ async def test_awareness_lists_connected_cube_and_actions():
 
     assert "led_matrix_01" in text
     assert "display_text" in text and "display_frame" in text and "clear" in text
-    # Permission to use, with the decision left to BlipShell.
-    assert "your call" in text.lower()
+    # Framed as identity, with the decision left to BlipShell.
+    assert "your decision" in text.lower()
+    assert "part of yourself" in text.lower()
 
 
 async def test_awareness_includes_blipshells_own_notes():
