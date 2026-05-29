@@ -49,6 +49,9 @@ class ParsedConversation:
     title: str
     created_at: Optional[float] = None
     messages: list[ParsedMessage] = field(default_factory=list)
+    # Source-conversation identity for dedup on periodic re-imports.
+    external_id: Optional[str] = None        # e.g. ChatGPT conversation_id
+    external_updated_at: Optional[float] = None  # source last-updated time
 
 
 @dataclass
@@ -115,47 +118,24 @@ async def import_conversations(
     async def _process_one(i: int, conv: ParsedConversation):
         nonlocal progress_count
 
-        # Resume support: skip complete conversations, re-import incomplete ones
-        session_id, db_count = await sqlite.get_session_message_count(conv.title)
-        if session_id is not None:
-            if db_count > 0:
-                logger.info("Skipping already imported (%d msgs): %s", db_count, conv.title)
-                stats.conversations_skipped += 1
-                progress_count += 1
-                if on_progress:
-                    on_progress(progress_count, total, conv.title, stats)
-                return
-            else:
-                logger.info(
-                    "Re-importing incomplete '%s' (interrupted, 0 messages saved)",
-                    conv.title,
-                )
-                try:
-                    cursor = await sqlite._db.execute(
-                        "SELECT id FROM memories WHERE session_id = ?",
-                        (session_id,),
-                    )
-                    old_ids = [row[0] for row in await cursor.fetchall()]
-                    for mid in old_ids:
-                        try:
-                            vectors.delete_memory(mid)
-                        except Exception as e:
-                            logger.warning("Failed to delete memory vector %d: %s", mid, e)
-                    cursor = await sqlite._db.execute(
-                        "SELECT id FROM lessons WHERE source_session_id = ?",
-                        (session_id,),
-                    )
-                    old_lesson_ids = [row[0] for row in await cursor.fetchall()]
-                    for lid in old_lesson_ids:
-                        try:
-                            vectors.delete_lesson(lid)
-                        except Exception as e:
-                            logger.warning("Failed to delete lesson vector %d: %s", lid, e)
-                    await sqlite.delete_session_cascade(session_id, old_ids)
-                    stats.conversations_reimported += 1
-                except Exception as e:
-                    logger.error("Failed to clean up incomplete '%s': %s", conv.title, e)
-                    return
+        # Resume support: dedup by external_id (fallback title), re-import
+        # grown/incomplete conversations, skip unchanged ones.
+        try:
+            action = await _resume_action(sqlite, vectors, conv)
+        except Exception as e:
+            logger.error("Resume check failed for '%s': %s", conv.title, e)
+            progress_count += 1
+            if on_progress:
+                on_progress(progress_count, total, conv.title, stats)
+            return
+        if action == "skip":
+            stats.conversations_skipped += 1
+            progress_count += 1
+            if on_progress:
+                on_progress(progress_count, total, conv.title, stats)
+            return
+        if action == "reimport":
+            stats.conversations_reimported += 1
 
         async with semaphore:
             try:
@@ -182,10 +162,63 @@ async def import_conversations(
 # Global batch pipeline — minimizes model swaps across all conversations
 # ---------------------------------------------------------------------------
 
-async def _cleanup_incomplete_session(
+async def _resume_action(
+    sqlite: SQLiteStore, vectors: VectorStore, conv: "ParsedConversation",
+) -> str:
+    """Decide what to do with a conversation on (re-)import.
+
+    Returns:
+      'import'   — new conversation, proceed
+      'reimport' — existed but stale/incomplete; cleaned up, proceed fresh
+      'skip'     — already imported and unchanged
+
+    Dedup prefers external_id (robust against ChatGPT's duplicate/generic
+    titles); falls back to title for id-less sources or pre-external_id
+    sessions. A conversation that has grown since import (export
+    update_time newer than the stored value) is re-imported in full.
+    """
+    stored_updated = None
+
+    if conv.external_id:
+        # Dedup by id. If the id has never been imported, it's a NEW
+        # conversation — do NOT fall back to title, because a title match
+        # would be a *different* conversation that happens to share a
+        # (often generic) title like "New chat".
+        session_id, db_count, stored_updated = (
+            await sqlite.get_session_by_external_id(conv.external_id)
+        )
+        if session_id is None:
+            return "import"
+    else:
+        # Id-less source (or pre-external_id export): dedup by title.
+        session_id, db_count = await sqlite.get_session_message_count(conv.title)
+        if session_id is None:
+            return "import"
+
+    if db_count == 0:
+        logger.info("Re-importing incomplete '%s' (0 messages saved)", conv.title)
+        await _cleanup_session(sqlite, vectors, session_id)
+        return "reimport"
+
+    grown = (
+        conv.external_updated_at is not None
+        and stored_updated is not None
+        and conv.external_updated_at > stored_updated
+    )
+    if grown:
+        logger.info("Re-importing grown conversation '%s' (updated since import)",
+                    conv.title)
+        await _cleanup_session(sqlite, vectors, session_id)
+        return "reimport"
+
+    logger.info("Skipping already imported (%d msgs): %s", db_count, conv.title)
+    return "skip"
+
+
+async def _cleanup_session(
     sqlite: SQLiteStore, vectors: VectorStore, session_id: int,
 ):
-    """Clean up an incomplete session (0 messages saved) for re-import."""
+    """Delete a session's memories, lessons, and vectors for a clean re-import."""
     cursor = await sqlite._db.execute(
         "SELECT id FROM memories WHERE session_id = ?",
         (session_id,),
@@ -244,31 +277,26 @@ async def _import_global_batch(
     tag_bonus = config.importance_tag_bonus if config else 0.05
 
     # ── Phase 0: Resume check ─────────────────────────────────────────
-    # Scan all conversations upfront to build the work list and skip count.
+    # Scan all conversations upfront (sequentially, before concurrent work)
+    # to build the work list and skip/reimport counts.
     work_convs: list[ParsedConversation] = []
 
     for conv in conversations:
-        session_id, db_count = await sqlite.get_session_message_count(conv.title)
-        if session_id is not None:
-            if db_count > 0:
-                logger.info("Skipping already imported (%d msgs): %s", db_count, conv.title)
-                stats.conversations_skipped += 1
-                if on_progress:
-                    on_progress(
-                        stats.conversations_skipped + stats.conversations_imported,
-                        total, conv.title, stats,
-                    )
-                continue
-            else:
-                # Clean up incomplete import
-                logger.info("Re-importing incomplete '%s'", conv.title)
-                try:
-                    await _cleanup_incomplete_session(sqlite, vectors, session_id)
-                    stats.conversations_reimported += 1
-                except Exception as e:
-                    logger.error("Failed to clean up incomplete '%s': %s", conv.title, e)
-                    continue
-
+        try:
+            action = await _resume_action(sqlite, vectors, conv)
+        except Exception as e:
+            logger.error("Resume check failed for '%s': %s", conv.title, e)
+            continue
+        if action == "skip":
+            stats.conversations_skipped += 1
+            if on_progress:
+                on_progress(
+                    stats.conversations_skipped + stats.conversations_imported,
+                    total, conv.title, stats,
+                )
+            continue
+        if action == "reimport":
+            stats.conversations_reimported += 1
         work_convs.append(conv)
 
     if not work_convs:
@@ -357,7 +385,11 @@ async def _import_global_batch(
                 datetime.fromtimestamp(conv.created_at, tz=UTC)
                 if conv.created_at else None
             )
-            session_id = await sqlite.create_session(title=conv.title, created_at=conv_ts)
+            session_id = await sqlite.create_session(
+                title=conv.title, created_at=conv_ts,
+                external_id=conv.external_id,
+                external_updated_at=conv.external_updated_at,
+            )
 
             memory_ids: list[int] = []
             for msg_idx, (msg, tags, summary) in enumerate(surviving):
@@ -515,7 +547,11 @@ async def _import_single_conversation(
         datetime.fromtimestamp(conv.created_at, tz=UTC)
         if conv.created_at else None
     )
-    session_id = await sqlite.create_session(title=conv.title, created_at=conv_ts)
+    session_id = await sqlite.create_session(
+        title=conv.title, created_at=conv_ts,
+        external_id=conv.external_id,
+        external_updated_at=conv.external_updated_at,
+    )
 
     recency_bonus = config.importance_recency_bonus if config else 0.1
     tag_bonus = config.importance_tag_bonus if config else 0.05

@@ -42,32 +42,72 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 def parse_conversations(file_path: str | Path) -> list[ParsedConversation]:
-    """Parse a ChatGPT conversations.json export file.
+    """Parse a ChatGPT conversations export file.
 
-    ChatGPT export format:
-    - Array of conversation objects, each with:
-      - title, create_time, update_time
+    Supports two containers (both hold the same per-conversation shape):
+    - JSON array — the official `conversations.json` (one big `[...]`)
+    - JSONL — one conversation object per line (third-party exporters)
+
+    Each conversation object has:
+      - title, create_time, update_time, conversation_id
       - mapping: {node_id: {message: {...}, parent, children: [...]}}
       - current_node: ID of the last message
-    - Messages form a tree; we linearize by walking from root following children.
-    - author.role is one of: system, user, assistant, tool
-    - content.parts is a list of strings (concatenated)
-    - Some messages have null content or are system/tool messages — skip those
+    Messages form a tree; we linearize by walking from root following children.
+    author.role is one of system/user/assistant/tool; only user/assistant kept.
     """
     path = Path(file_path)
-    with open(path, "r", encoding="utf-8") as f:
-        raw = json.load(f)
-
-    if not isinstance(raw, list):
-        raise ValueError("Expected a JSON array of conversations")
+    records = _load_records(path)
 
     conversations = []
-    for conv_obj in raw:
+    for conv_obj in records:
         parsed = _parse_single_conversation(conv_obj)
         if parsed and parsed.messages:
             conversations.append(parsed)
 
     return conversations
+
+
+def _load_records(path: Path) -> list[dict]:
+    """Load conversation records from a JSON array or JSONL file.
+
+    Auto-detects: tries whole-file JSON first; if that yields a list, use it;
+    if it yields a single dict, wrap it; otherwise fall back to line-by-line
+    JSONL parsing. This is robust to the .json/.jsonl extension being wrong.
+    """
+    text = path.read_text(encoding="utf-8")
+    stripped = text.lstrip()
+
+    # JSON array or single object — try whole-file parse first.
+    if stripped.startswith("["):
+        raw = json.loads(text)
+        if not isinstance(raw, list):
+            raise ValueError("Expected a JSON array of conversations")
+        return raw
+    if stripped.startswith("{"):
+        # Could be a single conversation object, or JSONL (many objects, one
+        # per line). A single object parses cleanly; JSONL raises "Extra data".
+        try:
+            obj = json.loads(text)
+            return [obj] if isinstance(obj, dict) else obj
+        except json.JSONDecodeError:
+            pass  # fall through to JSONL
+
+    # JSONL: one JSON object per non-empty line.
+    records = []
+    for line_no, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"{path.name}: line {line_no} is not valid JSON ({e}). "
+                "Expected a JSON array or JSONL (one conversation per line)."
+            ) from e
+    if not records:
+        raise ValueError(f"{path.name}: no conversations found")
+    return records
 
 
 def _parse_single_conversation(conv_obj: dict) -> Optional[ParsedConversation]:
@@ -94,10 +134,17 @@ def _parse_single_conversation(conv_obj: dict) -> Optional[ParsedConversation]:
     messages = []
     _walk_tree(mapping, root_id, messages)
 
+    # conversation_id (fallback to id) identifies the source conversation for
+    # dedup; update_time lets re-imports detect a conversation that has grown.
+    external_id = conv_obj.get("conversation_id") or conv_obj.get("id")
+    external_updated_at = conv_obj.get("update_time")
+
     return ParsedConversation(
         title=title,
         created_at=created_at,
         messages=messages,
+        external_id=external_id,
+        external_updated_at=external_updated_at,
     )
 
 

@@ -428,6 +428,10 @@ class SQLiteStore:
             "ALTER TABLE entity_relationships ADD COLUMN expired_by INTEGER",
             # Unify crash recovery — memories.is_processed replaces session_messages
             "ALTER TABLE memories ADD COLUMN is_processed BOOLEAN DEFAULT 1",
+            # External-source dedup for periodic imports (ChatGPT/Claude conversation id)
+            "ALTER TABLE sessions ADD COLUMN external_id TEXT",
+            "ALTER TABLE sessions ADD COLUMN external_updated_at REAL",
+            "CREATE INDEX IF NOT EXISTS idx_sessions_external_id ON sessions(external_id)",
         ):
             try:
                 await self._db.execute(col_sql)
@@ -622,12 +626,21 @@ class SQLiteStore:
     # --- Sessions ---
 
     async def create_session(self, title: str = "New Session", project: Optional[str] = None,
-                             created_at: Optional[datetime] = None) -> int:
-        """Create a new session and return its ID."""
+                             created_at: Optional[datetime] = None,
+                             external_id: Optional[str] = None,
+                             external_updated_at: Optional[float] = None) -> int:
+        """Create a new session and return its ID.
+
+        external_id / external_updated_at track the source conversation when
+        a session is created from an import (ChatGPT/Claude conversation id +
+        its last-updated timestamp), enabling dedup and grown-conversation
+        detection on periodic re-imports.
+        """
         ts = (created_at or datetime.now(timezone.utc)).isoformat()
         cursor = await self._db.execute(
-            "INSERT INTO sessions (title, project, created_at, last_active) VALUES (?, ?, ?, ?)",
-            (title, project, ts, ts),
+            "INSERT INTO sessions (title, project, created_at, last_active, "
+            "external_id, external_updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (title, project, ts, ts, external_id, external_updated_at),
         )
         await self._db.commit()
         return cursor.lastrowid
@@ -769,6 +782,24 @@ class SQLiteStore:
         if row:
             return row[0], row[1] or 0
         return None, 0
+
+    async def get_session_by_external_id(
+        self, external_id: str,
+    ) -> tuple[int | None, int, float | None]:
+        """Look up a session by its source conversation id.
+
+        Returns (session_id, message_count, external_updated_at) or
+        (None, 0, None) if no session was imported from that conversation.
+        """
+        cursor = await self._db.execute(
+            "SELECT id, message_count, external_updated_at FROM sessions "
+            "WHERE external_id = ? LIMIT 1",
+            (external_id,),
+        )
+        row = await cursor.fetchone()
+        if row:
+            return row[0], row[1] or 0, row[2]
+        return None, 0, None
 
     async def save_raw_memory(
         self, session_id: int, role: str, content: str,
