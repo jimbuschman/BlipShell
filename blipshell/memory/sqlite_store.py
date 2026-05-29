@@ -1253,10 +1253,12 @@ class SQLiteStore:
         every conversational query. Fix: join tokens with OR so each keyword
         contributes independently. Stop words are removed to reduce noise.
         """
-        # Remove characters that FTS5 interprets as operators
-        sanitized = query.replace('"', ' ').replace("'", ' ')
-        for ch in '?*(){}[]^~:\\/<>!@#$%&+=|,;.-':
-            sanitized = sanitized.replace(ch, ' ')
+        # Whitelist approach: keep only alphanumeric characters, replace
+        # everything else with a space. A blacklist inevitably misses an
+        # FTS5 operator char (e.g. the backtick), which produces a
+        # "syntax error near ..." failure. Keeping only alnum (Unicode-aware,
+        # so non-Latin scripts survive) eliminates that entire class of bug.
+        sanitized = ''.join(c if c.isalnum() else ' ' for c in query)
         # Remove FTS5 reserved keywords and stop words
         tokens = sanitized.split()
         tokens = [
