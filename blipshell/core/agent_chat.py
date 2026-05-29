@@ -89,12 +89,19 @@ class ChatMixin:
             "route": "planned" if needs_planning else "simple",
         })
 
+        # Robot body: let any connected cube reflect that we're now thinking.
+        # Fire-and-forget — cube rendering must never stall the chat turn.
+        self._emit_robot_event("thinking_started")
+
         if needs_planning:
             logger.info("Message classified as complex — using planned execution")
             response = await self._chat_planned(user_message, on_token=on_token, on_tool_display=on_tool_display)
         else:
             logger.info("Message classified as simple — using direct chat")
             response = await self._chat_simple(user_message, on_token=on_token, on_tool_display=on_tool_display, research_mode=research_mode)
+
+        # Robot body: thinking finished.
+        self._emit_robot_event("thinking_ended")
 
         # Self-reflection: second LLM pass to catch errors/gaps
         if self.reflect_enabled and response and not response.startswith("Error:"):
@@ -126,6 +133,26 @@ class ChatMixin:
         task.add_done_callback(_on_task_done)
 
         return response
+
+    def _emit_robot_event(self, name: str, payload: Optional[dict] = None):
+        """Publish a lifecycle event to connected cubes (fire-and-forget).
+
+        This is the bridge that makes a cube BlipShell's body: as the assistant
+        listens/thinks/responds, the matching event fires and the LLM-authored
+        behaviors drive the cube — no manual triggering. Scheduled as a task so
+        cube rendering latency (a socket round-trip) never blocks the chat turn.
+        A no-op when robotics isn't running or no cube has a behavior bound to
+        this event.
+        """
+        core = getattr(self, "robotics", None)
+        if core is None:
+            return
+        try:
+            task = asyncio.create_task(core.registry.event_bus.publish(name, payload or {}))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+        except RuntimeError:
+            pass  # no running event loop (e.g. called outside async context)
 
     async def _detect_and_persist_correction(self, user_message: str):
         """Detect if a user message is correcting the assistant and persist as anti-pattern lesson.
