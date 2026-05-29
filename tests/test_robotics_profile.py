@@ -14,7 +14,9 @@ from blipshell.robotics.profile import (
     ProfileGenerator,
     _extract_json,
     build_profile_prompt,
+    build_revise_prompt,
 )
+from blipshell.robotics.trace import TraceIssue
 
 VALID_PROFILE = {
     "semantic_role": "status display surface",
@@ -150,3 +152,87 @@ async def test_generate_tolerates_malformed_behavior_entry(registry_with_cube):
 
     # The string entry is dropped; the action-less one is valid-but-empty.
     assert all(isinstance(b.trigger, str) for b in profile.behaviors)
+
+
+# --- self-test / review / adjust loop ---------------------------------------
+
+# Reproduces the live-run bug: greet by showing HI then immediately clearing it.
+BAD_GREET = {
+    "semantic_role": "status display",
+    "behaviors": [
+        {"trigger": "user_present", "intent": "briefly greet the user", "actions": [
+            {"target": "led_matrix_01", "action": "display_text", "args": {"text": "HI"}},
+            {"target": "led_matrix_01", "action": "clear", "args": {}},
+        ]},
+    ],
+}
+# The fix: drop the clear so the greeting actually shows.
+FIXED_GREET = {
+    "semantic_role": "status display",
+    "behaviors": [
+        {"trigger": "user_present", "intent": "briefly greet the user", "actions": [
+            {"target": "led_matrix_01", "action": "display_text", "args": {"text": "HI"}},
+        ]},
+    ],
+}
+
+
+def _sequence_gen(*payloads):
+    """generate_fn that returns each payload in turn, repeating the last."""
+    state = {"n": 0}
+
+    async def gen(system, user):
+        i = min(state["n"], len(payloads) - 1)
+        state["n"] += 1
+        return json.dumps(payloads[i])
+
+    return gen
+
+
+async def test_self_review_fixes_flagged_behavior(registry_with_cube):
+    """Author a flash bug, observe it, revise to a clean profile."""
+    meta = registry_with_cube.get_metadata("led_matrix_01")
+    gen = ProfileGenerator(_sequence_gen(BAD_GREET, FIXED_GREET))
+
+    profile = await gen.generate(meta, registry_with_cube)
+
+    assert profile.revision_count == 1
+    assert profile.unresolved_issues == []
+    assert len(profile.behaviors[0].actions) == 1  # the clear was dropped
+
+
+async def test_self_review_gives_up_after_budget(registry_with_cube):
+    """If the model never fixes it, stop after max_revisions and report it."""
+    meta = registry_with_cube.get_metadata("led_matrix_01")
+    gen = ProfileGenerator(_sequence_gen(BAD_GREET))  # always returns the bad one
+
+    profile = await gen.generate(meta, registry_with_cube, max_revisions=2)
+
+    assert profile.revision_count == 2
+    assert profile.unresolved_issues  # still flagged
+    assert "never visible" in profile.unresolved_issues[0]
+
+
+async def test_clean_profile_needs_no_revision(registry_with_cube):
+    meta = registry_with_cube.get_metadata("led_matrix_01")
+    gen = ProfileGenerator(_sequence_gen(FIXED_GREET))
+
+    profile = await gen.generate(meta, registry_with_cube)
+
+    assert profile.revision_count == 0
+    assert profile.unresolved_issues == []
+
+
+def test_revise_prompt_includes_issue_and_constraint():
+    from blipshell.robotics.profile import CapabilityProfile
+
+    profile = CapabilityProfile(cube_id="led_matrix_01")
+    issues = [TraceIssue(
+        behavior_label="greet", action_index=0, target="led_matrix_01",
+        action="display_text", problem="the output of 'display_text' was never visible",
+    )]
+    system, user = build_revise_prompt(profile, issues)
+
+    assert "no delay" in system.lower()       # explains the platform constraint
+    assert "never visible" in user            # surfaces the observed problem
+    assert "greet" in user

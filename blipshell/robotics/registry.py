@@ -113,6 +113,10 @@ class CapabilityRegistry:
     def get_metadata(self, cube_id: str) -> CubeMetadata | None:
         return self._metadata.get(cube_id)
 
+    def get_cube(self, cube_id: str) -> Cube | None:
+        """The connected Cube instance, or None. Used by the behavior tracer."""
+        return self._cubes.get(cube_id)
+
     def list_cubes(self) -> list[CubeMetadata]:
         """All currently connected cubes' metadata."""
         return list(self._metadata.values())

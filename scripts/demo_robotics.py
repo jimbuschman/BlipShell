@@ -77,10 +77,21 @@ async def run_demo(config_path: str) -> int:
             console.print("[yellow]No profile authored (LLM call failed — check the "
                           "endpoint/model). Tools still registered.[/yellow]")
         else:
+            if profile.revision_count:
+                review = (f"[yellow]self-reviewed: {profile.revision_count} revision(s) "
+                          f"after observing problems[/yellow]")
+                if profile.unresolved_issues:
+                    review += (f"\n[red]unresolved: {len(profile.unresolved_issues)} "
+                               f"issue(s) — {profile.unresolved_issues[0]}[/red]")
+                else:
+                    review += "\n[green]all observed problems fixed[/green]"
+            else:
+                review = "[dim]no problems observed — no revision needed[/dim]"
             console.print(Panel(
                 f"[bold]role:[/bold] {profile.semantic_role}\n"
                 f"[bold]uses:[/bold] {', '.join(profile.intended_uses) or '(none)'}\n"
-                f"[bold]guidance:[/bold] {profile.usage_guidance}",
+                f"[bold]guidance:[/bold] {profile.usage_guidance}\n"
+                f"{review}",
                 title="Step 2 — LLM-authored profile", border_style="green",
             ))
             console.print("[dim]behaviors:[/dim]")

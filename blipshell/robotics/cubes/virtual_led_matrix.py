@@ -35,6 +35,16 @@ class VirtualLEDMatrix(Cube):
     def _blank_frame(self) -> list[list[int]]:
         return [[0] * self.width for _ in range(self.height)]
 
+    def snapshot(self):
+        """Observable state = the text cue and the pixel frame (immutable copy)."""
+        return (self.last_text, tuple(tuple(row) for row in self.frame))
+
+    def restore(self, snap) -> None:
+        if snap is None:
+            return
+        self.last_text, frame = snap
+        self.frame = [list(row) for row in frame]
+
     def describe(self) -> CubeMetadata:
         return CubeMetadata(
             cube_id=self.cube_id,

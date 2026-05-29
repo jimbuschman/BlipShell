@@ -18,6 +18,7 @@ from blipshell.robotics.eventbus import EventBus
 from blipshell.robotics.profile import CapabilityProfile
 from blipshell.robotics.registry import CapabilityRegistry
 from blipshell.robotics.rules import Behavior, BehaviorAction, RulesEngine
+from blipshell.robotics.trace import TraceIssue, trace_behaviors
 
 __all__ = [
     "ActionSpec",
@@ -30,4 +31,6 @@ __all__ = [
     "Behavior",
     "BehaviorAction",
     "CapabilityProfile",
+    "TraceIssue",
+    "trace_behaviors",
 ]

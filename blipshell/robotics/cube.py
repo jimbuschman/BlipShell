@@ -48,6 +48,22 @@ class Cube(ABC):
         """
         ...
 
+    def snapshot(self) -> Any:
+        """Return a comparable snapshot of this cube's *observable* state.
+
+        Used by the behavior tracer to (a) detect when one action's visible
+        output is immediately replaced by the next, and (b) restore state after
+        a dry-run so tracing never disturbs the live cube. The value must be
+        equality-comparable; two equal snapshots mean nothing observable
+        changed. Default None — a cube with no observable state (e.g. a pure
+        sensor) is simply never flagged.
+        """
+        return None
+
+    def restore(self, snap: Any) -> None:
+        """Restore a snapshot taken by snapshot(). Default no-op."""
+        return None
+
     def set_event_sink(self, sink: EventSink | None) -> None:
         """Wire (or clear) the bus this cube publishes events into."""
         self._event_sink = sink

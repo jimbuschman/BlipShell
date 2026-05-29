@@ -23,8 +23,12 @@ from blipshell.robotics.capability import CubeMetadata
 from blipshell.robotics.events import CORE_EVENTS
 from blipshell.robotics.registry import CapabilityRegistry
 from blipshell.robotics.rules import Behavior
+from blipshell.robotics.trace import TraceIssue, trace_behaviors
 
 logger = logging.getLogger(__name__)
+
+# How many times the model may revise after seeing observed problems.
+DEFAULT_MAX_REVISIONS = 2
 
 # (system, user) -> raw LLM text. Wraps router.generate(REASONING, ...).
 GenerateFn = Callable[[str, str], Awaitable[str]]
@@ -38,6 +42,10 @@ class CapabilityProfile(BaseModel):
     intended_uses: list[str] = Field(default_factory=list)
     usage_guidance: str = ""
     behaviors: list[Behavior] = Field(default_factory=list)
+    # Set by the self-review loop: how many revisions the model made after
+    # seeing observed problems, and any problems still unresolved at the end.
+    revision_count: int = 0
+    unresolved_issues: list[str] = Field(default_factory=list)
 
 
 def build_profile_prompt(meta: CubeMetadata, registry: CapabilityRegistry) -> tuple[str, str]:
@@ -57,7 +65,8 @@ def build_profile_prompt(meta: CubeMetadata, registry: CapabilityRegistry) -> tu
         '  "intended_uses": ["<short use>", ...],\n'
         '  "usage_guidance": "<one line of advice on using it well>",\n'
         '  "behaviors": [\n'
-        '    {"trigger": "<event name>", "actions": [\n'
+        '    {"trigger": "<event name>", "intent": "<what the user should observe>",\n'
+        '     "actions": [\n'
         '      {"target": "<cube_id>", "action": "<action>", "args": {...}}\n'
         '    ]}\n'
         '  ]\n'
@@ -108,20 +117,110 @@ def _extract_json(text: str) -> dict[str, Any]:
     return json.loads(text[start:end + 1])
 
 
+def build_revise_prompt(
+    profile: "CapabilityProfile", issues: list[TraceIssue],
+) -> tuple[str, str]:
+    """Build (system, user) prompts asking the LLM to fix observed problems.
+
+    The system prompt explains the platform constraint that caused the problem
+    (instant, delay-free execution) but does NOT prescribe a fix — reorder,
+    remove, replace, combine, whatever the model judges best.
+    """
+    system = (
+        "You are revising robot behaviors that did not produce the effect you "
+        "intended. Actions in a behavior run immediately one after another with "
+        "NO delay — there is no way to pause between them. So if one action "
+        "displays something and the next action on the same target changes the "
+        "display, the first output is never seen.\n\n"
+        "Fix each flagged behavior so its visible result matches its intent. You "
+        "may reorder, remove, replace, or combine actions however you judge best. "
+        "Respond with a SINGLE JSON object in the same format as before "
+        "(semantic_role, intended_uses, usage_guidance, behaviors with intent), "
+        "no prose."
+    )
+    issue_lines = [
+        f"  - behavior '{i.behavior_label}': {i.problem}" for i in issues
+    ]
+    user = (
+        "Your current profile:\n"
+        + json.dumps(_profile_to_dict(profile))
+        + "\n\nProblems observed when the behaviors were actually run:\n"
+        + "\n".join(issue_lines)
+        + "\n\nReturn the corrected profile JSON."
+    )
+    return system, user
+
+
+def _profile_to_dict(profile: "CapabilityProfile") -> dict[str, Any]:
+    """Serialize a profile back to the authoring JSON shape (for revision)."""
+    return {
+        "semantic_role": profile.semantic_role,
+        "intended_uses": profile.intended_uses,
+        "usage_guidance": profile.usage_guidance,
+        "behaviors": [
+            {
+                "trigger": b.trigger,
+                "intent": b.intent,
+                "actions": [
+                    {"target": a.target, "action": a.action, "args": a.args}
+                    for a in b.actions
+                ],
+            }
+            for b in profile.behaviors
+        ],
+    }
+
+
 class ProfileGenerator:
-    """Turns a connected cube into a validated CapabilityProfile via the LLM."""
+    """Turns a connected cube into a validated, self-reviewed CapabilityProfile.
+
+    Authoring is a loop: the LLM proposes behaviors, the tracer runs them and
+    reports what was actually observed, and the LLM revises until the observed
+    effect is clean or the revision budget is spent. This is the "self-test and
+    adjust" step — without it the model authors blind.
+    """
 
     def __init__(self, generate_fn: GenerateFn):
         self._generate = generate_fn
 
     async def generate(
-        self, meta: CubeMetadata, registry: CapabilityRegistry,
+        self,
+        meta: CubeMetadata,
+        registry: CapabilityRegistry,
+        max_revisions: int = DEFAULT_MAX_REVISIONS,
     ) -> CapabilityProfile:
-        """Ask the LLM for a profile and return it with invalid behaviors dropped."""
+        """Author, then trace-review-revise until clean or budget exhausted."""
         system, user = build_profile_prompt(meta, registry)
+        profile = await self._author(system, user, meta, registry)
+
+        issues = await trace_behaviors(profile.behaviors, registry)
+        revisions = 0
+        while issues and revisions < max_revisions:
+            logger.info("Profile for '%s': %d observed issue(s), revising (%d/%d)",
+                        meta.cube_id, len(issues), revisions + 1, max_revisions)
+            rsystem, ruser = build_revise_prompt(profile, issues)
+            try:
+                profile = await self._author(rsystem, ruser, meta, registry)
+            except Exception as e:
+                logger.warning("Revision %d failed for '%s': %s — keeping prior",
+                               revisions + 1, meta.cube_id, e)
+                break
+            revisions += 1
+            issues = await trace_behaviors(profile.behaviors, registry)
+
+        profile.revision_count = revisions
+        profile.unresolved_issues = [i.problem for i in issues]
+        if issues:
+            logger.warning("Profile for '%s' still has %d issue(s) after %d revision(s)",
+                           meta.cube_id, len(issues), revisions)
+        return profile
+
+    async def _author(
+        self, system: str, user: str, meta: CubeMetadata, registry: CapabilityRegistry,
+    ) -> CapabilityProfile:
+        """One LLM round: generate, extract JSON, validate behaviors."""
         raw = await self._generate(system, user)
         data = _extract_json(raw)
-
         behaviors = self._validate_behaviors(data.get("behaviors", []), registry)
         return CapabilityProfile(
             cube_id=meta.cube_id,

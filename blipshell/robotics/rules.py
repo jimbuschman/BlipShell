@@ -47,6 +47,9 @@ class Behavior(BaseModel):
     trigger: str  # event name that fires this behavior
     actions: list[BehaviorAction] = Field(default_factory=list)
     name: str | None = None  # optional label for logs/observability
+    # What the author expects the user to observe. Lets the trace/review step
+    # judge whether the behavior's actual visible effect matches the goal.
+    intent: str | None = None
 
 
 class RulesEngine:
