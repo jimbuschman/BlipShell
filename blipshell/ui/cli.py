@@ -862,6 +862,9 @@ async def chat_loop(
                 elif cmd[0] == "mcp":
                     _print_mcp_status(agent, cmd_args)
                     continue
+                elif cmd[0] == "cube":
+                    await _handle_cube_command(agent, cmd_args)
+                    continue
                 elif cmd[0] == "changes":
                     _print_changes(agent)
                     continue
@@ -1950,6 +1953,63 @@ def _print_mcp_status(agent: Agent, args: list[str]):
     console.print(table)
 
 
+async def _handle_cube_command(agent: Agent, args: list[str]):
+    """Show connected cubes or disconnect one. Connection is automatic.
+
+    /cube            — list connected cubes + server status
+    /cube disconnect <cube_id>
+    """
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+
+    if agent.robotics is None:
+        console.print("[dim]Robotics not initialized.[/dim]")
+        return
+
+    if not agent.config.robotics.enabled:
+        console.print("[yellow]Robotics is disabled. Set robotics.enabled: true in "
+                      "config.yaml so cubes can connect.[/yellow]")
+        return
+
+    registry = agent.robotics.registry
+
+    # /cube disconnect <cube_id>
+    if args and args[0] == "disconnect":
+        if len(args) < 2:
+            console.print("[yellow]Usage: /cube disconnect <cube_id>[/yellow]")
+            return
+        cube_id = args[1]
+        ok = await agent.robotics.disconnect(cube_id)
+        console.print(f"[green]Disconnected '{cube_id}'.[/green]" if ok
+                      else f"[red]No cube '{cube_id}' connected.[/red]")
+        return
+
+    # /cube — status + connected cubes
+    server = agent._cube_server
+    if server is not None:
+        console.print(f"[dim]Cube server listening on "
+                      f"{agent.config.robotics.host}:{server.port}[/dim]")
+    cubes = registry.list_cubes()
+    if not cubes:
+        console.print("[dim]No cubes connected. Launch one: "
+                      "python -m scripts.cube_window[/dim]")
+        return
+
+    table = Table(title="Connected Cubes")
+    table.add_column("Cube ID", style="cyan")
+    table.add_column("Type")
+    table.add_column("Actions", justify="right")
+    table.add_column("Behaviors", justify="right")
+    for meta in cubes:
+        profile = agent.robotics.get_profile(meta.cube_id)
+        n_behaviors = len(profile.behaviors) if profile else 0
+        table.add_row(meta.cube_id, meta.module_type,
+                      str(len(meta.actions)), str(n_behaviors))
+    console.print(table)
+
+
 async def _run_nightly(agent: Agent, job_name: str | None = None):
     """Run nightly maintenance jobs."""
     from rich.status import Status
@@ -2754,6 +2814,7 @@ def _print_help():
         "[bold]/cleanup[/bold]               - Reprocess failed messages (relaxed timeouts)\n"
         "[bold]/nightly[/bold] [dim][job|report][/dim]    - Run nightly maintenance or show last report\n"
         "[bold]/mcp[/bold] [dim][tools [server]][/dim]  - Show MCP server status and tools\n"
+        "[bold]/cube[/bold] [dim][disconnect <id>][/dim]  - Show connected cubes (auto-connect via robotics server)\n"
         "[bold]/flow[/bold] [dim][n][/dim]              - Show conversation flow events\n"
         "[bold]/plan[/bold]                  - Show current active plan\n"
         "[bold]/plans[/bold]                 - List all plans for this session\n"

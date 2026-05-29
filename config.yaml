@@ -222,6 +222,15 @@ worker:
     - "analysis"
   poll_interval: 10                  # Seconds between worker polls
 
+# Modular cube robotics — software-first. When enabled, BlipShell listens for
+# cube connections; cubes auto-register, their actions become tools, and the
+# LLM authors behaviors. Launch a cube: python -m scripts.cube_window
+robotics:
+  enabled: false                     # set true to open the cube server
+  host: "127.0.0.1"
+  port: 8765
+  invoke_timeout: 10.0               # seconds to await a remote cube's result
+
 # Per-model behavioral settings (Aider-inspired)
 # Configures how the agent interacts with each model.
 # Model name matching is flexible: exact, base name, or prefix.

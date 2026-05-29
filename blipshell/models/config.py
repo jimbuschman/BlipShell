@@ -306,6 +306,20 @@ class MCPServerConfig(BaseModel):
     timeout: int = 30  # per-call timeout in seconds
 
 
+class RoboticsConfig(BaseModel):
+    """Modular cube robotics — software-first transport server.
+
+    When enabled, BlipShell listens for cube connections (in-process virtual
+    cubes or the standalone window over a socket). Cubes auto-register on
+    connect; their actions become tools and the LLM authors behaviors. Disabled
+    by default — opening a listening socket is opt-in.
+    """
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 8765
+    invoke_timeout: float = 10.0  # seconds to await a remote cube's action result
+
+
 class CompactionConfig(BaseModel):
     """Structured compaction configuration.
 
@@ -411,5 +425,6 @@ class BlipShellConfig(BaseModel):
     notes: NotesConfig = NotesConfig()
     guardrails: GuardrailsConfig = GuardrailsConfig()
     worker: WorkerConfig = WorkerConfig()
+    robotics: RoboticsConfig = RoboticsConfig()
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
     model_settings: dict[str, dict] = Field(default_factory=dict)

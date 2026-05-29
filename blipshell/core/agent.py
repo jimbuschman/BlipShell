@@ -110,6 +110,7 @@ class Agent(
 
         # Robotics — modular cube system (inert until a cube connects)
         self.robotics = None
+        self._cube_server = None  # transport server for cubes (if robotics enabled)
 
         self._health_check_task: Optional[asyncio.Task] = None
         self._nightly_scheduler_task: Optional[asyncio.Task] = None
@@ -278,6 +279,24 @@ class Agent(
             return await self.router.generate(TaskType.TOOL_CALLING, user, system=system)
 
         self.robotics = RoboticsCore(self.tool_registry, generate_fn=_robotics_generate)
+
+        # Cube transport server — listens for cube connections (standalone
+        # window or remote hardware). Cubes auto-register on connect.
+        if self.config.robotics.enabled:
+            from blipshell.robotics.transport import CubeServer
+            self._cube_server = CubeServer(
+                self.robotics,
+                host=self.config.robotics.host,
+                port=self.config.robotics.port,
+                invoke_timeout=self.config.robotics.invoke_timeout,
+            )
+            try:
+                await self._cube_server.start()
+                _status(f"Cube server listening on "
+                        f"{self.config.robotics.host}:{self.config.robotics.port}")
+            except Exception as e:
+                logger.warning("Failed to start cube server: %s", e)
+                self._cube_server = None
 
         # Connect MCP servers (if configured)
         if self.config.mcp_servers:
@@ -669,6 +688,14 @@ class Agent(
         # Kill any background shell processes
         from blipshell.core.tools.shell import cleanup_background_processes
         await cleanup_background_processes()
+
+        # Stop the cube transport server (closes listening socket)
+        if self._cube_server is not None:
+            try:
+                await self._cube_server.stop()
+            except Exception as e:
+                logger.debug("Cube server stop error: %s", e)
+            self._cube_server = None
 
         # Cancel asyncio background tasks (lightweight, main-loop only)
         await self._cancel_background_tasks()
