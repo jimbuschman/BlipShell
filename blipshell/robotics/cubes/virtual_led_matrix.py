@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 
 
 class VirtualLEDMatrix(Cube):
-    """An in-memory width x height LED matrix (default 4x4)."""
+    """An in-memory width x height LED matrix (default 8x8)."""
 
-    def __init__(self, cube_id: str = "led_matrix_01", width: int = 4, height: int = 4):
+    def __init__(self, cube_id: str = "led_matrix_01", width: int = 8, height: int = 8):
         super().__init__()
         self.cube_id = cube_id
         self.width = width

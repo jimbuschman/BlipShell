@@ -53,7 +53,7 @@ async def test_invoke_display_text_updates_state(registry):
 async def test_invoke_display_frame_updates_state(registry):
     cube = VirtualLEDMatrix()
     await registry.connect(cube)
-    frame = [[1, 0, 1, 0], [0, 1, 0, 1], [1, 0, 1, 0], [0, 1, 0, 1]]
+    frame = [[(r + c) % 2 for c in range(8)] for r in range(8)]  # 8x8 checkerboard
 
     result = await registry.invoke("led_matrix_01", "display_frame", {"frame": frame})
 
@@ -69,7 +69,7 @@ async def test_clear_resets_state(registry):
     await registry.invoke("led_matrix_01", "clear", {})
 
     assert cube.last_text is None
-    assert cube.frame == [[0] * 4 for _ in range(4)]
+    assert cube.frame == [[0] * 8 for _ in range(8)]
 
 
 # --- validation: errors are actionable, never exceptions --------------------
@@ -96,15 +96,16 @@ async def test_invoke_missing_required_arg(registry):
 
 async def test_frame_constraint_enforced_by_cube(registry):
     await registry.connect(VirtualLEDMatrix())
-    # 2x2 frame on a 4x4 panel — cube-level hardware constraint violation.
+    # 2x2 frame on an 8x8 panel — cube-level hardware constraint violation.
     result = await registry.invoke("led_matrix_01", "display_frame", {"frame": [[1, 0], [0, 1]]})
     assert result.lower().startswith("error")
-    assert "4x4" in result
+    assert "8x8" in result
 
 
 async def test_frame_bad_values_rejected(registry):
     await registry.connect(VirtualLEDMatrix())
-    frame = [[2, 0, 1, 0], [0, 1, 0, 1], [1, 0, 1, 0], [0, 1, 0, 1]]
+    frame = [[0] * 8 for _ in range(8)]
+    frame[0][0] = 2  # valid 8x8 dimensions, but an out-of-range value
     result = await registry.invoke("led_matrix_01", "display_frame", {"frame": frame})
     assert result.lower().startswith("error")
     assert "0" in result and "1" in result
