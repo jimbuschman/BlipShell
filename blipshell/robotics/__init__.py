@@ -14,6 +14,7 @@ anything is soldered.
 from blipshell.robotics.capability import ActionSpec, CubeMetadata
 from blipshell.robotics.core import RoboticsCore
 from blipshell.robotics.cube import Cube
+from blipshell.robotics.emotion import AffectState, EmotionEngine
 from blipshell.robotics.eventbus import EventBus
 from blipshell.robotics.profile import CapabilityProfile
 from blipshell.robotics.registry import CapabilityRegistry
@@ -33,4 +34,6 @@ __all__ = [
     "CapabilityProfile",
     "TraceIssue",
     "trace_behaviors",
+    "EmotionEngine",
+    "AffectState",
 ]
