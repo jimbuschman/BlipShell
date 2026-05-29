@@ -104,7 +104,11 @@ async def run_inject_flaw_demo(agent: Agent) -> int:
         title="Self-correction result", border_style="magenta",
     ))
 
-    # Fire the corrected behavior so you can see the greeting actually persist.
+    # Load the corrected behaviors into a rules engine and fire the event, so
+    # you can see the greeting actually persist (not just trust the JSON).
+    from blipshell.robotics.rules import RulesEngine
+    engine = RulesEngine(registry)
+    engine.load(fixed.behaviors)
     await cube.invoke("clear", {})
     await registry.event_bus.publish("user_present", {})
     console.print(f"user_present → {_render_matrix(cube)}")
