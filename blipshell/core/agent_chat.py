@@ -89,12 +89,19 @@ class ChatMixin:
             "route": "planned" if needs_planning else "simple",
         })
 
+        # True occasions for a connected cube. We only state what's happening;
+        # BlipShell's own authored behaviors decide what (if anything) to do.
+        self._emit_robot_event("speech_detected")   # the user just spoke to it
+        self._emit_robot_event("thinking_started")  # it's about to process
+
         if needs_planning:
             logger.info("Message classified as complex — using planned execution")
             response = await self._chat_planned(user_message, on_token=on_token, on_tool_display=on_tool_display)
         else:
             logger.info("Message classified as simple — using direct chat")
             response = await self._chat_simple(user_message, on_token=on_token, on_tool_display=on_tool_display, research_mode=research_mode)
+
+        self._emit_robot_event("thinking_ended")     # it finished processing
 
         # Self-reflection: second LLM pass to catch errors/gaps
         if self.reflect_enabled and response and not response.startswith("Error:"):
@@ -126,6 +133,29 @@ class ChatMixin:
         task.add_done_callback(_on_task_done)
 
         return response
+
+    def _emit_robot_event(self, name: str, payload: Optional[dict] = None):
+        """Publish a TRUE lifecycle occasion to connected cubes (fire-and-forget).
+
+        This only emits facts about what is actually happening (the user spoke,
+        BlipShell started/finished thinking). It never decides what the cube
+        does in response — that is entirely up to the behaviors BlipShell
+        authored for itself (its plugin), which the rules engine runs. We supply
+        the occasion; BlipShell supplies the reaction.
+
+        Fire-and-forget so cube rendering latency (a socket round-trip) never
+        blocks the chat turn. A no-op when robotics is off or no behavior is
+        bound to this event.
+        """
+        core = getattr(self, "robotics", None)
+        if core is None:
+            return
+        try:
+            task = asyncio.create_task(core.registry.event_bus.publish(name, payload or {}))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+        except RuntimeError:
+            pass  # no running event loop
 
     async def _detect_and_persist_correction(self, user_message: str):
         """Detect if a user message is correcting the assistant and persist as anti-pattern lesson.
@@ -323,6 +353,9 @@ class ChatMixin:
             "directly (the cube_<id>_<action> tools). Treat it as part of "
             "yourself, not an external gadget: it's yours, and whether, when, "
             "and how you use it is entirely your decision.",
+            "You don't need to ask before acting through it, and you don't have "
+            "to wait to be told — if a moment feels worth it, just act, the way "
+            "you choose your words.",
             "",
             "Connected to you:",
         ]
