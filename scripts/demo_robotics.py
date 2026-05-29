@@ -29,7 +29,12 @@ from rich.table import Table
 
 from blipshell.core.agent import Agent
 from blipshell.core.config import ConfigManager
+from blipshell.llm.router import TaskType
+from blipshell.robotics import CapabilityRegistry
 from blipshell.robotics.cubes import VirtualLEDMatrix
+from blipshell.robotics.profile import CapabilityProfile, ProfileGenerator
+from blipshell.robotics.rules import Behavior, BehaviorAction
+from blipshell.robotics.trace import trace_behaviors
 
 console = Console()
 
@@ -42,7 +47,71 @@ def _render_matrix(cube: VirtualLEDMatrix) -> str:
     return "\n".join(rows)
 
 
-async def run_demo(config_path: str) -> int:
+async def run_inject_flaw_demo(agent: Agent) -> int:
+    """Seed a known flash bug and show the live model catch and fix it.
+
+    Bypasses normal authoring: hands the generator a deliberately broken profile
+    (display "HI" then immediately clear — HI flashes for 0ms) so the trace ->
+    review -> revise loop is exercised against the real model every run.
+    """
+    cube = VirtualLEDMatrix()
+    registry = CapabilityRegistry()
+    await registry.connect(cube)  # bare registry — no auto-authoring listener
+
+    async def generate_fn(system: str, user: str) -> str:
+        return await agent.router.generate(TaskType.TOOL_CALLING, user, system=system)
+
+    generator = ProfileGenerator(generate_fn)
+    meta = registry.get_metadata(cube.cube_id)
+
+    flawed = CapabilityProfile(
+        cube_id=cube.cube_id,
+        semantic_role="status display (seeded with a deliberate flaw)",
+        behaviors=[Behavior(
+            trigger="user_present",
+            intent="briefly greet the user, then return to idle",
+            actions=[
+                BehaviorAction(target=cube.cube_id, action="display_text", args={"text": "HI"}),
+                BehaviorAction(target=cube.cube_id, action="clear", args={}),
+            ],
+        )],
+    )
+
+    console.print(Panel(
+        'Seeded behavior: user_present → display_text "HI", then clear.\n'
+        'Intent: "briefly greet the user". The clear runs instantly, so HI is '
+        "never seen.",
+        title="Inject-flaw — seeded bug", border_style="red",
+    ))
+
+    issues = await trace_behaviors(flawed.behaviors, registry)
+    console.print(Panel(
+        "\n".join(f"• {i.problem}" for i in issues) or "(tracer found nothing — unexpected)",
+        title="Tracer — what it observed", border_style="yellow",
+    ))
+
+    console.print("[cyan]Asking the model to revise (live)...[/cyan]")
+    fixed = await generator.revise_until_clean(flawed, meta, registry)
+
+    console.print("[dim]revised behavior:[/dim]")
+    console.print(JSON(json.dumps([b.model_dump() for b in fixed.behaviors])))
+
+    status = ("[green]fixed — no observed problems remain[/green]"
+              if not fixed.unresolved_issues
+              else f"[red]still flawed after {fixed.revision_count} revision(s)[/red]")
+    console.print(Panel(
+        f"revisions: {fixed.revision_count}\n{status}",
+        title="Self-correction result", border_style="magenta",
+    ))
+
+    # Fire the corrected behavior so you can see the greeting actually persist.
+    await cube.invoke("clear", {})
+    await registry.event_bus.publish("user_present", {})
+    console.print(f"user_present → {_render_matrix(cube)}")
+    return 0
+
+
+async def run_demo(config_path: str, inject_flaw: bool = False) -> int:
     console.print("[bold cyan]Bootstrapping agent...[/bold cyan]")
     config_manager = ConfigManager(config_path)
     config = config_manager.load()
@@ -58,6 +127,9 @@ async def run_demo(config_path: str) -> int:
         if agent.robotics is None:
             console.print("[red]agent.robotics is None — robotics not wired.[/red]")
             return 1
+
+        if inject_flaw:
+            return await run_inject_flaw_demo(agent)
 
         core = agent.robotics
         cube = VirtualLEDMatrix()
@@ -142,8 +214,10 @@ async def run_demo(config_path: str) -> int:
 def main():
     parser = argparse.ArgumentParser(description="Live cube robotics demo")
     parser.add_argument("--config", default="config.yaml", help="path to config.yaml")
+    parser.add_argument("--inject-flaw", action="store_true",
+                        help="seed a known flash bug and show the model self-correct it")
     args = parser.parse_args()
-    sys.exit(asyncio.run(run_demo(args.config)))
+    sys.exit(asyncio.run(run_demo(args.config, inject_flaw=args.inject_flaw)))
 
 
 if __name__ == "__main__":

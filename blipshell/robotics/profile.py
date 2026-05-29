@@ -192,7 +192,20 @@ class ProfileGenerator:
         """Author, then trace-review-revise until clean or budget exhausted."""
         system, user = build_profile_prompt(meta, registry)
         profile = await self._author(system, user, meta, registry)
+        return await self.revise_until_clean(profile, meta, registry, max_revisions)
 
+    async def revise_until_clean(
+        self,
+        profile: CapabilityProfile,
+        meta: CubeMetadata,
+        registry: CapabilityRegistry,
+        max_revisions: int = DEFAULT_MAX_REVISIONS,
+    ) -> CapabilityProfile:
+        """Trace an existing profile and revise it until clean or budget spent.
+
+        Exposed separately from generate() so a flawed profile can be fed in
+        directly (e.g. to demonstrate self-correction on a known bug).
+        """
         issues = await trace_behaviors(profile.behaviors, registry)
         revisions = 0
         while issues and revisions < max_revisions:

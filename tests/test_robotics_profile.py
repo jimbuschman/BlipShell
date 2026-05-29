@@ -223,6 +223,28 @@ async def test_clean_profile_needs_no_revision(registry_with_cube):
     assert profile.unresolved_issues == []
 
 
+async def test_revise_until_clean_fixes_seeded_flaw(registry_with_cube):
+    """The inject-flaw path: feed a known-bad profile straight in, get it fixed."""
+    from blipshell.robotics.profile import CapabilityProfile
+    from blipshell.robotics.rules import Behavior, BehaviorAction
+
+    meta = registry_with_cube.get_metadata("led_matrix_01")
+    flawed = CapabilityProfile(cube_id="led_matrix_01", behaviors=[Behavior(
+        trigger="user_present", intent="briefly greet",
+        actions=[
+            BehaviorAction(target="led_matrix_01", action="display_text", args={"text": "HI"}),
+            BehaviorAction(target="led_matrix_01", action="clear", args={}),
+        ],
+    )])
+    gen = ProfileGenerator(_sequence_gen(FIXED_GREET))  # model returns the fix
+
+    fixed = await gen.revise_until_clean(flawed, meta, registry_with_cube)
+
+    assert fixed.revision_count == 1
+    assert fixed.unresolved_issues == []
+    assert len(fixed.behaviors[0].actions) == 1
+
+
 def test_revise_prompt_includes_issue_and_constraint():
     from blipshell.robotics.profile import CapabilityProfile
 
