@@ -271,8 +271,11 @@ class Agent(
         # and the LLM authors behaviors per cube. Inert until a cube connects.
         from blipshell.robotics import RoboticsCore
 
+        # Profile authoring is an interactive (user waits on connect),
+        # structured-output task — route to the fast tool_calling tier, not the
+        # slow local reasoning model used for background synthesis.
         async def _robotics_generate(system: str, user: str) -> str:
-            return await self.router.generate(TaskType.REASONING, user, system=system)
+            return await self.router.generate(TaskType.TOOL_CALLING, user, system=system)
 
         self.robotics = RoboticsCore(self.tool_registry, generate_fn=_robotics_generate)
 
