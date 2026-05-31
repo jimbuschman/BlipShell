@@ -62,9 +62,11 @@ class ChatMixin:
             for c in user_message
         )
 
-        # Track user activity for nightly scheduler
+        # Track user activity (and the gap since last turn, for "you're back").
         import time
-        self._last_user_activity = time.time()
+        _now = time.time()
+        _activity_gap = _now - self._last_user_activity
+        self._last_user_activity = _now
 
         # Reset tool call tracking (populated by _chat_simple/_chat_planned)
         self._last_tool_calls = []
@@ -89,11 +91,11 @@ class ChatMixin:
             "route": "planned" if needs_planning else "simple",
         })
 
-        # True occasion for a connected cube: it's about to process this turn.
-        # (In a text chat "the user spoke" and "I'm thinking" are the same
-        # instant, so we don't emit a separate speech_detected — it would only
-        # flash. That occasion returns when there's real voice input.)
-        self._emit_robot_event("thinking_started")
+        # Update the affective interior from this turn — it drives the cube
+        # "face" (display-only; never changes the response).
+        if _activity_gap > 600:   # back after ~10+ minutes away
+            await self._update_mood("user_returned")
+        await self._update_mood("interaction")
 
         if needs_planning:
             logger.info("Message classified as complex — using planned execution")
@@ -101,8 +103,6 @@ class ChatMixin:
         else:
             logger.info("Message classified as simple — using direct chat")
             response = await self._chat_simple(user_message, on_token=on_token, on_tool_display=on_tool_display, research_mode=research_mode)
-
-        self._emit_robot_event("thinking_ended")     # it finished processing
 
         # Self-reflection: second LLM pass to catch errors/gaps
         if self.reflect_enabled and response and not response.startswith("Error:"):
@@ -135,29 +135,6 @@ class ChatMixin:
 
         return response
 
-    def _emit_robot_event(self, name: str, payload: Optional[dict] = None):
-        """Publish a TRUE lifecycle occasion to connected cubes (fire-and-forget).
-
-        This only emits facts about what is actually happening (the user spoke,
-        BlipShell started/finished thinking). It never decides what the cube
-        does in response — that is entirely up to the behaviors BlipShell
-        authored for itself (its plugin), which the rules engine runs. We supply
-        the occasion; BlipShell supplies the reaction.
-
-        Fire-and-forget so cube rendering latency (a socket round-trip) never
-        blocks the chat turn. A no-op when robotics is off or no behavior is
-        bound to this event.
-        """
-        core = getattr(self, "robotics", None)
-        if core is None:
-            return
-        try:
-            task = asyncio.create_task(core.registry.event_bus.publish(name, payload or {}))
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
-        except RuntimeError:
-            pass  # no running event loop
-
     async def _detect_and_persist_correction(self, user_message: str):
         """Detect if a user message is correcting the assistant and persist as anti-pattern lesson.
 
@@ -169,6 +146,9 @@ class ChatMixin:
         correction_signal = detect_correction(user_message)
         if not correction_signal:
             return
+
+        # A correction nudges the affective interior (chastened) — display-only.
+        await self._update_mood("user_corrected")
 
         # Get the last assistant message for context on what went wrong
         prev_assistant = ""
@@ -397,15 +377,10 @@ class ChatMixin:
         # Build message list
         messages = self._build_messages(user_message)
 
-        # Robot body: make BlipShell aware of connected cubes as tools it can
-        # choose to use. States what's connected + its own usage notes; never
-        # prescribes when — that's BlipShell's call.
-        cube_awareness = self._build_cube_awareness()
-        if cube_awareness:
-            if messages and messages[0].get("role") == "system":
-                messages[0]["content"] += "\n\n" + cube_awareness
-            else:
-                messages.insert(0, {"role": "system", "content": cube_awareness})
+        # (The cube is now BlipShell's mood-driven "face", not a tool it puppets,
+        # so we no longer inject "you have a body, use it" awareness here. The
+        # _build_cube_awareness builder is kept for if/when deliberate cube use
+        # returns.)
 
         # Detect external file changes and inject notification
         changed_files = self.detect_external_file_changes()

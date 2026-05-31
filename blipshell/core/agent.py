@@ -111,7 +111,13 @@ class Agent(
         # Robotics — modular cube system (inert until a cube connects)
         self.robotics = None
         self._cube_server = None  # transport server for cubes (if robotics enabled)
-        self._robot_idle_task = None  # emits truthful system_idle occasions
+        # Affective interior — a connected cube becomes BlipShell's "face" and
+        # renders this mood (display-only; never touches responses).
+        from blipshell.robotics import EmotionEngine
+        self.emotion = EmotionEngine()
+        self._last_mood_update = time.time()
+        self._last_mood_frame = None
+        self._mood_task = None
 
         self._health_check_task: Optional[asyncio.Task] = None
         self._nightly_scheduler_task: Optional[asyncio.Task] = None
@@ -269,30 +275,14 @@ class Agent(
         # Register tools
         self._register_tools()
 
-        # Robotics core — actions from connected cubes auto-register as tools,
-        # and the LLM authors behaviors per cube. Inert until a cube connects.
+        # Robotics core — connected cubes register here. We no longer auto-author
+        # behaviors: a connected display cube is BlipShell's "face" and renders
+        # the current mood (display-only), driven by the emotion engine. The
+        # authored-behavior/occasion path stays in the tree, dormant, for later.
         from blipshell.robotics import RoboticsCore
-
-        # Profile authoring is an interactive (user waits on connect),
-        # structured-output task — route to the fast tool_calling tier, not the
-        # slow local reasoning model used for background synthesis.
-        async def _robotics_generate(system: str, user: str) -> str:
-            return await self.router.generate(TaskType.TOOL_CALLING, user, system=system)
-
-        # Persist authored profiles per cube type so a cube has consistent body
-        # language across connects instead of being re-authored every time.
-        async def _load_robot_profile(key: str) -> Optional[str]:
-            return await self.sqlite.get_metadata(f"robot_profile_{key}")
-
-        async def _save_robot_profile(key: str, value: str) -> None:
-            await self.sqlite.set_metadata(f"robot_profile_{key}", value)
-
-        self.robotics = RoboticsCore(
-            self.tool_registry,
-            generate_fn=_robotics_generate,
-            load_profile_fn=_load_robot_profile,
-            save_profile_fn=_save_robot_profile,
-        )
+        self.robotics = RoboticsCore(self.tool_registry)
+        # Restore persisted mood (decayed by however long BlipShell was away).
+        await self._load_emotion()
 
         # Cube transport server — listens for cube connections (standalone
         # window or remote hardware). Cubes auto-register on connect.
@@ -311,8 +301,8 @@ class Agent(
             except Exception as e:
                 logger.warning("Failed to start cube server: %s", e)
                 self._cube_server = None
-            # Idle occasion emitter — fires system_idle when the user goes quiet.
-            self._robot_idle_task = asyncio.create_task(self._robot_idle_loop())
+            # Mood loop — decays + renders the face, and registers an idle mood.
+            self._mood_task = asyncio.create_task(self._mood_loop())
 
         # Connect MCP servers (if configured)
         if self.config.mcp_servers:
@@ -540,29 +530,94 @@ class Agent(
             except Exception as e:
                 logger.warning("Nightly scheduler error: %s", e)
 
-    async def _robot_idle_loop(self):
-        """Emit a truthful system_idle occasion when the user has been quiet.
+    async def _mood_loop(self):
+        """Tick the affective interior: decay the mood and render it to cubes.
 
-        BlipShell may author a system_idle behavior (e.g. clear / ambient); this
-        gives it the occasion to act on. We only state the fact (it's idle) —
-        the reaction is BlipShell's own authored behavior. Fires once per idle
-        period and re-arms when activity resumes.
+        Also applies a one-shot 'idle' nudge when the user goes quiet. The mood
+        is display-only — it drives the cube face, never BlipShell's responses.
         """
-        fired = False
+        idled = False
         while True:
             try:
-                await asyncio.sleep(5)
+                await asyncio.sleep(3)
                 idle = time.time() - self._last_user_activity
                 if idle >= self.config.robotics.idle_seconds:
-                    if not fired:
-                        self._emit_robot_event("system_idle")
-                        fired = True
+                    if not idled:
+                        await self._update_mood("idle")
+                        idled = True
+                    else:
+                        await self._update_mood()
                 else:
-                    fired = False
+                    idled = False
+                    await self._update_mood()
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.debug("Robot idle loop error: %s", e)
+                logger.debug("Mood loop error: %s", e)
+
+    async def _update_mood(self, event: Optional[str] = None):
+        """Decay the mood, optionally apply an event, and render it. Display-only."""
+        emotion = getattr(self, "emotion", None)
+        if emotion is None:
+            return
+        now = time.time()
+        emotion.decay(now - self._last_mood_update)
+        self._last_mood_update = now
+        if event:
+            emotion.appraise(event)
+        self._render_mood()
+        if event:
+            await self._save_emotion()
+
+    def _render_mood(self):
+        """Draw the current mood as a face on every connected display cube."""
+        core = getattr(self, "robotics", None)
+        if core is None:
+            return
+        from blipshell.robotics.mood_display import render_face
+        frame = render_face(self.emotion.state.valence, self.emotion.state.arousal)
+        if frame == self._last_mood_frame:
+            return  # nothing visibly changed — skip the redraw
+        self._last_mood_frame = frame
+        for meta in core.registry.list_cubes():
+            if meta.get_action("display_frame") is None:
+                continue
+            task = asyncio.create_task(
+                core.registry.invoke(meta.cube_id, "display_frame", {"frame": frame}))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
+
+    async def _load_emotion(self):
+        """Restore persisted mood, decayed by however long BlipShell was away."""
+        if not getattr(self, "sqlite", None):
+            return
+        try:
+            import json
+            raw = await self.sqlite.get_metadata("emotion_state")
+            if not raw:
+                return
+            data = json.loads(raw)
+            self.emotion.load({"valence": data.get("valence"), "arousal": data.get("arousal")})
+            ts = data.get("ts")
+            if ts:
+                self.emotion.decay(max(0.0, time.time() - ts))
+            self._last_mood_update = time.time()
+        except Exception as e:
+            logger.debug("Emotion load error: %s", e)
+
+    async def _save_emotion(self):
+        """Persist the current mood with a timestamp (for decay-on-load)."""
+        if not getattr(self, "sqlite", None):
+            return
+        try:
+            import json
+            await self.sqlite.set_metadata("emotion_state", json.dumps({
+                "valence": self.emotion.state.valence,
+                "arousal": self.emotion.state.arousal,
+                "ts": time.time(),
+            }))
+        except Exception as e:
+            logger.debug("Emotion save error: %s", e)
 
     async def _friction_probe_loop(self):
         """Background task: fire one idle friction probe per session.
@@ -736,9 +791,10 @@ class Agent(
             except Exception as e:
                 logger.debug("Cube server stop error: %s", e)
             self._cube_server = None
-        if self._robot_idle_task is not None:
-            self._robot_idle_task.cancel()
-            self._robot_idle_task = None
+        if self._mood_task is not None:
+            self._mood_task.cancel()
+            self._mood_task = None
+        await self._save_emotion()
 
         # Cancel asyncio background tasks (lightweight, main-loop only)
         await self._cancel_background_tasks()
