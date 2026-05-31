@@ -116,7 +116,7 @@ class Agent(
         from blipshell.robotics import EmotionEngine
         self.emotion = EmotionEngine()
         self._last_mood_update = time.time()
-        self._last_mood_frame = None
+        self._cube_last_frame = {}  # cube_id -> last frame sent (per-cube dedup)
         self._mood_task = None
 
         self._health_check_task: Optional[asyncio.Task] = None
@@ -576,12 +576,18 @@ class Agent(
             return
         from blipshell.robotics.mood_display import render_face
         frame = render_face(self.emotion.state.valence, self.emotion.state.arousal)
-        if frame == self._last_mood_frame:
-            return  # nothing visibly changed — skip the redraw
-        self._last_mood_frame = frame
+        connected = {meta.cube_id for meta in core.registry.list_cubes()}
+        # Drop dedup entries for cubes that have gone away.
+        for gone in [cid for cid in self._cube_last_frame if cid not in connected]:
+            del self._cube_last_frame[gone]
         for meta in core.registry.list_cubes():
             if meta.get_action("display_frame") is None:
                 continue
+            # Per-cube dedup: a newly connected cube has no last frame, so it
+            # always gets the current face — even if the mood hasn't changed.
+            if self._cube_last_frame.get(meta.cube_id) == frame:
+                continue
+            self._cube_last_frame[meta.cube_id] = frame
             task = asyncio.create_task(
                 core.registry.invoke(meta.cube_id, "display_frame", {"frame": frame}))
             self._background_tasks.add(task)
