@@ -33,3 +33,29 @@ async def test_eyes_mood_flows_through_registry():
 
     assert "mood set" in result
     assert eyes.target_valence == pytest.approx(0.3)
+
+
+def test_eyes_describe_advertises_play_reaction():
+    assert VirtualEyes().describe().get_action("play_reaction") is not None
+
+
+async def test_play_reaction_sets_active_reaction():
+    eyes = VirtualEyes()
+    res = await eyes.invoke("play_reaction", {"emotion": "surprised", "duration": 2})
+    assert "surprised" in res
+    assert eyes.active_reaction() == "surprised"
+
+
+async def test_play_reaction_unknown_emotion_is_error():
+    eyes = VirtualEyes()
+    res = await eyes.invoke("play_reaction", {"emotion": "ecstatic"})
+    assert res.lower().startswith("error")
+    assert eyes.active_reaction() is None
+
+
+async def test_reaction_expires():
+    eyes = VirtualEyes()
+    await eyes.invoke("play_reaction", {"emotion": "glee"})
+    assert eyes.active_reaction() == "glee"
+    eyes.reaction_until = 0.0  # force expiry (deadline in the past)
+    assert eyes.active_reaction() is None

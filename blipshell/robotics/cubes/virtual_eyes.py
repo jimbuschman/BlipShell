@@ -8,15 +8,22 @@ the way Cozmo/Vector eyes do. This class is the contract + state; the actual
 rendering + keep-alive live in the eye window (scripts/eyes_window.py).
 """
 
+import time
 from typing import Any
 
 from blipshell.models.tools import ToolParameter, ToolParameterType
 from blipshell.robotics.capability import ActionSpec, CubeMetadata
 from blipshell.robotics.cube import Cube
+from blipshell.robotics.eye_config import PRESETS
 
 
 class VirtualEyes(Cube):
-    """An eye-display cube. Holds the latest commanded mood; the window tweens to it."""
+    """An eye-display cube. Holds the latest commanded mood; the window tweens to it.
+
+    Also holds a transient *reaction*: a named expression that briefly overrides
+    the mood, then expires on its own — the device handles the override/revert
+    locally, so it's smooth and independent of BlipShell/LLM latency.
+    """
 
     def __init__(self, cube_id: str = "eyes_01"):
         super().__init__()
@@ -24,6 +31,9 @@ class VirtualEyes(Cube):
         # Latest mood BlipShell commanded. Defaults to neutral-calm.
         self.target_valence: float = 0.0
         self.target_arousal: float = -0.2
+        # Transient reaction (name + monotonic expiry).
+        self.current_reaction: str | None = None
+        self.reaction_until: float = 0.0
 
     def describe(self) -> CubeMetadata:
         return CubeMetadata(
@@ -47,6 +57,17 @@ class VirtualEyes(Cube):
                                       description="-1 (calm/sleepy) .. +1 (alert/energized)"),
                     ],
                 ),
+                ActionSpec(
+                    name="play_reaction",
+                    description=("Briefly show a named expression, then settle back to the "
+                                 "mood. One of: " + ", ".join(sorted(PRESETS))),
+                    parameters=[
+                        ToolParameter(name="emotion", type=ToolParameterType.STRING,
+                                      description="expression name (e.g. surprised, glee, annoyed)"),
+                        ToolParameter(name="duration", type=ToolParameterType.NUMBER,
+                                      description="seconds to hold (default 1.5)", required=False),
+                    ],
+                ),
             ],
         )
 
@@ -55,4 +76,19 @@ class VirtualEyes(Cube):
             self.target_valence = max(-1.0, min(1.0, float(args.get("valence", 0.0))))
             self.target_arousal = max(-1.0, min(1.0, float(args.get("arousal", 0.0))))
             return f"mood set to ({self.target_valence:.2f}, {self.target_arousal:.2f})"
+        if action == "play_reaction":
+            emotion = str(args.get("emotion", "")).lower()
+            if emotion not in PRESETS:
+                return (f"Error: unknown expression '{emotion}'. "
+                        f"Available: {', '.join(sorted(PRESETS))}.")
+            duration = float(args.get("duration", 1.5) or 1.5)
+            self.current_reaction = emotion
+            self.reaction_until = time.monotonic() + max(0.1, duration)
+            return f"reacting: {emotion} for {duration:.1f}s"
         raise ValueError(f"unsupported action '{action}'")
+
+    def active_reaction(self) -> str | None:
+        """The reaction currently overriding the mood, or None if expired."""
+        if self.current_reaction and time.monotonic() < self.reaction_until:
+            return self.current_reaction
+        return None

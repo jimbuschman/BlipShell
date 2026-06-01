@@ -110,6 +110,11 @@ class EyesWindow:
     def _target_config(self):
         if self.mode == "demo":
             return PRESETS[DEMO_ORDER[self.demo_idx]], DEMO_ORDER[self.demo_idx]
+        # A live reaction briefly overrides the mood baseline.
+        if self.mode == "live":
+            reaction = self.cube.active_reaction()
+            if reaction is not None:
+                return PRESETS[reaction], f"{reaction}!"
         v, a = ((self.manual_v, self.manual_a) if self.mode == "manual"
                 else (self.cube.target_valence, self.cube.target_arousal))
         label = mood_label(AffectState(valence=v, arousal=a))

@@ -41,6 +41,23 @@ async def test_awareness_lists_connected_cube_and_actions():
     assert "part of yourself" in text.lower()
 
 
+def test_mood_awareness_empty_without_emotion():
+    assert _MiniAgent(None)._mood_awareness_text() == ""
+
+
+def test_mood_awareness_states_mood_and_guardrail():
+    from blipshell.robotics import EmotionEngine
+    agent = _MiniAgent(None)
+    agent.emotion = EmotionEngine()
+    agent.emotion.appraise("praise")
+
+    text = agent._mood_awareness_text()
+
+    assert "mood" in text.lower()
+    assert "warmth" in text.lower() and "energy" in text.lower()
+    assert "never" in text.lower()  # the tone-only / never-reduce-helpfulness guardrail
+
+
 async def test_awareness_includes_blipshells_own_notes():
     """The profile (BlipShell's plugin) surfaces as its own notes, not our rules."""
     core = RoboticsCore(ToolRegistry(), generate_fn=None)

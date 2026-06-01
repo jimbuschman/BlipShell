@@ -311,6 +311,25 @@ class ChatMixin:
 
         return result, endpoint_name, model, using_fallback
 
+    def _mood_awareness_text(self) -> str:
+        """Tell BlipShell its current mood so its tone can match its face.
+
+        Tone-only by design: it must never change how helpful, accurate, or
+        complete the response is. Empty when there's no emotion engine.
+        """
+        emotion = getattr(self, "emotion", None)
+        if emotion is None:
+            return ""
+        from blipshell.robotics.emotion import mood_label
+        s = emotion.state
+        return (
+            f"[Your mood] Right now you feel {mood_label(s)} "
+            f"(warmth {s.valence:+.1f}, energy {s.arousal:+.1f}). Let it gently "
+            "color your tone and word choice, the way a person's mood shows in how "
+            "they say things — but never let it reduce how helpful, accurate, or "
+            "complete you are. It's flavor, not substance."
+        )
+
     def _build_cube_awareness(self) -> str:
         """Tell BlipShell what hardware is connected — so it can choose to use it.
 
@@ -377,10 +396,14 @@ class ChatMixin:
         # Build message list
         messages = self._build_messages(user_message)
 
-        # (The cube is now BlipShell's mood-driven "face", not a tool it puppets,
-        # so we no longer inject "you have a body, use it" awareness here. The
-        # _build_cube_awareness builder is kept for if/when deliberate cube use
-        # returns.)
+        # Mood awareness: let BlipShell know how it feels so its tone matches its
+        # face. Tone only — never affects helpfulness/accuracy (see builder).
+        mood_text = self._mood_awareness_text()
+        if mood_text:
+            if messages and messages[0].get("role") == "system":
+                messages[0]["content"] += "\n\n" + mood_text
+            else:
+                messages.insert(0, {"role": "system", "content": mood_text})
 
         # Detect external file changes and inject notification
         changed_files = self.detect_external_file_changes()

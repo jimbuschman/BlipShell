@@ -565,9 +565,39 @@ class Agent(
         self._last_mood_update = now
         if event:
             emotion.appraise(event)
+            self._maybe_react(event)
         self._render_mood()
         if event:
             await self._save_emotion()
+
+    # Genuine affective reactions to events (natural responses, not arbitrary
+    # puppeting). Frequent events (interaction/idle) get no reaction.
+    _REACTION_FOR_EVENT = {
+        "user_corrected": "annoyed",
+        "user_returned": "happy",
+        "praise": "glee",
+        "task_succeeded": "glee",
+        "task_failed": "frustrated",
+    }
+
+    def _maybe_react(self, event: str):
+        """Fire a transient expression for events that warrant one."""
+        emotion = self._REACTION_FOR_EVENT.get(event)
+        if emotion:
+            self._play_reaction(emotion)
+
+    def _play_reaction(self, emotion: str, duration: float = 1.5):
+        """Briefly override the mood with a named expression on reaction-capable cubes."""
+        core = getattr(self, "robotics", None)
+        if core is None:
+            return
+        for meta in core.registry.list_cubes():
+            if meta.get_action("play_reaction") is None:
+                continue
+            task = asyncio.create_task(core.registry.invoke(
+                meta.cube_id, "play_reaction", {"emotion": emotion, "duration": duration}))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
     def _render_mood(self):
         """Push the current mood to every connected display cube.
