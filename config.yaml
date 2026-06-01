@@ -3,8 +3,8 @@
 
 models:
   # --- Interactive ---
-  tool_calling: "minimax-m2.5:cloud"  # general chat — 100% tool pass, 1.2s benchmark, same family as coding pick
-  coding: "minimax/minimax-m2.7"          # project mode coding via OpenRouter (2.3x faster than m2.5, same quality)
+  tool_calling: "minimax-m3:cloud"  # general chat — 100% tool pass (2026-06-01 bench, ties m2.5, beats m2.7 which skipped web searches)
+  coding: "minimax/minimax-m3"          # project mode coding via OpenRouter (matched m2.5 quality on bench, newer + larger context)
   # --- Background processing (local) ---
   reasoning: "qwen3:14b"                 # entity extraction, tag discovery, lessons, contradiction
   summarization: "glm4:latest"           # memory/session summaries (Groq/Gemini tried first via endpoint priority)
@@ -34,12 +34,12 @@ endpoints:
     roles: ["coding", "tool_calling"]
     priority: 1                          # fallback for chat when Ollama cloud is down; primary for coding
     max_concurrent: 5
-    context_tokens: 204800               # MiniMax M2.7 supports 204.8K
+    context_tokens: 204800               # MiniMax M3's OpenRouter provider serves 512K; capped at 204.8K to match the Ollama-cloud chat endpoint and bound request cost
     pii_sanitize: true                   # data leaves machine via OpenRouter
     enabled: true
     models:
-      coding: "minimax/minimax-m2.7"
-      tool_calling: "minimax/minimax-m2.7"
+      coding: "minimax/minimax-m3"
+      tool_calling: "minimax/minimax-m3"
   - name: "groq"
     url: "https://api.groq.com/openai/v1"
     provider: "openai"
@@ -75,7 +75,7 @@ endpoints:
     pii_sanitize: true       # cloud models relay to remote server — data leaves machine
     enabled: true
     models:
-      tool_calling: "minimax-m2.5:cloud"  # Ollama cloud free tier
+      tool_calling: "minimax-m3:cloud"  # Ollama cloud free tier
       session_review: "kimi-k2.5:cloud"  # 100% contradiction+dedup, 0.65s avg, large context
   - name: "local"
     url: "http://localhost:11434"
