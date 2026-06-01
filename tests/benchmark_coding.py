@@ -114,6 +114,24 @@ _MODEL_SETTINGS_CONFIG = {
         "max_tool_calls": 15,
         "use_repo_map": True,
     },
+    # MiniMax via Ollama cloud (:cloud forms) — identical settings across all
+    # three versions so the model is the only variable in the A/B. Matches the
+    # OpenRouter minimax profiles below (25 calls, repo map, no think).
+    "minimax-m2.5": {
+        "max_tool_calls": 25,
+        "use_repo_map": True,
+        "think": False,
+    },
+    "minimax-m2.7": {
+        "max_tool_calls": 25,
+        "use_repo_map": True,
+        "think": False,
+    },
+    "minimax-m3": {
+        "max_tool_calls": 25,
+        "use_repo_map": True,
+        "think": False,
+    },
     # OpenRouter models (matched via prefix scan, e.g. "anthropic/claude-sonnet-4-6")
     "anthropic/claude-sonnet": {
         "max_tool_calls": 30,
