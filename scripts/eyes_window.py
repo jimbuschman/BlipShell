@@ -24,7 +24,20 @@ import threading
 import tkinter as tk
 
 from blipshell.robotics.cubes import VirtualEyes
+from blipshell.robotics.emotion import AffectState, mood_label
 from blipshell.robotics.eyes import eye_geometry
+
+# Preview presets so you can SEE each mood (cycled by --demo or the 'd' key).
+DEMO_PRESETS = [
+    ("neutral", 0.0, -0.2),
+    ("content", 0.5, -0.3),
+    ("happy", 0.8, 0.3),
+    ("excited", 0.8, 0.8),
+    ("alert", 0.0, 0.9),
+    ("sad", -0.7, -0.4),
+    ("agitated", -0.7, 0.8),
+    ("sleepy", 0.0, -0.9),
+]
 
 # 0.96" OLED is 128x64; render at 2x for visibility.
 CANVAS_W, CANVAS_H = 256, 128
@@ -59,6 +72,12 @@ class EyesWindow:
         self.gaze_target = [0.0, 0.0]
         self.next_saccade = random.randint(45, 120)
 
+        # Mood source: "live" (BlipShell drives), "manual" (arrow keys), "demo".
+        self.mode = "live"
+        self.manual_v, self.manual_a = 0.0, -0.2
+        self.demo_idx = 0
+        self.next_demo = 0
+
         self._build_ui(host, port)
 
     # --- UI -----------------------------------------------------------------
@@ -72,7 +91,40 @@ class EyesWindow:
         self.canvas.pack(padx=12, pady=12)
         self.status_var = tk.StringVar(value=f"connecting to {host}:{port}...")
         tk.Label(self.root, textvariable=self.status_var, fg="#888", bg=BG_COLOR,
-                 font=("Consolas", 9)).pack(pady=(0, 8))
+                 font=("Consolas", 9)).pack()
+        self.mood_var = tk.StringVar(value="")
+        tk.Label(self.root, textvariable=self.mood_var, fg="#46c8ff", bg=BG_COLOR,
+                 font=("Consolas", 11, "bold")).pack(pady=(2, 0))
+        tk.Label(self.root,
+                 text="arrows: set mood  ·  d: demo cycle  ·  b: back to BlipShell",
+                 fg="#555", bg=BG_COLOR, font=("Consolas", 8)).pack(pady=(2, 8))
+
+        self.root.bind("<Left>",  lambda e: self._nudge(-0.1, 0.0))
+        self.root.bind("<Right>", lambda e: self._nudge(0.1, 0.0))
+        self.root.bind("<Up>",    lambda e: self._nudge(0.0, 0.1))
+        self.root.bind("<Down>",  lambda e: self._nudge(0.0, -0.1))
+        self.root.bind("d", lambda e: self._set_mode("demo"))
+        self.root.bind("b", lambda e: self._set_mode("live"))
+
+    # --- mood source / preview controls -------------------------------------
+
+    def _nudge(self, dv: float, da: float) -> None:
+        self.mode = "manual"
+        self.manual_v = max(-1.0, min(1.0, self.manual_v + dv))
+        self.manual_a = max(-1.0, min(1.0, self.manual_a + da))
+
+    def _set_mode(self, mode: str) -> None:
+        self.mode = mode
+        if mode == "demo":
+            self.demo_idx = 0
+            self.next_demo = self.frame
+
+    def _effective_target(self) -> tuple[float, float]:
+        if self.mode == "manual":
+            return self.manual_v, self.manual_a
+        if self.mode == "demo":
+            return DEMO_PRESETS[self.demo_idx][1], DEMO_PRESETS[self.demo_idx][2]
+        return self.cube.target_valence, self.cube.target_arousal
 
     # --- drawing ------------------------------------------------------------
 
@@ -113,12 +165,24 @@ class EyesWindow:
             self.canvas.create_rectangle(x0, y1 - ll, x1, y1, fill=BG_COLOR, outline="")
 
     def _render(self) -> None:
-        # Tween displayed mood toward the commanded target.
-        self.disp_v += (self.cube.target_valence - self.disp_v) * TWEEN
-        self.disp_a += (self.cube.target_arousal - self.disp_a) * TWEEN
+        self.frame += 1
+
+        # Advance the demo cycle (hold each preset ~2.5s).
+        if self.mode == "demo" and self.frame >= self.next_demo:
+            self.demo_idx = (self.demo_idx + 1) % len(DEMO_PRESETS)
+            self.next_demo = self.frame + 75
+
+        # Tween displayed mood toward the effective target (live/manual/demo).
+        tv, ta = self._effective_target()
+        self.disp_v += (tv - self.disp_v) * TWEEN
+        self.disp_a += (ta - self.disp_a) * TWEEN
+
+        label = mood_label(AffectState(valence=self.disp_v, arousal=self.disp_a))
+        tag = {"demo": DEMO_PRESETS[self.demo_idx][0] + " (demo)",
+               "manual": "manual"}.get(self.mode, "live")
+        self.mood_var.set(f"{label}   v={self.disp_v:+.2f} a={self.disp_a:+.2f}   [{tag}]")
 
         # Keep-alive: blink.
-        self.frame += 1
         blink = 0.0
         if self.blink_phase >= 0:
             half = BLINK_FRAMES / 2
@@ -204,6 +268,7 @@ class EyesWindow:
 
     def run(self, host: str, port: int) -> None:
         self.connect(host, port)
+        self.root.focus_force()  # so arrow keys register immediately
         self.root.after(30, self._poll)
         self.root.after(FPS_MS, self._render)
         self.root.mainloop()
@@ -214,8 +279,13 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--cube-id", default="eyes_01")
+    parser.add_argument("--demo", action="store_true",
+                        help="cycle through the named moods so you can see each one")
     args = parser.parse_args()
-    EyesWindow(args.host, args.port, args.cube_id).run(args.host, args.port)
+    win = EyesWindow(args.host, args.port, args.cube_id)
+    if args.demo:
+        win._set_mode("demo")
+    win.run(args.host, args.port)
 
 
 if __name__ == "__main__":
