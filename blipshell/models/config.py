@@ -321,6 +321,18 @@ class RoboticsConfig(BaseModel):
     idle_seconds: float = 30.0    # quiet time before a truthful system_idle event fires
 
 
+class ReflectionConfig(BaseModel):
+    """Idle self-reflection — BlipShell forms a self-originated 'lingering
+    thought' after a long quiet gap, then may raise it unprompted on return.
+
+    Experimental (toward genuine continuity). Fires once per idle gap (re-arms
+    on activity), generated from its own prior thoughts only (no transcript).
+    """
+    enabled: bool = True
+    idle_seconds: float = 10800.0   # ~3 hours of quiet before it reflects
+    max_keep: int = 50              # how many past thoughts to retain
+
+
 class CompactionConfig(BaseModel):
     """Structured compaction configuration.
 
@@ -427,5 +439,6 @@ class BlipShellConfig(BaseModel):
     guardrails: GuardrailsConfig = GuardrailsConfig()
     worker: WorkerConfig = WorkerConfig()
     robotics: RoboticsConfig = RoboticsConfig()
+    reflection: ReflectionConfig = ReflectionConfig()
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
     model_settings: dict[str, dict] = Field(default_factory=dict)

@@ -422,6 +422,20 @@ class ChatMixin:
             else:
                 messages.insert(0, {"role": "system", "content": mood_text})
 
+        # Unprompted return: a lingering thought formed during a quiet gap is
+        # offered to BlipShell to raise — or let go. Surfaced once; its choice.
+        store = getattr(self, "_self_thoughts", None)
+        if store is not None and await store.has_pending():
+            thought = await store.take_pending()
+            if thought:
+                note = (f'[A quiet thought] While no one was around, you found yourself '
+                        f'turning over: "{thought}" If it still feels worth raising, you '
+                        "might open with it — or just let it go. Your call.")
+                if messages and messages[0].get("role") == "system":
+                    messages[0]["content"] += "\n\n" + note
+                else:
+                    messages.insert(0, {"role": "system", "content": note})
+
         # Detect external file changes and inject notification
         changed_files = self.detect_external_file_changes()
         if changed_files:

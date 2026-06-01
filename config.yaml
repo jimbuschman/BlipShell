@@ -232,6 +232,14 @@ robotics:
   invoke_timeout: 10.0               # seconds to await a remote cube's result
   idle_seconds: 30.0                 # quiet time before a truthful system_idle event fires
 
+# Idle self-reflection — after a long quiet gap BlipShell forms one self-originated
+# "lingering thought" (from its own prior thoughts, not the conversation) and may
+# raise it unprompted when you return. Experimental; fires once per gap.
+reflection:
+  enabled: true
+  idle_seconds: 10800.0              # ~3 hours quiet before it reflects
+  max_keep: 50                       # past thoughts retained
+
 # Per-model behavioral settings (Aider-inspired)
 # Configures how the agent interacts with each model.
 # Model name matching is flexible: exact, base name, or prefix.

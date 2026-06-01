@@ -124,6 +124,10 @@ class Agent(
         self._mood_trend_ref = (0.0, time.time())  # (valence, time) ~45s reference
         self._mood_trend_clause = ""
 
+        # Self-reflection — self-originated "lingering thoughts" across idle gaps.
+        self._self_thoughts = None
+        self._reflection_task = None
+
         self._health_check_task: Optional[asyncio.Task] = None
         self._nightly_scheduler_task: Optional[asyncio.Task] = None
         self._memory_flush_task: Optional[asyncio.Task] = None
@@ -288,6 +292,13 @@ class Agent(
         self.robotics = RoboticsCore(self.tool_registry)
         # Restore persisted mood (decayed by however long BlipShell was away).
         await self._load_emotion()
+
+        # Self-reflection: a self-layer for lingering thoughts + an idle loop
+        # that forms one (once per quiet gap) and lets BlipShell raise it on return.
+        from blipshell.core.self_reflection import SelfThoughtStore
+        self._self_thoughts = SelfThoughtStore(self.sqlite, max_keep=self.config.reflection.max_keep)
+        if self.config.reflection.enabled:
+            self._reflection_task = asyncio.create_task(self._reflection_loop())
 
         # Cube transport server — listens for cube connections (standalone
         # window or remote hardware). Cubes auto-register on connect.
@@ -653,6 +664,47 @@ class Agent(
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
 
+    async def _reflection_loop(self):
+        """Once per long idle gap, form a self-originated lingering thought.
+
+        One-shot per gap (re-arms when the user is active again), so it never
+        keeps prompting while idle. Independent of robotics — this is the mind,
+        not the body.
+        """
+        reflected = False
+        await asyncio.sleep(60)  # never reflect right on boot
+        while True:
+            try:
+                await asyncio.sleep(60)
+                idle = time.time() - self._last_user_activity
+                if idle >= self.config.reflection.idle_seconds:
+                    if not reflected:
+                        await self._generate_lingering_thought()
+                        reflected = True
+                else:
+                    reflected = False
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("Reflection loop error: %s", e)
+
+    async def _generate_lingering_thought(self):
+        """Form one self-originated thought from prior thoughts only (no transcript)."""
+        if self._self_thoughts is None or self.router is None:
+            return
+        try:
+            from blipshell.core.self_reflection import NOTHING, lingering_thought_prompt
+            prior = await self._self_thoughts.recent(5)
+            system, user = lingering_thought_prompt(prior)
+            text = (await self.router.generate(TaskType.REASONING, user, system=system)).strip()
+            if not text or text.upper().startswith(NOTHING):
+                logger.info("Idle reflection: nothing pressing")
+                return
+            await self._self_thoughts.add(text)
+            logger.info("Idle reflection (lingering thought): %s", text[:120])
+        except Exception as e:
+            logger.warning("Lingering-thought generation failed: %s", e)
+
     async def _load_emotion(self):
         """Restore persisted mood, decayed by however long BlipShell was away."""
         if not getattr(self, "sqlite", None):
@@ -860,6 +912,9 @@ class Agent(
         if self._mood_task is not None:
             self._mood_task.cancel()
             self._mood_task = None
+        if self._reflection_task is not None:
+            self._reflection_task.cancel()
+            self._reflection_task = None
         await self._save_emotion()
 
         # Cancel asyncio background tasks (lightweight, main-loop only)
