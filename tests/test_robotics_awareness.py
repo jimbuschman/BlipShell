@@ -45,6 +45,17 @@ def test_mood_awareness_empty_without_emotion():
     assert _MiniAgent(None)._mood_awareness_text() == ""
 
 
+def test_mood_duration_scales_and_doesnt_flatten():
+    f = ChatMixin._fmt_mood_duration
+    assert f(30) == "a little while"
+    assert "minute" in f(15 * 60)
+    assert "hour" in f(3 * 3600)
+    assert "day" in f(2 * 86400)
+    assert f(7 * 86400) == "about a week"   # not "about 168 hours"
+    assert "week" in f(20 * 86400)          # ~3 weeks
+    assert "month" in f(60 * 86400)         # ~2 months
+
+
 async def test_mood_awareness_gated_off_without_a_live_face():
     """No connected cube -> no mood reading surfaced, even with an emotion engine."""
     from blipshell.core.tools.base import ToolRegistry

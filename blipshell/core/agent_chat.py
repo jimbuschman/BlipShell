@@ -318,8 +318,20 @@ class ChatMixin:
         minutes = int(seconds // 60)
         if minutes < 60:
             return f"about {minutes} minute" + ("s" if minutes != 1 else "")
-        hours = round(minutes / 60)
-        return f"about {hours} hour" + ("s" if hours != 1 else "")
+        hours = minutes / 60
+        if hours < 24:
+            h = round(hours)
+            return f"about {h} hour" + ("s" if h != 1 else "")
+        days = hours / 24
+        if days < 7:
+            d = round(days)
+            return f"about {d} day" + ("s" if d != 1 else "")
+        weeks = days / 7
+        if weeks < 5:
+            w = round(weeks)
+            return "about a week" if w == 1 else f"about {w} weeks"
+        months = round(days / 30)
+        return "about a month" if months == 1 else f"about {months} months"
 
     def _mood_awareness_text(self) -> str:
         """Surface BlipShell's mood as a STATE it carries, not a tone to execute.
