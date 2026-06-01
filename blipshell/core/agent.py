@@ -118,6 +118,11 @@ class Agent(
         self._last_mood_update = time.time()
         self._cube_last_frame = {}  # cube_id -> last frame sent (per-cube dedup)
         self._mood_task = None
+        # Mood trajectory (for self-awareness: "felt X for a while" not just "now").
+        self._mood_label = None
+        self._mood_label_since = time.time()
+        self._mood_trend_ref = (0.0, time.time())  # (valence, time) ~45s reference
+        self._mood_trend_clause = ""
 
         self._health_check_task: Optional[asyncio.Task] = None
         self._nightly_scheduler_task: Optional[asyncio.Task] = None
@@ -566,6 +571,20 @@ class Agent(
         if event:
             emotion.appraise(event)
             self._maybe_react(event)
+
+        # Track trajectory: how long the current mood label has held, and trend.
+        from blipshell.robotics.emotion import mood_label
+        label = mood_label(emotion.state)
+        if label != self._mood_label:
+            self._mood_label = label
+            self._mood_label_since = now
+        ref_val, ref_time = self._mood_trend_ref
+        if now - ref_time >= 45:
+            delta = emotion.state.valence - ref_val
+            self._mood_trend_clause = (", and it's lifting" if delta > 0.15
+                                       else ", and it's sinking" if delta < -0.15 else "")
+            self._mood_trend_ref = (emotion.state.valence, now)
+
         self._render_mood()
         if event:
             await self._save_emotion()

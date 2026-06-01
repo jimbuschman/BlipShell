@@ -45,17 +45,31 @@ def test_mood_awareness_empty_without_emotion():
     assert _MiniAgent(None)._mood_awareness_text() == ""
 
 
-def test_mood_awareness_states_mood_and_guardrail():
-    from blipshell.robotics import EmotionEngine
-    agent = _MiniAgent(None)
+async def test_mood_awareness_gated_off_without_a_live_face():
+    """No connected cube -> no mood reading surfaced, even with an emotion engine."""
+    from blipshell.core.tools.base import ToolRegistry
+    from blipshell.robotics import EmotionEngine, RoboticsCore
+    agent = _MiniAgent(RoboticsCore(ToolRegistry()))  # robotics, but no cube connected
+    agent.emotion = EmotionEngine()
+    assert agent._mood_awareness_text() == ""
+
+
+async def test_mood_awareness_with_live_face_states_trajectory_and_choice():
+    from blipshell.core.tools.base import ToolRegistry
+    from blipshell.robotics import EmotionEngine, RoboticsCore
+    from blipshell.robotics.cubes import VirtualEyes
+    core = RoboticsCore(ToolRegistry())
+    await core.connect(VirtualEyes())
+    agent = _MiniAgent(core)
     agent.emotion = EmotionEngine()
     agent.emotion.appraise("praise")
 
     text = agent._mood_awareness_text()
 
-    assert "mood" in text.lower()
-    assert "warmth" in text.lower() and "energy" in text.lower()
-    assert "never" in text.lower()  # the tone-only / never-reduce-helpfulness guardrail
+    assert text  # a live face -> surfaced
+    assert "felt" in text.lower()              # trajectory framing ("felt X for ...")
+    assert "carry it is yours" in text.lower() # the feel/do choice, not a command
+    assert "never" in text.lower()             # tone-only guardrail
 
 
 async def test_awareness_includes_blipshells_own_notes():

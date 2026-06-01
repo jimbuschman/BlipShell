@@ -311,23 +311,40 @@ class ChatMixin:
 
         return result, endpoint_name, model, using_fallback
 
-    def _mood_awareness_text(self) -> str:
-        """Tell BlipShell its current mood so its tone can match its face.
+    @staticmethod
+    def _fmt_mood_duration(seconds: float) -> str:
+        if seconds < 60:
+            return "a little while"
+        minutes = int(seconds // 60)
+        if minutes < 60:
+            return f"about {minutes} minute" + ("s" if minutes != 1 else "")
+        hours = round(minutes / 60)
+        return f"about {hours} hour" + ("s" if hours != 1 else "")
 
-        Tone-only by design: it must never change how helpful, accurate, or
-        complete the response is. Empty when there's no emotion engine.
+    def _mood_awareness_text(self) -> str:
+        """Surface BlipShell's mood as a STATE it carries, not a tone to execute.
+
+        Designed with BlipShell's own feedback: give it trajectory (how long it's
+        felt this way, the "weather vs. season" point) and leave the choice of how
+        to carry it to BlipShell (the feel/do layer) rather than commanding a tone.
+        Gated: only when a live face (a connected cube) is actually embodying the
+        mood — no body, no mood reading. Tone only; never affects helpfulness.
         """
+        import time
+        core = getattr(self, "robotics", None)
         emotion = getattr(self, "emotion", None)
-        if emotion is None:
+        if emotion is None or core is None or not core.registry.list_cubes():
             return ""
         from blipshell.robotics.emotion import mood_label
-        s = emotion.state
+        label = mood_label(emotion.state)
+        since = getattr(self, "_mood_label_since", time.time())
+        duration = self._fmt_mood_duration(max(0.0, time.time() - since))
+        trend = getattr(self, "_mood_trend_clause", "")
         return (
-            f"[Your mood] Right now you feel {mood_label(s)} "
-            f"(warmth {s.valence:+.1f}, energy {s.arousal:+.1f}). Let it gently "
-            "color your tone and word choice, the way a person's mood shows in how "
-            "they say things — but never let it reduce how helpful, accurate, or "
-            "complete you are. It's flavor, not substance."
+            f"[Your state] You've felt {label} for {duration} now{trend}. How you "
+            "carry it is yours — you can let it show, or move against it (steady "
+            "when you're low, warm when you're tired). Just notice it; it never "
+            "changes how helpful, accurate, or complete you are."
         )
 
     def _build_cube_awareness(self) -> str:
