@@ -48,6 +48,7 @@ DEFAULT_CANDIDATES = [
     "deepseek-v4-flash:cloud",
     "gemma4:31b-cloud",
     "nemotron-3-super:cloud",
+    "minimax-m3:cloud",
     "minimax-m2.7:cloud",
     "ministral-3:14b-cloud",
     "ministral-3:8b-cloud",

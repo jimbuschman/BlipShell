@@ -144,6 +144,12 @@ _MODEL_SETTINGS_CONFIG = {
         "use_repo_map": True,
         "think": False,
     },
+    "minimax/minimax-m3": {
+        # Same profile as m2.5 baseline so the only variable is the model.
+        "max_tool_calls": 25,
+        "use_repo_map": True,
+        "think": False,
+    },
     "moonshotai/kimi-k2.5": {
         "max_tool_calls": 25,
         "use_repo_map": True,
@@ -1783,6 +1789,8 @@ def make_router(model_name: str, timeout: float = 300.0) -> LLMRouter:
             "google/gemini-2.5-pro":     (1.25, 10.0),
             "z-ai/glm-5":               (0.80, 2.56),
             "minimax/minimax-m2.5":      (0.27, 0.95),
+            # m3: promo (50% off) is 0.30/1.20; regular list price is 0.60/2.40.
+            "minimax/minimax-m3":        (0.30, 1.20),
             "moonshotai/kimi-k2.5":      (0.45, 2.20),
             "qwen/qwen3-coder-next":     (0.12, 0.75),
             "mistralai/devstral-2512":   (0.40, 2.00),
