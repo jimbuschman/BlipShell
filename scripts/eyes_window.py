@@ -1,17 +1,17 @@
 """Standalone Cozmo-style EYES device — BlipShell's face on a (simulated) OLED.
 
-Run this and it connects to BlipShell's cube server like a real eye module. It's
-a SMART device: BlipShell only sends the current mood (set_mood valence/arousal);
-this window renders the procedural eyes AND runs its own keep-alive — random
-blinks and saccade glances — so the eyes stay alive on their own, independent of
-BlipShell/LLM latency (exactly how Cozmo/Vector eyes behave).
+Renders the faithful esp32-eyes model (blipshell.robotics.eye_config), so what
+you see previews the real 0.96" OLED hardware. Connects to BlipShell's cube
+server like a real eye module; it's a SMART device — BlipShell sends only the
+mood (set_mood valence/arousal) and this window renders the procedural eyes,
+tweens to the commanded mood, and runs its own keep-alive (random blinks +
+saccade glances) locally, independent of BlipShell/LLM latency.
 
     # in BlipShell's config.yaml: robotics.enabled: true
-    python -m scripts.eyes_window
+    python -m scripts.eyes_window            # connect + show live mood
+    python -m scripts.eyes_window --demo     # cycle the 18 named expressions
 
-Eyes are fully procedural (no pre-rendered frames): a rounded-rect base cut by
-lids, parameterized by valence/arousal via robotics.eyes.eye_geometry, tweened
-smoothly toward the commanded mood and animated with blink/saccade locally.
+Keys: arrows set mood (valence/arousal) · d = demo cycle · b = back to BlipShell.
 """
 
 import argparse
@@ -24,32 +24,28 @@ import threading
 import tkinter as tk
 
 from blipshell.robotics.cubes import VirtualEyes
+from blipshell.robotics.eye_config import (
+    PRESETS,
+    eye_outline,
+    lerp_config,
+    mirror_config,
+    mood_to_config,
+    with_blink,
+)
 from blipshell.robotics.emotion import AffectState, mood_label
-from blipshell.robotics.eyes import eye_geometry
 
-# Preview presets so you can SEE each mood (cycled by --demo or the 'd' key).
-DEMO_PRESETS = [
-    ("neutral", 0.0, -0.2),
-    ("content", 0.5, -0.3),
-    ("happy", 0.8, 0.3),
-    ("excited", 0.8, 0.8),
-    ("alert", 0.0, 0.9),
-    ("sad", -0.7, -0.4),
-    ("agitated", -0.7, 0.8),
-    ("sleepy", 0.0, -0.9),
-]
-
-# 0.96" OLED is 128x64; render at 2x for visibility.
-CANVAS_W, CANVAS_H = 256, 128
-EYE_W, EYE_MAX_H, CORNER_R = 52, 76, 18
-EYE_CY = 64
-EYE_CX_L, EYE_CX_R = 90, 166
-GAZE_X_RANGE, GAZE_Y_RANGE = 18, 14
+# Logical display is 128x64 (the OLED); render at SCALE for visibility.
+DISPLAY_W, DISPLAY_H, SCALE = 128, 64, 4
+EYE_CX_L, EYE_CX_R, EYE_CY = 40, 88, 32     # logical eye centers
+GAZE_X, GAZE_Y = 9, 6                        # logical gaze travel
 ON_COLOR, BG_COLOR = "#46c8ff", "#000000"
-FPS_MS = 33                 # ~30 fps render
-TWEEN = 0.15                # mood/gaze easing per frame
-MIN_H = 3                   # closed-eye sliver so a blink reads as a line
+FPS_MS, TWEEN = 33, 0.18
 BLINK_FRAMES = 6
+DEMO_ORDER = [
+    "normal", "happy", "glee", "surprised", "awe", "skeptic", "suspicious",
+    "focused", "worried", "sad", "sleepy", "annoyed", "unimpressed",
+    "frustrated", "squint", "angry", "furious", "scared",
+]
 
 
 class EyesWindow:
@@ -61,19 +57,15 @@ class EyesWindow:
         self.sock = None
         self.sockfile = None
 
-        # Displayed (tweened) mood — eases toward the cube's commanded target.
-        self.disp_v = self.cube.target_valence
-        self.disp_a = self.cube.target_arousal
-        # Keep-alive state.
+        self.disp_cfg = PRESETS["normal"]            # current (tweened) eye config
         self.frame = 0
-        self.blink_phase = -1            # -1 = not blinking; else 0..BLINK_FRAMES
+        self.blink_phase = -1
         self.next_blink = random.randint(60, 180)
         self.gaze = [0.0, 0.0]
         self.gaze_target = [0.0, 0.0]
         self.next_saccade = random.randint(45, 120)
 
-        # Mood source: "live" (BlipShell drives), "manual" (arrow keys), "demo".
-        self.mode = "live"
+        self.mode = "live"                            # live | manual | demo
         self.manual_v, self.manual_a = 0.0, -0.2
         self.demo_idx = 0
         self.next_demo = 0
@@ -86,7 +78,7 @@ class EyesWindow:
         self.root = tk.Tk()
         self.root.title(f"Eyes — {self.cube.cube_id}")
         self.root.configure(bg=BG_COLOR)
-        self.canvas = tk.Canvas(self.root, width=CANVAS_W, height=CANVAS_H,
+        self.canvas = tk.Canvas(self.root, width=DISPLAY_W * SCALE, height=DISPLAY_H * SCALE,
                                 bg=BG_COLOR, highlightthickness=0)
         self.canvas.pack(padx=12, pady=12)
         self.status_var = tk.StringVar(value=f"connecting to {host}:{port}...")
@@ -95,18 +87,14 @@ class EyesWindow:
         self.mood_var = tk.StringVar(value="")
         tk.Label(self.root, textvariable=self.mood_var, fg="#46c8ff", bg=BG_COLOR,
                  font=("Consolas", 11, "bold")).pack(pady=(2, 0))
-        tk.Label(self.root,
-                 text="arrows: set mood  ·  d: demo cycle  ·  b: back to BlipShell",
+        tk.Label(self.root, text="arrows: set mood · d: demo cycle · b: back to BlipShell",
                  fg="#555", bg=BG_COLOR, font=("Consolas", 8)).pack(pady=(2, 8))
-
         self.root.bind("<Left>",  lambda e: self._nudge(-0.1, 0.0))
         self.root.bind("<Right>", lambda e: self._nudge(0.1, 0.0))
         self.root.bind("<Up>",    lambda e: self._nudge(0.0, 0.1))
         self.root.bind("<Down>",  lambda e: self._nudge(0.0, -0.1))
         self.root.bind("d", lambda e: self._set_mode("demo"))
         self.root.bind("b", lambda e: self._set_mode("live"))
-
-    # --- mood source / preview controls -------------------------------------
 
     def _nudge(self, dv: float, da: float) -> None:
         self.mode = "manual"
@@ -119,74 +107,40 @@ class EyesWindow:
             self.demo_idx = 0
             self.next_demo = self.frame
 
-    def _effective_target(self) -> tuple[float, float]:
-        if self.mode == "manual":
-            return self.manual_v, self.manual_a
+    def _target_config(self):
         if self.mode == "demo":
-            return DEMO_PRESETS[self.demo_idx][1], DEMO_PRESETS[self.demo_idx][2]
-        return self.cube.target_valence, self.cube.target_arousal
+            return PRESETS[DEMO_ORDER[self.demo_idx]], DEMO_ORDER[self.demo_idx]
+        v, a = ((self.manual_v, self.manual_a) if self.mode == "manual"
+                else (self.cube.target_valence, self.cube.target_arousal))
+        label = mood_label(AffectState(valence=v, arousal=a))
+        return mood_to_config(v, a), f"{label}  v={v:+.2f} a={a:+.2f}"
 
     # --- drawing ------------------------------------------------------------
 
-    @staticmethod
-    def _round_rect_points(x0, y0, x1, y1, r):
-        r = max(0, min(r, (x1 - x0) / 2, (y1 - y0) / 2))
-        return [
-            x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r,
-            x1, y1 - r, x1, y1, x1 - r, y1, x0 + r, y1,
-            x0, y1, x0, y1 - r, x0, y0 + r, x0, y0,
-        ]
-
-    def _draw_eye(self, cx, cy, shape, inner_is_right: bool) -> None:
-        h = max(MIN_H, EYE_MAX_H * shape.openness)
-        w = EYE_W * shape.width
-        ox = cx + shape.gaze_x * GAZE_X_RANGE
-        oy = cy + shape.gaze_y * GAZE_Y_RANGE
-        x0, y0, x1, y1 = ox - w / 2, oy - h / 2, ox + w / 2, oy + h / 2
-
-        # Lit eye body (rounded rect).
-        self.canvas.create_polygon(
-            self._round_rect_points(x0, y0, x1, y1, min(CORNER_R, h / 2)),
-            smooth=True, fill=ON_COLOR, outline="")
-
-        # Upper lids (cut from the top), mirrored per eye so the inner (nose-side)
-        # corner is correct. cover_inner/outer are fractions of eye height.
-        ci, co = shape.upper_lid_inner * h, shape.upper_lid_outer * h
-        if ci > 0 or co > 0:
-            if inner_is_right:   # left eye: inner corner is on the right
-                pts = [x0, y0, x1, y0, x1, y0 + ci, x0, y0 + co]
-            else:                # right eye: inner corner is on the left
-                pts = [x0, y0, x1, y0, x1, y0 + co, x0, y0 + ci]
-            self.canvas.create_polygon(pts, fill=BG_COLOR, outline="")
-
-        # Lower lid (raise the bottom for a happy squint).
-        ll = shape.lower_lid * h
-        if ll > 0:
-            self.canvas.create_rectangle(x0, y1 - ll, x1, y1, fill=BG_COLOR, outline="")
+    def _draw_eye(self, cfg, lcx, lcy) -> None:
+        cx = lcx + self.gaze[0] * GAZE_X
+        cy = lcy + self.gaze[1] * GAZE_Y
+        pts = eye_outline(cfg, cx, cy)
+        flat = [coord * SCALE for xy in pts for coord in xy]
+        if len(flat) >= 6:
+            self.canvas.create_polygon(flat, fill=ON_COLOR, outline="")
 
     def _render(self) -> None:
         self.frame += 1
-
-        # Advance the demo cycle (hold each preset ~2.5s).
         if self.mode == "demo" and self.frame >= self.next_demo:
-            self.demo_idx = (self.demo_idx + 1) % len(DEMO_PRESETS)
+            self.demo_idx = (self.demo_idx + 1) % len(DEMO_ORDER)
             self.next_demo = self.frame + 75
 
-        # Tween displayed mood toward the effective target (live/manual/demo).
-        tv, ta = self._effective_target()
-        self.disp_v += (tv - self.disp_v) * TWEEN
-        self.disp_a += (ta - self.disp_a) * TWEEN
+        target_cfg, label = self._target_config()
+        self.disp_cfg = lerp_config(self.disp_cfg, target_cfg, TWEEN)
+        tag = {"demo": "demo", "manual": "manual"}.get(self.mode, "live")
+        self.mood_var.set(f"{label}   [{tag}]")
 
-        label = mood_label(AffectState(valence=self.disp_v, arousal=self.disp_a))
-        tag = {"demo": DEMO_PRESETS[self.demo_idx][0] + " (demo)",
-               "manual": "manual"}.get(self.mode, "live")
-        self.mood_var.set(f"{label}   v={self.disp_v:+.2f} a={self.disp_a:+.2f}   [{tag}]")
-
-        # Keep-alive: blink.
+        # Keep-alive blink.
         blink = 0.0
         if self.blink_phase >= 0:
             half = BLINK_FRAMES / 2
-            blink = 1.0 - abs(self.blink_phase - half) / half  # 0->1->0 triangle
+            blink = 1.0 - abs(self.blink_phase - half) / half
             self.blink_phase += 1
             if self.blink_phase > BLINK_FRAMES:
                 self.blink_phase = -1
@@ -194,22 +148,18 @@ class EyesWindow:
         elif self.frame >= self.next_blink:
             self.blink_phase = 0
 
-        # Keep-alive: saccade glances.
+        # Keep-alive saccades.
         if self.frame >= self.next_saccade:
-            if random.random() < 0.5:
-                self.gaze_target = [0.0, 0.0]            # often re-center
-            else:
-                self.gaze_target = [random.uniform(-1, 1) * 0.7,
-                                    random.uniform(-1, 1) * 0.5]
+            self.gaze_target = ([0.0, 0.0] if random.random() < 0.5
+                                else [random.uniform(-1, 1) * 0.7, random.uniform(-1, 1) * 0.5])
             self.next_saccade = self.frame + random.randint(45, 150)
         self.gaze[0] += (self.gaze_target[0] - self.gaze[0]) * 0.25
         self.gaze[1] += (self.gaze_target[1] - self.gaze[1]) * 0.25
 
-        shape = eye_geometry(self.disp_v, self.disp_a, blink=blink,
-                             gaze=(self.gaze[0], self.gaze[1]))
+        cfg = with_blink(self.disp_cfg, blink)
         self.canvas.delete("all")
-        self._draw_eye(EYE_CX_L, EYE_CY, shape, inner_is_right=True)
-        self._draw_eye(EYE_CX_R, EYE_CY, shape, inner_is_right=False)
+        self._draw_eye(cfg, EYE_CX_L, EYE_CY)
+        self._draw_eye(mirror_config(cfg), EYE_CX_R, EYE_CY)
         self.root.after(FPS_MS, self._render)
 
     # --- networking ---------------------------------------------------------
@@ -268,7 +218,7 @@ class EyesWindow:
 
     def run(self, host: str, port: int) -> None:
         self.connect(host, port)
-        self.root.focus_force()  # so arrow keys register immediately
+        self.root.focus_force()
         self.root.after(30, self._poll)
         self.root.after(FPS_MS, self._render)
         self.root.mainloop()
@@ -280,7 +230,7 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--cube-id", default="eyes_01")
     parser.add_argument("--demo", action="store_true",
-                        help="cycle through the named moods so you can see each one")
+                        help="cycle the 18 named expressions so you can see each one")
     args = parser.parse_args()
     win = EyesWindow(args.host, args.port, args.cube_id)
     if args.demo:
