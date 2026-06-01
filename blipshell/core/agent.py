@@ -570,26 +570,37 @@ class Agent(
             await self._save_emotion()
 
     def _render_mood(self):
-        """Draw the current mood as a face on every connected display cube."""
+        """Push the current mood to every connected display cube.
+
+        Two kinds of display cube:
+          - smart eyes (set_mood): send valence/arousal; the device renders +
+            keep-alives on its own.
+          - dumb grid (display_frame): send a rendered procedural face frame.
+        Per-cube dedup so a newly connected cube always gets the current mood.
+        """
         core = getattr(self, "robotics", None)
         if core is None:
             return
-        from blipshell.robotics.mood_display import render_face
-        frame = render_face(self.emotion.state.valence, self.emotion.state.arousal)
+        v, a = self.emotion.state.valence, self.emotion.state.arousal
         connected = {meta.cube_id for meta in core.registry.list_cubes()}
         # Drop dedup entries for cubes that have gone away.
         for gone in [cid for cid in self._cube_last_frame if cid not in connected]:
             del self._cube_last_frame[gone]
+
         for meta in core.registry.list_cubes():
-            if meta.get_action("display_frame") is None:
+            if meta.get_action("set_mood") is not None:
+                payload = ("mood", round(v, 2), round(a, 2))
+                action, args = "set_mood", {"valence": v, "arousal": a}
+            elif meta.get_action("display_frame") is not None:
+                from blipshell.robotics.mood_display import render_face
+                payload = render_face(v, a)
+                action, args = "display_frame", {"frame": payload}
+            else:
                 continue
-            # Per-cube dedup: a newly connected cube has no last frame, so it
-            # always gets the current face — even if the mood hasn't changed.
-            if self._cube_last_frame.get(meta.cube_id) == frame:
+            if self._cube_last_frame.get(meta.cube_id) == payload:
                 continue
-            self._cube_last_frame[meta.cube_id] = frame
-            task = asyncio.create_task(
-                core.registry.invoke(meta.cube_id, "display_frame", {"frame": frame}))
+            self._cube_last_frame[meta.cube_id] = payload
+            task = asyncio.create_task(core.registry.invoke(meta.cube_id, action, args))
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
 
