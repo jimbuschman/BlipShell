@@ -139,7 +139,7 @@ class EyesWindow:
 
     def _draw_eye(self, cx, cy, shape, inner_is_right: bool) -> None:
         h = max(MIN_H, EYE_MAX_H * shape.openness)
-        w = EYE_W
+        w = EYE_W * shape.width
         ox = cx + shape.gaze_x * GAZE_X_RANGE
         oy = cy + shape.gaze_y * GAZE_Y_RANGE
         x0, y0, x1, y1 = ox - w / 2, oy - h / 2, ox + w / 2, oy + h / 2

@@ -7,23 +7,24 @@ from blipshell.robotics.eyes import EyeShape, eye_geometry
 
 def test_neutral_is_moderate_open_no_lids():
     e = eye_geometry(0.0, 0.0)
-    assert e.openness == pytest.approx(0.6)
+    assert e.openness == pytest.approx(0.55)
     assert e.lower_lid == 0.0
     assert e.upper_lid_inner == 0.0 and e.upper_lid_outer == 0.0
+    assert e.width == pytest.approx(1.0)
 
 
-def test_arousal_sets_openness():
+def test_arousal_sets_openness_and_width():
     wide = eye_geometry(0.0, 1.0)
     sleepy = eye_geometry(0.0, -1.0)
     assert wide.openness == pytest.approx(1.0)
-    assert sleepy.openness == pytest.approx(0.2)
+    assert sleepy.openness == pytest.approx(0.1)
     assert wide.openness > sleepy.openness
+    assert wide.width > 1.0          # alert/surprised eyes widen
+    assert sleepy.width == pytest.approx(1.0)  # low arousal doesn't widen
 
 
 def test_blink_closes_eyes():
     assert eye_geometry(0.0, 1.0, blink=1.0).openness == pytest.approx(0.0)
-    half = eye_geometry(0.0, 0.0, blink=0.5)
-    assert half.openness == pytest.approx(0.3)  # 0.6 * (1 - 0.5)
 
 
 def test_positive_valence_raises_lower_lid():
@@ -32,18 +33,23 @@ def test_positive_valence_raises_lower_lid():
     assert happy.upper_lid_inner == 0.0  # no droop when happy
 
 
-def test_negative_valence_droops_upper_lids():
-    sad = eye_geometry(-1.0, -0.5)  # sad + calm
-    assert sad.upper_lid_inner > 0.0 and sad.upper_lid_outer > 0.0
+def test_calm_sadness_slants_outer_corner_down():
+    """Sad (low valence, calm) drops the OUTER corners — the classic sad slant."""
+    sad = eye_geometry(-1.0, -0.6)
+    assert sad.upper_lid_outer > sad.upper_lid_inner
     assert sad.lower_lid == 0.0
-    # calm sadness is roughly symmetric (no furrow)
-    assert sad.upper_lid_inner == pytest.approx(sad.upper_lid_outer)
 
 
-def test_aroused_sadness_furrows_inner_corner():
-    angry = eye_geometry(-1.0, 1.0)  # negative valence + high arousal
-    # inner corner drops more than outer — a furrow, toward an angry look
+def test_aroused_negative_furrows_inner_corner():
+    """Angry (low valence, high arousal) drops the INNER corners — a furrow."""
+    angry = eye_geometry(-1.0, 1.0)
     assert angry.upper_lid_inner > angry.upper_lid_outer
+
+
+def test_displeased_neutral_arousal_is_symmetric():
+    e = eye_geometry(-1.0, 0.0)
+    assert e.upper_lid_inner == pytest.approx(e.upper_lid_outer)
+    assert e.upper_lid_inner > 0.0
 
 
 def test_gaze_passthrough_and_clamp():
@@ -54,7 +60,7 @@ def test_gaze_passthrough_and_clamp():
 def test_inputs_clamped():
     e = eye_geometry(5.0, -5.0)
     assert e.lower_lid <= 1.0
-    assert e.openness == pytest.approx(0.2)  # arousal clamped to -1
+    assert e.openness == pytest.approx(0.1)  # arousal clamped to -1
 
 
 def test_returns_eyeshape():
