@@ -632,6 +632,11 @@ class MemorySearch:
             return []
 
         candidates = await store.relevant_candidates(qvec, floor=cosine_floor, k=prefilter_k)
+        logger.info(
+            "Self-thought prefilter: %d candidate(s) >= cosine %.2f %s",
+            len(candidates), cosine_floor,
+            [(t[:50], round(s, 3)) for t, s in candidates],
+        )
         if not candidates:
             return []
 
@@ -649,6 +654,11 @@ class MemorySearch:
             except Exception as e:
                 logger.warning("Self-thought rerank failed: %s", e)
                 continue  # fail-closed: a thought we can't score doesn't surface
+            logger.info(
+                "Self-thought rerank: %.3f (floor %.2f, %s) for %r",
+                score, rerank_floor, "PASS" if score >= rerank_floor else "drop",
+                text[:50],
+            )
             if score >= rerank_floor:
                 scored.append((text, score))
 
