@@ -9,7 +9,6 @@ Run: pytest tests/test_lifecycle.py -v
 
 import asyncio
 import os
-import tempfile
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,14 +28,11 @@ from blipshell.models.config import MemoryConfig
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def temp_db_path():
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    yield path
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
+def temp_db_path(tmp_path):
+    # pytest's tmp_path is a guaranteed-existing, test-owned directory.
+    # tempfile.mkstemp relies on gettempdir(), which can point at a
+    # transient sandbox-managed TMPDIR that vanishes mid-test.
+    return str(tmp_path / "test.db")
 
 
 @pytest.fixture

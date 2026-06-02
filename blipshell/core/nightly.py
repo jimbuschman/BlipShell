@@ -658,16 +658,34 @@ class NightlyRunner:
         return {"deleted_junk": deleted_junk, "deleted_dupes": deleted_dupes}
 
     async def _job_session_reflections(self, on_status) -> dict:
-        """Generate holistic reflections for unreflected sessions."""
+        """Generate holistic reflections for unreflected sessions.
+
+        Like friction analysis, each session is one LLM call, so a full batch
+        exceeds the per-job timeout. Process under a time budget and exit with
+        partial progress — reflected sessions are recorded in
+        ``session_reflections`` and excluded next run, so the next nightly run
+        resumes the backlog instead of being hard-killed mid-loop.
+        """
         sessions = await self.sqlite.get_sessions_missing_reflections(limit=200)
         if not sessions:
             return {"processed": 0, "skipped": 0, "total": 0}
 
+        budget = _JOB_TIMEOUT - 30
+        start = time.monotonic()
         processed = 0
         skipped = 0
         failed = 0
         cloud_routed = 0
+        stopped_early = False
         for session in sessions:
+            if time.monotonic() - start > budget:
+                stopped_early = True
+                logger.info(
+                    "session_reflections hit time budget (%ds), stopping with "
+                    "partial progress (%d/%d sessions)",
+                    budget, processed, len(sessions),
+                )
+                break
             sid = session["id"]
             summary = session["summary"]
             project = session.get("project")
@@ -700,18 +718,38 @@ class NightlyRunner:
             "failed": failed,
             "cloud_routed": cloud_routed,
             "total": len(sessions),
+            "stopped_early": stopped_early,
         }
 
     async def _job_friction_analysis(self, on_status) -> dict:
-        """Analyze recent sessions for system-level friction."""
+        """Analyze recent sessions for system-level friction.
+
+        Each session needs a REASONING LLM call, so a full 200-session batch
+        far exceeds the per-job timeout. We process under a time budget
+        slightly below ``_JOB_TIMEOUT`` and exit cleanly with partial
+        progress — completed sessions are marked in ``friction_log`` (real
+        items or a NONE sentinel), so the next nightly run resumes where this
+        one stopped instead of being hard-killed mid-loop by ``wait_for``.
+        """
         sessions = await self.sqlite.get_sessions_missing_friction_analysis(limit=200)
         if not sessions:
             return {"processed": 0, "friction_items": 0, "total": 0}
 
+        budget = _JOB_TIMEOUT - 30
+        start = time.monotonic()
         processed = 0
         total_items = 0
         failed = 0
+        stopped_early = False
         for session in sessions:
+            if time.monotonic() - start > budget:
+                stopped_early = True
+                logger.info(
+                    "friction_analysis hit time budget (%ds), stopping with "
+                    "partial progress (%d/%d sessions)",
+                    budget, processed, len(sessions),
+                )
+                break
             sid = session["id"]
             summary = session["summary"]
             project = session.get("project")
@@ -757,6 +795,7 @@ class NightlyRunner:
             "friction_items": total_items,
             "failed": failed,
             "total": len(sessions),
+            "stopped_early": stopped_early,
         }
 
     async def _job_entity_extraction(self, on_status) -> dict:

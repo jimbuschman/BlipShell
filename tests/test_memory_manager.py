@@ -12,13 +12,25 @@ class TestEstimateTokens:
     def test_none_string(self):
         assert estimate_tokens(None) == 0
 
-    def test_normal_text(self):
-        # ~4 chars per token
+    def test_normal_text(self, monkeypatch):
+        # Heuristic fallback: ~4 chars per token (16 chars // 4 == 4).
+        # Force the fallback so the test is deterministic whether or not
+        # tiktoken is installed — estimate_tokens prefers tiktoken when present.
+        monkeypatch.setattr("blipshell.memory.manager._tokenizer", None)
+        monkeypatch.setattr("blipshell.memory.manager._tokenizer_loaded", True)
         assert estimate_tokens("hello world test") == 4
 
-    def test_long_text(self):
+    def test_long_text(self, monkeypatch):
+        monkeypatch.setattr("blipshell.memory.manager._tokenizer", None)
+        monkeypatch.setattr("blipshell.memory.manager._tokenizer_loaded", True)
         text = "a" * 400
-        assert estimate_tokens(text) == 100
+        assert estimate_tokens(text) == 100  # 400 // 4
+
+    def test_uses_tiktoken_when_available(self):
+        # When tiktoken is installed, real token counts are used (and differ
+        # from the len//4 heuristic). Just assert a sane positive count.
+        n = estimate_tokens("hello world test")
+        assert isinstance(n, int) and n > 0
 
 
 class TestPool:
@@ -87,7 +99,7 @@ class TestMemoryManager:
         assert "ActiveSession" in usage
         assert "Recall" in usage
         assert "RecentHistory" in usage
-        assert "Buffer" in usage
+        assert "Lessons" in usage
 
     def test_add_memory(self, memory_manager):
         memory_manager.add_memory("Recall", PoolItem(text="test memory"))
@@ -111,8 +123,10 @@ class TestMemoryManager:
         assert "recalled memory" in texts
 
     def test_lessons_labeled_correctly(self, memory_manager):
-        memory_manager.add_memory("Core", PoolItem(
-            text="lesson text", session_role="system2", priority_score=3.0,
+        # Lessons is now a dedicated pool; gather_memory stamps each item with
+        # its source pool name.
+        memory_manager.add_memory("Lessons", PoolItem(
+            text="lesson text", session_role="system", priority_score=3.0,
         ))
         items = memory_manager.gather_memory(token_budget=1000)
         assert items[0].pool_name == "Lessons"

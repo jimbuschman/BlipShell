@@ -1,8 +1,6 @@
 """Shared test fixtures for BlipShell tests."""
 
 import asyncio
-import os
-import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -52,15 +50,16 @@ def blipshell_config():
 
 
 @pytest.fixture
-def temp_db_path():
-    """Temporary SQLite DB path."""
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    yield path
-    try:
-        os.unlink(path)
-    except OSError:
-        pass
+def temp_db_path(tmp_path):
+    """Temporary SQLite DB path.
+
+    Uses pytest's ``tmp_path`` (a guaranteed-existing, test-owned directory)
+    rather than ``tempfile.mkstemp``. The latter relies on
+    ``tempfile.gettempdir()``, which can resolve to a transient directory
+    (e.g. a sandbox-managed ``TMPDIR``) that is created/removed out from under
+    the test, causing ``initialize()``'s ``mkdir`` to fail.
+    """
+    return str(tmp_path / "test.db")
 
 
 @pytest.fixture
