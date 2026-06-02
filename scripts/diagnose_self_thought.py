@@ -15,13 +15,15 @@ import logging
 import sys
 from pathlib import Path
 
+import httpx
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from blipshell.core.config import ConfigManager
 from blipshell.core.self_reflection import SelfThoughtStore, _cosine
 from blipshell.llm.endpoints import EndpointManager
 from blipshell.llm.router import LLMRouter
-from blipshell.memory.reranker import Reranker
+from blipshell.memory.reranker import DEFAULT_INSTRUCTION, RERANKER_SYSTEM, Reranker
 from blipshell.memory.search import MemorySearch
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.memory.vector_store import VectorStore
@@ -111,8 +113,7 @@ async def main():
         line("score(obvious match)", round(s_match, 4))
         line("score(obvious non-match)", round(s_nonmatch, 4))
         if s_match == 0.5 and s_nonmatch == 0.5:
-            line("VERDICT", "reranker returns NEUTRAL 0.5 -> model not answering "
-                            "(pull it? `ollama pull " + config.memory.reranker_model + "`)")
+            line("VERDICT", "reranker returns NEUTRAL 0.5 -> model not answering")
         elif s_match <= s_nonmatch:
             line("VERDICT", "reranker not discriminating (match <= non-match) -> "
                             "prompt/format mismatch for this model")
@@ -121,6 +122,42 @@ async def main():
     except Exception as e:
         line("RERANKER CALL FAILED", repr(e))
     await rr.close()
+    print()
+
+    # --- 2b. RAW PROBE: what does the model ACTUALLY emit? ---
+    # When stage 2 says 0.5, the score code can't find a yes/no token. Dump the
+    # raw response under a few request variants so we know why before fixing it.
+    print("[2b] RERANKER RAW OUTPUT (why 0.5?)")
+    prompt = (f"<Instruct>: {DEFAULT_INSTRUCTION}\n"
+              f"<Query>: What is Python?\n"
+              f"<Document>: Python is a high-level programming language.")
+    variants = [
+        ("as-is (num_predict=1)", {"num_predict": 1, "temperature": 0.0}, None),
+        ("num_predict=20", {"num_predict": 20, "temperature": 0.0}, None),
+        ("think=false, np=20", {"num_predict": 20, "temperature": 0.0}, False),
+        ("logprobs req, np=1", {"num_predict": 1, "temperature": 0.0, "logprobs": True, "top_logprobs": 10}, None),
+    ]
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for label, options, think in variants:
+            body = {
+                "model": config.memory.reranker_model,
+                "prompt": prompt,
+                "system": RERANKER_SYSTEM,
+                "stream": False,
+                "options": options,
+            }
+            if think is not None:
+                body["think"] = think
+            try:
+                resp = await client.post(f"{ollama_url}/api/generate", json=body)
+                data = resp.json()
+                line(f"  {label} | http", resp.status_code)
+                line("    response repr", repr(data.get("response", ""))[:120])
+                line("    has logprobs", bool(data.get("logprobs")))
+                if data.get("error"):
+                    line("    error", str(data.get("error"))[:120])
+            except Exception as e:
+                line(f"  {label}", f"CALL FAILED: {e!r}")
     print()
 
     # --- 3. FULL PATH: the exact call the chat turn makes ---
