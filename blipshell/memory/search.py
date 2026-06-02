@@ -610,18 +610,22 @@ class MemorySearch:
 
         Stage 1 — cosine prefilter (cheap, in-process): narrow ≤max_keep thoughts
         to the prefilter_k nearest above a *loose* cosine_floor. Efficiency only;
-        explicitly NOT the gate (nomic similarities sit in a high, mushy band).
+        explicitly NOT the gate (embedding similarities sit in a high band).
 
-        Stage 2 — reranker gate (sharp, calibrated 0-1): the actual decision. A
-        candidate surfaces only if score_pair clears rerank_floor.
+        Stage 2 — LLM relevance judge (sharp): a local reasoning-model yes/no on
+        each candidate is the actual decision. (This replaces a Qwen3 reranker
+        that doesn't produce usable output via Ollama /api/generate; a real model
+        judging relevance is the sharp gate the design wanted, on infra that
+        works, and keeps self-thoughts local.) The judge returns 1.0/0.0, so
+        rerank_floor keeps its threshold meaning.
 
-        Fail-closed: if the reranker is disabled or every call errors, nothing
-        surfaces. A self-authored thought reaching its own context is earned by a
-        sharp filter or not at all — better silent than sloppy.
+        Fail-closed: if the judge errors, nothing surfaces. A self-authored
+        thought reaching its own context is earned by a sharp filter or not at
+        all — better silent than sloppy.
 
-        Returns up to max_inject (text, reranker_score) pairs, best first.
+        Returns up to max_inject (text, cosine) pairs, most-similar first.
         """
-        if not self.reranker_enabled or store is None or max_inject <= 0:
+        if store is None or max_inject <= 0:
             return []
 
         loop = asyncio.get_running_loop()
@@ -640,30 +644,54 @@ class MemorySearch:
         if not candidates:
             return []
 
-        if self._reranker is None:
-            self._reranker = Reranker(
-                ollama_url=self._ollama_url,
-                model=self.reranker_model,
-                instruction=self.reranker_instruction or None,
-            )
-
-        scored: list[tuple[str, float]] = []
-        for text, _sim in candidates:
+        kept: list[tuple[str, float]] = []
+        for text, sim in candidates:
             try:
-                score = await self._reranker.score_pair(query, text)
+                verdict = await self._judge_relevance(query, text)
             except Exception as e:
-                logger.warning("Self-thought rerank failed: %s", e)
-                continue  # fail-closed: a thought we can't score doesn't surface
+                logger.warning("Self-thought relevance judge failed: %s", e)
+                continue  # fail-closed: a thought we can't judge doesn't surface
             logger.info(
-                "Self-thought rerank: %.3f (floor %.2f, %s) for %r",
-                score, rerank_floor, "PASS" if score >= rerank_floor else "drop",
-                text[:50],
+                "Self-thought judge: %.1f (floor %.2f, %s) cosine %.3f for %r",
+                verdict, rerank_floor, "PASS" if verdict >= rerank_floor else "drop",
+                sim, text[:50],
             )
-            if score >= rerank_floor:
-                scored.append((text, score))
+            if verdict >= rerank_floor:
+                kept.append((text, sim))   # order survivors by cosine similarity
 
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return scored[:max_inject]
+        kept.sort(key=lambda x: x[1], reverse=True)
+        return kept[:max_inject]
+
+    async def _judge_relevance(self, query: str, thought: str) -> float:
+        """LLM yes/no judge: is `thought` relevant to `query` right now?
+
+        Returns 1.0 (yes) or 0.0 (no, or no clear verdict — fail-closed). Uses
+        the local reasoning model with thinking off: a relevance yes/no doesn't
+        need deep reasoning, and this runs on the per-turn path where latency
+        matters.
+        """
+        system = (
+            "You decide whether one of the assistant's own past private thoughts "
+            "is relevant to what the user is now saying. Reply with exactly one "
+            "word: yes or no."
+        )
+        user = (
+            f'Past private thought: "{thought}"\n\n'
+            f'User just said: "{query}"\n\n'
+            "Is the past thought genuinely relevant to what the user is now "
+            "discussing — relevant enough that recalling it would help the "
+            "conversation? Answer yes or no."
+        )
+        resp = await self.router.generate(
+            TaskType.REASONING, user, system=system, think=False,
+        )
+        # Last explicit yes/no token wins; no verdict -> fail-closed (0.0).
+        for tok in reversed(re.findall(r"[a-z]+", (resp or "").lower())):
+            if tok == "yes":
+                return 1.0
+            if tok == "no":
+                return 0.0
+        return 0.0
 
     async def search_core_memories(self, query: str, n_results: int = 10) -> list[dict]:
         """Search core memories by semantic similarity."""

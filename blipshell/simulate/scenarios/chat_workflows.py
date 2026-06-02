@@ -32,20 +32,21 @@ def _thought_injected(agent) -> bool:
     return _SEED_THOUGHT in getattr(agent, "_relevance_injected_thoughts", set())
 
 
-def _reranker_on(agent) -> bool:
-    # The standing-injection gate is fail-closed: with no reranker, nothing
-    # surfaces, so the positive check is not applicable (treated as pass).
-    return bool(getattr(getattr(agent, "search", None), "reranker_enabled", False))
+def _inject_on(agent) -> bool:
+    # Standing injection is gated by reflection.inject_enabled. When off, the
+    # positive check is not applicable (treated as pass).
+    cfg = getattr(getattr(agent, "config", None), "reflection", None)
+    return bool(getattr(cfg, "inject_enabled", False))
 
 
 def _self_thought_resurfaces() -> SimScenario:
     """End-to-end: a self-originated lingering thought resurfaces as context
     when the conversation is near it, and stays silent when it isn't.
 
-    Exercises the real path: store embedding -> cosine prefilter -> reranker
-    gate -> [Thought] injection. The reranker score is the tuning knob, so the
-    positive turn echoes the thought near-verbatim to keep the gate reliable;
-    if no reranker is configured the positive check is skipped (fail-closed).
+    Exercises the real path: store embedding -> cosine prefilter -> LLM
+    relevance judge -> [Thought] injection. The positive turn echoes the
+    thought near-verbatim so the judge reliably says yes; if injection is
+    disabled the positive check is skipped.
     """
     return SimScenario(
         name="self_thought_resurfaces_on_relevance",
@@ -61,11 +62,11 @@ def _self_thought_resurfaces() -> SimScenario:
             SimStep(
                 action=StepAction.CHAT,
                 input="Should the modular cubes express emotion through motion rather than color?",
-                description="On-topic turn — the thought should resurface (if reranker on)",
+                description="On-topic turn — the thought should resurface (if injection on)",
                 expect_no_error=True,
                 custom_validator=lambda agent: (
                     []
-                    if (not _reranker_on(agent) or _thought_injected(agent))
+                    if (not _inject_on(agent) or _thought_injected(agent))
                     else ["on-topic turn did not resurface the seeded self-thought "
                           f"(injected={getattr(agent, '_relevance_injected_thoughts', set())!r})"]
                 ),
