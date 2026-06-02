@@ -436,9 +436,13 @@ class ChatMixin:
 
         # Unprompted return: a lingering thought formed during a quiet gap is
         # offered to BlipShell to raise — or let go. Surfaced once; its choice.
+        # Skip if this thought already resurfaced via relevance this turn — no
+        # point offering it as "a quiet thought" when it's already in context.
         store = getattr(self, "_self_thoughts", None)
+        injected = getattr(self, "_relevance_injected_thoughts", set())
         if store is not None and await store.has_pending():
-            thought = await store.take_pending()
+            pending = await store.peek_pending()
+            thought = None if (pending and pending in injected) else await store.take_pending()
             if thought:
                 note = (f'[A quiet thought] While no one was around, you found yourself '
                         f'turning over: "{thought}" If it still feels worth raising, you '
@@ -682,6 +686,9 @@ class ChatMixin:
         """Search for relevant memories, core memories, and lessons, add to Recall pool."""
         now = datetime.now(timezone.utc)
         active_proj = self.active_project["name"] if self.active_project else None
+        # Reset per-turn: which self-thoughts surfaced via relevance, so the
+        # one-shot return greeting can avoid double-surfacing the same thought.
+        self._relevance_injected_thoughts = set()
 
         def _time_label(ts) -> str:
             if not ts:
@@ -716,11 +723,15 @@ class ChatMixin:
                 query, n_results=5, active_project=active_proj,
             )
 
-        # Gather all three — if one fails, others still return
+        # Gather all four — if one fails, others still return. The self-thought
+        # search injects its own [Thought] items (relevance-gated by a reranker).
         mem_task = asyncio.ensure_future(_search_memories())
         core_task = asyncio.ensure_future(_search_core())
         lesson_task = asyncio.ensure_future(_search_lessons())
-        await asyncio.gather(mem_task, core_task, lesson_task, return_exceptions=True)
+        thought_task = asyncio.ensure_future(self._search_self_thoughts(query))
+        await asyncio.gather(
+            mem_task, core_task, lesson_task, thought_task, return_exceptions=True
+        )
 
         # Process memory results — inject raw content, not summaries.
         # Summaries are one-line abstractions ("User asked about X") that lose
@@ -791,6 +802,39 @@ class ChatMixin:
             "lesson_results": lesson_count,
             **search_stats,
         })
+
+    async def _search_self_thoughts(self, query: str):
+        """Resurface a self-originated lingering thought when it's relevant *now*.
+
+        This is the standing-context path that makes the self-layer a loop
+        rather than a one-shot poll: a thought BlipShell formed for its own sake
+        comes back when the conversation is near it. Relevance is decided by a
+        sharp two-stage filter (cosine prefilter → reranker gate) in
+        MemorySearch; this method just injects what survives it into Recall.
+        """
+        store = getattr(self, "_self_thoughts", None)
+        cfg = getattr(self.config, "reflection", None)
+        if store is None or cfg is None or not getattr(cfg, "inject_enabled", False):
+            return
+        try:
+            matches = await self.search.search_self_thoughts(
+                query, store,
+                cosine_floor=cfg.inject_cosine_floor,
+                rerank_floor=cfg.inject_rerank_floor,
+                max_inject=cfg.inject_max,
+                prefilter_k=cfg.inject_prefilter_k,
+            )
+        except Exception as e:
+            logger.warning("Self-thought injection failed: %s", e)
+            return
+        for text, score in matches:
+            self._relevance_injected_thoughts.add(text)
+            self.memory_manager.add_memory("Recall", PoolItem(
+                text=f"[Thought] {text}",
+                session_role="system",
+                priority_score=score,
+            ))
+            logger.info("Self-thought resurfaced (rerank %.2f): %s", score, text[:100])
 
     def _build_messages(self, user_message: str) -> list[dict]:
         """Build the full message list with memory context.

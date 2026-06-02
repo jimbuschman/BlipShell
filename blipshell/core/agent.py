@@ -127,6 +127,8 @@ class Agent(
         # Self-reflection — self-originated "lingering thoughts" across idle gaps.
         self._self_thoughts = None
         self._reflection_task = None
+        # Thoughts that resurfaced via relevance this turn (dedup vs the greeting).
+        self._relevance_injected_thoughts: set = set()
 
         self._health_check_task: Optional[asyncio.Task] = None
         self._nightly_scheduler_task: Optional[asyncio.Task] = None
@@ -296,7 +298,21 @@ class Agent(
         # Self-reflection: a self-layer for lingering thoughts + an idle loop
         # that forms one (once per quiet gap) and lets BlipShell raise it on return.
         from blipshell.core.self_reflection import SelfThoughtStore
-        self._self_thoughts = SelfThoughtStore(self.sqlite, max_keep=self.config.reflection.max_keep)
+
+        async def _embed_self_thought(text: str):
+            # Same vector space as memories so a thought's relevance is
+            # comparable to lesson/core similarities. Best-effort: returns None
+            # when embeddings are unavailable (the store treats that gracefully).
+            if not getattr(self, "vectors", None):
+                return None
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, self.vectors.embed_text, text)
+
+        self._self_thoughts = SelfThoughtStore(
+            self.sqlite,
+            max_keep=self.config.reflection.max_keep,
+            embed_fn=_embed_self_thought,
+        )
         if self.config.reflection.enabled:
             self._reflection_task = asyncio.create_task(self._reflection_loop())
 

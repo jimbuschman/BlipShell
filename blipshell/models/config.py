@@ -332,6 +332,15 @@ class ReflectionConfig(BaseModel):
     idle_seconds: float = 10800.0   # ~3 hours of quiet before it reflects
     max_keep: int = 50              # how many past thoughts to retain
 
+    # Standing injection: a relevant past thought resurfaces as context (not just
+    # the one-shot greeting). Two-stage filter — cosine prefilter then reranker
+    # gate. Fail-closed: needs memory.reranker_enabled, else nothing injects.
+    inject_enabled: bool = True
+    inject_cosine_floor: float = 0.4   # loose recall prefilter — NOT the gate
+    inject_rerank_floor: float = 0.8   # the gate (reranker, calibrated 0-1)
+    inject_max: int = 1                # max thoughts injected per turn (backstop)
+    inject_prefilter_k: int = 3        # candidates handed to the reranker
+
 
 class CompactionConfig(BaseModel):
     """Structured compaction configuration.

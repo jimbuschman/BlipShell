@@ -596,6 +596,65 @@ class MemorySearch:
 
         return len(candidates)
 
+    async def search_self_thoughts(
+        self,
+        query: str,
+        store,
+        *,
+        cosine_floor: float,
+        rerank_floor: float,
+        max_inject: int,
+        prefilter_k: int,
+    ) -> list[tuple[str, float]]:
+        """Two-stage relevance filter over BlipShell's own lingering thoughts.
+
+        Stage 1 — cosine prefilter (cheap, in-process): narrow ≤max_keep thoughts
+        to the prefilter_k nearest above a *loose* cosine_floor. Efficiency only;
+        explicitly NOT the gate (nomic similarities sit in a high, mushy band).
+
+        Stage 2 — reranker gate (sharp, calibrated 0-1): the actual decision. A
+        candidate surfaces only if score_pair clears rerank_floor.
+
+        Fail-closed: if the reranker is disabled or every call errors, nothing
+        surfaces. A self-authored thought reaching its own context is earned by a
+        sharp filter or not at all — better silent than sloppy.
+
+        Returns up to max_inject (text, reranker_score) pairs, best first.
+        """
+        if not self.reranker_enabled or store is None or max_inject <= 0:
+            return []
+
+        loop = asyncio.get_running_loop()
+        try:
+            qvec = await loop.run_in_executor(None, self.vectors.embed_text, query)
+        except Exception as e:
+            logger.warning("Self-thought query embed failed: %s", e)
+            return []
+
+        candidates = await store.relevant_candidates(qvec, floor=cosine_floor, k=prefilter_k)
+        if not candidates:
+            return []
+
+        if self._reranker is None:
+            self._reranker = Reranker(
+                ollama_url=self._ollama_url,
+                model=self.reranker_model,
+                instruction=self.reranker_instruction or None,
+            )
+
+        scored: list[tuple[str, float]] = []
+        for text, _sim in candidates:
+            try:
+                score = await self._reranker.score_pair(query, text)
+            except Exception as e:
+                logger.warning("Self-thought rerank failed: %s", e)
+                continue  # fail-closed: a thought we can't score doesn't surface
+            if score >= rerank_floor:
+                scored.append((text, score))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:max_inject]
+
     async def search_core_memories(self, query: str, n_results: int = 10) -> list[dict]:
         """Search core memories by semantic similarity."""
         loop = asyncio.get_running_loop()

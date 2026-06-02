@@ -90,3 +90,79 @@ async def test_corrupt_store_is_safe():
     assert await s.recent(5) == []                # falls back to empty, no crash
     await s.add("recovers")
     assert await s.recent(5) == ["recovers"]
+
+
+# --- standing-context path (embeddings + relevance) ------------------------
+
+# Deterministic toy embedder: keyword -> fixed unit vector so cosine is exact.
+_VECS = {
+    "robotics cube": [1.0, 0.0, 0.0],
+    "continuity of self": [0.0, 1.0, 0.0],
+}
+
+
+async def _toy_embed(text):
+    # Unknown text -> a third orthogonal axis (cosine 0 with the known two).
+    return _VECS.get(text, [0.0, 0.0, 1.0])
+
+
+async def test_relevant_candidates_filters_by_cosine_floor():
+    s = SelfThoughtStore(FakeStore(), embed_fn=_toy_embed)
+    await s.add("robotics cube")
+    await s.add("continuity of self")
+    # Query identical to the robotics vector -> only that thought clears the floor.
+    matches = await s.relevant_candidates([1.0, 0.0, 0.0], floor=0.5, k=3)
+    assert [t for t, _ in matches] == ["robotics cube"]
+    assert matches[0][1] == pytest.approx(1.0)
+
+
+async def test_relevant_candidates_respects_k_and_ordering():
+    s = SelfThoughtStore(FakeStore(), embed_fn=_toy_embed)
+    await s.add("robotics cube")          # cosine 1.0 with the query below
+    await s.add("continuity of self")     # cosine ~0.0
+    # A query that leans toward robotics but also overlaps continuity a little.
+    matches = await s.relevant_candidates([0.9, 0.1, 0.0], floor=0.0, k=1)
+    assert len(matches) == 1
+    assert matches[0][0] == "robotics cube"   # higher cosine ranks first
+
+
+async def test_surfaced_thought_still_resurfaces_via_relevance():
+    """The keystone: take_pending (the one-shot greeting) must NOT remove a
+    thought from the standing relevance path. It sticks around and comes back."""
+    s = SelfThoughtStore(FakeStore(), embed_fn=_toy_embed)
+    await s.add("robotics cube")
+    await s.take_pending()                       # greeting consumed it
+    assert await s.has_pending() is False
+    matches = await s.relevant_candidates([1.0, 0.0, 0.0], floor=0.5, k=3)
+    assert [t for t, _ in matches] == ["robotics cube"]   # still retrievable
+
+
+async def test_peek_pending_does_not_consume():
+    s = SelfThoughtStore(FakeStore(), embed_fn=_toy_embed)
+    await s.add("robotics cube")
+    assert await s.peek_pending() == "robotics cube"
+    assert await s.has_pending() is True         # peek left it unsurfaced
+    assert await s.take_pending() == "robotics cube"
+
+
+async def test_missing_embedding_is_backfilled_and_persisted():
+    store = FakeStore()
+    # Simulate a thought written before this layer existed (no embedding field).
+    store.data[SelfThoughtStore.KEY] = json.dumps(
+        [{"text": "robotics cube", "surfaced": False}]
+    )
+    s = SelfThoughtStore(store, embed_fn=_toy_embed)
+    matches = await s.relevant_candidates([1.0, 0.0, 0.0], floor=0.5, k=3)
+    assert [t for t, _ in matches] == ["robotics cube"]
+    # The backfilled embedding is now persisted, so a reload doesn't re-embed.
+    reloaded = json.loads(store.data[SelfThoughtStore.KEY])
+    assert reloaded[0]["embedding"] == [1.0, 0.0, 0.0]
+
+
+async def test_no_embedder_yields_no_candidates():
+    # Without an embedder, thoughts have no vectors and the standing path stays
+    # silent (the one-shot greeting still works — that path needs no embedding).
+    s = SelfThoughtStore(FakeStore())
+    await s.add("robotics cube")
+    assert await s.relevant_candidates([1.0, 0.0, 0.0], floor=0.0, k=3) == []
+    assert await s.has_pending() is True

@@ -16,7 +16,73 @@ def get_scenarios() -> list[SimScenario]:
         _chat_after_mode_switch(),
         _memory_search_in_chat(),
         _force_plan_via_prefix(),
+        _self_thought_resurfaces(),
     ]
+
+
+# A distinctive self-thought to seed; the positive turn echoes it near-verbatim
+# so the reranker reliably clears its floor, the negative turn is unrelated.
+_SEED_THOUGHT = (
+    "I keep wondering whether the modular cubes should express emotion "
+    "through motion rather than through color."
+)
+
+
+def _thought_injected(agent) -> bool:
+    return _SEED_THOUGHT in getattr(agent, "_relevance_injected_thoughts", set())
+
+
+def _reranker_on(agent) -> bool:
+    # The standing-injection gate is fail-closed: with no reranker, nothing
+    # surfaces, so the positive check is not applicable (treated as pass).
+    return bool(getattr(getattr(agent, "search", None), "reranker_enabled", False))
+
+
+def _self_thought_resurfaces() -> SimScenario:
+    """End-to-end: a self-originated lingering thought resurfaces as context
+    when the conversation is near it, and stays silent when it isn't.
+
+    Exercises the real path: store embedding -> cosine prefilter -> reranker
+    gate -> [Thought] injection. The reranker score is the tuning knob, so the
+    positive turn echoes the thought near-verbatim to keep the gate reliable;
+    if no reranker is configured the positive check is skipped (fail-closed).
+    """
+    return SimScenario(
+        name="self_thought_resurfaces_on_relevance",
+        description="Lingering thought resurfaces when relevant, silent when not",
+        category="chat_workflow",
+        steps=[
+            SimStep(
+                action=StepAction.AGENT_METHOD,
+                method="_self_thoughts.add",
+                method_args={"text": _SEED_THOUGHT},
+                description="Seed a self-originated lingering thought (embeds it)",
+            ),
+            SimStep(
+                action=StepAction.CHAT,
+                input="Should the modular cubes express emotion through motion rather than color?",
+                description="On-topic turn — the thought should resurface (if reranker on)",
+                expect_no_error=True,
+                custom_validator=lambda agent: (
+                    []
+                    if (not _reranker_on(agent) or _thought_injected(agent))
+                    else ["on-topic turn did not resurface the seeded self-thought "
+                          f"(injected={getattr(agent, '_relevance_injected_thoughts', set())!r})"]
+                ),
+            ),
+            SimStep(
+                action=StepAction.CHAT,
+                input="What's a good recipe for sourdough bread?",
+                description="Off-topic turn — the thought must NOT leak in",
+                expect_no_error=True,
+                custom_validator=lambda agent: (
+                    []
+                    if not _thought_injected(agent)
+                    else ["off-topic turn leaked an unrelated self-thought into context"]
+                ),
+            ),
+        ],
+    )
 
 
 def _basic_conversation() -> SimScenario:

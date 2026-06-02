@@ -236,6 +236,14 @@ class VectorStore:
         )
         return response["embeddings"][0]
 
+    def embed_text(self, text: str) -> list[float]:
+        """Public single-text embedding — same vector space as stored memories.
+
+        Used by callers (e.g. the self-thought layer) that keep their own
+        vectors but need them comparable to memory/lesson/core similarities.
+        """
+        return self._embed(text)
+
     def _embed_batch(self, texts: list[str], chunk_size: int = 32) -> list[list[float]]:
         """Generate embeddings for multiple texts, chunked to avoid overwhelming Ollama."""
         if self._ollama_client is None:
