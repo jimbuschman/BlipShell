@@ -52,9 +52,15 @@ class BackgroundMixin:
         for idx, msg in undumped:
             if msg.role in (MessageRole.USER, MessageRole.ASSISTANT):
                 mem_id = self.session_manager._memory_db_ids.get(idx)
+                # Annotate vision turns so memory records an image was present
+                # (the raw bytes never enter the text pipeline).
+                text = msg.content
+                if getattr(msg, "images", None):
+                    names = ", ".join(i.get("orig_name", "image") for i in msg.images)
+                    text = f"{text}\n[image attached: {names}]".strip()
                 self._memory_worker.enqueue(WorkItem(
                     work_type=WorkType.PROCESS_MESSAGE,
-                    text=msg.content,
+                    text=text,
                     role=msg.role.value,
                     session_id=self.session_manager.session_id,
                     memory_id=mem_id,

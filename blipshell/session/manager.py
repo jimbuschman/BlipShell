@@ -5,6 +5,7 @@ dump-to-memory lifecycle, and session summary generation.
 """
 
 import asyncio
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -75,10 +76,18 @@ class SessionManager:
                 # Load existing messages into memory manager
                 memories = await self.sqlite.get_memories_by_session(session.id)
                 for mem in memories:
+                    # Restore image refs (vision turns) from metadata_json if present.
+                    images = None
+                    if getattr(mem, "metadata_json", None):
+                        try:
+                            images = json.loads(mem.metadata_json).get("images")
+                        except (ValueError, AttributeError):
+                            images = None
                     self._messages.append(SessionMessage(
                         role=MessageRole(mem.role),
                         content=mem.content,
                         timestamp=mem.timestamp,
+                        images=images,
                     ))
                     self._dumped_indices.add(len(self._messages) - 1)
                 logger.info("Resumed session %d (%d messages)", session.id, len(memories))
@@ -96,16 +105,21 @@ class SessionManager:
         logger.info("Started new session %d (project=%s)", self.session_id, project)
         return self.session_id
 
-    def add_message(self, role: MessageRole, content: str, tool_calls: list[dict] | None = None):
+    def add_message(self, role: MessageRole, content: str, tool_calls: list[dict] | None = None,
+                    images: list[dict] | None = None):
         """Add a message to the current session.
 
         Persists to memories table immediately (is_processed=0) so messages
         survive crashes. The memory pipeline later updates the row with
         summary, rank, importance, and sets is_processed=1.
+
+        `images` is an optional list of ImageRef dicts (vision input). The bytes
+        live on disk; only the refs travel with the message and get re-sent on
+        later turns (persist & replay) while in the recent-history window.
         """
         cleaned = self._clean_text(content)
-        if not cleaned:
-            return  # skip empty messages — they contaminate session history
+        if not cleaned and not images:
+            return  # skip empty text-only messages — they contaminate history
         now = datetime.now(timezone.utc)
         msg = SessionMessage(
             role=role,
@@ -113,6 +127,7 @@ class SessionManager:
             timestamp=now,
             token_count=estimate_tokens(cleaned),
             tool_calls=tool_calls,
+            images=images,
         )
         self._messages.append(msg)
 
@@ -121,23 +136,32 @@ class SessionManager:
         if self.session_id and role in (MessageRole.USER, MessageRole.ASSISTANT):
             msg_idx = len(self._messages) - 1
             task = asyncio.ensure_future(self._persist_message(
-                self.session_id, role.value, cleaned, now.isoformat(), msg_idx,
+                self.session_id, role.value, cleaned, now.isoformat(), msg_idx, images,
             ))
             self._pending_persists.append(task)
 
         # Add to memory manager ActiveSession pool
+        pool_text = f"{role.value}: {cleaned}"
+        if images:
+            names = ", ".join(i.get("orig_name", "image") for i in images)
+            pool_text += f" [image: {names}]"
         self.memory_manager.add_memory("ActiveSession", PoolItem(
-            text=f"{role.value}: {cleaned}",
+            text=pool_text,
             session_role=role.value,
             priority_score=1.0 if role == MessageRole.USER else 0.8,
             session_id=self.session_id or 0,
         ))
 
-    async def _persist_message(self, session_id: int, role: str, content: str, timestamp: str, msg_idx: int):
-        """Persist a raw message to memories table (is_processed=0)."""
+    async def _persist_message(self, session_id: int, role: str, content: str, timestamp: str,
+                               msg_idx: int, images: list[dict] | None = None):
+        """Persist a raw message to memories table (is_processed=0).
+
+        Image refs (if any) go in metadata_json so vision turns survive a resume.
+        """
         try:
+            metadata = json.dumps({"images": images}) if images else None
             mem_id = await self.sqlite.save_raw_memory(
-                session_id, role, content, timestamp,
+                session_id, role, content, timestamp, metadata=metadata,
             )
             # Store the memory ID so the pipeline can update it later
             self._memory_db_ids[msg_idx] = mem_id

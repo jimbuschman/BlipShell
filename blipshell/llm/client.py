@@ -85,6 +85,8 @@ class LLMClient:
         **kwargs,
     ) -> dict:
         """Send a chat request (non-streaming). Returns full response dict."""
+        from blipshell.core.vision import apply_images_ollama
+        messages = apply_images_ollama(messages)
         params = {
             "model": model,
             "messages": messages,
@@ -114,6 +116,8 @@ class LLMClient:
 
         On failure, retries the whole stream (not mid-stream).
         """
+        from blipshell.core.vision import apply_images_ollama
+        messages = apply_images_ollama(messages)
         params = {
             "model": model,
             "messages": messages,

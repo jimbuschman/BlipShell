@@ -48,6 +48,7 @@ class ModelSettings:
     extra_instructions: str = ""    # applied in project/coding mode only
     chat_instructions: str = ""     # applied in plain chat mode only
     num_ctx_buffer: int = 8192
+    vision_capable: bool = False    # model accepts image input
 
     @classmethod
     def from_dict(cls, data: dict) -> "ModelSettings":
@@ -103,6 +104,10 @@ class ModelSettingsRegistry:
 
         # Defaults
         return ModelSettings()
+
+    def is_vision(self, model_name: str) -> bool:
+        """True if the model is configured as vision-capable (accepts images)."""
+        return self.get(model_name).vision_capable
 
     def has_settings(self, model_name: str) -> bool:
         """Check if explicit settings exist for a model."""

@@ -253,6 +253,15 @@ reflection:
 # Configures how the agent interacts with each model.
 # Model name matching is flexible: exact, base name, or prefix.
 model_settings:
+  # Vision-capable models (accept image input). Both name forms are declared
+  # because the registry base-name match splits on ':' OR '/': "minimax-m3:cloud"
+  # matches "minimax-m3", but "minimax/minimax-m3" matches only "minimax".
+  minimax-m3:
+    vision_capable: true
+  minimax/minimax-m3:
+    vision_capable: true
+  kimi-k2.5:
+    vision_capable: true
   qwen3-coder:
     max_tool_calls: 20
     use_repo_map: true

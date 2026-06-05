@@ -36,6 +36,7 @@ class ChatMixin:
         force_plan: bool = False,
         on_tool_display: Optional[Callable] = None,
         research_mode: bool = False,
+        images: Optional[list[str]] = None,
     ) -> str:
         """Process a user message through the full agent pipeline.
 
@@ -77,8 +78,22 @@ class ChatMixin:
                 and self.config.guardrails.correction_detector):
             await self._detect_and_persist_correction(user_message)
 
+        # Load any attached images (vision input). Bytes are downscaled and
+        # stored on disk; only lightweight refs ride with the message.
+        image_refs: list[dict] = []
+        if images:
+            from blipshell.core.vision import load_image
+            for p in images:
+                ref = load_image(p)
+                if ref:
+                    image_refs.append(ref.to_dict())
+                elif on_token:
+                    on_token(f"[could not load image: {p}]\n")
+
         # Add user message to session
-        self.session_manager.add_message(MessageRole.USER, user_message)
+        self.session_manager.add_message(
+            MessageRole.USER, user_message, images=image_refs or None,
+        )
 
         # Decide execution path — only force_plan triggers the executor.
         # The model handles complexity naturally through the unified chat loop.
@@ -220,6 +235,12 @@ class ChatMixin:
         model = self.router.get_model(task_type)
         using_fallback = False
 
+        # Vision gating: if this turn carries images, only vision-capable models
+        # may handle it. If none are available, degrade to text (see below).
+        from blipshell.core.vision import has_image_refs, strip_image_refs
+        require_vision = has_image_refs(messages)
+        vision_degraded = False
+
         tools = self.tool_registry.get_all_ollama_tools() or None
 
         loop = ChatLoop(self.tool_registry, on_token)
@@ -228,17 +249,31 @@ class ChatMixin:
         full_response = ""
         last_failed_endpoint: str | None = None
 
-        # Try endpoints in priority order, then fall back to a different model
-        for attempt in range(3):  # endpoint 1 → endpoint 2 → fallback model
+        # Try endpoints in priority order, then fall back to a different model.
+        # Extra attempts leave room for skipping non-vision endpoints + degrading.
+        for attempt in range(5):
             endpoint = await self.endpoint_manager.get_endpoint_for_role(
                 task_type, exclude=last_failed_endpoint,
             )
 
             if not endpoint:
+                # Image turn with no vision-capable endpoint left — degrade to
+                # text-only (strip images → placeholder) so the session survives
+                # a cloud outage instead of erroring.
+                if require_vision and not vision_degraded:
+                    messages = strip_image_refs(messages)
+                    require_vision = False
+                    vision_degraded = True
+                    last_failed_endpoint = None
+                    if on_token:
+                        on_token("\n\x1b[33m[No vision endpoint available — "
+                                 "describing from text only]\x1b[0m\n")
+                    continue
                 # All endpoints exhausted — try fallback model on any available endpoint
                 if not using_fallback:
                     fallback = self.router.get_fallback_model(task_type)
-                    if fallback and fallback != model:
+                    if (fallback and fallback != model
+                            and (not require_vision or self.model_settings.is_vision(fallback))):
                         logger.warning("All endpoints failed for '%s', falling back to '%s'", model, fallback)
                         model = fallback
                         using_fallback = True
@@ -254,6 +289,15 @@ class ChatMixin:
 
             # Per-endpoint model override
             ep_model = endpoint.models.get(task_type) or model
+
+            # Vision gating: skip endpoints whose model can't see images.
+            if require_vision and not self.model_settings.is_vision(ep_model):
+                logger.info(
+                    "Skipping non-vision endpoint '%s' (model '%s') for image turn",
+                    endpoint.name, ep_model,
+                )
+                last_failed_endpoint = endpoint.name
+                continue
 
             chat_kwargs: dict = {}
             if endpoint.context_tokens:

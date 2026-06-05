@@ -131,6 +131,8 @@ class OpenAICompatClient:
         Returns a dict with a 'message' key containing 'content' and
         optionally 'tool_calls', matching the shape callers expect.
         """
+        from blipshell.core.vision import apply_images_openai
+        messages = apply_images_openai(messages)
         params: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -169,6 +171,8 @@ class OpenAICompatClient:
         function name, then argument fragments).  We accumulate them and
         yield a final message with the complete tool_calls list.
         """
+        from blipshell.core.vision import apply_images_openai
+        messages = apply_images_openai(messages)
         params: dict[str, Any] = {
             "model": model,
             "messages": messages,

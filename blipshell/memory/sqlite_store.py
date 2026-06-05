@@ -803,7 +803,7 @@ class SQLiteStore:
 
     async def save_raw_memory(
         self, session_id: int, role: str, content: str,
-        timestamp: str | None = None,
+        timestamp: str | None = None, metadata: str | None = None,
     ) -> int:
         """Persist a raw message as an unprocessed memory. Returns the memory ID.
 
@@ -811,12 +811,15 @@ class SQLiteStore:
         The memory pipeline will later update this row with summary, rank,
         importance, and set is_processed=1.  If the app crashes before
         processing, get_unprocessed_memories() finds these on next startup.
+
+        `metadata` is an optional JSON string stored in metadata_json (used to
+        carry image refs so vision turns survive a session resume).
         """
         cursor = await self._db.execute(
             """INSERT INTO memories
-               (session_id, role, content, summary, timestamp, is_processed)
-               VALUES (?, ?, ?, NULL, COALESCE(?, CURRENT_TIMESTAMP), 0)""",
-            (session_id, role, content, timestamp),
+               (session_id, role, content, summary, timestamp, is_processed, metadata_json)
+               VALUES (?, ?, ?, NULL, COALESCE(?, CURRENT_TIMESTAMP), 0, ?)""",
+            (session_id, role, content, timestamp, metadata),
         )
         await self._db.commit()
         return cursor.lastrowid

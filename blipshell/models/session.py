@@ -26,14 +26,22 @@ class SessionMessage(BaseModel):
     tool_calls: Optional[list[dict]] = None  # native Ollama tool call data
     tool_call_id: Optional[str] = None  # for tool response messages
     is_summarized: bool = False
+    images: Optional[list[dict]] = None  # ImageRef dicts (vision input), bytes on disk
 
     def to_ollama_message(self) -> dict:
-        """Convert to Ollama message format."""
+        """Convert to Ollama message format.
+
+        Images are emitted under a neutral `_image_refs` key (a list of ImageRef
+        dicts); the LLM client translates that to the provider-specific shape at
+        send time (see blipshell/core/vision.py).
+        """
         msg = {"role": self.role.value, "content": self.content}
         if self.tool_calls:
             msg["tool_calls"] = self.tool_calls
         if self.tool_call_id:
             msg["tool_call_id"] = self.tool_call_id
+        if self.images:
+            msg["_image_refs"] = self.images
         return msg
 
 

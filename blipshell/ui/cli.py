@@ -28,6 +28,7 @@ from rich.text import Text
 
 from blipshell.core.agent import Agent
 from blipshell.core.config import ConfigManager
+from blipshell.core.vision import extract_image_paths
 from blipshell.models.session import MessageRole
 from prompt_toolkit.formatted_text import ANSI
 
@@ -913,6 +914,16 @@ async def chat_loop(
                 message = user_input[10:]
                 console.print(f"[dim italic]Researching: {message}[/dim italic]")
 
+            # Auto-detect inline image file paths (vision input). Strips the
+            # paths from the text and attaches them to the turn.
+            images = None
+            cleaned_msg, img_paths = extract_image_paths(message)
+            if img_paths:
+                images = img_paths
+                message = cleaned_msg
+                for p in img_paths:
+                    console.print(f"[dim italic]  attaching image: {Path(p).name}[/dim italic]")
+
             # Auto-detect research intent (only for normal messages, not commands/plan)
             if not force_plan and not research_mode and _detect_research_intent(message):
                 try:
@@ -954,7 +965,7 @@ async def chat_loop(
             thinking_status.start()
 
             _active_chat_task = asyncio.create_task(
-                agent.chat(message, on_token=on_token, force_plan=force_plan, on_tool_display=_display_tool_batch, research_mode=research_mode)
+                agent.chat(message, on_token=on_token, force_plan=force_plan, on_tool_display=_display_tool_batch, research_mode=research_mode, images=images)
             )
             chat_task = _active_chat_task
             esc_task = asyncio.create_task(_poll_for_escape())
