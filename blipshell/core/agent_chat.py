@@ -745,7 +745,7 @@ class ChatMixin:
             )
 
         # Gather all four — if one fails, others still return. The self-thought
-        # search injects its own [Thought] items (relevance-gated by a reranker).
+        # search injects its own [Thought] items (relevance-gated by an LLM judge).
         mem_task = asyncio.ensure_future(_search_memories())
         core_task = asyncio.ensure_future(_search_core())
         lesson_task = asyncio.ensure_future(_search_lessons())
@@ -848,7 +848,7 @@ class ChatMixin:
         This is the standing-context path that makes the self-layer a loop
         rather than a one-shot poll: a thought BlipShell formed for its own sake
         comes back when the conversation is near it. Relevance is decided by a
-        sharp two-stage filter (cosine prefilter → reranker gate) in
+        sharp two-stage filter (cosine prefilter → LLM relevance judge) in
         MemorySearch; this method just injects what survives it into Recall.
         """
         store = getattr(self, "_self_thoughts", None)
@@ -873,7 +873,7 @@ class ChatMixin:
                 session_role="system",
                 priority_score=score,
             ))
-            logger.info("Self-thought resurfaced (rerank %.2f): %s", score, text[:100])
+            logger.info("Self-thought resurfaced (cosine %.2f): %s", score, text[:100])
 
     def _build_messages(self, user_message: str) -> list[dict]:
         """Build the full message list with memory context.

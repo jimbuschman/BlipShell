@@ -145,8 +145,8 @@ class SelfThoughtStore:
     ) -> list[tuple[str, float]]:
         """Top-k thoughts whose embedding clears `floor` cosine against query_vec.
 
-        This is a loose *recall* prefilter, not the gate — a sharper reranker
-        decides what actually surfaces. Thoughts missing an embedding (e.g.
+        This is a loose *recall* prefilter, not the gate — a sharper LLM
+        relevance judge decides what actually surfaces. Thoughts missing an embedding (e.g.
         written before this layer existed, or while Ollama was down) are
         backfilled on first use and persisted.
         """

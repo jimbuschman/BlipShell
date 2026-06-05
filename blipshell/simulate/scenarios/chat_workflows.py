@@ -21,7 +21,7 @@ def get_scenarios() -> list[SimScenario]:
 
 
 # A distinctive self-thought to seed; the positive turn echoes it near-verbatim
-# so the reranker reliably clears its floor, the negative turn is unrelated.
+# so the relevance judge reliably clears its floor, the negative turn is unrelated.
 _SEED_THOUGHT = (
     "I keep wondering whether the modular cubes should express emotion "
     "through motion rather than through color."

@@ -240,13 +240,14 @@ reflection:
   idle_seconds: 10800.0              # ~3 hours quiet before it reflects
   max_keep: 50                       # past thoughts retained
   # Standing injection — a relevant past thought resurfaces as context, not just
-  # the one-shot return greeting. Two-stage: loose cosine prefilter, then the
-  # reranker decides. Fail-closed (needs memory.reranker_enabled), max=1 backstop.
+  # the one-shot return greeting. Two-stage: loose cosine prefilter, then a local
+  # LLM relevance judge (yes/no) decides. Does NOT use the reranker; gated by
+  # inject_enabled only. Fail-closed (judge error → nothing injects), max=1 backstop.
   inject_enabled: true
   inject_cosine_floor: 0.4           # loose recall prefilter — NOT the gate
-  inject_rerank_floor: 0.8           # the real gate (reranker score, 0-1)
+  inject_rerank_floor: 0.8           # the real gate: judge verdict (1.0/0.0) must clear this
   inject_max: 1                      # thoughts injected per turn
-  inject_prefilter_k: 3              # candidates sent to the reranker
+  inject_prefilter_k: 3              # candidates sent to the judge
 
 # Per-model behavioral settings (Aider-inspired)
 # Configures how the agent interacts with each model.
