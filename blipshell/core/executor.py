@@ -9,6 +9,7 @@ import logging
 from typing import Callable, Optional
 
 from blipshell.core.chat_loop import ChatLoop, LoopConfig, estimate_messages_tokens
+from blipshell.core.intent_detection import detect_review_intent, REVIEW_GROUNDING_GUIDANCE
 from blipshell.memory.manager import estimate_tokens
 from blipshell.core.tools.base import ToolRegistry
 from blipshell.llm.prompts import dynamic_execution_prompt, executor_system_prompt, execute_step, summarize_plan_results, UTILITY_SYSTEM_PROMPT
@@ -449,6 +450,13 @@ class TaskExecutor:
                 if pinned:
                     guardrails_prompt += f"\n{pinned}\n"
             sys_prompt += guardrails_prompt
+
+        # Look-before-review: ground review/critique requests in a real read/grep
+        # before findings are stated. Guidance fires on the review_grounding flag
+        # regardless of whether the full guardrails engine is enabled.
+        if (self.guardrails_config and self.guardrails_config.review_grounding
+                and detect_review_intent(user_request)):
+            sys_prompt += REVIEW_GROUNDING_GUIDANCE
 
         tools = self.tool_registry.get_all_ollama_tools() or None
 

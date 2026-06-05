@@ -18,6 +18,8 @@ import re
 from collections import Counter
 from typing import TYPE_CHECKING
 
+from blipshell.core.intent_detection import detect_review_intent
+
 if TYPE_CHECKING:
     from blipshell.llm.router import LLMRouter
     from blipshell.models.config import GuardrailsConfig
@@ -92,6 +94,10 @@ class GuardrailsEngine:
         self._file_edit_counts: Counter = Counter()   # path → edit count
         self._readonly_streak: int = 0                # consecutive read-only tool calls
         self._doom_warnings_sent: set[str] = set()    # deduplicate warnings
+
+        # Look-before-review gate state — fire at most once per execution so a
+        # stubborn model isn't blocked forever.
+        self._review_gate_fired: bool = False
 
     def record_checklist(self, plan_steps: list[str], postconditions: list[str] | None = None):
         """Store the confirmed plan for later completion audit."""
@@ -273,6 +279,42 @@ class GuardrailsEngine:
             return None
 
         return "[DOOM-LOOP WARNING]\n" + "\n".join(f"- {w}" for w in warnings)
+
+    # ── Look-Before-Review gate ──────────────────────────────────────────
+
+    # Tools that count as "actually looking at the code" this turn. grep/glob
+    # don't add to the executor's files_read set, so tool_call_names is the
+    # correct signal here (not files_read).
+    _GROUNDING_TOOLS = frozenset({
+        "read_file", "read_multiple_files", "grep_files", "glob_files",
+        "list_directory", "repo_map",
+    })
+
+    def check_review_grounding(self, tool_call_names: list[str]) -> str | None:
+        """Refuse a review/critique completion that never looked at the code.
+
+        Called when task_complete fires. If the original request was a review
+        request and the model made NO grounding tool call (read/grep/glob/etc.)
+        this turn, returns actionable feedback so the loop rejects the
+        completion and the model goes and looks. Fires at most once per
+        execution. Zero LLM cost — pure intent + tool-name check.
+        """
+        if not self.config.review_grounding or self._review_gate_fired:
+            return None
+        if not detect_review_intent(self.original_request):
+            return None
+        if any(name in self._GROUNDING_TOOLS for name in (tool_call_names or [])):
+            return None
+
+        self._review_gate_fired = True
+        return (
+            "[REVIEW NOT GROUNDED]\n"
+            "This is a review/critique request, but you haven't read or searched "
+            "any code this turn (no read_file/grep_files/glob_files/list_directory "
+            "calls). Findings stated without looking are guesses. Read or grep the "
+            "relevant files, then ground each finding in a specific file and line "
+            "before calling task_complete. If you look and find nothing, say so."
+        )
 
     # ── Critique Provider (#6) ──────────────────────────────────────────
 

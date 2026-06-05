@@ -1030,6 +1030,27 @@ class ChatLoop:
 
                 # ── Completion tool fired ──
                 if completion_tool_result is not None:
+                    # Guardrails: look-before-review gate — cheap, deterministic,
+                    # runs first so an ungrounded review is rejected without
+                    # spending an LLM call on critique/audit.
+                    if config.guardrails and hasattr(config.guardrails, 'check_review_grounding'):
+                        try:
+                            gate = config.guardrails.check_review_grounding(tool_call_names)
+                            if gate:
+                                if self.on_token:
+                                    self.on_token(
+                                        "\x1b[33m  [Review gate: not grounded — "
+                                        "read the code first]\x1b[0m\n"
+                                    )
+                                messages.append({
+                                    "role": "user",
+                                    "content": gate,
+                                })
+                                completion_tool_result = None
+                                continue  # Model should read/grep, then complete
+                        except Exception as e:
+                            logger.debug("Review grounding gate error: %s", e)
+
                     # Guardrails: critique completion — richer quality review (runs first)
                     if config.guardrails and hasattr(config.guardrails, 'critique_completion'):
                         try:

@@ -393,6 +393,10 @@ class GuardrailsConfig(BaseModel):
     critique_edits: bool = False        # review each edit_file for correctness
     critique_trajectory: bool = False   # evaluate approach quality at checkpoints (heavier than trajectory_monitor)
     critique_completion: bool = False   # richer pre-completion review (supplements completion_audit)
+    # Look-before-review — ground review/critique requests in a real read/grep.
+    # Cheap: prompt guidance (both chat paths) + a zero-LLM completion gate that
+    # refuses task_complete when a review finishes with no read/grep this turn.
+    review_grounding: bool = True       # enforce look-before-review on review requests
     # Doom-loop detector — cheap counter-based pattern detection (no LLM cost)
     doom_loop_detector: bool = True     # detect repetitive/stuck behavior patterns
     doom_loop_read_threshold: int = 3   # warn after reading same file N times

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     pass  # All types accessed via self
 
 from blipshell.core.executor import build_executor_narrative
+from blipshell.core.intent_detection import detect_review_intent, REVIEW_GROUNDING_GUIDANCE
 from blipshell.llm.exceptions import is_model_error
 from blipshell.llm.router import TaskType
 from blipshell.memory.manager import PoolItem, estimate_tokens
@@ -485,6 +486,16 @@ class ChatMixin:
                 messages[0]["content"] += research_instruction
             else:
                 messages.insert(0, {"role": "system", "content": research_instruction})
+
+        # Look-before-review: when the message reads as a review/critique request,
+        # silently inject grounding guidance into the system prompt so the model
+        # grounds findings in a real read/grep instead of confabulating from priors.
+        if (self.config.guardrails.review_grounding
+                and detect_review_intent(user_message)):
+            if messages and messages[0].get("role") == "system":
+                messages[0]["content"] += REVIEW_GROUNDING_GUIDANCE
+            else:
+                messages.insert(0, {"role": "system", "content": REVIEW_GROUNDING_GUIDANCE})
 
         # Event: context_built (stats computed in _build_messages)
         if self._last_context_stats:
