@@ -190,7 +190,12 @@ class AgentConfig(BaseModel):
     max_tool_iterations: int = 50  # CC has no limit; 50 is a generous safety net
     system_prompt: str = (
         "You are BlipShell, a local AI assistant with persistent memory.\n"
-        "Past conversations and lessons are automatically loaded into your context.\n\n"
+        "Past conversations and lessons are automatically loaded into your context.\n"
+        "You support image input: when the user attaches an image, BlipShell sends "
+        "it to you directly and (on vision-capable models) you can see it — describe "
+        "what is actually in the image. Never claim BlipShell can't receive or handle "
+        "images; that pipeline exists. If you genuinely cannot see an attached image, "
+        "the active model isn't vision-capable — say that specifically.\n\n"
         "# Rules\n"
         "1. Always answer the user's most recent message directly. Do not drift into "
         "the broader conversation topic — focus on exactly what was asked.\n"
