@@ -600,6 +600,16 @@ class ChatMixin:
                         else:
                             time_label = f"[{ts.strftime('%Y-%m-%d')}] "
                     memory_context += f"- {time_label}{r.summary}\n"
+            elif len(user_message.strip()) >= 3:
+                # Loud absence: an empty memory_context silently invites the
+                # executor to invent "remembered" context. State the absence
+                # explicitly so it grounds claims in the files it actually reads
+                # or in this conversation, rather than confabulating history.
+                memory_context = (
+                    "No past-session memories matched this task. Do not state "
+                    "remembered specifics you cannot ground in the files you read "
+                    "or in this conversation."
+                )
             # Log search results for /flow observability
             await self._log_event("search_complete", {
                 "memory_results": len(results) if results else 0,
@@ -755,6 +765,24 @@ class ChatMixin:
                 ))
         except Exception as e:
             logger.error("Memory search failed: %s", e)
+
+        # Loud absence: when the recall search finds nothing, a silently empty
+        # Recall pool invites the model to fill the gap with invented
+        # "remembered" specifics. Make the absence visible so it can say "I
+        # don't have that" instead of confabulating. Scoped to episodic recall —
+        # Core facts and Lessons are separate pools and may still have hits.
+        # Length guard mirrors the search noise filter (queries < 3 chars are
+        # skipped there, so a 0 result isn't a real "nothing matched" signal).
+        if memory_count == 0 and len(query.strip()) >= 3:
+            self.memory_manager.add_memory("Recall", PoolItem(
+                text=(
+                    "[No past-conversation memories matched this query. Do not "
+                    "present specifics as remembered — if asked about prior "
+                    "discussion on this, say you don't have it stored.]"
+                ),
+                session_role="system",
+                priority_score=1.0,
+            ))
 
         # Process core memory results
         core_count = 0

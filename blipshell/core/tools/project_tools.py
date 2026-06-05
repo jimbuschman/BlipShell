@@ -179,9 +179,16 @@ class ActivateProjectTool(Tool):
         lang = project.get("language", "")
         desc = project.get("description", "")
 
-        # Check for digest
+        # Check for digest. ProjectDigestManager._save_digest stores the digest
+        # as a plain string; this tool used to assume a {"content": ...} dict,
+        # which raised "'str' object has no attribute 'get'" on any project that
+        # had a digest. Handle both shapes so old and new data both work.
         metadata = json.loads(project.get("metadata_json") or "{}")
-        digest = metadata.get("digest", {}).get("content", "")
+        digest_raw = metadata.get("digest", "")
+        if isinstance(digest_raw, dict):
+            digest = digest_raw.get("content", "")
+        else:
+            digest = digest_raw or ""
 
         parts = [f"Activated project '{name}' at {root}."]
         if lang:
