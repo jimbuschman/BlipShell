@@ -26,6 +26,30 @@ from blipshell.models.session import MessageRole
 logger = logging.getLogger(__name__)
 
 
+def format_relative_time(ts, now=None) -> str:
+    """Render a timestamp as a compact relative label like ``"[3h ago] "``.
+
+    Returns ``""`` for a falsy timestamp. Naive datetimes are treated as UTC.
+    The label includes a trailing space so callers can prefix content directly.
+    Anything 7+ days old falls back to an absolute ``[YYYY-MM-DD]`` date.
+    """
+    if not ts:
+        return ""
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    if now is None:
+        now = datetime.now(timezone.utc)
+    delta = now - ts
+    hours = delta.total_seconds() / 3600
+    if hours < 1:
+        return f"[{int(delta.total_seconds() / 60)}m ago] "
+    elif hours < 24:
+        return f"[{int(hours)}h ago] "
+    elif delta.days < 7:
+        return f"[{delta.days}d ago] "
+    return f"[{ts.strftime('%Y-%m-%d')}] "
+
+
 class ChatMixin:
     """Chat pipeline methods mixed into Agent."""
 
@@ -641,19 +665,7 @@ class ChatMixin:
                 memory_context = "Relevant memories from past sessions:\n"
                 now_planned = datetime.now(timezone.utc)
                 for r in results:
-                    time_label = ""
-                    if r.timestamp:
-                        ts = r.timestamp if r.timestamp.tzinfo else r.timestamp.replace(tzinfo=timezone.utc)
-                        delta = now_planned - ts
-                        hours = delta.total_seconds() / 3600
-                        if hours < 1:
-                            time_label = f"[{int(delta.total_seconds() / 60)}m ago] "
-                        elif hours < 24:
-                            time_label = f"[{int(hours)}h ago] "
-                        elif delta.days < 7:
-                            time_label = f"[{delta.days}d ago] "
-                        else:
-                            time_label = f"[{ts.strftime('%Y-%m-%d')}] "
+                    time_label = format_relative_time(r.timestamp, now_planned)
                     memory_context += f"- {time_label}{r.summary}\n"
             elif len(user_message.strip()) >= 3:
                 # Loud absence: an empty memory_context silently invites the
@@ -756,19 +768,7 @@ class ChatMixin:
         self._relevance_injected_thoughts = set()
 
         def _time_label(ts) -> str:
-            if not ts:
-                return ""
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-            delta = now - ts
-            hours = delta.total_seconds() / 3600
-            if hours < 1:
-                return f"[{int(delta.total_seconds() / 60)}m ago] "
-            elif hours < 24:
-                return f"[{int(hours)}h ago] "
-            elif delta.days < 7:
-                return f"[{delta.days}d ago] "
-            return f"[{ts.strftime('%Y-%m-%d')}] "
+            return format_relative_time(ts, now)
 
         # Run all three searches concurrently — they're independent queries.
         # With gate removed from search methods, these can hit Ollama in parallel.
@@ -1073,13 +1073,34 @@ class ChatMixin:
                 + files_list
             )
 
+        # Absolute time anchor. Placed at the END so the cacheable prefix of the
+        # system prompt stays stable across turns — a changing timestamp near the
+        # top would bust prompt caching on cloud endpoints every turn. Rendered in
+        # local time (stored timestamps are UTC; the per-message stamps below are
+        # relative, so this is the only place an absolute "now" is exposed).
+        now = datetime.now(timezone.utc)
+        now_local = now.astimezone()
+        system_prompt += (
+            f"\n\nCurrent date/time: "
+            f"{now_local.strftime('%Y-%m-%d %H:%M %A')} ({now_local.tzname()})."
+        )
+
         messages = [
             {"role": "system", "content": system_prompt},
         ]
 
-        # Add conversation history from ActiveSession (last messages)
+        # Add conversation history from ActiveSession (last messages). Prefix
+        # user/assistant turns with a relative-time label so the model can sense
+        # how much time passed between messages (and since the last contact).
+        # to_ollama_message() returns a fresh dict, so stamping its content here
+        # does not mutate stored history.
         for msg in self.session_manager.get_messages()[-20:]:
-            messages.append(msg.to_ollama_message())
+            om = msg.to_ollama_message()
+            if msg.role in (MessageRole.USER, MessageRole.ASSISTANT) and om.get("content"):
+                label = format_relative_time(msg.timestamp, now)
+                if label:
+                    om["content"] = f"{label}{om['content']}"
+            messages.append(om)
 
         return messages
 

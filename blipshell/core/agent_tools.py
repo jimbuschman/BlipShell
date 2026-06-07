@@ -43,6 +43,7 @@ from blipshell.core.tools.project_tools import (
     ListProjectsTool,
 )
 from blipshell.core.tools.shell import CheckProcessTool, ShellTool
+from blipshell.core.tools.time_tools import GetCurrentTimeTool
 from blipshell.core.tools.task_tools import (
     CheckBackgroundTaskTool,
     ListBackgroundTasksTool,
@@ -93,6 +94,9 @@ class ToolsMixin:
             timeout=cfg.web.timeout,
             router=self.router,
         ), group="web")
+
+        # Time awareness (read-only, available in all modes)
+        self.tool_registry.register(GetCurrentTimeTool(), group="general")
 
         # Plan mode tools
         self.tool_registry.register(
