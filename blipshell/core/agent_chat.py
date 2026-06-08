@@ -26,12 +26,22 @@ from blipshell.models.session import MessageRole
 logger = logging.getLogger(__name__)
 
 
-def format_relative_time(ts, now=None) -> str:
+# Don't stamp conversation messages younger than this — within an active
+# back-and-forth every line is seconds old, so a label like "[0m ago]" is pure
+# noise. The label only carries signal once a real pause has elapsed (you
+# stepped away and came back), at which point the pre-gap messages cross this
+# threshold and surface their age.
+MESSAGE_STAMP_MIN_AGE_SECONDS = 600  # 10 minutes
+
+
+def format_relative_time(ts, now=None, min_age_seconds: float = 0) -> str:
     """Render a timestamp as a compact relative label like ``"[3h ago] "``.
 
-    Returns ``""`` for a falsy timestamp. Naive datetimes are treated as UTC.
-    The label includes a trailing space so callers can prefix content directly.
-    Anything 7+ days old falls back to an absolute ``[YYYY-MM-DD]`` date.
+    Returns ``""`` for a falsy timestamp, or when the timestamp is younger than
+    ``min_age_seconds`` (used to suppress noise on near-now messages). Naive
+    datetimes are treated as UTC. The label includes a trailing space so callers
+    can prefix content directly. Anything 7+ days old falls back to an absolute
+    ``[YYYY-MM-DD]`` date.
     """
     if not ts:
         return ""
@@ -40,6 +50,8 @@ def format_relative_time(ts, now=None) -> str:
     if now is None:
         now = datetime.now(timezone.utc)
     delta = now - ts
+    if delta.total_seconds() < min_age_seconds:
+        return ""
     hours = delta.total_seconds() / 3600
     if hours < 1:
         return f"[{int(delta.total_seconds() / 60)}m ago] "
@@ -1129,7 +1141,10 @@ class ChatMixin:
         for msg in self.session_manager.get_messages()[-20:]:
             om = msg.to_ollama_message()
             if msg.role in (MessageRole.USER, MessageRole.ASSISTANT) and om.get("content"):
-                label = format_relative_time(msg.timestamp, now)
+                label = format_relative_time(
+                    msg.timestamp, now,
+                    min_age_seconds=MESSAGE_STAMP_MIN_AGE_SECONDS,
+                )
                 if label:
                     om["content"] = f"{label}{om['content']}"
             messages.append(om)

@@ -67,6 +67,29 @@ def test_now_defaults_to_current_time_when_omitted():
 
 
 # ---------------------------------------------------------------------------
+# min_age_seconds suppression (kills "[0m ago]" noise on active-chat messages)
+# ---------------------------------------------------------------------------
+
+def test_min_age_suppresses_near_now_message():
+    # A message 30s old must NOT be stamped when a 10-min floor is set.
+    assert format_relative_time(NOW - timedelta(seconds=30), NOW, min_age_seconds=600) == ""
+
+
+def test_min_age_suppresses_just_under_threshold():
+    assert format_relative_time(NOW - timedelta(minutes=9), NOW, min_age_seconds=600) == ""
+
+
+def test_min_age_allows_at_or_above_threshold():
+    # 11 minutes old, 10-min floor — gap is real, so it stamps.
+    assert format_relative_time(NOW - timedelta(minutes=11), NOW, min_age_seconds=600) == "[11m ago] "
+
+
+def test_min_age_default_zero_stamps_everything():
+    # Default behavior (memory rendering path) is unchanged: 0m still labeled.
+    assert format_relative_time(NOW - timedelta(seconds=10), NOW) == "[0m ago] "
+
+
+# ---------------------------------------------------------------------------
 # GetCurrentTimeTool
 # ---------------------------------------------------------------------------
 
