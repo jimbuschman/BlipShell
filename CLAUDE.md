@@ -2,26 +2,32 @@
 
 ## What is BlipShell?
 Local LLM personal assistant with persistent memory. Uses Ollama for local inference.
-Multi-endpoint support: Ollama (local) + OpenAI-compatible cloud APIs (Groq, Gemini, etc.).
+Multi-endpoint support: Ollama (local) + OpenAI-compatible cloud APIs (OpenRouter, Groq, etc.).
 Config-driven model routing per task type with per-endpoint model overrides.
+Supports image input (vision) on vision-capable models.
 
-## Current Model Assignments (config.yaml)
-**Interactive (cloud via Ollama):**
-- tool_calling: glm-5:cloud — general chat + tool use
-- coding: glm-5:cloud — /code command (benchmark winner: 13/13 checks)
+## Current Architecture (verify config.yaml — it's the source of truth)
+- **Vector store: sqlite-vec** (vec0 tables inside `blipshell.db`). ChromaDB was REMOVED ~2026-04;
+  the dual-store sync-drift problem is gone. NOTE: historical feature entries below still mention
+  ChromaDB / `chroma_store.py` / `rebuild_chroma.py` — those are past-work records, not current code.
+- Hybrid search = FTS5 keyword + sqlite-vec KNN fused with RRF, plus entity-graph expansion.
+- See `docs/SYSTEM_REVIEW.md` (2026-06-08) for a grounded review + improvement roadmap.
 
-**Background processing (cloud + local):**
-- summarization: Groq gpt-oss-120b (priority 2) → local glm4 (Gemini disabled — 20-req burst limit too unreliable)
-- ranking_importance: Groq llama-3.3-70b-versatile (0.4s avg) → local qwen2.5:7b fallback
-- reasoning: qwen3:14b (local) — entity extraction, tag discovery, lessons, dedup, contradiction
-- importance: qwen3:14b (local) — standalone importance scoring
-- ranking: qwen2.5:14b (local) — standalone ranking (rarely used, ranking_importance preferred)
-- embedding: nomic-embed-text (local) — vector search
+## Current Model Assignments (config.yaml, as of 2026-06)
+**Interactive:**
+- tool_calling: `minimax-m3:cloud` (Ollama cloud) — general chat + tool use; vision-capable
+- coding: `minimax/minimax-m3` (OpenRouter) — project mode; vision-capable
+
+**Background processing (local; cloud tried first via endpoint priority where configured):**
+- reasoning / ranking / importance / ranking_importance / session_review: `qwen3:14b` (consolidated on one model to avoid swaps)
+- summarization: `glm4:latest` (Groq/cloud tried first via endpoint priority)
+- embedding: `qwen3-embedding:0.6b` (~10% better similarity than nomic)
 
 **Fallbacks (local, when cloud is down):**
-- tool_calling/coding/reasoning: gpt-oss:latest
-- summarization: glm4:latest
-- ranking_importance: qwen2.5:7b (benchmarked: 10/10 rank accuracy, 5.3s avg)
+- tool_calling / coding / reasoning / session_review: `gpt-oss:latest`
+- summarization / ranking / importance: `qwen3:14b`
+- ranking_importance: `qwen3.5:9b`
+- `fallback_think: false` (faster chat on fallback models)
 
 ## Completed Work
 - Memory consolidation (feature 4)

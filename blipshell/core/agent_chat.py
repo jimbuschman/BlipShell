@@ -919,6 +919,32 @@ class ChatMixin:
             ))
             logger.info("Self-thought resurfaced (cosine %.2f): %s", score, text[:100])
 
+    def _build_capability_block(self) -> str:
+        """Derived per-turn capability block — generated from live config/model
+        settings so the model's self-knowledge can't drift from a hand-written
+        string. (This is the fix for the class of bug where the model denied it
+        could see images right after using vision: capabilities are now stated
+        from what's actually true this turn, not a static prompt claim.)
+
+        Currently surfaces image-input support based on whether the active model
+        is vision-capable. Extend here as more capabilities become conditional.
+        """
+        task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
+        model = self.router.get_model(task_type)
+        lines = ["# Capabilities (this turn)"]
+        if self.model_settings.is_vision(model):
+            lines.append(
+                f"- Image input: SUPPORTED — the active model ({model}) is vision-capable. "
+                "When the user attaches an image you receive it directly; describe what you "
+                "actually see. Never claim you can't receive images."
+            )
+        else:
+            lines.append(
+                f"- Image input: not available this turn — the active model ({model}) is "
+                "text-only. If an image was attached, say the current model can't see it."
+            )
+        return "\n".join(lines)
+
     def _build_messages(self, user_message: str) -> list[dict]:
         """Build the full message list with memory context.
 
@@ -1072,6 +1098,11 @@ class ChatMixin:
                 "\n\nFILES ALREADY READ THIS SESSION (do NOT re-read these):\n"
                 + files_list
             )
+
+        # Derived capability block — keeps the model's self-knowledge in sync
+        # with what's actually true this turn (e.g. vision availability) instead
+        # of a hand-written claim that can drift from the code.
+        system_prompt += "\n\n" + self._build_capability_block()
 
         # Absolute time anchor. Placed at the END so the cacheable prefix of the
         # system prompt stays stable across turns — a changing timestamp near the
