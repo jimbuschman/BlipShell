@@ -1051,34 +1051,9 @@ class ChatLoop:
                         except Exception as e:
                             logger.debug("Review grounding gate error: %s", e)
 
-                    # Guardrails: critique completion — richer quality review (runs first)
-                    if config.guardrails and hasattr(config.guardrails, 'critique_completion'):
-                        try:
-                            tc_files = ""
-                            for _i3, (n3, a3, _) in enumerate(parsed_calls):
-                                if n3 == config.completion_tool:
-                                    tc_files = a3.get("files_modified", "")
-                                    break
-                            critique = await config.guardrails.critique_completion(
-                                summary=completion_tool_result,
-                                files_modified=tc_files,
-                                tool_call_names=tool_call_names,
-                            )
-                            if critique:
-                                if self.on_token:
-                                    self.on_token(
-                                        f"\x1b[33m  [Critique: completion issue found]\x1b[0m\n"
-                                    )
-                                messages.append({
-                                    "role": "user",
-                                    "content": critique,
-                                })
-                                completion_tool_result = None
-                                continue  # Model should fix and retry
-                        except Exception as e:
-                            logger.debug("Completion critique error: %s", e)
-
-                    # Guardrails: completion audit — validate against original request
+                    # Guardrails: completion audit — one grounded, difficulty-gated
+                    # check (deterministic first, LLM-judge only on non-trivial tasks).
+                    # Replaces the old two-pass critique_completion + validate_completion.
                     if config.guardrails and hasattr(config.guardrails, 'validate_completion'):
                         try:
                             # Extract files_modified from the task_complete args
@@ -1089,6 +1064,8 @@ class ChatLoop:
                                     break
                             valid, feedback = await config.guardrails.validate_completion(
                                 completion_tool_result, tc_files,
+                                tool_call_names=tool_call_names,
+                                tool_call_count=tool_call_count,
                             )
                             if not valid:
                                 if self.on_token:

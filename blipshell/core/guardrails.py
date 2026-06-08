@@ -147,21 +147,82 @@ class GuardrailsEngine:
 
     # ── Completion Audit (#3) ────────────────────────────────────────────
 
+    # Tools that actually mutate state — used to sanity-check completion claims.
+    _MUTATING_TOOLS = frozenset({"edit_file", "write_file", "run_command", "shell"})
+
+    def _deterministic_completion_check(
+        self, summary: str, files_modified: str, tool_call_names: list[str] | None,
+    ) -> str | None:
+        """Zero-LLM completion sanity checks. Returns a rejection message or None.
+
+        Conservative by design — only fires on unambiguous cases so it never
+        false-trips a legitimate completion.
+        """
+        if not (summary or "").strip():
+            return ("No summary provided. Call task_complete with a short summary of "
+                    "what you actually did.")
+        names = tool_call_names or []
+        if files_modified and files_modified.strip():
+            if not any(n in self._MUTATING_TOOLS for n in names):
+                return (
+                    f"You reported files_modified ({files_modified.strip()}) but made no "
+                    "edits this turn (no edit_file/write_file/run_command). Make the change "
+                    "first, then call task_complete — or clear files_modified if nothing changed."
+                )
+        return None
+
+    def _completion_needs_llm_audit(
+        self, files_modified: str, tool_call_names: list[str] | None, tool_call_count: int,
+    ) -> bool:
+        """Whether a deterministic-clean completion warrants an LLM audit.
+
+        Trivial tasks skip it — always-on self-critique degrades easy work
+        (Snorkel "self-critique paradox"). Non-trivial = had a confirmed plan,
+        ran enough tools, or touched more than one file.
+        """
+        if self.checklist:
+            return True
+        if tool_call_count >= self.config.completion_audit_min_tool_calls:
+            return True
+        if files_modified:
+            files = [f for f in re.split(r"[,\n]", files_modified) if f.strip()]
+            if len(files) > 1:
+                return True
+        return False
+
     async def validate_completion(
         self,
         summary: str,
         files_modified: str = "",
+        tool_call_names: list[str] | None = None,
+        tool_call_count: int = 0,
     ) -> tuple[bool, str]:
-        """Validate that task_complete matches the original request.
+        """Grounded, difficulty-gated completion check.
 
-        Returns (is_valid, feedback). If invalid, feedback is a message
-        to inject back into the conversation so the model can fix it.
+        Order (cheap → expensive): master toggle → retry cap → deterministic
+        checks (zero LLM) → difficulty gate (skip the LLM audit on trivial,
+        deterministic-clean tasks) → a single LLM PASS/FAIL audit. Returns
+        (is_valid, feedback); if invalid, feedback is injected so the model can fix it.
         """
         if not self.config.completion_audit:
             return True, ""
 
         if self.audit_retries >= self.config.max_audit_retries:
             logger.info("Completion audit: max retries reached, accepting")
+            return True, ""
+
+        # Deterministic gate — catch obvious "not done" cases with no LLM call.
+        det = self._deterministic_completion_check(summary, files_modified, tool_call_names)
+        if det:
+            self.audit_retries += 1
+            return False, (
+                f"[COMPLETION CHECK — attempt {self.audit_retries}/"
+                f"{self.config.max_audit_retries}]\n{det}"
+            )
+
+        # Difficulty gate — don't spend an LLM call critiquing a trivial task that
+        # already passed the deterministic checks.
+        if not self._completion_needs_llm_audit(files_modified, tool_call_names, tool_call_count):
             return True, ""
 
         from blipshell.llm.prompts import validate_task_completion

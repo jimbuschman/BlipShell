@@ -21,6 +21,18 @@ from blipshell.core.guardrails import (
 from blipshell.models.config import GuardrailsConfig
 
 
+class _RecordingRouter:
+    """Stub router that counts generate() calls (to assert LLM-call avoidance)."""
+
+    def __init__(self, result: str = "PASS"):
+        self.calls = 0
+        self._result = result
+
+    async def generate(self, *args, **kwargs):
+        self.calls += 1
+        return self._result
+
+
 # ── Correction Detection ────────────────────────────────────────────────────
 
 
@@ -236,13 +248,95 @@ class TestGuardrailsEngine:
 
     @pytest.mark.asyncio
     async def test_audit_no_router_accepts(self):
-        """If router is None (no LLM available), accepts gracefully."""
+        """If router is None (no LLM available), accepts gracefully — for a
+        non-trivial task that actually reaches the LLM audit."""
         engine = self._make_engine()
         engine.original_request = "Test"
-        # router is None — the LLM call will fail
-        valid, feedback = await engine.validate_completion("Done", "file.py")
+        # Non-trivial (high tool count) + a real edit, so it clears the
+        # deterministic + difficulty gates and reaches the (None) router.
+        valid, feedback = await engine.validate_completion(
+            "Done", "file.py", tool_call_names=["edit_file"], tool_call_count=8,
+        )
         # Should accept on error (graceful degradation)
         assert valid is True
+
+    # ── Deterministic completion gate (zero LLM) ─────────────────────────
+
+    def test_det_empty_summary_rejects(self):
+        engine = self._make_engine()
+        assert engine._deterministic_completion_check("", "", ["edit_file"]) is not None
+        assert engine._deterministic_completion_check("   ", "", ["edit_file"]) is not None
+
+    def test_det_files_claimed_no_mutator_rejects(self):
+        engine = self._make_engine()
+        msg = engine._deterministic_completion_check("Done", "a.py", ["read_file", "grep_files"])
+        assert msg is not None and "no edits" in msg
+
+    def test_det_files_claimed_with_edit_passes(self):
+        engine = self._make_engine()
+        assert engine._deterministic_completion_check("Done", "a.py", ["edit_file"]) is None
+
+    def test_det_no_files_claimed_passes(self):
+        # Q&A task: no files modified, summary present → nothing to flag.
+        engine = self._make_engine()
+        assert engine._deterministic_completion_check("Here's the answer", "", ["read_file"]) is None
+
+    # ── Difficulty gate ──────────────────────────────────────────────────
+
+    def test_difficulty_checklist_triggers_audit(self):
+        engine = self._make_engine()
+        engine.record_checklist(["step 1", "step 2"])
+        assert engine._completion_needs_llm_audit("", ["read_file"], 1) is True
+
+    def test_difficulty_high_tool_count_triggers_audit(self):
+        engine = self._make_engine(completion_audit_min_tool_calls=5)
+        assert engine._completion_needs_llm_audit("", ["read_file"], 6) is True
+
+    def test_difficulty_multifile_triggers_audit(self):
+        engine = self._make_engine()
+        assert engine._completion_needs_llm_audit("a.py, b.py", ["edit_file"], 1) is True
+
+    def test_difficulty_trivial_skips_audit(self):
+        engine = self._make_engine(completion_audit_min_tool_calls=5)
+        assert engine._completion_needs_llm_audit("a.py", ["edit_file"], 2) is False
+
+    # ── validate_completion routing (LLM call only when warranted) ───────
+
+    @pytest.mark.asyncio
+    async def test_trivial_clean_task_skips_llm(self):
+        """The core win: a trivial, deterministic-clean completion accepts with
+        NO LLM call."""
+        router = _RecordingRouter(result="PASS")
+        engine = GuardrailsEngine(GuardrailsConfig(enabled=True), router=router)
+        engine.original_request = "rename a var"
+        valid, _ = await engine.validate_completion(
+            "Renamed the variable", "a.py", tool_call_names=["edit_file"], tool_call_count=2,
+        )
+        assert valid is True
+        assert router.calls == 0  # difficulty gate skipped the LLM
+
+    @pytest.mark.asyncio
+    async def test_nontrivial_task_calls_llm_once(self):
+        router = _RecordingRouter(result="PASS")
+        engine = GuardrailsEngine(GuardrailsConfig(enabled=True), router=router)
+        engine.original_request = "implement feature"
+        valid, _ = await engine.validate_completion(
+            "Implemented it", "a.py", tool_call_names=["edit_file"], tool_call_count=9,
+        )
+        assert valid is True
+        assert router.calls == 1
+
+    @pytest.mark.asyncio
+    async def test_deterministic_reject_skips_llm(self):
+        router = _RecordingRouter(result="PASS")
+        engine = GuardrailsEngine(GuardrailsConfig(enabled=True), router=router)
+        engine.original_request = "do the thing"
+        valid, feedback = await engine.validate_completion(
+            "", "", tool_call_names=["edit_file"], tool_call_count=9,
+        )
+        assert valid is False
+        assert router.calls == 0  # rejected before any LLM call
+        assert "No summary" in feedback
 
 
 # ── Confirm Plan Tool ────────────────────────────────────────────────────────
