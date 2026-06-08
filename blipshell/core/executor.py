@@ -380,6 +380,7 @@ class TaskExecutor:
         memory_context: str = "",
         chat_history: list[dict] | None = None,
         log_event: Optional[Callable] = None,
+        capability_context: str = "",
     ) -> str:
         """Execute a task dynamically — single continuous conversation.
 
@@ -467,6 +468,11 @@ class TaskExecutor:
 
         # Build initial messages — single system message (CC approach)
         task_prompt = dynamic_execution_prompt(user_request)
+        # Derived capability block (e.g. vision availability) — kept in sync with
+        # what's actually true this turn rather than a hand-written claim. Built by
+        # the caller (agent_chat._build_capability_block) so derivation lives in one place.
+        if capability_context:
+            sys_prompt += f"\n\n{capability_context}"
         if memory_context:
             sys_prompt += f"\n\n--- RELEVANT MEMORIES ---\n{memory_context}"
         messages = [

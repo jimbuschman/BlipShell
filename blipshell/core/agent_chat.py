@@ -711,6 +711,7 @@ class ChatMixin:
                 memory_context=memory_context,
                 chat_history=chat_history,
                 log_event=self._log_event,
+                capability_context=self._build_capability_block(),
             )
         except Exception as e:
             logger.error("Dynamic execution failed: %s", e)
