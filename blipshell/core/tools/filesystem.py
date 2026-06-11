@@ -11,6 +11,10 @@ from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterT
 
 logger = logging.getLogger(__name__)
 
+# Files that can't be meaningfully read as text — reading them with errors="replace"
+# yields gibberish, so read_file redirects instead. Images go through vision input.
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+
 
 def _validate_within_root(resolved: Path, root_path: str | None) -> str | None:
     """Ensure resolved path is within root_path. Returns error message or None."""
@@ -122,6 +126,28 @@ class ReadFileTool(Tool):
             )
         if resolved.stat().st_size > self.max_file_size:
             return f"Error: File '{path}' exceeds max size ({self.max_file_size} bytes)."
+
+        # Images and other binary files can't be read as text — return guidance,
+        # not replacement-char gibberish. Images reach the model via vision input.
+        if resolved.suffix.lower() in _IMAGE_EXTS:
+            return (
+                f"'{path}' is an image ({resolved.suffix}) and cannot be read as text. "
+                "Images are given to you directly as visual input when attached to a "
+                "message — they are not read with this tool. If the user pointed you at "
+                "a folder of images, those images are already attached to this turn; "
+                "look at them and describe what you see. Do not read image files as text."
+            )
+        try:
+            with open(resolved, "rb") as fh:
+                head = fh.read(8192)
+        except OSError as e:
+            return f"Error: could not read '{path}': {e}"
+        if b"\x00" in head:
+            return (
+                f"'{path}' appears to be a binary file (contains null bytes) and cannot "
+                "be read as text. If this is an image or document, it needs to be attached "
+                "as input rather than read with this tool."
+            )
 
         content = resolved.read_text(encoding="utf-8", errors="replace")
 

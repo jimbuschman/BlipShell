@@ -33,12 +33,19 @@ except ImportError:  # pragma: no cover - depends on environment
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
 MAX_DIMENSION = 1024          # downscale longest side to this (vision-token cost)
 MAX_BYTES = 5 * 1024 * 1024   # soft cap; warn above this when we can't downscale
+MAX_DIR_IMAGES = 32           # cap when a folder is attached (vision-token blowout guard)
 DEFAULT_STORE_DIR = Path("data/session_images")
 
-# Tokens ending in an image extension: quoted (allows spaces) or bare (no spaces).
+# Path candidates in a message. Three shapes, tried left-to-right:
+#   1. "quoted path" — any quoted string (file OR directory, spaces allowed)
+#   2. bare image-file path — a no-space token ending in an image extension
+#   3. bare directory path — a no-space token with separators (e.g. C:\Users\me\shots)
+# Each candidate is then verified against the filesystem and classified as an
+# image file or a directory of images; non-paths and non-image files are ignored.
 _PATH_RE = re.compile(
-    r'"([^"]+?\.(?:png|jpe?g|gif|webp|bmp))"'      # "quoted path with spaces.png"
-    r"|(\S+\.(?:png|jpe?g|gif|webp|bmp))",          # bare/no-space path.png
+    r'"([^"]+)"'                                    # 1: quoted path (file or dir)
+    r"|(\S+\.(?:png|jpe?g|gif|webp|bmp))"           # 2: bare image-file path
+    r"|((?:[A-Za-z]:)?(?:[\\/][^\s\\/]+)+[\\/]?)",  # 3: bare path with separators
     re.IGNORECASE,
 )
 
@@ -67,12 +74,38 @@ class ImageRef:
         )
 
 
-def extract_image_paths(message: str) -> tuple[str, list[str]]:
-    """Find existing image-file paths in a message, return (cleaned_text, paths).
+def _images_in_dir(directory: Path) -> list[str]:
+    """Return image-file paths directly inside a directory (non-recursive, sorted).
 
-    Detects quoted paths (which may contain spaces) and bare no-space paths that
-    end in a known image extension AND exist on disk. Matched paths are stripped
-    from the returned text. Non-existent or non-image tokens are left untouched.
+    Capped at MAX_DIR_IMAGES to avoid a vision-token blowout when a large folder
+    is attached; logs a warning naming the count when extras are skipped.
+    """
+    try:
+        imgs = sorted(
+            str(e) for e in directory.iterdir()
+            if e.is_file() and e.suffix.lower() in IMAGE_EXTENSIONS
+        )
+    except OSError as e:
+        logger.warning("Could not list directory %s: %s", directory, e)
+        return []
+    if len(imgs) > MAX_DIR_IMAGES:
+        logger.warning(
+            "Folder %s has %d images; attaching the first %d (raise MAX_DIR_IMAGES "
+            "or attach specific files for the rest).",
+            directory, len(imgs), MAX_DIR_IMAGES,
+        )
+        imgs = imgs[:MAX_DIR_IMAGES]
+    return imgs
+
+
+def extract_image_paths(message: str) -> tuple[str, list[str]]:
+    """Find image inputs referenced in a message, return (cleaned_text, paths).
+
+    Detects three shapes that exist on disk: quoted paths (which may contain
+    spaces), bare no-space paths ending in a known image extension, and directory
+    paths — a folder is expanded into the image files directly inside it (the
+    "I sent the folder of screenshots" case). Matched references are stripped from
+    the returned text. Non-existent paths and non-image files are left untouched.
     """
     if not message:
         return message, []
@@ -80,11 +113,19 @@ def extract_image_paths(message: str) -> tuple[str, list[str]]:
     found: list[str] = []
     spans: list[tuple[int, int]] = []
     for m in _PATH_RE.finditer(message):
-        candidate = m.group(1) or m.group(2)
+        candidate = (m.group(1) or m.group(2) or m.group(3) or "").strip()
+        if not candidate:
+            continue
         try:
-            if candidate and Path(candidate).is_file():
+            p = Path(candidate)
+            if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS:
                 found.append(candidate)
                 spans.append(m.span())
+            elif p.is_dir():
+                dir_imgs = _images_in_dir(p)
+                if dir_imgs:
+                    found.extend(dir_imgs)
+                    spans.append(m.span())
         except OSError:
             continue  # malformed path — ignore
 

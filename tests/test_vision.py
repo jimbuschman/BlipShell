@@ -61,6 +61,46 @@ def test_extract_no_paths_returns_message_unchanged():
     assert extract_image_paths(msg) == (msg, [])
 
 
+def test_extract_expands_directory_of_images(tmp_path):
+    folder = tmp_path / "screenshots"
+    folder.mkdir()
+    _make_png(folder / "a.png")
+    _make_png(folder / "b.png")
+    (folder / "notes.txt").write_text("ignore me")
+    cleaned, paths = extract_image_paths(f"review the shots in {folder}")
+    assert sorted(Path(p).name for p in paths) == ["a.png", "b.png"]
+    assert "screenshots" not in cleaned
+    assert "review the shots" in cleaned
+
+
+def test_extract_expands_quoted_directory_with_spaces(tmp_path):
+    folder = tmp_path / "my shots"
+    folder.mkdir()
+    _make_png(folder / "x.png")
+    cleaned, paths = extract_image_paths(f'look at "{folder}"')
+    assert [Path(p).name for p in paths] == ["x.png"]
+    assert "my shots" not in cleaned
+
+
+def test_extract_empty_directory_yields_nothing(tmp_path):
+    folder = tmp_path / "empty"
+    folder.mkdir()
+    msg = f"check {folder}"
+    cleaned, paths = extract_image_paths(msg)
+    assert paths == []
+    assert cleaned == msg  # nothing matched → text untouched
+
+
+def test_extract_directory_caps_at_max(tmp_path, monkeypatch):
+    monkeypatch.setattr(vision, "MAX_DIR_IMAGES", 3)
+    folder = tmp_path / "many"
+    folder.mkdir()
+    for i in range(5):
+        _make_png(folder / f"img{i}.png")
+    _cleaned, paths = extract_image_paths(f"see {folder}")
+    assert len(paths) == 3
+
+
 # ── load_image / encode ──────────────────────────────────────────────────────
 
 def test_load_image_returns_ref_and_stores(tmp_path):
