@@ -224,6 +224,8 @@ CREATE TABLE IF NOT EXISTS entities (
     name TEXT NOT NULL,
     entity_type TEXT DEFAULT 'concept',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    is_archived INTEGER DEFAULT 0,        -- soft-archive for low-value entity pruning
+    archived_at DATETIME,                 -- when archived (reversible; row is never deleted here)
     UNIQUE(name, entity_type)
 );
 
@@ -432,6 +434,10 @@ class SQLiteStore:
             "ALTER TABLE sessions ADD COLUMN external_id TEXT",
             "ALTER TABLE sessions ADD COLUMN external_updated_at REAL",
             "CREATE INDEX IF NOT EXISTS idx_sessions_external_id ON sessions(external_id)",
+            # Soft-archive for low-value entity pruning (reversible — never deletes)
+            "ALTER TABLE entities ADD COLUMN is_archived INTEGER DEFAULT 0",
+            "ALTER TABLE entities ADD COLUMN archived_at DATETIME",
+            "CREATE INDEX IF NOT EXISTS idx_entities_archived ON entities(is_archived)",
         ):
             try:
                 await self._db.execute(col_sql)
@@ -2414,10 +2420,81 @@ class SQLiteStore:
         return [r["memory_id"] for r in rows]
 
     async def get_all_entity_names(self) -> list[str]:
-        """Get all entity names (for fast in-memory matching at search time)."""
-        cursor = await self._db.execute("SELECT DISTINCT name FROM entities")
+        """Get all entity names (for fast in-memory matching at search time).
+
+        Excludes soft-archived entities so pruned-but-not-deleted entities stop
+        expanding searches.
+        """
+        cursor = await self._db.execute(
+            "SELECT DISTINCT name FROM entities WHERE is_archived = 0"
+        )
         rows = await cursor.fetchall()
         return [r["name"] for r in rows]
+
+    async def get_prunable_entities(
+        self,
+        min_age_days: int,
+        max_mentions: int,
+        max_degree: int,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """Find low-value entities eligible for soft-archive.
+
+        An entity is prunable when ALL hold:
+          - it is older than `min_age_days` (so freshly-discovered entities that
+            simply haven't accumulated references yet are never pruned),
+          - its mention count is <= `max_mentions`,
+          - its relationship degree (edges where it is subject or object) is
+            <= `max_degree`,
+          - it is not already archived.
+
+        Read-only — returns the candidate rows so the caller (or dry-run) can
+        report exactly what would be archived. Date math is done in SQLite via
+        datetime('now', ...) so it matches the CURRENT_TIMESTAMP format used by
+        entities.created_at (no Python/SQLite format skew).
+        """
+        sql = """
+            SELECT id, name, entity_type, created_at, mentions, degree FROM (
+                SELECT e.id, e.name, e.entity_type, e.created_at,
+                       (SELECT COUNT(*) FROM entity_mentions m
+                        WHERE m.entity_id = e.id) AS mentions,
+                       (SELECT COUNT(*) FROM entity_relationships r
+                        WHERE r.subject_id = e.id OR r.object_id = e.id) AS degree
+                FROM entities e
+                WHERE e.is_archived = 0
+                  AND e.created_at < datetime('now', ?)
+            )
+            WHERE mentions <= ? AND degree <= ?
+            ORDER BY mentions ASC, degree ASC, id ASC
+        """
+        params: list = [f"-{int(min_age_days)} days", max_mentions, max_degree]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        cursor = await self._db.execute(sql, params)
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def archive_entities(self, entity_ids: list[int]) -> int:
+        """Soft-archive entities by id (sets is_archived=1, archived_at=now).
+
+        Reversible: the rows, their relationships and mentions are left intact —
+        only the flag flips. Returns the number of rows newly archived.
+        """
+        if not entity_ids:
+            return 0
+        placeholders = ",".join("?" * len(entity_ids))
+        cursor = await self._db.execute(
+            f"""UPDATE entities
+                SET is_archived = 1, archived_at = CURRENT_TIMESTAMP
+                WHERE is_archived = 0 AND id IN ({placeholders})""",
+            entity_ids,
+        )
+        await self._db.commit()
+        count = cursor.rowcount
+        if count:
+            logger.info("Soft-archived %d low-value entities", count)
+        return count
 
     # --- Bi-temporal Edge Tracking (Feature 4) ---
 

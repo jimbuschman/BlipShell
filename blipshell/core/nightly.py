@@ -37,6 +37,7 @@ JOB_ORDER = [
     "friction_analysis",
     "entity_extraction",
     "entity_cleanup",
+    "prune_entities",
     "centroid_tag",
     "batch_tag",
     "prune",
@@ -281,6 +282,7 @@ class NightlyRunner:
             "centroid_tag": self._job_centroid_tag,
             "batch_tag": self._job_batch_tag,
             "prune": self._job_prune,
+            "prune_entities": self._job_prune_entities,
             "consolidate": self._job_consolidate,
             "clean_neutral_tags": self._job_clean_neutral_tags,
             "tag_discovery": self._job_tag_discovery,
@@ -471,6 +473,60 @@ class NightlyRunner:
         return {
             "pruned": count,
             "orphan_sweep": sweep,
+        }
+
+    async def _job_prune_entities(self, on_status) -> dict:
+        """Soft-archive low-value entities from the graph (reversible, dry-run aware).
+
+        Thresholds are config-driven (entity_prune_* on MemoryConfig). An entity
+        is a candidate when it is older than min_age_days AND has <= max_mentions
+        mentions AND <= max_degree relationships. Disabled by default; when
+        enabled it runs in dry-run mode (log-only) until entity_prune_dry_run is
+        explicitly set false. Archiving flips a flag — it never deletes, so it is
+        fully reversible.
+        """
+        cfg = self.config.memory
+        if not getattr(cfg, "entity_prune_enabled", False):
+            return {"skipped": "entity_prune_enabled=false"}
+
+        candidates = await self.sqlite.get_prunable_entities(
+            min_age_days=cfg.entity_prune_min_age_days,
+            max_mentions=cfg.entity_prune_max_mentions,
+            max_degree=cfg.entity_prune_max_degree,
+        )
+
+        dry_run = getattr(cfg, "entity_prune_dry_run", True)
+        sample = [
+            {"id": c["id"], "name": c["name"], "type": c["entity_type"],
+             "mentions": c["mentions"], "degree": c["degree"]}
+            for c in candidates[:25]
+        ]
+
+        if dry_run:
+            on_status(
+                f"[dry-run] {len(candidates)} entities WOULD be archived "
+                f"(age>{cfg.entity_prune_min_age_days}d, mentions<="
+                f"{cfg.entity_prune_max_mentions}, degree<="
+                f"{cfg.entity_prune_max_degree}) — nothing changed"
+            )
+            for c in sample:
+                logger.info(
+                    "[dry-run] would archive entity id=%d '%s' (%s) mentions=%d degree=%d",
+                    c["id"], c["name"], c["type"], c["mentions"], c["degree"],
+                )
+            return {
+                "dry_run": True,
+                "would_prune": len(candidates),
+                "sample": sample,
+            }
+
+        archived = await self.sqlite.archive_entities([c["id"] for c in candidates])
+        on_status(f"Soft-archived {archived} low-value entities")
+        return {
+            "dry_run": False,
+            "archived": archived,
+            "candidates": len(candidates),
+            "sample": sample,
         }
 
     async def _job_consolidate(self, on_status) -> dict:
@@ -802,12 +858,18 @@ class NightlyRunner:
         """Catch up on unextracted memories."""
         from blipshell.memory.entity_extractor import EntityExtractor
 
+        # Mirror the live worker path (worker.py) so the nightly catch-up honors
+        # the same entity-resolution config. Previously this read a non-existent
+        # attribute (entity_resolution_enabled) and always fell back to False,
+        # so catch-up extraction ran without dedup and created duplicate entities.
+        er_cfg = self.config.memory.entity_resolution
         extractor = EntityExtractor(
             self.sqlite, self.router, self.vectors,
             batch_size=500,
-            entity_resolution_enabled=getattr(
-                self.config.memory, "entity_resolution_enabled", False,
-            ),
+            entity_resolution_enabled=er_cfg.enabled,
+            entity_auto_merge_threshold=er_cfg.embedding_auto_merge_threshold,
+            entity_llm_threshold=er_cfg.llm_arbitration_threshold,
+            entity_max_candidates=er_cfg.max_candidates,
         )
         return await extractor.extract_batch(concurrency=1)
 

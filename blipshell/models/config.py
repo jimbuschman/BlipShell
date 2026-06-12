@@ -145,6 +145,12 @@ class MemoryConfig(BaseModel):
     auto_prune_days: int = 0  # 0 = disabled; was 90 but archived 1083 imported memories
     prune_max_importance: float = 0.3
     prune_max_rank: int = 2
+    # Entity graph pruning (soft-archive low-value entities; nightly "prune_entities" job)
+    entity_prune_enabled: bool = False  # opt-in — off by default
+    entity_prune_dry_run: bool = True   # when enabled, log-only until explicitly set False
+    entity_prune_min_age_days: int = 30  # never prune entities younger than this
+    entity_prune_max_mentions: int = 1   # prune only if mention count <= this
+    entity_prune_max_degree: int = 1     # prune only if relationship degree <= this
     consolidation_similarity: float = 0.85  # min cosine similarity to merge
     consolidation_batch_size: int = 20  # memories to check per nightly run (0 = disabled)
     contradiction_similarity_threshold: float = 0.7  # min similarity to check for contradiction

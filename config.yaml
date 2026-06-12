@@ -148,6 +148,14 @@ memory:
   prune_max_importance: 0.3
   prune_max_rank: 2
 
+  # Entity graph pruning — soft-archive low-value entities (nightly "prune_entities" job).
+  # Reversible: flips is_archived, never deletes. Dry-run logs candidates without touching data.
+  entity_prune_enabled: false      # opt-in
+  entity_prune_dry_run: true       # log-only until you explicitly set this false
+  entity_prune_min_age_days: 30    # never prune entities younger than this
+  entity_prune_max_mentions: 1     # prune only if mention count <= this
+  entity_prune_max_degree: 1       # prune only if relationship degree <= this
+
 session:
   max_messages_before_summary: 50
   summary_chunk_size: 20
