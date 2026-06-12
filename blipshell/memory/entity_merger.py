@@ -147,6 +147,10 @@ class EntityMerger:
                 if drop["id"] == e["id"]:
                     break
 
+        # Sort the plan by confidence (highest similarity first) so a human
+        # reviewing the dry-run reads the safest merges first and the borderline
+        # LLM-band ones last — that tail is where to look hardest.
+        plan.sort(key=lambda p: -p["similarity"])
         sample = plan[:25]
         if dry_run:
             for p in sample:
@@ -156,7 +160,10 @@ class EntityMerger:
                     p["drop_name"], p["drop_id"], p["keep_name"], p["keep_id"],
                     p["similarity"], p["method"],
                 )
-            return {**stats, "dry_run": True, "would_merge": len(plan), "sample": sample}
+            # Return the FULL plan (sorted) so the caller can persist a complete,
+            # reviewable preview — the 25-row sample isn't enough on a large graph.
+            return {**stats, "dry_run": True, "would_merge": len(plan),
+                    "sample": sample, "plan": plan}
 
         applied = 0
         for p in plan:

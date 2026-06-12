@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Callable, Optional
 
 from blipshell.core.import_lock import is_import_active, read_lock_info
@@ -504,10 +505,21 @@ class NightlyRunner:
         dry_run = getattr(cfg, "entity_merge_dry_run", True)
         result = await merger.merge_pass(dry_run=dry_run)
         if dry_run:
+            # Persist the full, confidence-sorted plan so it can be read through
+            # before committing — the in-result sample is just a teaser. Keep the
+            # returned/persisted dict small by dropping the full plan from it.
+            plan = result.pop("plan", [])
+            preview_path = Path(self.config.database.path).parent / "entity_merge_preview.json"
+            try:
+                preview_path.write_text(json.dumps(plan, indent=2), encoding="utf-8")
+                result["preview_file"] = str(preview_path)
+            except Exception as e:
+                logger.warning("Failed to write merge preview: %s", e)
             on_status(
                 f"[dry-run] {result['would_merge']} entity merges proposed "
                 f"({result['auto_merges']} auto, {result['llm_merges']} LLM, "
-                f"{result['llm_rejects']} rejected) — nothing changed"
+                f"{result['llm_rejects']} rejected) — nothing changed; "
+                f"full sorted preview -> {preview_path}"
             )
         else:
             on_status(
