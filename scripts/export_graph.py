@@ -283,6 +283,13 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     interaction: {{ hover: true, tooltipDelay: 100 }}
   }});
 
+  // Freeze the layout once it settles so the graph stops drifting.
+  // Without this the force simulation runs forever and the nodes jiggle.
+  network.once("stabilizationIterationsDone", () => network.setOptions({{ physics: false }}));
+  // Let dragging a node re-settle its neighbors, then freeze again.
+  network.on("dragStart", () => network.setOptions({{ physics: true }}));
+  network.on("dragEnd", () => network.setOptions({{ physics: false }}));
+
   // Type-to-find: focus the first matching node.
   document.getElementById("find").addEventListener("keydown", (e) => {{
     if (e.key !== "Enter") return;
