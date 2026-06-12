@@ -156,6 +156,16 @@ memory:
   entity_prune_max_mentions: 1     # prune only if mention count <= this
   entity_prune_max_degree: 1       # prune only if relationship degree <= this
 
+  # Retroactive entity merge — consolidate duplicate entities already in the graph
+  # (nightly "merge_entities" job). Conservative: a bad merge destroys edge
+  # differentiation. Thresholds are higher than creation-time resolution.
+  entity_merge_enabled: false      # opt-in
+  entity_merge_dry_run: true       # log-only until you explicitly set this false
+  entity_merge_auto_threshold: 0.90  # auto-merge above this similarity
+  entity_merge_llm_threshold: 0.80   # LLM arbitration (edge-aware) band: this..auto
+  entity_merge_max_candidates: 5     # similar entities checked per entity
+  entity_merge_edge_sample: 5        # edges shown to the arbitration LLM
+
 session:
   max_messages_before_summary: 50
   summary_chunk_size: 20

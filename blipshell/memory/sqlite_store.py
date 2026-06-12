@@ -2475,6 +2475,58 @@ class SQLiteStore:
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
+    async def get_mergeable_entities(self) -> list[dict]:
+        """Return non-archived entities with mention counts, for retroactive merge.
+
+        Ordered mentions DESC so the most-referenced entity in a duplicate set
+        tends to be processed first and chosen as the canonical keeper.
+        """
+        cursor = await self._db.execute(
+            """SELECT id, name, entity_type, mentions FROM (
+                   SELECT e.id, e.name, e.entity_type,
+                          (SELECT COUNT(*) FROM entity_mentions m
+                           WHERE m.entity_id = e.id) AS mentions
+                   FROM entities e
+                   WHERE e.is_archived = 0
+               )
+               ORDER BY mentions DESC, id ASC"""
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def get_entity_edge_sample(
+        self, entity_id: int, entity_name: str, limit: int = 5,
+    ) -> list[str]:
+        """Return up to `limit` human-readable active edges for an entity.
+
+        Outgoing edges render as "name predicate other"; incoming as
+        "other predicate name". Used to give the merge-arbitration LLM real
+        signal beyond the bare entity names. Expired (bi-temporal) edges are
+        excluded.
+        """
+        out_cur = await self._db.execute(
+            """SELECT er.predicate AS pred, o.name AS other
+               FROM entity_relationships er
+               JOIN entities o ON o.id = er.object_id
+               WHERE er.subject_id = ? AND er.expired_at IS NULL
+               LIMIT ?""",
+            (entity_id, limit),
+        )
+        edges = [f"{entity_name} {r['pred']} {r['other']}"
+                 for r in await out_cur.fetchall()]
+        if len(edges) < limit:
+            in_cur = await self._db.execute(
+                """SELECT er.predicate AS pred, s.name AS other
+                   FROM entity_relationships er
+                   JOIN entities s ON s.id = er.subject_id
+                   WHERE er.object_id = ? AND er.expired_at IS NULL
+                   LIMIT ?""",
+                (entity_id, limit - len(edges)),
+            )
+            edges += [f"{r['other']} {r['pred']} {entity_name}"
+                      for r in await in_cur.fetchall()]
+        return edges
+
     async def archive_entities(self, entity_ids: list[int]) -> int:
         """Soft-archive entities by id (sets is_archived=1, archived_at=now).
 

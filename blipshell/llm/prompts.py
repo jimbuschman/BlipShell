@@ -603,6 +603,50 @@ def resolve_entity_duplicate(
     return system, user
 
 
+def resolve_entity_merge_with_edges(
+    name_a: str, edges_a: list[str],
+    name_b: str, edges_b: list[str],
+) -> tuple[str, str]:
+    """Prompt for retroactive merge arbitration, with each entity's edge context.
+
+    Unlike resolve_entity_duplicate (creation-time, names only), this is used to
+    decide whether two ALREADY-STORED entities should be merged. There is no
+    surrounding conversation, so the entity's relationships are the only signal
+    for distinguishing 'qwen3 (the model, uses python, runs_on ollama)' from a
+    differently-scoped 'qwen-3'. Biased toward NO: a wrong merge collapses two
+    distinct things and destroys edge differentiation, which is hard to recover.
+
+    Returns (system_prompt, user_prompt).
+    """
+    system = (
+        "You decide whether two stored knowledge-graph entities refer to the "
+        "SAME real-world thing and should be merged. Use their relationships as "
+        "evidence — matching relationships confirm sameness, conflicting ones "
+        "signal distinct entities.\n\n"
+        "Same entity (YES):\n"
+        "- Abbreviations / spelling variants: 'postgres'/'postgresql', 'js'/'javascript'\n"
+        "- Same thing, different formatting: 'next.js'/'nextjs', 'qwen3'/'qwen-3'\n"
+        "  — but ONLY if their relationships are consistent with one thing\n\n"
+        "Different entities (NO):\n"
+        "- Different referents that share a name: 'python' (language) vs 'python' (snake)\n"
+        "- Related but distinct: 'react' vs 'react native'\n"
+        "- Different versions/scopes whose edges disagree: 'gpt-3' vs 'gpt-4'\n\n"
+        "When the relationships give no clear evidence either way, answer NO. "
+        "Only answer YES if you are confident.\n\n"
+        "Respond with ONLY: YES or NO"
+    )
+    a_edges = "\n".join(f"  - {e}" for e in edges_a) or "  (no relationships)"
+    b_edges = "\n".join(f"  - {e}" for e in edges_b) or "  (no relationships)"
+    user = (
+        f"Entity A: {name_a}\n"
+        f"A's relationships:\n{a_edges}\n\n"
+        f"Entity B: {name_b}\n"
+        f"B's relationships:\n{b_edges}\n\n"
+        "Are these the same entity and safe to merge?"
+    )
+    return system, user
+
+
 def extract_entities(summary: str) -> tuple[str, str]:
     """Prompt for extracting entity relationship triples from a memory summary.
 

@@ -37,6 +37,7 @@ JOB_ORDER = [
     "friction_analysis",
     "entity_extraction",
     "entity_cleanup",
+    "merge_entities",
     "prune_entities",
     "centroid_tag",
     "batch_tag",
@@ -54,6 +55,7 @@ _OLLAMA_JOBS = {
     "backfill_lessons", "score_lessons", "clean_junk_lessons",
     "session_reflections", "friction_analysis",
     "entity_extraction", "batch_tag",
+    "merge_entities",
     "rebuild_digests",
 }
 
@@ -282,6 +284,7 @@ class NightlyRunner:
             "centroid_tag": self._job_centroid_tag,
             "batch_tag": self._job_batch_tag,
             "prune": self._job_prune,
+            "merge_entities": self._job_merge_entities,
             "prune_entities": self._job_prune_entities,
             "consolidate": self._job_consolidate,
             "clean_neutral_tags": self._job_clean_neutral_tags,
@@ -474,6 +477,44 @@ class NightlyRunner:
             "pruned": count,
             "orphan_sweep": sweep,
         }
+
+    async def _job_merge_entities(self, on_status) -> dict:
+        """Retroactively merge duplicate entities already in the graph.
+
+        Consolidates duplicates that creation-time resolution missed (e.g. those
+        created while nightly extraction ran without dedup). Conservative,
+        config-driven, dry-run aware. Runs before prune_entities so merged-away
+        husks don't get treated as independent low-value nodes.
+        """
+        cfg = self.config.memory
+        if not getattr(cfg, "entity_merge_enabled", False):
+            return {"skipped": "entity_merge_enabled=false"}
+        if self.vectors is None:
+            return {"skipped": "no vector store (similarity search unavailable)"}
+
+        from blipshell.memory.entity_merger import EntityMerger
+
+        merger = EntityMerger(
+            self.sqlite, self.router, self.vectors,
+            auto_threshold=cfg.entity_merge_auto_threshold,
+            llm_threshold=cfg.entity_merge_llm_threshold,
+            max_candidates=cfg.entity_merge_max_candidates,
+            edge_sample=cfg.entity_merge_edge_sample,
+        )
+        dry_run = getattr(cfg, "entity_merge_dry_run", True)
+        result = await merger.merge_pass(dry_run=dry_run)
+        if dry_run:
+            on_status(
+                f"[dry-run] {result['would_merge']} entity merges proposed "
+                f"({result['auto_merges']} auto, {result['llm_merges']} LLM, "
+                f"{result['llm_rejects']} rejected) — nothing changed"
+            )
+        else:
+            on_status(
+                f"Merged {result['merged']} duplicate entities "
+                f"({result['auto_merges']} auto, {result['llm_merges']} LLM)"
+            )
+        return result
 
     async def _job_prune_entities(self, on_status) -> dict:
         """Soft-archive low-value entities from the graph (reversible, dry-run aware).

@@ -151,6 +151,15 @@ class MemoryConfig(BaseModel):
     entity_prune_min_age_days: int = 30  # never prune entities younger than this
     entity_prune_max_mentions: int = 1   # prune only if mention count <= this
     entity_prune_max_degree: int = 1     # prune only if relationship degree <= this
+    # Retroactive entity merge (consolidate existing duplicates; nightly "merge_entities").
+    # Conservative on purpose — a bad merge destroys edge differentiation. Higher
+    # thresholds than creation-time resolution (which is 0.85 auto / 0.70 LLM).
+    entity_merge_enabled: bool = False        # opt-in
+    entity_merge_dry_run: bool = True         # log-only until explicitly set false
+    entity_merge_auto_threshold: float = 0.90  # auto-merge above this similarity
+    entity_merge_llm_threshold: float = 0.80   # LLM arbitration band: this..auto
+    entity_merge_max_candidates: int = 5       # similar entities checked per entity
+    entity_merge_edge_sample: int = 5          # edges shown to the arbitration LLM
     consolidation_similarity: float = 0.85  # min cosine similarity to merge
     consolidation_batch_size: int = 20  # memories to check per nightly run (0 = disabled)
     contradiction_similarity_threshold: float = 0.7  # min similarity to check for contradiction
