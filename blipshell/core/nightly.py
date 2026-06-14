@@ -63,6 +63,12 @@ _OLLAMA_JOBS = {
 # Max time per job (seconds). Prevents a single hung job from burning hours.
 _JOB_TIMEOUT = 300  # 5 minutes per job
 
+# Sentinel distinguishing "caller didn't specify a budget, use the nightly
+# default" from an explicit None ("no budget, full pass"). Used by
+# _job_merge_entities so the scheduled run gets budgeted while the standalone
+# script can opt out.
+_DEFAULT_BUDGET = object()
+
 
 class NightlyRunner:
     """Orchestrates nightly maintenance jobs."""
@@ -479,13 +485,23 @@ class NightlyRunner:
             "orphan_sweep": sweep,
         }
 
-    async def _job_merge_entities(self, on_status) -> dict:
+    async def _job_merge_entities(
+        self, on_status, on_progress=None, time_budget_seconds=_DEFAULT_BUDGET,
+    ) -> dict:
         """Retroactively merge duplicate entities already in the graph.
 
         Consolidates duplicates that creation-time resolution missed (e.g. those
         created while nightly extraction ran without dedup). Conservative,
         config-driven, dry-run aware. Runs before prune_entities so merged-away
         husks don't get treated as independent low-value nodes.
+
+        The full-graph scan can't finish in one _JOB_TIMEOUT, so by default this
+        runs merge_pass under a time budget of (_JOB_TIMEOUT - 30): it makes
+        resumable partial progress every scheduled run instead of always timing
+        out (merged husks are archived, so the graph converges over nights).
+        on_progress (scanned, total, stats) is forwarded for a heartbeat. The
+        standalone scripts/merge_entities.py runner passes
+        time_budget_seconds=None for an uncapped full pass / complete preview.
         """
         cfg = self.config.memory
         if not getattr(cfg, "entity_merge_enabled", False):
@@ -502,12 +518,29 @@ class NightlyRunner:
             max_candidates=cfg.entity_merge_max_candidates,
             edge_sample=cfg.entity_merge_edge_sample,
         )
+        if time_budget_seconds is _DEFAULT_BUDGET:
+            time_budget_seconds = _JOB_TIMEOUT - 30
         dry_run = getattr(cfg, "entity_merge_dry_run", True)
-        result = await merger.merge_pass(dry_run=dry_run)
+        result = await merger.merge_pass(
+            dry_run=dry_run, on_progress=on_progress,
+            time_budget_seconds=time_budget_seconds,
+        )
+        # If a time budget cut the scan short, say so — the numbers are partial
+        # and the rest is picked up next run.
+        if result.get("stopped_early"):
+            scan_note = (
+                f" [partial: scanned {result['entities_scanned']}/"
+                f"{result['entities_total']}, resumes next run]"
+            )
+        else:
+            scan_note = ""
+
         if dry_run:
-            # Persist the full, confidence-sorted plan so it can be read through
-            # before committing — the in-result sample is just a teaser. Keep the
+            # Persist the confidence-sorted plan so it can be read through before
+            # committing — the in-result sample is just a teaser. Keep the
             # returned/persisted dict small by dropping the full plan from it.
+            # Note: under a time budget this preview is PARTIAL; use the
+            # standalone scripts/merge_entities.py for a complete one.
             plan = result.pop("plan", [])
             preview_path = Path(self.config.database.path).parent / "entity_merge_preview.json"
             try:
@@ -519,12 +552,12 @@ class NightlyRunner:
                 f"[dry-run] {result['would_merge']} entity merges proposed "
                 f"({result['auto_merges']} auto, {result['llm_merges']} LLM, "
                 f"{result['llm_rejects']} rejected) — nothing changed; "
-                f"full sorted preview -> {preview_path}"
+                f"sorted preview -> {preview_path}{scan_note}"
             )
         else:
             on_status(
                 f"Merged {result['merged']} duplicate entities "
-                f"({result['auto_merges']} auto, {result['llm_merges']} LLM)"
+                f"({result['auto_merges']} auto, {result['llm_merges']} LLM){scan_note}"
             )
         return result
 

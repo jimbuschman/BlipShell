@@ -20,6 +20,7 @@ merged-away husk (reversible). Dry-run reports the plan without touching data.
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from blipshell.llm.prompts import resolve_entity_merge_with_edges
@@ -85,25 +86,59 @@ class EntityMerger:
                            a["name"], b["name"], e)
             return False
 
-    async def merge_pass(self, dry_run: bool = True) -> dict:
+    async def merge_pass(
+        self, dry_run: bool = True, on_progress=None, time_budget_seconds=None,
+    ) -> dict:
         """Run one retroactive merge pass. Returns stats (+ a plan sample).
 
-        When dry_run is True, computes the full merge plan and logs it but makes
-        no changes. When False, applies the plan: merge_entity → record alias →
+        When dry_run is True, computes the merge plan and logs it but makes no
+        changes. When False, applies the plan: merge_entity → record alias →
         soft-archive the merged-away entity.
+
+        on_progress, if given, is called as on_progress(scanned, total, stats)
+        every PROGRESS_INTERVAL entities — this pass scans the whole graph
+        (~31K entities, each a vector search plus possible LLM arbitration), so
+        a long run needs a heartbeat to distinguish "working" from "hung".
+
+        time_budget_seconds, if set, makes the scan stop cleanly before the
+        budget elapses (reserving SAFETY_MARGIN for the in-flight LLM call and
+        the apply phase) and marks stats["stopped_early"]. The scheduled nightly
+        passes one so the job makes resumable partial progress instead of always
+        blowing the per-job timeout: in apply mode each run consumes some
+        duplicates (their husks get archived, so get_mergeable_entities won't
+        return them next time) and the graph converges over successive nights.
+        None = no budget, scan the full graph (the standalone script).
         """
+        PROGRESS_INTERVAL = 500
+        SAFETY_MARGIN = 15.0
+        deadline = (
+            time.monotonic() + time_budget_seconds
+            if time_budget_seconds is not None else None
+        )
         entities = await self.sqlite.get_mergeable_entities()
+        total = len(entities)
         by_id = {e["id"]: e for e in entities}
         merged_away: set[int] = set()
         plan: list[dict] = []
         stats = {
-            "entities_scanned": len(entities),
+            "entities_total": total,
+            "entities_scanned": 0,
             "auto_merges": 0,
             "llm_merges": 0,
             "llm_rejects": 0,
+            "stopped_early": False,
         }
 
-        for e in entities:
+        for idx, e in enumerate(entities):
+            if on_progress and idx % PROGRESS_INTERVAL == 0:
+                on_progress(idx, total, stats)
+            if deadline is not None and time.monotonic() > deadline - SAFETY_MARGIN:
+                stats["stopped_early"] = True
+                logger.info(
+                    "merge_pass: time budget reached at %d/%d entities", idx, total,
+                )
+                break
+            stats["entities_scanned"] = idx + 1
             if e["id"] in merged_away:
                 continue
             try:
