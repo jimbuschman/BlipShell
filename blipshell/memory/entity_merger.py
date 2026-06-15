@@ -20,6 +20,7 @@ merged-away husk (reversible). Dry-run reports the plan without touching data.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import TYPE_CHECKING
 
@@ -31,6 +32,10 @@ if TYPE_CHECKING:
     from blipshell.memory.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
+
+# Split a name into tokens on whitespace and common separators so version
+# markers fall out as their own tokens (projectecho_v1 -> {projectecho, v1}).
+_TOKEN_SPLIT = re.compile(r"[\s_\-:/.,]+")
 
 
 class EntityMerger:
@@ -63,6 +68,28 @@ class EntityMerger:
         if (a["mentions"], -a["id"]) >= (b["mentions"], -b["id"]):
             return a, b
         return b, a
+
+    @staticmethod
+    def _numeric_tokens(name: str) -> set[str]:
+        """Tokens in `name` that contain a digit (version/number markers)."""
+        return {
+            t for t in _TOKEN_SPLIT.split(name.lower())
+            if any(c.isdigit() for c in t)
+        }
+
+    @classmethod
+    def _version_distinguished(cls, a_name: str, b_name: str) -> bool:
+        """True if two names differ in their numeric/version tokens.
+
+        Embeddings rate names that differ only by a version/instance number as
+        ~identical (projectecho_v1 vs _v2 = 0.996, corememorybackup1 vs 2,
+        llama 3.2b vs 3.2, ws2812 vs ws2812b), which would clear the auto-merge
+        threshold and collapse DISTINCT things with no LLM veto. Such pairs are
+        almost always separate versions, not formatting variants, so they must
+        never merge. Pairs whose numeric tokens match (langchain-x vs
+        langchain_x, deepseek-r1-7b vs deepseek-r1:7b) are unaffected.
+        """
+        return cls._numeric_tokens(a_name) != cls._numeric_tokens(b_name)
 
     async def _llm_confirms_merge(self, a: dict, b: dict) -> bool:
         """Edge-aware LLM arbitration for the ambiguous similarity band."""
@@ -126,6 +153,7 @@ class EntityMerger:
             "auto_merges": 0,
             "llm_merges": 0,
             "llm_rejects": 0,
+            "version_skips": 0,
             "stopped_early": False,
         }
 
@@ -160,6 +188,14 @@ class EntityMerger:
                     break
 
                 other = by_id[cid]
+                # Version/instance guard: names differing only by a number are
+                # distinct things (v1 vs v2), not duplicates — never merge them,
+                # auto OR LLM. Checked before the band split so it also short-
+                # circuits the expensive LLM call.
+                if self._version_distinguished(e["name"], other["name"]):
+                    stats["version_skips"] += 1
+                    continue
+
                 method = None
                 if sim >= self.auto_threshold:
                     method = "retroactive_embedding"
@@ -200,22 +236,59 @@ class EntityMerger:
             return {**stats, "dry_run": True, "would_merge": len(plan),
                     "sample": sample, "plan": plan}
 
-        applied = 0
-        for p in plan:
+        apply_result = await self.apply_plan(plan)
+        return {**stats, "dry_run": False, "sample": sample, **apply_result}
+
+    async def apply_plan(self, plan: list[dict], on_status=None) -> dict:
+        """Apply a precomputed merge plan WITHOUT re-scanning the graph.
+
+        Lets a reviewed dry-run preview (entity_merge_preview.json) be applied
+        directly in minutes instead of repeating the multi-hour scan — and
+        guarantees you apply exactly what you reviewed. Each entry:
+        merge_entity (repoint edges/mentions) → record alias → soft-archive the
+        loser (is_archived, never deleted) → drop its vector.
+
+        Safety: the version/instance guard runs again here (so a stale preview
+        generated before the guard existed can't apply v1/v2-style merges), and
+        the pass is idempotent — entries whose loser is already archived/merged
+        (this run or a previous one) are skipped, so it's safe to re-run.
+        """
+        # Snapshot of still-live (non-archived) entity ids for idempotency.
+        live = {e["id"] for e in await self.sqlite.get_mergeable_entities()}
+        archived_this_run: set[int] = set()
+        merged = guard_skipped = skipped = 0
+
+        for i, p in enumerate(plan):
+            drop_id, keep_id = p["drop_id"], p["keep_id"]
+            if self._version_distinguished(p["drop_name"], p["keep_name"]):
+                guard_skipped += 1
+                continue
+            # Skip if the loser is gone/archived, or the keeper was itself
+            # merged away earlier (repointing into a husk would corrupt edges).
+            if (drop_id not in live or drop_id in archived_this_run
+                    or keep_id in archived_this_run):
+                skipped += 1
+                continue
             try:
-                await self.sqlite.merge_entity(p["drop_id"], p["keep_id"])
+                await self.sqlite.merge_entity(drop_id, keep_id)
                 await self.sqlite.record_entity_alias(
-                    p["drop_name"], p["keep_id"], merge_method=p["method"],
+                    p["drop_name"], keep_id,
+                    merge_method=p.get("method", "retroactive_preview"),
                 )
-                await self.sqlite.archive_entities([p["drop_id"]])
+                await self.sqlite.archive_entities([drop_id])
                 if self.vectors:
                     try:
-                        self.vectors.delete_entity(p["drop_id"])
+                        self.vectors.delete_entity(drop_id)
                     except Exception:
                         pass  # orphan vector, swept later
-                applied += 1
+                archived_this_run.add(drop_id)
+                merged += 1
+                if on_status and (i + 1) % 500 == 0:
+                    on_status(f"applied {merged}/{len(plan)} merges")
             except Exception as ex:
-                logger.warning("Failed to merge id=%d into id=%d: %s",
-                               p["drop_id"], p["keep_id"], ex)
-        return {**stats, "dry_run": False, "merged": applied,
-                "planned": len(plan), "sample": sample}
+                logger.warning("Failed to merge id=%s into id=%s: %s",
+                               drop_id, keep_id, ex)
+                skipped += 1
+
+        return {"merged": merged, "guard_skipped": guard_skipped,
+                "skipped": skipped, "planned": len(plan)}
