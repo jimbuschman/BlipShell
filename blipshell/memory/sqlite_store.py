@@ -2333,8 +2333,11 @@ class SQLiteStore:
                    VALUES (?, ?, ?, ?)""",
                 (subject_id, predicate.strip().lower(), object_id, memory_id),
             )
+            rid = cursor.lastrowid
+            # New activity un-archives pruned endpoints (see revive_entities).
+            await self.revive_entities([subject_id, object_id], skip_commit=True)
             await self._db.commit()
-            return cursor.lastrowid if cursor.lastrowid else None
+            return rid if rid else None
         except Exception as e:
             logger.warning("Failed to create relationship: %s", e)
             return None
@@ -2345,8 +2348,35 @@ class SQLiteStore:
             "INSERT OR IGNORE INTO entity_mentions (entity_id, memory_id) VALUES (?, ?)",
             (entity_id, memory_id),
         )
+        # New activity un-archives a pruned entity (see revive_entities).
+        await self.revive_entities([entity_id], skip_commit=True)
         if not skip_commit:
             await self._db.commit()
+
+    async def revive_entities(self, entity_ids, *, skip_commit: bool = False) -> int:
+        """Un-archive PRUNED entities that gain new activity (re-mention / new
+        relationship), reversing the prune soft-archive once an entity becomes
+        relevant again.
+
+        Merged-away husks are deliberately NOT revived: their name is recorded
+        in entity_aliases, and resurrecting one would recreate the duplicate the
+        merge eliminated. (Resolution doesn't yet route husk names to their
+        canonical — see the known re-mention-of-merged-name gap.) No-op for
+        already-active entities. Returns the number revived.
+        """
+        ids = [i for i in set(entity_ids) if i is not None]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" * len(ids))
+        cursor = await self._db.execute(
+            f"""UPDATE entities SET is_archived = 0, archived_at = NULL
+                WHERE is_archived = 1 AND id IN ({placeholders})
+                  AND name NOT IN (SELECT alias_name FROM entity_aliases)""",
+            ids,
+        )
+        if not skip_commit:
+            await self._db.commit()
+        return cursor.rowcount
 
     async def get_unextracted_memory_ids(self, limit: int = 50) -> list[int]:
         """Get memory IDs that haven't had entities extracted yet."""
@@ -2569,9 +2599,12 @@ class SQLiteStore:
                    VALUES (?, ?, ?, ?, ?)""",
                 (subject_id, predicate, object_id, memory_id, valid_from),
             )
+            rid = cursor.lastrowid
+            # New activity un-archives pruned endpoints (see revive_entities).
+            await self.revive_entities([subject_id, object_id], skip_commit=True)
             if not skip_commit:
                 await self._db.commit()
-            return cursor.lastrowid if cursor.lastrowid else None
+            return rid if rid else None
         except Exception as e:
             logger.warning("Failed to create temporal relationship: %s", e)
             return None
