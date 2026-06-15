@@ -605,6 +605,7 @@ class MemorySearch:
         rerank_floor: float,
         max_inject: int,
         prefilter_k: int,
+        gravity_enabled: bool = False,
     ) -> list[tuple[str, float]]:
         """Two-stage relevance filter over BlipShell's own lingering thoughts.
 
@@ -659,7 +660,16 @@ class MemorySearch:
             if verdict >= rerank_floor:
                 kept.append((text, sim))   # order survivors by cosine similarity
 
-        kept.sort(key=lambda x: x[1], reverse=True)
+        # Among thoughts that PASSED the relevance gate, decide which one(s)
+        # actually surface. Without gravity: most-relevant (cosine) wins. With
+        # gravity: weight x relevance wins — so the thought that matters most to
+        # BlipShell takes the (capped) slot, not merely the most lexically near.
+        # Relevance was already required by the gate; gravity only re-orders it.
+        if gravity_enabled:
+            weights = await store.effective_weights([t for t, _ in kept])
+            kept.sort(key=lambda ts: weights.get(ts[0], 1.0) * ts[1], reverse=True)
+        else:
+            kept.sort(key=lambda x: x[1], reverse=True)
         return kept[:max_inject]
 
     async def _judge_relevance(self, query: str, thought: str) -> float:

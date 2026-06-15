@@ -364,6 +364,21 @@ class ReflectionConfig(BaseModel):
     inject_max: int = 1                # max thoughts injected per turn (backstop)
     inject_prefilter_k: int = 3        # candidates handed to the judge
 
+    # Self-gravity (step 1): each thought carries a weight that recurrence
+    # reinforces and surfacing/age decay erodes. Among thoughts that pass the
+    # relevance gate, the heaviest (weight x relevance) surfaces, and heavy ones
+    # render with a "recurring" marker. OFF by default — graduated opt-in. This
+    # lives entirely in the self-layer: it never touches retrieval ranking, so
+    # the assistant cannot regress. The relevance gate is unchanged and still
+    # required, so gravity only re-orders/marks what was already going to surface.
+    gravity_enabled: bool = False
+    gravity_recur_threshold: float = 0.85  # cosine above which a new thought "echoes" a prior
+    gravity_recur_boost: float = 0.5       # weight added to an echoed prior (recurrence = gravity)
+    gravity_fatigue: float = 0.6           # weight multiplier each time a thought surfaces (anti-spiral)
+    gravity_half_life_days: float = 30.0   # age decay: effective weight halves over this span
+    gravity_min_weight: float = 0.1        # floor so decay/fatigue never fully zero a thought
+    gravity_marker_weight: float = 1.5     # render "recurring" marker at/above this effective weight
+
 
 class CompactionConfig(BaseModel):
     """Structured compaction configuration.

@@ -308,10 +308,17 @@ class Agent(
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, self.vectors.embed_text, text)
 
+        _refl = self.config.reflection
         self._self_thoughts = SelfThoughtStore(
             self.sqlite,
-            max_keep=self.config.reflection.max_keep,
+            max_keep=_refl.max_keep,
             embed_fn=_embed_self_thought,
+            gravity_enabled=_refl.gravity_enabled,
+            recur_threshold=_refl.gravity_recur_threshold,
+            recur_boost=_refl.gravity_recur_boost,
+            fatigue=_refl.gravity_fatigue,
+            half_life_days=_refl.gravity_half_life_days,
+            min_weight=_refl.gravity_min_weight,
         )
         if self.config.reflection.enabled:
             self._reflection_task = asyncio.create_task(self._reflection_loop())

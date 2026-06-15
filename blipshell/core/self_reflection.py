@@ -19,6 +19,7 @@ Stored in app_metadata (lightweight, easy to drop if it's not worth keeping).
 import json
 import logging
 import math
+from datetime import datetime, timezone
 from typing import Awaitable, Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -84,10 +85,69 @@ class SelfThoughtStore:
 
     KEY = "self_thoughts"
 
-    def __init__(self, sqlite, max_keep: int = 50, embed_fn: Optional[EmbedFn] = None):
+    def __init__(self, sqlite, max_keep: int = 50, embed_fn: Optional[EmbedFn] = None,
+                 *, gravity_enabled: bool = False, recur_threshold: float = 0.85,
+                 recur_boost: float = 0.5, fatigue: float = 0.6,
+                 half_life_days: float = 30.0, min_weight: float = 0.1):
         self._sqlite = sqlite
         self._max = max_keep
         self._embed_fn = embed_fn
+        # Self-gravity (off by default). When disabled, every gravity path below
+        # is a no-op and the store behaves exactly as before.
+        self._gravity_enabled = gravity_enabled
+        self._recur_threshold = recur_threshold
+        self._recur_boost = recur_boost
+        self._fatigue = fatigue
+        self._half_life_days = half_life_days
+        self._min_weight = min_weight
+
+    @staticmethod
+    def _now() -> datetime:
+        return datetime.now(timezone.utc)
+
+    def _effective_weight(self, item: dict, now: datetime) -> float:
+        """Stored weight after age decay (computed at read, not persisted).
+
+        Recurrence/fatigue mutate the stored ``weight``; age decay is applied on
+        top here so a thought has to keep recurring to stay heavy as it ages.
+        """
+        w = item.get("weight", 1.0)
+        created = item.get("created_at")
+        if created and self._half_life_days > 0:
+            try:
+                age_days = (now - datetime.fromisoformat(created)).total_seconds() / 86400.0
+                if age_days > 0:
+                    w *= 0.5 ** (age_days / self._half_life_days)
+            except (ValueError, TypeError):
+                pass
+        return max(w, self._min_weight)
+
+    async def effective_weights(self, texts) -> dict:
+        """Map each given thought text -> its current effective (age-decayed)
+        weight. Used by the surfacing gate to rank, and by the renderer to mark
+        recurring thoughts. Empty when gravity is disabled."""
+        if not self._gravity_enabled or not texts:
+            return {}
+        now = self._now()
+        wanted = set(texts)
+        return {it["text"]: self._effective_weight(it, now)
+                for it in await self._load() if it["text"] in wanted}
+
+    async def apply_fatigue(self, texts) -> None:
+        """Decay the stored weight of thoughts that just surfaced (anti-spiral:
+        the same thought can't dominate turn after turn). No-op when disabled;
+        recurrence is what lets a genuinely central thought recover."""
+        if not self._gravity_enabled or not texts:
+            return
+        wanted = set(texts)
+        items = await self._load()
+        changed = False
+        for it in items:
+            if it["text"] in wanted:
+                it["weight"] = max(it.get("weight", 1.0) * self._fatigue, self._min_weight)
+                changed = True
+        if changed:
+            await self._save(items)
 
     async def _load(self) -> list[dict]:
         raw = await self._sqlite.get_metadata(self.KEY)
@@ -113,7 +173,19 @@ class SelfThoughtStore:
 
     async def add(self, text: str) -> None:
         items = await self._load()
-        items.append({"text": text, "surfaced": False, "embedding": await self._embed(text)})
+        emb = await self._embed(text)
+        # Recurrence reinforcement: if this new thought echoes a prior one, the
+        # prior gains weight — "it keeps coming back to this" is gravity. (Only
+        # when gravity is enabled; otherwise weight is inert metadata.)
+        if self._gravity_enabled and emb:
+            for it in items:
+                ie = it.get("embedding")
+                if ie and _cosine(emb, ie) >= self._recur_threshold:
+                    it["weight"] = it.get("weight", 1.0) + self._recur_boost
+        items.append({
+            "text": text, "surfaced": False, "embedding": emb,
+            "weight": 1.0, "created_at": self._now().isoformat(),
+        })
         await self._save(items)
 
     async def recent(self, n: int = 5) -> list[str]:

@@ -912,6 +912,7 @@ class ChatMixin:
         cfg = getattr(self.config, "reflection", None)
         if store is None or cfg is None or not getattr(cfg, "inject_enabled", False):
             return
+        gravity_on = getattr(cfg, "gravity_enabled", False)
         try:
             matches = await self.search.search_self_thoughts(
                 query, store,
@@ -919,18 +920,33 @@ class ChatMixin:
                 rerank_floor=cfg.inject_rerank_floor,
                 max_inject=cfg.inject_max,
                 prefilter_k=cfg.inject_prefilter_k,
+                gravity_enabled=gravity_on,
             )
         except Exception as e:
             logger.warning("Self-thought injection failed: %s", e)
             return
+
+        # Surface the thought's weight so the model registers gravity instead of
+        # inferring it from list position (the "computed then dropped at the
+        # context boundary" fix). A recurring thought reads differently.
+        weights = await store.effective_weights([t for t, _ in matches]) if gravity_on else {}
         for text, score in matches:
             self._relevance_injected_thoughts.add(text)
+            marker = "[Thought]"
+            if gravity_on and weights.get(text, 1.0) >= getattr(cfg, "gravity_marker_weight", 1.5):
+                marker = "[Thought · recurring]"
             self.memory_manager.add_memory("Recall", PoolItem(
-                text=f"[Thought] {text}",
+                text=f"{marker} {text}",
                 session_role="system",
                 priority_score=score,
             ))
-            logger.info("Self-thought resurfaced (cosine %.2f): %s", score, text[:100])
+            logger.info("Self-thought resurfaced (cosine %.2f, weight %.2f): %s",
+                        score, weights.get(text, 1.0), text[:100])
+
+        # Surfacing into context fatigues the thought (anti-spiral): injecting it
+        # is the event that decays its weight, so it can't dominate every turn.
+        if gravity_on and matches:
+            await store.apply_fatigue([t for t, _ in matches])
 
     def _build_capability_block(self) -> str:
         """Derived per-turn capability block — generated from live config/model
