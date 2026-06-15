@@ -73,6 +73,37 @@ async def run_scan(config_path: str | None = None, local: bool = False) -> dict:
     return result
 
 
+async def run_lexical(
+    config_path: str | None = None, local: bool = False, apply: bool = False,
+) -> dict:
+    """Deterministic lexical-variant merge (no embeddings/LLM). Fast."""
+    from blipshell.core.nightly import NightlyRunner
+    from blipshell.memory.entity_merger import EntityMerger
+
+    runner = await NightlyRunner.create_from_config(config_path, local_only=local)
+    started = time.monotonic()
+
+    def on_status(msg: str):
+        click.echo(msg)
+        logger.info(msg)
+
+    try:
+        cfg = runner.config.memory
+        merger = EntityMerger(
+            runner.sqlite, runner.router, runner.vectors,
+            auto_threshold=cfg.entity_merge_auto_threshold,
+            llm_threshold=cfg.entity_merge_llm_threshold,
+            max_candidates=cfg.entity_merge_max_candidates,
+            edge_sample=cfg.entity_merge_edge_sample,
+        )
+        result = await merger.lexical_merge_pass(dry_run=not apply, on_status=on_status)
+    finally:
+        await runner.close()
+
+    result["elapsed_s"] = round(time.monotonic() - started, 1)
+    return result
+
+
 async def run_apply_preview(
     config_path: str | None = None, local: bool = False,
     preview_file: str | None = None,
@@ -118,9 +149,33 @@ async def run_apply_preview(
               help="Apply the reviewed preview file directly (no re-scan)")
 @click.option("--preview-file", default=None,
               help="Path to the preview JSON (default: <db_dir>/entity_merge_preview.json)")
-def main(config_path, local, apply_preview, preview_file):
+@click.option("--lexical", is_flag=True,
+              help="Deterministic merge of lexical variants (chat gpt/chatgpt); "
+                   "no embeddings/LLM. Dry-run unless --apply is also given.")
+@click.option("--apply", is_flag=True, help="With --lexical: apply (default is dry-run)")
+def main(config_path, local, apply_preview, preview_file, lexical, apply):
     """Run the retroactive entity merge with no nightly timeout."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    if lexical:
+        result = asyncio.run(run_lexical(config_path, local, apply=apply))
+        click.echo("\n=== Lexical merge result ===")
+        for k, v in result.items():
+            if k in ("sample", "plan"):
+                continue
+            click.echo(f"  {k}: {v}")
+        if result.get("dry_run"):
+            click.echo(
+                f"\nDry run — found {result['would_merge']} lexical-variant merges, "
+                f"nothing changed. Apply with:\n"
+                f"    python -m scripts.merge_entities --lexical --apply"
+            )
+        else:
+            click.echo(
+                f"\nApplied {result['merged']} lexical merges "
+                f"({result['skipped']} skipped). Soft-archived — recoverable."
+            )
+        return
 
     if apply_preview:
         result = asyncio.run(run_apply_preview(config_path, local, preview_file))

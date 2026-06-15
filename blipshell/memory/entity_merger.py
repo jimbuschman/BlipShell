@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from blipshell.llm.prompts import resolve_entity_merge_with_edges
@@ -76,6 +77,14 @@ class EntityMerger:
             t for t in _TOKEN_SPLIT.split(name.lower())
             if any(c.isdigit() for c in t)
         }
+
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        """Collapse only spacing/joining punctuation (space _ - .) so pure
+        lexical variants map together (chat gpt == chatgpt, phi-3 == phi3) while
+        meaningful symbols are kept (c# != c++) and different numbers stay
+        distinct (projectecho_v1 != _v2)."""
+        return re.sub(r"[\s_\-.]+", "", name.lower())
 
     @classmethod
     def _version_distinguished(cls, a_name: str, b_name: str) -> bool:
@@ -239,7 +248,8 @@ class EntityMerger:
         apply_result = await self.apply_plan(plan)
         return {**stats, "dry_run": False, "sample": sample, **apply_result}
 
-    async def apply_plan(self, plan: list[dict], on_status=None) -> dict:
+    async def apply_plan(self, plan: list[dict], on_status=None,
+                         enforce_version_guard: bool = True) -> dict:
         """Apply a precomputed merge plan WITHOUT re-scanning the graph.
 
         Lets a reviewed dry-run preview (entity_merge_preview.json) be applied
@@ -252,6 +262,10 @@ class EntityMerger:
         generated before the guard existed can't apply v1/v2-style merges), and
         the pass is idempotent — entries whose loser is already archived/merged
         (this run or a previous one) are skipped, so it's safe to re-run.
+
+        enforce_version_guard=False is used by the lexical pass, whose groups
+        already share a normalized name (so v1/v2 can never co-occur) but whose
+        members WOULD trip the numeric-token guard (phi-3 vs phi3).
         """
         # Snapshot of still-live (non-archived) entity ids for idempotency.
         live = {e["id"] for e in await self.sqlite.get_mergeable_entities()}
@@ -260,7 +274,8 @@ class EntityMerger:
 
         for i, p in enumerate(plan):
             drop_id, keep_id = p["drop_id"], p["keep_id"]
-            if self._version_distinguished(p["drop_name"], p["keep_name"]):
+            if enforce_version_guard and self._version_distinguished(
+                    p["drop_name"], p["keep_name"]):
                 guard_skipped += 1
                 continue
             # Skip if the loser is gone/archived, or the keeper was itself
@@ -292,3 +307,49 @@ class EntityMerger:
 
         return {"merged": merged, "guard_skipped": guard_skipped,
                 "skipped": skipped, "planned": len(plan)}
+
+    async def lexical_merge_pass(self, dry_run: bool = True, on_status=None) -> dict:
+        """Deterministically merge pure lexical variants — no embeddings, no LLM.
+
+        Groups active entities by (normalized_name, entity_type) and, within each
+        group, keeps the most-mentioned and merges the rest. Catches the
+        spacing/punctuation variants the embedding+LLM pass is too conservative
+        to (chat gpt/chatgpt, self-reflection/self_reflection, phi-3/phi3). Safe
+        by construction: members share a normalized name, so distinct-number
+        pairs (v1/v2) and symbol pairs (c#/c++) never land in the same group.
+        Same-type only — won't conflate a 'memory' concept with a 'memory' tech.
+        Dry-run aware; reversible (soft-archive via apply_plan).
+        """
+        entities = await self.sqlite.get_mergeable_entities()
+        groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+        for e in entities:
+            groups[(self._normalize_name(e["name"]), e["entity_type"])].append(e)
+
+        plan: list[dict] = []
+        for members in groups.values():
+            if len(members) < 2:
+                continue
+            members.sort(key=lambda m: (-m["mentions"], m["id"]))
+            keep = members[0]
+            for drop in members[1:]:
+                if drop["name"] == keep["name"]:
+                    continue  # exact-equal name (shouldn't happen); nothing to do
+                plan.append({
+                    "drop_id": drop["id"], "drop_name": drop["name"],
+                    "keep_id": keep["id"], "keep_name": keep["name"],
+                    "method": "lexical_normalized",
+                })
+
+        stats = {"entities_scanned": len(entities), "groups": len(plan)}
+        if dry_run:
+            for p in plan[:25]:
+                logger.info("[dry-run] would lexically merge '%s' (id=%d) -> "
+                            "'%s' (id=%d)", p["drop_name"], p["drop_id"],
+                            p["keep_name"], p["keep_id"])
+            return {**stats, "dry_run": True, "would_merge": len(plan),
+                    "sample": plan[:25], "plan": plan}
+
+        apply_result = await self.apply_plan(
+            plan, on_status=on_status, enforce_version_guard=False,
+        )
+        return {**stats, "dry_run": False, "sample": plan[:25], **apply_result}

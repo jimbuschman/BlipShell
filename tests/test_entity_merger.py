@@ -123,6 +123,69 @@ class TestApplyPlan:
         sqlite.merge_entity.assert_not_awaited()
 
 
+class TestNormalizeName:
+    @pytest.mark.parametrize("a,b", [
+        ("chat gpt", "chatgpt"),
+        ("self-reflection", "self_reflection"),
+        ("phi-3", "phi3"),
+        ("esp32-s3", "esp32 s3"),
+        ("llama 3.2", "llama3.2"),
+    ])
+    def test_variants_normalize_equal(self, a, b):
+        assert EntityMerger._normalize_name(a) == EntityMerger._normalize_name(b)
+
+    @pytest.mark.parametrize("a,b", [
+        ("c#", "c++"),                       # symbols kept
+        ("projectecho_v1", "projectecho_v2"),  # different numbers
+        ("gemini", "gemma"),
+    ])
+    def test_distinct_normalize_differently(self, a, b):
+        assert EntityMerger._normalize_name(a) != EntityMerger._normalize_name(b)
+
+
+class TestLexicalMergePass:
+    def _merger(self, entities):
+        sqlite = MagicMock()
+        sqlite.get_mergeable_entities = AsyncMock(return_value=entities)
+        sqlite.merge_entity = AsyncMock()
+        sqlite.record_entity_alias = AsyncMock()
+        sqlite.archive_entities = AsyncMock()
+        vectors = MagicMock()
+        vectors.delete_entity = MagicMock()
+        return EntityMerger(sqlite, MagicMock(), vectors)
+
+    async def test_dry_run_groups_variants(self):
+        merger = self._merger([
+            {"id": 1, "name": "chatgpt", "entity_type": "technology", "mentions": 858},
+            {"id": 2, "name": "chat gpt", "entity_type": "technology", "mentions": 13},
+            {"id": 3, "name": "python", "entity_type": "technology", "mentions": 800},
+        ])
+        result = await merger.lexical_merge_pass(dry_run=True)
+        assert result["would_merge"] == 1
+        p = result["plan"][0]
+        assert p["drop_id"] == 2 and p["keep_id"] == 1  # keeper = more mentions
+        merger.sqlite.merge_entity.assert_not_awaited()
+
+    async def test_apply_merges_phi_variant_despite_version_guard(self):
+        """phi-3/phi3 trip the numeric guard but share a normalized name → merge."""
+        merger = self._merger([
+            {"id": 10, "name": "phi3", "entity_type": "technology", "mentions": 15},
+            {"id": 11, "name": "phi-3", "entity_type": "technology", "mentions": 16},
+        ])
+        result = await merger.lexical_merge_pass(dry_run=False)
+        assert result["merged"] == 1
+        # keeper is phi-3 (16 > 15); phi3 merged into it
+        merger.sqlite.merge_entity.assert_awaited_once_with(10, 11)
+
+    async def test_does_not_merge_across_types(self):
+        merger = self._merger([
+            {"id": 1, "name": "memory", "entity_type": "concept", "mentions": 300},
+            {"id": 2, "name": "memory", "entity_type": "technology", "mentions": 50},
+        ])
+        result = await merger.lexical_merge_pass(dry_run=True)
+        assert result["would_merge"] == 0
+
+
 class TestMergePassBudget:
     async def test_no_budget_scans_all(self):
         """time_budget_seconds=None scans the full graph, not stopped early."""
