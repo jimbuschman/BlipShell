@@ -62,7 +62,7 @@ def log(msg: str):
     print(msg, file=sys.stderr)
 
 
-def load_graph(db_path: str):
+def load_graph(db_path: str, include_archived: bool = False):
     """Read entities, relationships and mention counts from SQLite.
 
     Returns (nodes_by_id, edges) where nodes_by_id maps entity id -> dict and
@@ -75,8 +75,14 @@ def load_graph(db_path: str):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
+        # Exclude soft-archived entities (merged-away husks, pruned noise) by
+        # default so the export reflects the LIVE graph. Edges touching an
+        # archived node drop out automatically via the dangling-edge skip below.
+        entity_q = "SELECT id, name, entity_type FROM entities"
+        if not include_archived:
+            entity_q += " WHERE is_archived = 0"
         nodes = {}
-        for row in conn.execute("SELECT id, name, entity_type FROM entities"):
+        for row in conn.execute(entity_q):
             nodes[row["id"]] = {
                 "id": row["id"],
                 "name": row["name"],
@@ -322,11 +328,14 @@ def main():
                         help="Keep only the N highest-degree nodes")
     parser.add_argument("--min-degree", type=int, default=0,
                         help="Drop nodes with fewer than N relationships")
+    parser.add_argument("--include-archived", action="store_true",
+                        help="Include soft-archived entities (merged/pruned); "
+                             "off by default so the export shows the live graph")
     parser.add_argument("--type", action="append", metavar="TYPE",
                         help="Keep only this entity type (repeatable)")
     args = parser.parse_args()
 
-    nodes, edges = load_graph(args.db)
+    nodes, edges = load_graph(args.db, include_archived=args.include_archived)
     log(f"Loaded full graph: {len(nodes)} entities, {len(edges)} relationships")
 
     nodes, edges = apply_filters(nodes, edges, args)
