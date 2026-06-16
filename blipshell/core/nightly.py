@@ -69,6 +69,13 @@ _JOB_TIMEOUT = 300  # 5 minutes per job
 # script can opt out.
 _DEFAULT_BUDGET = object()
 
+# Per-session cap for friction analysis. A between-iterations time budget is not
+# enough on its own: one slow/hung REASONING call would block the loop past
+# _JOB_TIMEOUT (the budget check only runs between sessions). Each session's LLM
+# work is wrapped in wait_for(this), and the loop won't START a session unless a
+# full per-session budget fits before the cap. Module-level so tests can shrink it.
+_FRICTION_SESSION_TIMEOUT = 90.0
+
 
 class NightlyRunner:
     """Orchestrates nightly maintenance jobs."""
@@ -867,27 +874,33 @@ class NightlyRunner:
         """Analyze recent sessions for system-level friction.
 
         Each session needs a REASONING LLM call, so a full 200-session batch
-        far exceeds the per-job timeout. We process under a time budget
-        slightly below ``_JOB_TIMEOUT`` and exit cleanly with partial
-        progress — completed sessions are marked in ``friction_log`` (real
-        items or a NONE sentinel), so the next nightly run resumes where this
-        one stopped instead of being hard-killed mid-loop by ``wait_for``.
+        far exceeds the per-job timeout. Two layers keep it under the cap:
+        (1) a between-sessions time budget that won't START a session it can't
+        finish, and (2) a per-session ``wait_for`` so one slow/hung call can't
+        block the loop past the budget check (the bug that let this job time
+        out at 300s despite the budget). Completed sessions are marked in
+        ``friction_log`` (real items or a NONE sentinel); timed-out/unanalyzed
+        ones stay unmarked so the next nightly run resumes them.
         """
         sessions = await self.sqlite.get_sessions_missing_friction_analysis(limit=200)
         if not sessions:
             return {"processed": 0, "friction_items": 0, "total": 0}
 
-        budget = _JOB_TIMEOUT - 30
+        # Reserve a full per-session budget before the cap so the loop never
+        # STARTS a session it can't finish in time — and each session's LLM work
+        # is independently bounded below, so a single hung call can't run past it.
+        budget = _JOB_TIMEOUT - _FRICTION_SESSION_TIMEOUT - 15
         start = time.monotonic()
         processed = 0
         total_items = 0
         failed = 0
+        timed_out = 0
         stopped_early = False
         for session in sessions:
             if time.monotonic() - start > budget:
                 stopped_early = True
                 logger.info(
-                    "friction_analysis hit time budget (%ds), stopping with "
+                    "friction_analysis hit time budget (%.0fs), stopping with "
                     "partial progress (%d/%d sessions)",
                     budget, processed, len(sessions),
                 )
@@ -896,22 +909,29 @@ class NightlyRunner:
             summary = session["summary"]
             project = session.get("project")
             try:
-                chunks, _ = await self.processor.prepare_conversation_for_reflection(
-                    sid, summary,
+                # Bound the per-session LLM work. On timeout the loop regains
+                # control (the session is left unmarked → retried next run) even
+                # if the underlying call is a non-cancellable router/Ollama gate.
+                items = await asyncio.wait_for(
+                    self._analyze_one_session_friction(sid, summary, project),
+                    timeout=_FRICTION_SESSION_TIMEOUT,
                 )
-                if not chunks:
-                    continue
-                # Use first chunk only for friction (don't need full multi-chunk)
-                conversation_text = chunks[0]
-                if len(chunks) > 1:
-                    conversation_text += f"\n\n[... {len(chunks) - 1} more parts omitted]"
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "friction_analysis: session %d exceeded %.0fs, skipping "
+                    "(retried next run)", sid, _FRICTION_SESSION_TIMEOUT,
+                )
+                timed_out += 1
+                continue
+            except Exception as e:
+                logger.error("Friction analysis failed for session %d: %s", sid, e)
+                failed += 1
+                continue
 
-                items = await self.processor.analyze_session_friction(
-                    session_id=sid,
-                    session_summary=summary,
-                    conversation_text=conversation_text,
-                    project=project,
-                )
+            if items is None:
+                continue  # no chunks — leave unmarked so it's retried later
+
+            try:
                 for item in items:
                     await self.sqlite.add_friction_entry(
                         session_id=sid,
@@ -921,7 +941,6 @@ class NightlyRunner:
                     )
                 total_items += len(items)
                 processed += 1
-
                 # Even if NONE, mark session as analyzed by inserting a sentinel
                 if not items:
                     await self.sqlite.add_friction_entry(
@@ -929,16 +948,40 @@ class NightlyRunner:
                         category="NONE", description="No friction detected",
                     )
             except Exception as e:
-                logger.error("Friction analysis failed for session %d: %s", sid, e)
+                logger.error("Friction write failed for session %d: %s", sid, e)
                 failed += 1
 
         return {
+            "timed_out": timed_out,
             "processed": processed,
             "friction_items": total_items,
             "failed": failed,
             "total": len(sessions),
             "stopped_early": stopped_early,
         }
+
+    async def _analyze_one_session_friction(self, sid, summary, project):
+        """Prepare a session's conversation and run friction analysis on it.
+
+        Returns the list of friction items (empty = analyzed, no friction), or
+        None when there's nothing to analyze (no chunks). Split out so the
+        caller can bound the whole thing with a single ``wait_for``.
+        """
+        chunks, _ = await self.processor.prepare_conversation_for_reflection(
+            sid, summary,
+        )
+        if not chunks:
+            return None
+        # Use first chunk only for friction (don't need full multi-chunk)
+        conversation_text = chunks[0]
+        if len(chunks) > 1:
+            conversation_text += f"\n\n[... {len(chunks) - 1} more parts omitted]"
+        return await self.processor.analyze_session_friction(
+            session_id=sid,
+            session_summary=summary,
+            conversation_text=conversation_text,
+            project=project,
+        )
 
     async def _job_entity_extraction(self, on_status) -> dict:
         """Catch up on unextracted memories."""
