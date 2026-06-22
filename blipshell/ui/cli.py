@@ -3271,6 +3271,61 @@ def nightly_cmd(ctx, job, quiet, loop, local):
     asyncio.run(_run())
 
 
+# --- Unified model benchmark harness ---
+
+@main.group("benchmark")
+def benchmark_grp():
+    """Benchmark candidate LLMs and decide whether to switch.
+
+    run       — run a candidate through the suites, store metrics, show a verdict
+    scoreboard— re-render the latest stored run for a model vs the baseline
+    discover  — pull a candidate shortlist from OpenRouter + Artificial Analysis
+    """
+
+
+@benchmark_grp.command("run")
+@click.argument("model")
+@click.option("--quick", "tier", flag_value="quick", default=True, help="Fast pipeline-only tier (default)")
+@click.option("--full", "tier", flag_value="full", help="Everything: pipeline + reasoning + tool-calling + real-data")
+@click.option("--judge/--no-judge", default=True, help="Grade open-ended tasks with the configured cloud judge")
+@click.option("--baseline", is_flag=True, help="Record this run as the production baseline for comparison")
+@click.option("--provider", default="ollama", type=click.Choice(["ollama", "openai"]), help="Candidate endpoint provider")
+@click.option("--url", default=None, help="Candidate endpoint URL (default: first local Ollama endpoint)")
+@click.option("--api-key-env", default=None, help="Env var holding the API key (for --provider openai)")
+@click.pass_context
+def benchmark_run_cmd(ctx, model, tier, judge, baseline, provider, url, api_key_env):
+    """Benchmark MODEL (e.g. qwen3:14b, minimax/minimax-m3)."""
+    from blipshell.benchmark.runner import run_benchmark
+    asyncio.run(run_benchmark(
+        model, config_path=ctx.obj.get("config_path"), tier=tier,
+        judge_enabled=judge, baseline=baseline,
+        provider=provider, url=url, api_key_env=api_key_env,
+    ))
+
+
+@benchmark_grp.command("scoreboard")
+@click.argument("model")
+@click.pass_context
+def benchmark_scoreboard_cmd(ctx, model):
+    """Re-render the latest stored run for MODEL vs the baseline."""
+    from blipshell.benchmark.runner import run_scoreboard
+    asyncio.run(run_scoreboard(model, config_path=ctx.obj.get("config_path")))
+
+
+@benchmark_grp.command("discover")
+@click.option("--min-context", type=int, default=None, help="Drop models below this context window")
+@click.option("--max-price", type=float, default=None, help="Drop models above this $/1M prompt tokens")
+@click.option("--vision", is_flag=True, help="Only vision-capable models")
+@click.pass_context
+def benchmark_discover_cmd(ctx, min_context, max_price, vision):
+    """Pull the candidate shortlist from OpenRouter + Artificial Analysis."""
+    from blipshell.benchmark.runner import run_discover
+    asyncio.run(run_discover(
+        config_path=ctx.obj.get("config_path"),
+        min_context=min_context, max_price=max_price, vision=vision,
+    ))
+
+
 # --- Bulk Session Review ---
 
 @main.command("review")

@@ -1,0 +1,331 @@
+"""Unit tests for the unified benchmark harness — logic/wiring only.
+
+Per the project's validation split, these run on the dev box with NO Ollama:
+they cover normalization, scoring math, the switch-verdict, judge response
+parsing (via a fake client), discovery parsing (canned JSON), and the store.
+Model quality/behavior is validated separately on the Ollama PC.
+"""
+
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from blipshell.benchmark import discovery, harness, scoreboard
+from blipshell.benchmark.judge import LLMJudge
+from blipshell.benchmark.store import BenchmarkStore
+
+
+# ---------------------------------------------------------------------------
+# Pure scorers
+# ---------------------------------------------------------------------------
+
+def test_score_ranking_band():
+    # 8 items aligned to EXPECTED_RANK_BANDS; make 6/8 land in band.
+    parsed = [1, 1, 1, 3, 4, 3, 5, 5]  # last (sanding) band is (1,3); 5 is out
+    # index 7 expected (1,3) -> 5 out; all others in band -> 7/8
+    results = [{"parsed": p} for p in parsed]
+    assert harness.score_ranking(results) == pytest.approx(7 / 8)
+
+
+def test_score_ranking_ignores_errors():
+    results = [{"parsed": -1}] * 8  # all errored
+    assert harness.score_ranking(results) is None
+
+
+def test_score_importance_band():
+    vals = [0.1, 0.1, 0.1, 0.5, 0.6, 0.5, 0.7, 0.9]  # last band (0,0.45) -> 0.9 out
+    results = [{"parsed": v} for v in vals]
+    assert harness.score_importance(results) == pytest.approx(7 / 8)
+
+
+def test_score_contradiction_only_valid():
+    results = [
+        {"parsed": "YES", "correct": True},
+        {"parsed": "NO", "correct": True},
+        {"parsed": "INVALID", "correct": False},  # excluded
+        {"parsed": "YES", "correct": False},
+    ]
+    assert harness.score_contradiction(results) == pytest.approx(2 / 3)
+
+
+def test_score_entity_presence_match():
+    # EXPECTED_ENTITY_HAS = [T,T,T,T,F]
+    results = [
+        {"triple_count": 2, "raw": "a|b|c"},   # T ok
+        {"triple_count": 0, "raw": ""},          # T miss
+        {"triple_count": 1, "raw": "x"},        # T ok
+        {"triple_count": 3, "raw": "y"},        # T ok
+        {"triple_count": 0, "raw": "NONE"},     # F ok
+    ]
+    assert harness.score_entity(results) == pytest.approx(4 / 5)
+
+
+def test_score_entity_skips_errors():
+    results = [{"triple_count": 0, "raw": "ERROR: boom"}] * 5
+    assert harness.score_entity(results) is None
+
+
+def test_score_tool_calling():
+    results = [
+        {"correct": True, "content": "ok"},
+        {"correct": False, "content": "ok"},
+        {"correct": True, "content": "ERROR: x"},  # excluded
+    ]
+    assert harness.score_tool_calling(results) == pytest.approx(1 / 2)
+
+
+def test_score_rank_and_importance_average():
+    results = [
+        {"rank": lo, "importance": (b[0] + b[1]) / 2}
+        for lo, b in zip(
+            [b[0] for b in harness.EXPECTED_RANK_BANDS],
+            harness.EXPECTED_IMPORTANCE_BANDS,
+        )
+    ]
+    # all rank at band-low, all importance mid -> both fractions 1.0 -> 1.0
+    assert harness.score_rank_and_importance(results) == pytest.approx(1.0)
+
+
+def test_realdata_agreement_tolerance():
+    results = [
+        {"original_rank": 3, "new_rank": 3},   # agree
+        {"original_rank": 3, "new_rank": 4},   # within tol=1
+        {"original_rank": 1, "new_rank": 5},   # disagree
+        {"original_rank": 2, "new_rank": -1},  # invalid, skipped
+    ]
+    assert harness.realdata_agreement(results, "original_rank", "new_rank", tol=1) == pytest.approx(2 / 3)
+
+
+# ---------------------------------------------------------------------------
+# Judge parsing
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw,expected", [
+    ('{"score": 0.8, "reason": "good"}', 0.8),
+    ('```json\n{"score": 0.5}\n```', 0.5),
+    ('garbage score: 0.42 trailing', 0.42),
+    ('I rate this 7/10', 0.7),          # 0-10 normalization
+    ('score = 85', 0.85),               # 0-100 normalization
+    ('0.33', 0.33),
+    ('', None),
+    ('no number here', None),
+    ('{"score": 9999}', None),          # absurd -> rejected
+])
+def test_judge_parse_score(raw, expected):
+    got = LLMJudge.parse_score(raw)
+    if expected is None:
+        assert got is None
+    else:
+        assert got == pytest.approx(expected)
+
+
+class _FakeClient:
+    """Minimal duck-typed client for the judge: returns queued responses."""
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = 0
+
+    async def generate(self, prompt, model, system=None, use_cache=True, **kw):
+        self.calls += 1
+        r = self._responses.pop(0)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+
+async def test_judge_grade_returns_score():
+    judge = LLMJudge("judge-model", _FakeClient(['{"score": 0.9}']))
+    assert await judge.grade_summarization("src", "summary") == pytest.approx(0.9)
+
+
+async def test_judge_grade_survives_failure():
+    judge = LLMJudge("judge-model", _FakeClient([RuntimeError("api down")]))
+    assert await judge.grade_reasoning("task", "resp") is None
+
+
+# ---------------------------------------------------------------------------
+# Scoreboard verdict math
+# ---------------------------------------------------------------------------
+
+def _rows(model, scores, is_baseline=False):
+    """scores: {task_type: (metric, value)}."""
+    return [
+        {
+            "run_group": "g", "model": model, "suite": "pipeline",
+            "task_type": tt, "metric": metric, "value": val, "unit": "ratio",
+            "tier": "quick", "is_baseline": is_baseline, "run_ts": "t", "raw_json": None,
+        }
+        for tt, (metric, val) in scores.items()
+    ]
+
+
+def test_scoreboard_better_worse_tie():
+    cand = _rows("cand", {
+        "ranking": ("accuracy", 0.90),     # +0.20 better
+        "coding": ("quality", 0.50),       # -0.20 worse
+        "tool_calling": ("tool_pass_rate", 0.80),  # +0.02 tie
+    })
+    base = _rows("base", {
+        "ranking": ("accuracy", 0.70),
+        "coding": ("quality", 0.70),
+        "tool_calling": ("tool_pass_rate", 0.78),
+    }, is_baseline=True)
+    sb = scoreboard.build_scoreboard(cand, base, verdict_delta=0.05)
+    verdicts = {t["task_type"]: t["verdict"] for t in sb["tasks"]}
+    assert verdicts == {"ranking": "better", "coding": "worse", "tool_calling": "tie"}
+    assert sb["have_baseline"] is True
+    # equal weights: composite cand = (0.9+0.5+0.8)/3, base = (0.7+0.7+0.78)/3
+    # composite is rounded to 4dp for display
+    assert sb["composite_candidate"] == pytest.approx((0.9 + 0.5 + 0.8) / 3, abs=1e-3)
+    assert sb["composite_baseline"] == pytest.approx((0.7 + 0.7 + 0.78) / 3, abs=1e-3)
+
+
+def test_scoreboard_no_baseline():
+    cand = _rows("cand", {"ranking": ("accuracy", 0.8)})
+    sb = scoreboard.build_scoreboard(cand, [], verdict_delta=0.05)
+    assert sb["have_baseline"] is False
+    assert sb["overall"] == "no_baseline"
+    assert sb["composite_candidate"] == pytest.approx(0.8)
+
+
+def test_scoreboard_weights_and_latency_excluded():
+    cand = _rows("cand", {
+        "ranking": ("accuracy", 1.0),
+        "coding": ("quality", 0.0),
+    })
+    # add a latency row that must NOT enter the composite
+    cand.append({
+        "run_group": "g", "model": "cand", "suite": "pipeline", "task_type": "pipeline",
+        "metric": "latency_s", "value": 12.3, "unit": "seconds", "tier": "quick",
+        "is_baseline": False, "run_ts": "t", "raw_json": None,
+    })
+    sb = scoreboard.build_scoreboard(cand, [], task_weights={"ranking": 3.0, "coding": 1.0})
+    # weighted: (3*1.0 + 1*0.0)/4 = 0.75
+    assert sb["composite_candidate"] == pytest.approx(0.75)
+    assert sb["latency"] == {"pipeline": 12.3}
+    # only two scoring tasks
+    assert {t["task_type"] for t in sb["tasks"]} == {"ranking", "coding"}
+
+
+# ---------------------------------------------------------------------------
+# Discovery parsing
+# ---------------------------------------------------------------------------
+
+def test_parse_openrouter_price_and_vision():
+    payload = {"data": [
+        {
+            "id": "vendor/model-a",
+            "context_length": 128000,
+            "pricing": {"prompt": "0.0000007", "completion": "0.0000028"},
+            "architecture": {"input_modalities": ["text", "image"]},
+            "created": 1700000000,
+        },
+        {
+            "id": "vendor/model-b",
+            "context_length": 8192,
+            "pricing": {"prompt": "0", "completion": "0"},
+            "architecture": {"modality": "text->text"},
+        },
+    ]}
+    entries = discovery.parse_openrouter(payload, "ts")
+    a, b = entries
+    assert a["model"] == "vendor/model-a"
+    assert a["price_in"] == pytest.approx(0.7)        # 0.0000007 * 1e6
+    assert a["price_out"] == pytest.approx(2.8)
+    assert a["vision"] is True
+    assert b["vision"] is False
+
+
+def test_parse_artificial_analysis_field_fallbacks():
+    payload = {"data": [
+        {
+            "slug": "gpt-x",
+            "context_window": 200000,
+            "price_1m_input_tokens": 5.0,
+            "price_1m_output_tokens": 15.0,
+            "artificial_analysis_intelligence_index": 59,
+            "median_output_tokens_per_second": 62.0,
+            "median_time_to_first_token_seconds": 0.4,
+        },
+    ]}
+    entries = discovery.parse_artificial_analysis(payload, "ts")
+    e = entries[0]
+    assert e["model"] == "gpt-x"
+    assert e["intelligence_index"] == 59
+    assert e["tok_per_s"] == pytest.approx(62.0)
+    assert e["price_in"] == pytest.approx(5.0)
+
+
+def test_shortlist_filters_and_new_flag():
+    entries = [
+        {"model": "big-cheap", "source": "openrouter", "context_length": 200000, "price_in": 0.5, "vision": False},
+        {"model": "small", "source": "openrouter", "context_length": 4096, "price_in": 0.1, "vision": False},
+        {"model": "pricey", "source": "openrouter", "context_length": 128000, "price_in": 10.0, "vision": True},
+    ]
+    short = discovery.shortlist(
+        entries, min_context=8192, max_price=5.0, vision_only=False,
+        known_keys={("big-cheap", "openrouter")},
+    )
+    models = [e["model"] for e in short]
+    assert "small" not in models      # below min_context
+    assert "pricey" not in models     # above max_price
+    assert models == ["big-cheap"]
+    assert short[0]["is_new"] is False
+
+
+# ---------------------------------------------------------------------------
+# Store round-trip
+# ---------------------------------------------------------------------------
+
+async def test_store_record_and_baseline(tmp_path):
+    db = str(tmp_path / "bench.db")
+    store = await BenchmarkStore(db).initialize()
+    try:
+        await store.record_run(
+            run_group="g1", model="m1", suite="pipeline", task_type="ranking",
+            metric="accuracy", value=0.8, run_ts="t1", is_baseline=True,
+        )
+        await store.record_run(
+            run_group="g2", model="m2", suite="pipeline", task_type="ranking",
+            metric="accuracy", value=0.9, run_ts="t2",
+        )
+        base = await store.baseline_metrics()
+        assert len(base) == 1 and base[0]["model"] == "m1"
+
+        # New baseline supersedes the old one.
+        await store.clear_baseline()
+        assert await store.baseline_metrics() == []
+
+        assert await store.latest_run_group("m2") == "g2"
+        assert set(await store.models_with_runs()) == {"m1", "m2"}
+    finally:
+        await store.close()
+
+
+async def test_store_catalog_upsert(tmp_path):
+    db = str(tmp_path / "bench.db")
+    store = await BenchmarkStore(db).initialize()
+    try:
+        await store.upsert_catalog({
+            "model": "vendor/x", "source": "openrouter", "context_length": 1000,
+            "price_in": 1.0, "price_out": 2.0, "vision": True,
+            "intelligence_index": None, "tok_per_s": None, "ttft_s": None,
+            "created_ts": None, "fetched_ts": "t1", "raw": {"a": 1},
+        })
+        # Upsert again with new price — should overwrite, not duplicate.
+        await store.upsert_catalog({
+            "model": "vendor/x", "source": "openrouter", "context_length": 1000,
+            "price_in": 0.5, "price_out": 2.0, "vision": True,
+            "intelligence_index": None, "tok_per_s": None, "ttft_s": None,
+            "created_ts": None, "fetched_ts": "t2", "raw": None,
+        })
+        rows = await store.catalog_models("openrouter")
+        assert len(rows) == 1
+        assert rows[0]["price_in"] == pytest.approx(0.5)
+        keys = await store.known_catalog_keys()
+        assert ("vendor/x", "openrouter") in keys
+    finally:
+        await store.close()

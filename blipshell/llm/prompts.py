@@ -1253,3 +1253,65 @@ def compaction_continuation_message() -> str:
         "'I\\'ll continue' or similar. Pick up from where you left off and "
         "answer the user's most recent message."
     )
+
+
+# ---------------------------------------------------------------------------
+# Benchmark judge rubrics
+#
+# Used by the unified benchmark harness (`blipshell benchmark`). A neutral
+# cloud judge grades a candidate model's open-ended output 0.0-1.0. Every
+# rubric demands a strict JSON object {"score": <float>, "reason": "<text>"}
+# so the harness can parse deterministically (with a regex fallback).
+# ---------------------------------------------------------------------------
+
+_JUDGE_SYSTEM = (
+    "You are a strict, impartial evaluator of language-model output for a "
+    "personal-assistant memory system. You grade ONE candidate response "
+    "against a rubric and return ONLY a JSON object: "
+    '{"score": <number 0.0-1.0>, "reason": "<one sentence>"}. '
+    "No markdown, no preamble. Be calibrated: 1.0 = flawless, 0.5 = usable "
+    "with real flaws, 0.0 = wrong or unusable."
+)
+
+
+def judge_summarization(source_text: str, summary: str) -> tuple[str, str]:
+    """Grade a memory summary for faithfulness, concision, and voice."""
+    user = (
+        "Rubric for a memory summary:\n"
+        "- FAITHFUL: preserves the specific names, numbers, and key facts; invents nothing.\n"
+        "- CONCISE: 1-2 short factual sentences, not a narrative.\n"
+        "- VOICE: third-person factual note (no 'User asked'/'Assistant said'); no markup/emoji.\n"
+        "- If the source was pure filler/greeting, 'SKIP' is the correct answer (score it 1.0).\n\n"
+        f"SOURCE MESSAGE:\n{source_text}\n\n"
+        f"CANDIDATE SUMMARY:\n{summary}\n\n"
+        'Return ONLY: {"score": <0.0-1.0>, "reason": "<one sentence>"}'
+    )
+    return _JUDGE_SYSTEM, user
+
+
+def judge_reasoning(task: str, response: str) -> tuple[str, str]:
+    """Grade a reasoning/plan response for correctness, completeness, actionability."""
+    user = (
+        "Rubric for a reasoning/planning response:\n"
+        "- CORRECT: the reasoning and conclusions are sound for the task.\n"
+        "- COMPLETE: covers the key considerations the task requires; no major gaps.\n"
+        "- ACTIONABLE: concrete and usable, not vague hand-waving.\n\n"
+        f"TASK:\n{task}\n\n"
+        f"CANDIDATE RESPONSE:\n{response}\n\n"
+        'Return ONLY: {"score": <0.0-1.0>, "reason": "<one sentence>"}'
+    )
+    return _JUDGE_SYSTEM, user
+
+
+def judge_lesson(conversation: str, lesson: str) -> tuple[str, str]:
+    """Grade an extracted lesson for being a genuine, reusable insight."""
+    user = (
+        "Rubric for an extracted lesson/insight from a conversation:\n"
+        "- GROUNDED: actually supported by the conversation; not invented.\n"
+        "- REUSABLE: a generalizable insight useful in future, not a one-off restatement.\n"
+        "- CONCISE: a crisp takeaway, not a transcript recap.\n\n"
+        f"CONVERSATION:\n{conversation}\n\n"
+        f"CANDIDATE LESSON:\n{lesson}\n\n"
+        'Return ONLY: {"score": <0.0-1.0>, "reason": "<one sentence>"}'
+    )
+    return _JUDGE_SYSTEM, user

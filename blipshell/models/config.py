@@ -443,6 +443,34 @@ class GuardrailsConfig(BaseModel):
     doom_loop_readonly_streak: int = 8  # warn after N consecutive read-only tools with no writes
 
 
+class BenchmarkConfig(BaseModel):
+    """Unified model-benchmark harness configuration.
+
+    Drives `blipshell benchmark` — running candidate models through the
+    existing benchmark suites, grading open-ended outputs with a neutral
+    cloud judge, and rendering a switch-verdict vs the current production
+    models. All optional: an absent `benchmark:` block uses these defaults.
+    """
+    db_path: str = "data/benchmark.db"  # dedicated store; NOT the production memory DB
+    # Neutral cloud judge — grades open-ended tasks (summarization/reasoning/lessons)
+    # 0..1. Must name an endpoint present in `endpoints:`. Empty judge_model = no judging
+    # (deterministic metrics only). The judge model is excluded from candidate runs.
+    judge_model: str = ""
+    judge_endpoint: str = ""  # endpoint name from `endpoints:` to route the judge through
+    judge_timeout: float = 60.0  # per-judge-call timeout (asyncio.wait_for)
+    # Verdict: candidate is "better"/"worse" only when the per-task delta vs the
+    # production baseline exceeds this; otherwise "tie".
+    verdict_delta: float = 0.05
+    # Composite weighting per task type (empty = equal weight across measured tasks).
+    task_weights: dict[str, float] = Field(default_factory=dict)
+    # Tier sample sizes.
+    quick_sample: int = 8    # synthetic curated messages (pipeline tier)
+    full_sample: int = 50    # real-DB sample for the full tier
+    # Discovery: shortlist defaults for `benchmark discover`.
+    discover_min_context: int = 0       # 0 = no floor
+    discover_max_price: float = 0.0     # 0 = no ceiling ($/1M prompt tokens)
+
+
 class WorkerConfig(BaseModel):
     """Remote worker configuration."""
     enabled: bool = False
@@ -490,6 +518,7 @@ class BlipShellConfig(BaseModel):
     notes: NotesConfig = NotesConfig()
     guardrails: GuardrailsConfig = GuardrailsConfig()
     worker: WorkerConfig = WorkerConfig()
+    benchmark: BenchmarkConfig = BenchmarkConfig()
     robotics: RoboticsConfig = RoboticsConfig()
     reflection: ReflectionConfig = ReflectionConfig()
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)

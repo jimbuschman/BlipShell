@@ -240,6 +240,25 @@ worker:
     - "analysis"
   poll_interval: 10                  # Seconds between worker polls
 
+# Unified model-benchmark harness — `blipshell benchmark run/scoreboard/discover`.
+# Runs candidate LLMs through the existing benchmark suites, grades open-ended
+# outputs with a neutral cloud judge, and renders a switch-verdict vs the current
+# production models. Entirely optional — omit this block for sane defaults.
+benchmark:
+  db_path: "data/benchmark.db"       # dedicated store (NOT blipshell.db)
+  # Judge: a strong cloud model that is NOT a candidate, to avoid self-grading bias.
+  # judge_endpoint must name an endpoint in `endpoints:` above. Leave judge_model
+  # empty to disable judging (deterministic metrics only).
+  judge_model: ""                    # e.g. "openai/gpt-5.5" or "anthropic/claude-opus-4.8"
+  judge_endpoint: ""                 # e.g. "openrouter"
+  judge_timeout: 60.0
+  verdict_delta: 0.05                # per-task delta vs baseline to call better/worse
+  task_weights: {}                   # empty = equal weight; e.g. {coding: 2.0, ranking: 0.5}
+  quick_sample: 8                    # curated synthetic messages (quick tier)
+  full_sample: 50                    # real-DB sample (full tier)
+  discover_min_context: 0            # shortlist floor (0 = none)
+  discover_max_price: 0.0            # shortlist ceiling $/1M prompt tokens (0 = none)
+
 # Modular cube robotics — software-first. When enabled, BlipShell listens for
 # cube connections; cubes auto-register, their actions become tools, and the
 # LLM authors behaviors. Launch a cube: python -m scripts.cube_window
