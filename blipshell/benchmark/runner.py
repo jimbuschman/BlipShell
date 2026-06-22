@@ -52,6 +52,8 @@ async def run_benchmark(
     provider: str = "ollama",
     url: Optional[str] = None,
     api_key_env: Optional[str] = None,
+    coding_tier: str = "standard",
+    coding_timeout: float = 300.0,
 ) -> None:
     """Run a candidate through the suites, store metrics, render the verdict."""
     config = ConfigManager(config_path).load()
@@ -85,6 +87,8 @@ async def run_benchmark(
         return
     api_key = resolve_env_vars(f"${{{api_key_env}}}") if api_key_env else None
     router = build_candidate_router(model, provider=provider, url=url, api_key=api_key)
+    # Embedding benchmark always uses a local Ollama endpoint (embedders are local).
+    ollama_url = url if provider == "ollama" else get_ollama_url(config.endpoints)
 
     run_ts = _now_iso()
     group = _run_group(model, run_ts)
@@ -101,7 +105,10 @@ async def run_benchmark(
         )
         rows = await harness.run(
             db_path=config.database.path,
+            ollama_url=ollama_url,
             full_sample=bench.full_sample,
+            coding_tier=coding_tier,
+            coding_timeout=coding_timeout,
             on_status=lambda m: console.print(f"  [dim]{m}[/dim]"),
         )
         await store.record_many(rows)
@@ -120,6 +127,48 @@ async def run_benchmark(
         )
     finally:
         await store.close()
+
+
+def run_list() -> None:
+    """Print what each tier runs + rough time, so nothing has to be remembered."""
+    table = Table(title="blipshell benchmark — what runs in each tier", show_lines=True)
+    table.add_column("Tier", style="cyan", no_wrap=True)
+    table.add_column("Flag", style="dim", no_wrap=True)
+    table.add_column("Covers (BlipShell task types)")
+    table.add_column("Rough time", justify="right")
+    table.add_row(
+        "Quick", "(default)",
+        "Memory pipeline: ranking, importance, rank+importance, contradiction, "
+        "entity extraction, summarization (judge), lessons (judge)",
+        "~minutes",
+    )
+    table.add_row(
+        "Full", "--full",
+        "Quick + reasoning (judge), code-generation (judge), tool-calling, "
+        "session_review (judge), real-data pipeline",
+        "~minutes",
+    )
+    table.add_row(
+        "All", "--all",
+        "Full + embedding retrieval (Precision@5/Recall@10/MRR on sqlite-vec) + "
+        "the real agentic coding executor (sandbox, ~14 tasks)",
+        "~1 hr",
+    )
+    console.print(table)
+    console.print(
+        "\n[bold]Common commands[/bold] (you don't need to remember the rest):\n"
+        "  blipshell benchmark run <model>                 # quick check\n"
+        "  blipshell benchmark run <model> --full          # everyday: all fast tasks\n"
+        "  blipshell benchmark run <model> --full --baseline   # set the current model as reference\n"
+        "  blipshell benchmark run <model> --all           # everything incl. slow coding\n"
+        "  blipshell benchmark scoreboard <model>          # re-show last run vs baseline\n"
+        "  blipshell benchmark discover                    # find new models worth testing\n"
+    )
+    console.print(
+        "[dim]Cloud candidate: add --provider openai --url <api-base> --api-key-env <ENV_VAR>.\n"
+        "Coding depth: --coding-tier standard|hard|expert|all. Judge: configure "
+        "benchmark.judge_model/judge_endpoint in config.yaml (off by default).[/dim]"
+    )
 
 
 async def run_scoreboard(model: str, *, config_path: Optional[str] = None) -> None:

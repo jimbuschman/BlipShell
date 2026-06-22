@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from blipshell.benchmark import discovery, harness, scoreboard
+from blipshell.benchmark import discovery, embedding_bench, harness, scoreboard
 from blipshell.benchmark.judge import LLMJudge
 from blipshell.benchmark.store import BenchmarkStore
 
@@ -97,6 +97,62 @@ def test_realdata_agreement_tolerance():
         {"original_rank": 2, "new_rank": -1},  # invalid, skipped
     ]
     assert harness.realdata_agreement(results, "original_rank", "new_rank", tol=1) == pytest.approx(2 / 3)
+
+
+def test_score_reflection_completeness():
+    full = {
+        "effectiveness": "effective",
+        "what_worked": "x", "what_didnt_work": "y",
+        "technical_insights": "z", "process_insights": "w",
+    }
+    assert harness.score_reflection_completeness(full) == pytest.approx(1.0)
+    half = {"what_worked": "x", "what_didnt_work": "y",
+            "technical_insights": None, "process_insights": None}
+    assert harness.score_reflection_completeness(half) == pytest.approx(0.5)
+    empty = {"what_worked": None, "what_didnt_work": None,
+             "technical_insights": None, "process_insights": None}
+    assert harness.score_reflection_completeness(empty) == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Embedding retrieval metrics
+# ---------------------------------------------------------------------------
+
+def test_embedding_precision_recall_mrr():
+    ranked = [10, 20, 30, 40, 50]   # ids in rank order
+    expected = {30, 50}
+    # P@5: 2 relevant in top5 / min(5,2)=2 -> 1.0
+    assert embedding_bench.precision_at_k(ranked, expected, 5) == pytest.approx(1.0)
+    # R@10: both found / 2 -> 1.0
+    assert embedding_bench.recall_at_k(ranked, expected, 10) == pytest.approx(1.0)
+    # first relevant at rank 3 -> MRR 1/3
+    assert embedding_bench.mrr(ranked, expected) == pytest.approx(1 / 3)
+    # P@2: only id 10,20 considered, neither relevant -> 0
+    assert embedding_bench.precision_at_k(ranked, expected, 2) == pytest.approx(0.0)
+
+
+def test_embedding_metrics_empty_expected():
+    assert embedding_bench.precision_at_k([1, 2], set(), 5) == 0.0
+    assert embedding_bench.recall_at_k([1, 2], set(), 10) == 0.0
+    assert embedding_bench.mrr([1, 2], set()) == 0.0
+
+
+def test_embedding_cosine():
+    assert embedding_bench.cosine([1, 0], [1, 0]) == pytest.approx(1.0)
+    assert embedding_bench.cosine([1, 0], [0, 1]) == pytest.approx(0.0)
+    assert embedding_bench.cosine([1, 0], [0, 0]) == 0.0  # zero-norm guard
+
+
+def test_embedding_aggregate():
+    per_query = [
+        {"p_at_5": 1.0, "r_at_10": 1.0, "mrr": 1.0},
+        {"p_at_5": 0.0, "r_at_10": 0.0, "mrr": 0.0},
+    ]
+    agg = embedding_bench.aggregate_retrieval(per_query)
+    assert agg["p_at_5"] == pytest.approx(0.5)
+    assert agg["headline"] == pytest.approx(0.5)
+    assert agg["n_queries"] == 2
+    assert embedding_bench.aggregate_retrieval([]) is None
 
 
 # ---------------------------------------------------------------------------

@@ -60,6 +60,47 @@ EXPECTED_IMPORTANCE_BANDS = [
 # ENTITY_TEST_SUMMARIES order: first 4 contain entities, last ("User said hello") is NONE.
 EXPECTED_ENTITY_HAS = [True, True, True, True, False]
 
+# Synthetic substantive sessions for session_review (a non-trivial session should
+# yield a filled 5-section reflection; SKIP would be wrong here). Kept self-contained
+# (no DB dependency) so the benchmark is deterministic and safe.
+SESSION_REVIEW_CASES = [
+    {
+        "summary": (
+            "Debugged terrible audio from a MAX98357 on an ESP32; root cause was an "
+            "impedance mismatch and a loose JST connector. Switched to JST-PH connectors "
+            "and a matched 4-ohm speaker, which fixed the noise."
+        ),
+        "transcript": (
+            "User: the MAX98357 on my esp32 sounds like garbage, mostly noise.\n"
+            "Assistant: That's often impedance mismatch or loose wiring. What speaker ohms?\n"
+            "User: not sure, and the connectors are dupont and pretty loose.\n"
+            "Assistant: Dupont wires on audio are unreliable — switch to JST-PH 2-pin, and "
+            "confirm the speaker is 4ohm to match the MAX98357. A wrong-impedance speaker "
+            "also distorts.\n"
+            "User: swapped to JST-PH and a 4ohm speaker — clean now. the speaker was 8ohm before.\n"
+            "Assistant: Good — the 8ohm mismatch plus loose contacts explains the noise."
+        ),
+    },
+    {
+        "summary": (
+            "Diagnosed a duplicate-message bug: assistant messages were saved twice because "
+            "_persist_message was fire-and-forget, so _memory_db_ids was empty when the "
+            "enqueue ran. Fixed by tracking persist tasks and awaiting them before enqueue."
+        ),
+        "transcript": (
+            "User: every assistant message is getting saved twice in the DB.\n"
+            "Assistant: Sounds like a race. Let me check how messages persist.\n"
+            "Assistant: Found it — _persist_message uses asyncio.ensure_future (fire-and-forget), "
+            "so _memory_db_ids isn't populated when _enqueue_undumped_messages runs. The processor "
+            "gets memory_id=None and inserts a duplicate row.\n"
+            "User: how do we fix it cleanly?\n"
+            "Assistant: Track persist tasks in a list and await them in flush_pending_persists() "
+            "before the enqueue reads _memory_db_ids. Make _enqueue_undumped_messages async and "
+            "await the flush first."
+        ),
+    },
+]
+
 
 # ---------------------------------------------------------------------------
 # Router construction
@@ -167,6 +208,14 @@ def score_tool_calling(results: list[dict]) -> Optional[float]:
     if not valid:
         return None
     return sum(1 for r in valid if r.get("correct")) / len(valid)
+
+
+def score_reflection_completeness(parsed: dict) -> float:
+    """0-1 completeness of a parsed session reflection: the 4 content sections
+    filled. (Effectiveness always parses to a default, so it isn't scored.)"""
+    keys = ("what_worked", "what_didnt_work", "technical_insights", "process_insights")
+    filled = sum(1 for k in keys if parsed.get(k))
+    return filled / len(keys)
 
 
 def realdata_agreement(results: list[dict], orig_key: str, new_key: str, tol: float) -> Optional[float]:
@@ -378,13 +427,155 @@ class BenchmarkHarness:
         rows.append(self._row("realdata", "realdata_suite", "latency_s", lat, unit="seconds"))
         return rows
 
-    async def run(self, db_path: Optional[str] = None, full_sample: int = 50, on_status=None) -> list[dict]:
-        """Run the configured tier and return all metric rows."""
+    # -- session review (full tier) --------------------------------------
+
+    async def run_session_review(self, on_status=None) -> list[dict]:
+        from blipshell.llm.prompts import reflect_on_session
+        from blipshell.memory.processor import MemoryProcessor
+
+        def status(msg):
+            if on_status:
+                on_status(msg)
+
+        status("session_review: reflecting on sessions")
+        completeness_scores = []
+        judge_scores = []
+        latencies = []
+        for case in SESSION_REVIEW_CASES:
+            system, user = reflect_on_session(case["summary"], case["transcript"])
+            import time
+            start = time.perf_counter()
+            try:
+                raw = await self.router.generate(
+                    TaskType.SESSION_REVIEW, user, system=system, think=False,
+                )
+            except Exception as e:  # noqa: BLE001
+                raw = f"ERROR: {e}"
+            latencies.append(time.perf_counter() - start)
+            if str(raw).startswith("ERROR:"):
+                continue
+            parsed = MemoryProcessor._parse_reflection(raw)
+            completeness_scores.append(score_reflection_completeness(parsed))
+            if self.judge:
+                judge_scores.append(await self.judge.grade_reasoning(
+                    f"Review this session and produce a 5-section reflection.\n\n"
+                    f"Summary: {case['summary']}\n\n{case['transcript']}",
+                    raw,
+                ))
+
+        completeness = _mean(completeness_scores)
+        quality = _mean(judge_scores) if self.judge else completeness
+        rows = [self._row("session_review", "session_review", "quality", quality,
+                          raw={"completeness": completeness, "judged": bool(self.judge)})]
+        lat = round(sum(latencies) / len(latencies), 3) if latencies else None
+        rows.append(self._row("session_review", "session_review", "latency_s", lat, unit="seconds"))
+        return rows
+
+    # -- embedding retrieval (all tier) -----------------------------------
+
+    async def run_embedding(self, db_path: str, ollama_url: str, on_status=None) -> list[dict]:
+        from blipshell.benchmark.embedding_bench import run_embedding_benchmark
+
+        def status(msg):
+            if on_status:
+                on_status(msg)
+
+        status("embedding: re-embedding ground-truth set + scoring retrieval")
+        agg = await run_embedding_benchmark(
+            model=self.model, ollama_url=ollama_url, db_path=db_path,
+        )
+        if agg is None:
+            return [self._row("embedding", "embedding", "accuracy", None,
+                              raw={"note": "embedding benchmark unavailable (model/db/ground-truth)"})]
+        return [self._row(
+            "embedding", "embedding", "accuracy", agg["headline"],
+            raw={"p_at_5": agg["p_at_5"], "r_at_10": agg["r_at_10"],
+                 "mrr": agg["mrr"], "n_queries": agg["n_queries"]},
+        )]
+
+    # -- agentic coding executor (all tier; heavy) ------------------------
+
+    async def run_coding(self, coding_tier: str = "standard", timeout: float = 300.0, on_status=None) -> list[dict]:
+        import shutil
+
+        from tests import benchmark_coding as bc
+
+        def status(msg):
+            if on_status:
+                on_status(msg)
+
+        task_list = list(bc.CODING_TASKS)
+        if coding_tier in ("hard", "all"):
+            task_list += list(bc.HARD_TASKS)
+        if coding_tier in ("expert", "all"):
+            task_list += list(bc.EXPERT_TASKS)
+
+        status(f"coding: building sandbox ({len(task_list)} tasks — this is slow)")
+        try:
+            sandbox = bc.create_project_sandbox()
+            context = bc.build_project_context(sandbox)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("coding: sandbox setup failed: %s", e)
+            return [self._row("coding", "coding", "accuracy", None,
+                              raw={"note": f"sandbox setup failed: {e}"})]
+
+        passed = total = 0
+        times = []
+        completed = 0
+        try:
+            for task in task_list:
+                status(f"coding: {task['name']}")
+                try:
+                    m = await bc.run_task(self.model, task, sandbox, context, timeout=timeout)
+                    passed += m.checks_passed
+                    total += m.checks_total
+                    times.append(getattr(m, "total_time", 0.0))
+                    completed += 1
+                except Exception as e:  # noqa: BLE001 — one bad task shouldn't kill the suite
+                    logger.warning("coding: task '%s' errored: %s", task.get("name"), e)
+                finally:
+                    try:
+                        bc.reset_sandbox(sandbox)
+                    except Exception as e:  # noqa: BLE001
+                        logger.debug("coding: sandbox reset failed: %s", e)
+        finally:
+            shutil.rmtree(sandbox, ignore_errors=True)
+
+        score = (passed / total) if total else None
+        rows = [self._row("coding", "coding", "accuracy", score,
+                          raw={"checks_passed": passed, "checks_total": total,
+                               "tasks_completed": completed, "tasks_total": len(task_list)})]
+        lat = round(sum(times) / len(times), 2) if times else None
+        rows.append(self._row("coding", "coding", "latency_s", lat, unit="seconds"))
+        return rows
+
+    async def run(
+        self,
+        *,
+        db_path: Optional[str] = None,
+        ollama_url: str = "http://localhost:11434",
+        full_sample: int = 50,
+        coding_tier: str = "standard",
+        coding_timeout: float = 300.0,
+        on_status=None,
+    ) -> list[dict]:
+        """Run the configured tier and return all metric rows.
+
+        Tiers: quick = pipeline; full = + reasoning + session_review + real-data;
+        all = full + embedding + agentic coding executor (heavy).
+        """
         rows = await self.run_pipeline(on_status=on_status)
-        if self.tier == "full":
+        if self.tier in ("full", "all"):
             rows += await self.run_reasoning(on_status=on_status)
+            rows += await self.run_session_review(on_status=on_status)
             if db_path:
                 rows += await self.run_realdata(db_path, full_sample, on_status=on_status)
+        if self.tier == "all":
+            if db_path:
+                rows += await self.run_embedding(db_path, ollama_url, on_status=on_status)
+            else:
+                logger.info("embedding: skipped (no db_path)")
+            rows += await self.run_coding(coding_tier, coding_timeout, on_status=on_status)
         return rows
 
     # -- judge helpers (no-op when judge is None) -------------------------
