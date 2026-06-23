@@ -3323,6 +3323,19 @@ def benchmark_scoreboard_cmd(ctx, model):
     asyncio.run(run_scoreboard(model, config_path=ctx.obj.get("config_path")))
 
 
+@benchmark_grp.command("leaderboard")
+@click.pass_context
+def benchmark_leaderboard_cmd(ctx):
+    """Compare ALL benchmarked models per job vs the config.yaml incumbents.
+
+    One table: for each job, the model config currently uses vs the best tested
+    model, with a SWITCH flag where a candidate wins. Benchmark your current
+    models + candidates (`benchmark run <model> --full`), then run this.
+    """
+    from blipshell.benchmark.runner import run_leaderboard
+    asyncio.run(run_leaderboard(config_path=ctx.obj.get("config_path")))
+
+
 @benchmark_grp.command("discover")
 @click.option("--min-context", type=int, default=None, help="Drop models below this context window")
 @click.option("--max-price", type=float, default=None, help="Drop models above this $/1M prompt tokens")

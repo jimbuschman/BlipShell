@@ -18,6 +18,7 @@ from blipshell.benchmark.discovery import (
 )
 from blipshell.benchmark.harness import BenchmarkHarness, build_candidate_router
 from blipshell.benchmark.judge import JudgeUnavailable, build_judge
+from blipshell.benchmark.leaderboard import build_leaderboard, render_leaderboard
 from blipshell.benchmark.scoreboard import build_scoreboard, render_scoreboard
 from blipshell.benchmark.store import BenchmarkStore
 from blipshell.core.config import ConfigManager
@@ -40,6 +41,29 @@ def _run_group(model: str, run_ts: str) -> str:
 def _baseline_model_desc(config) -> str:
     m = config.models
     return f"{m.tool_calling} (interactive), {m.reasoning} (background)"
+
+
+def _incumbents(config) -> dict[str, str]:
+    """task_type -> the model config.yaml currently routes that job to, applying
+    the same fallbacks the router uses (ranking_importance->ranking,
+    session_review->reasoning)."""
+    m = config.models
+    ri = m.ranking_importance or m.ranking
+    sr = m.session_review or m.reasoning
+    return {
+        "ranking": m.ranking,
+        "importance": m.importance,
+        "rank_importance": ri,
+        "contradiction": m.reasoning,
+        "entity": m.reasoning,
+        "summarization": m.summarization,
+        "lessons": sr,
+        "reasoning": m.reasoning,
+        "coding": m.coding,
+        "tool_calling": m.tool_calling,
+        "session_review": sr,
+        "embedding": m.embedding,
+    }
 
 
 async def run_benchmark(
@@ -162,6 +186,7 @@ def run_list() -> None:
         "  blipshell benchmark run <model> --full --baseline   # set the current model as reference\n"
         "  blipshell benchmark run <model> --all           # everything incl. slow coding\n"
         "  blipshell benchmark scoreboard <model>          # re-show last run vs baseline\n"
+        "  blipshell benchmark leaderboard                 # ALL models per job vs config incumbents\n"
         "  blipshell benchmark discover                    # find new models worth testing\n"
     )
     console.print(
@@ -194,6 +219,33 @@ async def run_scoreboard(model: str, *, config_path: Optional[str] = None) -> No
             task_weights=bench.task_weights, verdict_delta=bench.verdict_delta,
         )
         render_scoreboard(sb, model, _baseline_model_desc(config), catalog=catalog, console=console)
+    finally:
+        await store.close()
+
+
+async def run_leaderboard(*, config_path: Optional[str] = None) -> None:
+    """Line every benchmarked model up against the per-job config incumbent."""
+    config = ConfigManager(config_path).load()
+    bench = config.benchmark
+    store = await BenchmarkStore(bench.db_path).initialize()
+    try:
+        models = await store.models_with_runs()
+        if not models:
+            console.print("[yellow]No benchmarked models yet.[/yellow] "
+                          "Run `blipshell benchmark run <model> --full` for your current "
+                          "models and any candidates first.")
+            return
+        # Latest run per model so re-runs supersede stale numbers.
+        model_rows: dict[str, list[dict]] = {}
+        for m in models:
+            group = await store.latest_run_group(m)
+            if group:
+                model_rows[m] = await store.metrics_for_group(group)
+        lb = build_leaderboard(
+            model_rows, _incumbents(config),
+            task_weights=bench.task_weights, verdict_delta=bench.verdict_delta,
+        )
+        render_leaderboard(lb, console=console)
     finally:
         await store.close()
 

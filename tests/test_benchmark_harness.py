@@ -267,6 +267,108 @@ def test_scoreboard_weights_and_latency_excluded():
 
 
 # ---------------------------------------------------------------------------
+# Leaderboard (cross-model, per-job incumbent comparison)
+# ---------------------------------------------------------------------------
+
+from blipshell.benchmark import leaderboard  # noqa: E402
+
+
+def test_leaderboard_flags_switch_when_candidate_beats_incumbent():
+    model_rows = {
+        "incumbent-model": _rows("incumbent-model", {"coding": ("quality", 0.70)}),
+        "challenger": _rows("challenger", {"coding": ("quality", 0.80)}),  # +0.10
+    }
+    lb = leaderboard.build_leaderboard(
+        model_rows, {"coding": "incumbent-model"}, verdict_delta=0.05,
+    )
+    task = next(t for t in lb["tasks"] if t["task_type"] == "coding")
+    assert task["incumbent"] == "incumbent-model"
+    assert task["incumbent_score"] == pytest.approx(0.70)
+    assert task["best_model"] == "challenger"
+    assert task["switch"] is True
+    assert task["delta"] == pytest.approx(0.10)
+    assert lb["switch_suggestions"] == [
+        {"task_type": "coding", "from": "incumbent-model", "to": "challenger", "delta": pytest.approx(0.10)}
+    ]
+
+
+def test_leaderboard_no_switch_within_threshold():
+    model_rows = {
+        "incumbent-model": _rows("incumbent-model", {"coding": ("quality", 0.70)}),
+        "challenger": _rows("challenger", {"coding": ("quality", 0.73)}),  # +0.03 < 0.05
+    }
+    lb = leaderboard.build_leaderboard(
+        model_rows, {"coding": "incumbent-model"}, verdict_delta=0.05,
+    )
+    task = next(t for t in lb["tasks"] if t["task_type"] == "coding")
+    # challenger is still "best", but the margin doesn't clear the switch threshold.
+    assert task["best_model"] == "challenger"
+    assert task["switch"] is False
+    assert lb["switch_suggestions"] == []
+
+
+def test_leaderboard_incumbent_not_benchmarked():
+    # config routes coding to a model we never benchmarked -> no delta, no switch.
+    model_rows = {
+        "challenger": _rows("challenger", {"coding": ("quality", 0.90)}),
+    }
+    lb = leaderboard.build_leaderboard(
+        model_rows, {"coding": "some-unbenchmarked-model"}, verdict_delta=0.05,
+    )
+    task = next(t for t in lb["tasks"] if t["task_type"] == "coding")
+    assert task["incumbent"] == "some-unbenchmarked-model"
+    assert task["incumbent_benchmarked"] is False
+    assert task["incumbent_score"] is None
+    assert task["delta"] is None
+    assert task["switch"] is False
+    assert lb["switch_suggestions"] == []
+
+
+def test_leaderboard_incumbent_wins_no_suggestion():
+    model_rows = {
+        "incumbent-model": _rows("incumbent-model", {"coding": ("quality", 0.90)}),
+        "challenger": _rows("challenger", {"coding": ("quality", 0.70)}),
+    }
+    lb = leaderboard.build_leaderboard(
+        model_rows, {"coding": "incumbent-model"}, verdict_delta=0.05,
+    )
+    task = next(t for t in lb["tasks"] if t["task_type"] == "coding")
+    assert task["best_model"] == "incumbent-model"
+    assert task["switch"] is False
+    assert lb["switch_suggestions"] == []
+
+
+def test_leaderboard_composite_and_known_job_ordering():
+    model_rows = {
+        "a": _rows("a", {
+            "coding": ("quality", 0.80),
+            "ranking": ("accuracy", 0.60),
+        }),
+        "b": _rows("b", {
+            "coding": ("quality", 0.40),
+            "ranking": ("accuracy", 1.00),
+        }),
+    }
+    lb = leaderboard.build_leaderboard(
+        model_rows, {"coding": "a", "ranking": "a"},
+        task_weights={"coding": 3.0, "ranking": 1.0},
+    )
+    # composite a = (3*0.8 + 1*0.6)/4 = 0.75 ; b = (3*0.4 + 1*1.0)/4 = 0.55
+    assert lb["composite"]["a"] == pytest.approx(0.75)
+    assert lb["composite"]["b"] == pytest.approx(0.55)
+    # known jobs ordered per TASK_TO_CONFIG_FIELD (ranking before coding)
+    order = [t["task_type"] for t in lb["tasks"]]
+    assert order == ["ranking", "coding"]
+
+
+def test_leaderboard_empty():
+    lb = leaderboard.build_leaderboard({}, {}, verdict_delta=0.05)
+    assert lb["tasks"] == []
+    assert lb["switch_suggestions"] == []
+    assert lb["composite"] == {}
+
+
+# ---------------------------------------------------------------------------
 # Discovery parsing
 # ---------------------------------------------------------------------------
 
