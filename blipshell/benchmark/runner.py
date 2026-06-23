@@ -6,6 +6,7 @@ delegates here (lazy import + asyncio.run), matching nightly/test commands.
 import logging
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from rich.console import Console
@@ -21,7 +22,7 @@ from blipshell.benchmark.judge import JudgeUnavailable, build_judge
 from blipshell.benchmark.leaderboard import build_leaderboard, render_leaderboard
 from blipshell.benchmark.scoreboard import build_scoreboard, render_scoreboard
 from blipshell.benchmark.store import BenchmarkStore
-from blipshell.core.config import ConfigManager
+from blipshell.core.config import DEFAULT_CONFIG_PATH, ConfigManager
 from blipshell.llm.endpoints import EndpointManager
 from blipshell.models.config import get_ollama_url, resolve_env_vars
 
@@ -36,6 +37,21 @@ def _now_iso() -> str:
 def _run_group(model: str, run_ts: str) -> str:
     slug = re.sub(r"[^A-Za-z0-9_.-]", "_", model)
     return f"{slug}@{run_ts}"
+
+
+def _resolve_db_path(db_path: str, config_path: Optional[str]) -> str:
+    """Anchor a relative benchmark db_path to the config file's directory (the
+    repo root by default), NOT the current working directory.
+
+    `blipshell` is an installed CLI run from any folder; with a cwd-relative
+    path, `benchmark run` from the repo and `benchmark leaderboard` from another
+    folder would open different files — the second silently showing an empty DB.
+    """
+    p = Path(db_path)
+    if p.is_absolute():
+        return str(p)
+    base = Path(config_path).resolve().parent if config_path else DEFAULT_CONFIG_PATH.parent
+    return str((base / p).resolve())
 
 
 def _baseline_model_desc(config) -> str:
@@ -117,7 +133,8 @@ async def run_benchmark(
     run_ts = _now_iso()
     group = _run_group(model, run_ts)
 
-    store = await BenchmarkStore(bench.db_path).initialize()
+    db_path = _resolve_db_path(bench.db_path, config_path)
+    store = await BenchmarkStore(db_path).initialize()
     try:
         if baseline:
             await store.clear_baseline()
@@ -136,7 +153,7 @@ async def run_benchmark(
             on_status=lambda m: console.print(f"  [dim]{m}[/dim]"),
         )
         await store.record_many(rows)
-        console.print(f"[green]Recorded {len(rows)} metrics to {bench.db_path}[/green]\n")
+        console.print(f"[green]Recorded {len(rows)} metrics to {db_path}[/green]\n")
 
         # A --baseline run is the reference itself — render standalone (no self-compare).
         baseline_rows = [] if baseline else await store.baseline_metrics()
@@ -200,7 +217,7 @@ async def run_scoreboard(model: str, *, config_path: Optional[str] = None) -> No
     """Render the most recent stored run for a model vs the baseline."""
     config = ConfigManager(config_path).load()
     bench = config.benchmark
-    store = await BenchmarkStore(bench.db_path).initialize()
+    store = await BenchmarkStore(_resolve_db_path(bench.db_path, config_path)).initialize()
     try:
         group = await store.latest_run_group(model)
         if not group:
@@ -227,7 +244,7 @@ async def run_leaderboard(*, config_path: Optional[str] = None) -> None:
     """Line every benchmarked model up against the per-job config incumbent."""
     config = ConfigManager(config_path).load()
     bench = config.benchmark
-    store = await BenchmarkStore(bench.db_path).initialize()
+    store = await BenchmarkStore(_resolve_db_path(bench.db_path, config_path)).initialize()
     try:
         models = await store.models_with_runs()
         if not models:
@@ -260,7 +277,7 @@ async def run_discover(
     """Pull the candidate shortlist from OpenRouter + Artificial Analysis."""
     config = ConfigManager(config_path).load()
     bench = config.benchmark
-    store = await BenchmarkStore(bench.db_path).initialize()
+    store = await BenchmarkStore(_resolve_db_path(bench.db_path, config_path)).initialize()
     try:
         known = await store.known_catalog_keys()
         fetched_ts = _now_iso()

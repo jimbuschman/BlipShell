@@ -401,6 +401,33 @@ def test_harness_does_not_import_top_level_tests_package():
 
 
 # ---------------------------------------------------------------------------
+# Benchmark DB path resolution — must be cwd-independent (the store is the same
+# file no matter which folder `blipshell` is invoked from).
+# ---------------------------------------------------------------------------
+
+from blipshell.benchmark import runner  # noqa: E402
+from blipshell.core.config import DEFAULT_CONFIG_PATH  # noqa: E402
+
+
+def test_resolve_db_path_relative_anchors_to_repo_root_not_cwd():
+    # Default config_path -> repo root (where config.yaml/data live), regardless of cwd.
+    resolved = Path(runner._resolve_db_path("data/benchmark.db", None))
+    assert resolved.is_absolute()
+    assert resolved == (DEFAULT_CONFIG_PATH.parent / "data" / "benchmark.db").resolve()
+
+
+def test_resolve_db_path_relative_anchors_to_config_dir(tmp_path):
+    cfg = tmp_path / "myconfig.yaml"
+    resolved = Path(runner._resolve_db_path("data/benchmark.db", str(cfg)))
+    assert resolved == (tmp_path / "data" / "benchmark.db").resolve()
+
+
+def test_resolve_db_path_absolute_passthrough(tmp_path):
+    abs_db = tmp_path / "explicit.db"
+    assert runner._resolve_db_path(str(abs_db), None) == str(abs_db)
+
+
+# ---------------------------------------------------------------------------
 # Discovery parsing
 # ---------------------------------------------------------------------------
 
