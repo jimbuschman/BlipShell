@@ -3326,11 +3326,10 @@ def benchmark_scoreboard_cmd(ctx, model):
 @benchmark_grp.command("leaderboard")
 @click.pass_context
 def benchmark_leaderboard_cmd(ctx):
-    """Compare ALL benchmarked models per job vs the config.yaml incumbents.
-
-    One table: for each job, the model config currently uses vs the best tested
-    model, with a SWITCH flag where a candidate wins. Benchmark your current
-    models + candidates (`benchmark run <model> --full`), then run this.
+    """Show ALL benchmarked models side by side: quality-by-task matrix + per-suite
+    latency. Numbers only, no verdict — BlipShell's per-job local/cloud routing and
+    fallbacks are yours to weigh. Benchmark a few models (`benchmark run <model>
+    --full`), then run this and compare.
     """
     from blipshell.benchmark.runner import run_leaderboard
     asyncio.run(run_leaderboard(config_path=ctx.obj.get("config_path")))

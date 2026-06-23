@@ -267,105 +267,11 @@ def test_scoreboard_weights_and_latency_excluded():
 
 
 # ---------------------------------------------------------------------------
-# Leaderboard (cross-model, per-job incumbent comparison)
+# Leaderboard (cross-model, numbers-only — no verdict; BlipShell's local/cloud
+# + fallback routing is too rich to model an automated switch recommendation).
 # ---------------------------------------------------------------------------
 
 from blipshell.benchmark import leaderboard  # noqa: E402
-
-
-def test_leaderboard_flags_switch_when_candidate_beats_incumbent():
-    model_rows = {
-        "incumbent-model": _rows("incumbent-model", {"coding": ("quality", 0.70)}),
-        "challenger": _rows("challenger", {"coding": ("quality", 0.80)}),  # +0.10
-    }
-    lb = leaderboard.build_leaderboard(
-        model_rows, {"coding": "incumbent-model"}, verdict_delta=0.05,
-    )
-    task = next(t for t in lb["tasks"] if t["task_type"] == "coding")
-    assert task["incumbent"] == "incumbent-model"
-    assert task["incumbent_score"] == pytest.approx(0.70)
-    assert task["best_model"] == "challenger"
-    assert task["switch"] is True
-    assert task["delta"] == pytest.approx(0.10)
-    assert lb["switch_suggestions"] == [
-        {"task_type": "coding", "from": "incumbent-model", "to": "challenger", "delta": pytest.approx(0.10)}
-    ]
-
-
-def test_leaderboard_no_switch_within_threshold():
-    model_rows = {
-        "incumbent-model": _rows("incumbent-model", {"coding": ("quality", 0.70)}),
-        "challenger": _rows("challenger", {"coding": ("quality", 0.73)}),  # +0.03 < 0.05
-    }
-    lb = leaderboard.build_leaderboard(
-        model_rows, {"coding": "incumbent-model"}, verdict_delta=0.05,
-    )
-    task = next(t for t in lb["tasks"] if t["task_type"] == "coding")
-    # challenger is still "best", but the margin doesn't clear the switch threshold.
-    assert task["best_model"] == "challenger"
-    assert task["switch"] is False
-    assert lb["switch_suggestions"] == []
-
-
-def test_leaderboard_incumbent_not_benchmarked():
-    # config routes coding to a model we never benchmarked -> no delta, no switch.
-    model_rows = {
-        "challenger": _rows("challenger", {"coding": ("quality", 0.90)}),
-    }
-    lb = leaderboard.build_leaderboard(
-        model_rows, {"coding": "some-unbenchmarked-model"}, verdict_delta=0.05,
-    )
-    task = next(t for t in lb["tasks"] if t["task_type"] == "coding")
-    assert task["incumbent"] == "some-unbenchmarked-model"
-    assert task["incumbent_benchmarked"] is False
-    assert task["incumbent_score"] is None
-    assert task["delta"] is None
-    assert task["switch"] is False
-    assert lb["switch_suggestions"] == []
-
-
-def test_leaderboard_incumbent_wins_no_suggestion():
-    model_rows = {
-        "incumbent-model": _rows("incumbent-model", {"coding": ("quality", 0.90)}),
-        "challenger": _rows("challenger", {"coding": ("quality", 0.70)}),
-    }
-    lb = leaderboard.build_leaderboard(
-        model_rows, {"coding": "incumbent-model"}, verdict_delta=0.05,
-    )
-    task = next(t for t in lb["tasks"] if t["task_type"] == "coding")
-    assert task["best_model"] == "incumbent-model"
-    assert task["switch"] is False
-    assert lb["switch_suggestions"] == []
-
-
-def test_leaderboard_composite_and_known_job_ordering():
-    model_rows = {
-        "a": _rows("a", {
-            "coding": ("quality", 0.80),
-            "ranking": ("accuracy", 0.60),
-        }),
-        "b": _rows("b", {
-            "coding": ("quality", 0.40),
-            "ranking": ("accuracy", 1.00),
-        }),
-    }
-    lb = leaderboard.build_leaderboard(
-        model_rows, {"coding": "a", "ranking": "a"},
-        task_weights={"coding": 3.0, "ranking": 1.0},
-    )
-    # composite a = (3*0.8 + 1*0.6)/4 = 0.75 ; b = (3*0.4 + 1*1.0)/4 = 0.55
-    assert lb["composite"]["a"] == pytest.approx(0.75)
-    assert lb["composite"]["b"] == pytest.approx(0.55)
-    # known jobs ordered per TASK_TO_CONFIG_FIELD (ranking before coding)
-    order = [t["task_type"] for t in lb["tasks"]]
-    assert order == ["ranking", "coding"]
-
-
-def test_leaderboard_empty():
-    lb = leaderboard.build_leaderboard({}, {}, verdict_delta=0.05)
-    assert lb["tasks"] == []
-    assert lb["switch_suggestions"] == []
-    assert lb["composite"] == {}
 
 
 def _rows_with_latency(model, scores, lats, is_baseline=False):
@@ -378,45 +284,62 @@ def _rows_with_latency(model, scores, lats, is_baseline=False):
     return rows
 
 
-def test_leaderboard_surfaces_suite_latency_per_job():
+def test_leaderboard_matrix_scores_and_best_per_task():
     model_rows = {
-        "incumbent-model": _rows_with_latency(
-            "incumbent-model",
-            {"ranking": ("accuracy", 0.80), "reasoning": ("quality", 0.80)},
-            {"pipeline": 1.4, "reasoning_suite": 2.1},
-        ),
-        "challenger": _rows_with_latency(
-            "challenger",
-            {"ranking": ("accuracy", 0.90), "reasoning": ("quality", 0.82)},
-            {"pipeline": 6.0, "reasoning_suite": 8.2},
-        ),
+        "a": _rows("a", {"coding": ("quality", 0.80)}),
+        "b": _rows("b", {"coding": ("quality", 0.65)}),
     }
-    incumbents = {"ranking": "incumbent-model", "reasoning": "incumbent-model"}
-    lb = leaderboard.build_leaderboard(model_rows, incumbents, verdict_delta=0.05)
+    lb = leaderboard.build_leaderboard(model_rows)
+    task = next(t for t in lb["tasks"] if t["task_type"] == "coding")
+    assert task["scores"] == {"a": pytest.approx(0.80), "b": pytest.approx(0.65)}
+    assert task["metric"] == "quality"
+    assert task["best_model"] == "a"  # bolding hint only — no verdict emitted
+    # no incumbent/switch concepts in the output at all
+    assert "switch" not in task and "incumbent" not in task
+    assert "switch_suggestions" not in lb
 
+
+def test_leaderboard_handles_models_missing_a_task():
+    model_rows = {
+        "a": _rows("a", {"coding": ("quality", 0.80), "ranking": ("accuracy", 0.50)}),
+        "b": _rows("b", {"coding": ("quality", 0.65)}),  # never benchmarked on ranking
+    }
+    lb = leaderboard.build_leaderboard(model_rows)
     ranking = next(t for t in lb["tasks"] if t["task_type"] == "ranking")
-    # ranking is a pipeline-suite job -> shares the pipeline latency
-    assert ranking["incumbent_latency"] == pytest.approx(1.4)
-    assert ranking["best_latency"] == pytest.approx(6.0)   # challenger won on quality
-    assert ranking["switch"] is True
-
-    reasoning = next(t for t in lb["tasks"] if t["task_type"] == "reasoning")
-    # +0.02 within threshold -> no switch; latency still surfaced for the best model
-    assert reasoning["switch"] is False
-    assert reasoning["best_latency"] is not None
-    # latency map round-trips per model/suite
-    assert lb["latency"]["challenger"]["reasoning_suite"] == pytest.approx(8.2)
+    assert set(ranking["scores"]) == {"a"}  # b absent, not zero-filled
+    assert ranking["best_model"] == "a"
 
 
-def test_job_latency_falls_back_and_handles_missing():
-    # coding has no own latency row -> falls back to reasoning_suite
-    assert leaderboard._job_latency({"reasoning_suite": 5.0}, "coding") == 5.0
-    # coding's own latency wins when present
-    assert leaderboard._job_latency({"coding": 9.0, "reasoning_suite": 5.0}, "coding") == 9.0
-    # embedding has no measured latency
-    assert leaderboard._job_latency({"pipeline": 1.0}, "embedding") is None
-    # nothing measured
-    assert leaderboard._job_latency({}, "ranking") is None
+def test_leaderboard_composite_and_known_job_ordering():
+    model_rows = {
+        "a": _rows("a", {"coding": ("quality", 0.80), "ranking": ("accuracy", 0.60)}),
+        "b": _rows("b", {"coding": ("quality", 0.40), "ranking": ("accuracy", 1.00)}),
+    }
+    lb = leaderboard.build_leaderboard(model_rows, task_weights={"coding": 3.0, "ranking": 1.0})
+    # composite a = (3*0.8 + 1*0.6)/4 = 0.75 ; b = (3*0.4 + 1*1.0)/4 = 0.55
+    assert lb["composite"]["a"] == pytest.approx(0.75)
+    assert lb["composite"]["b"] == pytest.approx(0.55)
+    # known jobs ordered per KNOWN_JOB_ORDER (ranking before coding)
+    assert [t["task_type"] for t in lb["tasks"]] == ["ranking", "coding"]
+
+
+def test_leaderboard_latency_map_round_trips_per_suite():
+    model_rows = {
+        "a": _rows_with_latency("a", {"ranking": ("accuracy", 0.80)},
+                                {"pipeline": 1.4, "reasoning_suite": 2.1}),
+        "b": _rows_with_latency("b", {"ranking": ("accuracy", 0.90)},
+                                {"pipeline": 6.0, "reasoning_suite": 8.2}),
+    }
+    lb = leaderboard.build_leaderboard(model_rows)
+    assert lb["latency"]["a"]["pipeline"] == pytest.approx(1.4)
+    assert lb["latency"]["b"]["reasoning_suite"] == pytest.approx(8.2)
+
+
+def test_leaderboard_empty():
+    lb = leaderboard.build_leaderboard({})
+    assert lb["tasks"] == []
+    assert lb["composite"] == {}
+    assert lb["latency"] == {}
 
 
 # ---------------------------------------------------------------------------

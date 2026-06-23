@@ -59,29 +59,6 @@ def _baseline_model_desc(config) -> str:
     return f"{m.tool_calling} (interactive), {m.reasoning} (background)"
 
 
-def _incumbents(config) -> dict[str, str]:
-    """task_type -> the model config.yaml currently routes that job to, applying
-    the same fallbacks the router uses (ranking_importance->ranking,
-    session_review->reasoning)."""
-    m = config.models
-    ri = m.ranking_importance or m.ranking
-    sr = m.session_review or m.reasoning
-    return {
-        "ranking": m.ranking,
-        "importance": m.importance,
-        "rank_importance": ri,
-        "contradiction": m.reasoning,
-        "entity": m.reasoning,
-        "summarization": m.summarization,
-        "lessons": sr,
-        "reasoning": m.reasoning,
-        "coding": m.coding,
-        "tool_calling": m.tool_calling,
-        "session_review": sr,
-        "embedding": m.embedding,
-    }
-
-
 async def run_benchmark(
     model: str,
     *,
@@ -203,7 +180,7 @@ def run_list() -> None:
         "  blipshell benchmark run <model> --full --baseline   # set the current model as reference\n"
         "  blipshell benchmark run <model> --all           # everything incl. slow coding\n"
         "  blipshell benchmark scoreboard <model>          # re-show last run vs baseline\n"
-        "  blipshell benchmark leaderboard                 # ALL models per job vs config incumbents\n"
+        "  blipshell benchmark leaderboard                 # ALL models side by side (quality + latency)\n"
         "  blipshell benchmark discover                    # find new models worth testing\n"
     )
     console.print(
@@ -258,10 +235,7 @@ async def run_leaderboard(*, config_path: Optional[str] = None) -> None:
             group = await store.latest_run_group(m)
             if group:
                 model_rows[m] = await store.metrics_for_group(group)
-        lb = build_leaderboard(
-            model_rows, _incumbents(config),
-            task_weights=bench.task_weights, verdict_delta=bench.verdict_delta,
-        )
+        lb = build_leaderboard(model_rows, task_weights=bench.task_weights)
         render_leaderboard(lb, console=console)
     finally:
         await store.close()
