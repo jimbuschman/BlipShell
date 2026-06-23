@@ -369,6 +369,38 @@ def test_leaderboard_empty():
 
 
 # ---------------------------------------------------------------------------
+# Dataset loader — must NOT depend on a top-level `tests` package (collides
+# with an unrelated site-packages `tests` under an editable install).
+# ---------------------------------------------------------------------------
+
+def test_load_dataset_resolves_suite_modules_by_path():
+    bm = harness._load_dataset("benchmark_models")
+    # the functions/data run_pipeline reuses must be present
+    for attr in ("benchmark_ranking", "benchmark_summarization",
+                 "build_conversation_text", "TEST_MESSAGES", "TEST_CONVERSATIONS"):
+        assert hasattr(bm, attr), f"benchmark_models missing {attr}"
+    # loaded from the project's tests/, not site-packages
+    assert bm.__file__.replace("\\", "/").endswith("tests/benchmark_models.py")
+
+
+def test_load_dataset_is_cached():
+    assert harness._load_dataset("benchmark_models") is harness._load_dataset("benchmark_models")
+
+
+def test_load_dataset_missing_raises_actionable_error():
+    with pytest.raises(ImportError, match="Benchmark dataset not found"):
+        harness._load_dataset("benchmark_does_not_exist")
+
+
+def test_harness_does_not_import_top_level_tests_package():
+    # Guards the regression: `from tests import ...` resolves to the wrong package
+    # on the Ollama PC. The harness must load suites by path instead.
+    src = Path(harness.__file__).read_text(encoding="utf-8")
+    assert "from tests import" not in src
+    assert "import tests\n" not in src
+
+
+# ---------------------------------------------------------------------------
 # Discovery parsing
 # ---------------------------------------------------------------------------
 

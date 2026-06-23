@@ -14,7 +14,10 @@ The suite runners themselves are imported and reused from tests/benchmark_*.py
 (they each take a router) — this harness never reimplements task execution.
 """
 
+import importlib.util
 import logging
+import sys
+from pathlib import Path
 from typing import Optional
 
 from blipshell.benchmark.judge import LLMJudge
@@ -23,6 +26,41 @@ from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.models.config import EndpointConfig, LLMConfig, ModelsConfig, resolve_env_vars
 
 logger = logging.getLogger(__name__)
+
+# Repo root = <repo>/blipshell/benchmark/harness.py -> parents[2].
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_dataset(name: str):
+    """Load tests/<name>.py (a benchmark suite runner + its data) by file path.
+
+    The suites live in tests/, but we deliberately do NOT `import tests.<name>`:
+    'tests' is a generic top-level name that collides with unrelated `tests`
+    packages installed in site-packages, and an editable install of BlipShell
+    only exposes the `blipshell` package on the path — so `import tests` resolves
+    to the wrong package (or fails). Loading by absolute path anchored to the
+    repo root is install-mode-independent and collision-proof. These modules
+    import only `blipshell.*` + stdlib/rich, so path-loading is self-contained.
+    """
+    path = _REPO_ROOT / "tests" / f"{name}.py"
+    if not path.exists():
+        raise ImportError(
+            f"Benchmark dataset not found: {path}. The benchmark harness reuses the "
+            f"suite runners in tests/; run from a source checkout of BlipShell."
+        )
+    mod_name = f"_blipshell_bench_{name}"
+    cached = sys.modules.get(mod_name)
+    if cached is not None:
+        return cached
+    spec = importlib.util.spec_from_file_location(mod_name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = module  # register before exec so any self-reference resolves
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(mod_name, None)
+        raise
+    return module
 
 ALL_ROLES = [
     "reasoning", "tool_calling", "coding", "summarization",
@@ -288,7 +326,7 @@ class BenchmarkHarness:
     # -- pipeline (synthetic, always run) ---------------------------------
 
     async def run_pipeline(self, on_status=None) -> list[dict]:
-        from tests import benchmark_models as bm
+        bm = _load_dataset("benchmark_models")
 
         def status(msg):
             if on_status:
@@ -338,7 +376,7 @@ class BenchmarkHarness:
     # -- reasoning / coding-gen / tool-calling (full tier) ----------------
 
     async def run_reasoning(self, on_status=None) -> list[dict]:
-        from tests import benchmark_reasoning as br
+        br = _load_dataset("benchmark_reasoning")
 
         def status(msg):
             if on_status:
@@ -370,7 +408,7 @@ class BenchmarkHarness:
     # -- real-data (full tier) --------------------------------------------
 
     async def run_realdata(self, db_path: str, sample: int, on_status=None) -> list[dict]:
-        from tests import benchmark_realdata as rd
+        rd = _load_dataset("benchmark_realdata")
 
         def status(msg):
             if on_status:
@@ -498,7 +536,7 @@ class BenchmarkHarness:
     async def run_coding(self, coding_tier: str = "standard", timeout: float = 300.0, on_status=None) -> list[dict]:
         import shutil
 
-        from tests import benchmark_coding as bc
+        bc = _load_dataset("benchmark_coding")
 
         def status(msg):
             if on_status:
