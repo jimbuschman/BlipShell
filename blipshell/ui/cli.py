@@ -3275,64 +3275,47 @@ def nightly_cmd(ctx, job, quiet, loop, local):
 
 @main.group("benchmark")
 def benchmark_grp():
-    """Benchmark candidate LLMs and decide whether to switch.
+    """Benchmark local/cloud models for the jobs BlipShell routes per task.
 
-    run       — run a candidate through the suites, store metrics, show a verdict
-    scoreboard— re-render the latest stored run for a model vs the baseline
-    discover  — pull a candidate shortlist from OpenRouter + Artificial Analysis
+    run <model> — ONE deep test across every job (ability + speed); writes a
+                  shareable report you can hand to a stronger LLM.
+    report      — regenerate that report from stored runs (no re-run).
+    discover    — pull a candidate shortlist from OpenRouter + Artificial Analysis.
     """
 
 
 @benchmark_grp.command("run")
 @click.argument("model")
-@click.option("--quick", "tier", flag_value="quick", default=True, help="Fast memory-pipeline tier (default)")
-@click.option("--full", "tier", flag_value="full", help="All fast tasks: pipeline + reasoning + tool-calling + session_review + real-data")
-@click.option("--all", "tier", flag_value="all", help="Everything incl. embedding + agentic coding executor (~1hr)")
-@click.option("--judge/--no-judge", default=True, help="Grade open-ended tasks with the configured cloud judge")
-@click.option("--baseline", is_flag=True, help="Record this run as the production baseline for comparison")
+@click.option("--judge/--no-judge", default=True, help="Grade open-ended jobs with the configured neutral judge")
 @click.option("--provider", default="ollama", type=click.Choice(["ollama", "openai"]), help="Candidate endpoint provider")
 @click.option("--url", default=None, help="Candidate endpoint URL (default: first local Ollama endpoint)")
 @click.option("--api-key-env", default=None, help="Env var holding the API key (for --provider openai)")
-@click.option("--coding-tier", default="standard", type=click.Choice(["standard", "hard", "expert", "all"]), help="Coding-executor depth (only used with --all)")
-@click.option("--coding-timeout", default=300.0, type=float, help="Per-task timeout for the coding executor (seconds)")
+@click.option("--coding-timeout", default=300.0, type=float, help="Per-task timeout for the agentic coding executor (seconds)")
 @click.pass_context
-def benchmark_run_cmd(ctx, model, tier, judge, baseline, provider, url, api_key_env, coding_tier, coding_timeout):
-    """Benchmark MODEL (e.g. qwen3:14b, minimax/minimax-m3). See `benchmark list` for tiers."""
+def benchmark_run_cmd(ctx, model, judge, provider, url, api_key_env, coding_timeout):
+    """Run the ONE deep test of MODEL (e.g. qwen3:14b, minimax/minimax-m3).
+
+    Tests every job (ranking, importance, contradiction, entity, summarization,
+    lessons, reasoning, coding-gen, agentic coding, tool-calling, session review,
+    embedding) for ability and speed, then updates data/benchmark/report.md.
+    Intentionally heavy (~30-90 min). Cloud candidate:
+    --provider openai --url <api-base> --api-key-env <ENV_VAR>.
+    """
     from blipshell.benchmark.runner import run_benchmark
     asyncio.run(run_benchmark(
-        model, config_path=ctx.obj.get("config_path"), tier=tier,
-        judge_enabled=judge, baseline=baseline,
-        provider=provider, url=url, api_key_env=api_key_env,
-        coding_tier=coding_tier, coding_timeout=coding_timeout,
+        model, config_path=ctx.obj.get("config_path"),
+        judge_enabled=judge, provider=provider, url=url,
+        api_key_env=api_key_env, coding_timeout=coding_timeout,
     ))
 
 
-@benchmark_grp.command("list")
-def benchmark_list_cmd():
-    """Show what each tier runs + rough time (so you don't have to remember)."""
-    from blipshell.benchmark.runner import run_list
-    run_list()
-
-
-@benchmark_grp.command("scoreboard")
-@click.argument("model")
+@benchmark_grp.command("report")
 @click.pass_context
-def benchmark_scoreboard_cmd(ctx, model):
-    """Re-render the latest stored run for MODEL vs the baseline."""
-    from blipshell.benchmark.runner import run_scoreboard
-    asyncio.run(run_scoreboard(model, config_path=ctx.obj.get("config_path")))
-
-
-@benchmark_grp.command("leaderboard")
-@click.pass_context
-def benchmark_leaderboard_cmd(ctx):
-    """Show ALL benchmarked models side by side: quality-by-task matrix + per-suite
-    latency. Numbers only, no verdict — BlipShell's per-job local/cloud routing and
-    fallbacks are yours to weigh. Benchmark a few models (`benchmark run <model>
-    --full`), then run this and compare.
-    """
-    from blipshell.benchmark.runner import run_leaderboard
-    asyncio.run(run_leaderboard(config_path=ctx.obj.get("config_path")))
+def benchmark_report_cmd(ctx):
+    """Regenerate the shareable report (data/benchmark/report.md + .json) from all
+    stored runs, without re-running any model."""
+    from blipshell.benchmark.runner import run_report
+    asyncio.run(run_report(config_path=ctx.obj.get("config_path")))
 
 
 @benchmark_grp.command("discover")

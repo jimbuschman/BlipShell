@@ -13,5 +13,6 @@ data/blipshell.db-wal
 data/benchmark.db
 data/benchmark.db-shm
 data/benchmark.db-wal
+data/benchmark/
 data/chroma/
 data/.blipshell_history

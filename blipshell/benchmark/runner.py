@@ -19,8 +19,7 @@ from blipshell.benchmark.discovery import (
 )
 from blipshell.benchmark.harness import BenchmarkHarness, build_candidate_router
 from blipshell.benchmark.judge import JudgeUnavailable, build_judge
-from blipshell.benchmark.leaderboard import build_leaderboard, render_leaderboard
-from blipshell.benchmark.scoreboard import build_scoreboard, render_scoreboard
+from blipshell.benchmark.report import build_report, write_report
 from blipshell.benchmark.store import BenchmarkStore
 from blipshell.core.config import DEFAULT_CONFIG_PATH, ConfigManager
 from blipshell.llm.endpoints import EndpointManager
@@ -44,7 +43,7 @@ def _resolve_db_path(db_path: str, config_path: Optional[str]) -> str:
     repo root by default), NOT the current working directory.
 
     `blipshell` is an installed CLI run from any folder; with a cwd-relative
-    path, `benchmark run` from the repo and `benchmark leaderboard` from another
+    path, `benchmark run` from the repo and `benchmark report` from another
     folder would open different files — the second silently showing an empty DB.
     """
     p = Path(db_path)
@@ -54,25 +53,48 @@ def _resolve_db_path(db_path: str, config_path: Optional[str]) -> str:
     return str((base / p).resolve())
 
 
-def _baseline_model_desc(config) -> str:
-    m = config.models
-    return f"{m.tool_calling} (interactive), {m.reasoning} (background)"
+def _report_dir(config_path: Optional[str]) -> str:
+    """data/benchmark/ next to the config file (repo root by default), cwd-independent."""
+    base = Path(config_path).resolve().parent if config_path else DEFAULT_CONFIG_PATH.parent
+    return str(base / "data" / "benchmark")
+
+
+async def _regenerate_report(store, config, config_path: Optional[str]) -> tuple[dict, int]:
+    """Build the shareable report from the latest stored run of every model.
+    Returns (written_paths, model_count)."""
+    models = await store.models_with_runs()
+    model_rows: dict[str, list[dict]] = {}
+    catalog: dict[str, dict] = {}
+    for m in models:
+        group = await store.latest_run_group(m)
+        if not group:
+            continue
+        model_rows[m] = await store.metrics_for_group(group)
+        cat = await store.catalog_lookup(m)
+        if cat:
+            catalog[m] = cat
+    report = build_report(
+        model_rows, catalog=catalog,
+        judge_model=config.benchmark.judge_model or None,
+        generated_ts=_now_iso(),
+        task_weights=config.benchmark.task_weights,
+    )
+    paths = write_report(report, _report_dir(config_path))
+    return paths, len(model_rows)
 
 
 async def run_benchmark(
     model: str,
     *,
     config_path: Optional[str] = None,
-    tier: str = "quick",
     judge_enabled: bool = True,
-    baseline: bool = False,
     provider: str = "ollama",
     url: Optional[str] = None,
     api_key_env: Optional[str] = None,
-    coding_tier: str = "standard",
     coding_timeout: float = 300.0,
 ) -> None:
-    """Run a candidate through the suites, store metrics, render the verdict."""
+    """Run ONE deep test of a model across every job, store metrics, and
+    regenerate the shareable report. No tiers — always full depth."""
     config = ConfigManager(config_path).load()
     bench = config.benchmark
 
@@ -113,130 +135,47 @@ async def run_benchmark(
     db_path = _resolve_db_path(bench.db_path, config_path)
     store = await BenchmarkStore(db_path).initialize()
     try:
-        if baseline:
-            await store.clear_baseline()
-
-        console.rule(f"[bold blue]Benchmarking {model}  ({tier} tier{', baseline' if baseline else ''})")
+        console.rule(f"[bold blue]Benchmarking {model} — full deep run")
+        console.print("[dim]Runs every job incl. the agentic coding suite + embedding. "
+                      "This is intentionally heavy (~30-90 min); shallow runs don't discriminate.[/dim]")
         harness = BenchmarkHarness(
             model=model, router=router, run_group=group, run_ts=run_ts,
-            tier=tier, judge=judge, is_baseline=baseline,
+            tier="deep", judge=judge,
         )
         rows = await harness.run(
             db_path=config.database.path,
             ollama_url=ollama_url,
             full_sample=bench.full_sample,
-            coding_tier=coding_tier,
             coding_timeout=coding_timeout,
             on_status=lambda m: console.print(f"  [dim]{m}[/dim]"),
         )
         await store.record_many(rows)
-        console.print(f"[green]Recorded {len(rows)} metrics to {db_path}[/green]\n")
+        console.print(f"[green]Recorded {len(rows)} metrics for {model}.[/green]")
 
-        # A --baseline run is the reference itself — render standalone (no self-compare).
-        baseline_rows = [] if baseline else await store.baseline_metrics()
-        catalog = await store.catalog_lookup(model)
-        sb = build_scoreboard(
-            rows, baseline_rows,
-            task_weights=bench.task_weights, verdict_delta=bench.verdict_delta,
-        )
-        render_scoreboard(
-            sb, model, _baseline_model_desc(config),
-            catalog=catalog, console=console,
+        paths, n = await _regenerate_report(store, config, config_path)
+        console.print(
+            f"[bold green]Report updated[/bold green] ({n} model{'s' if n != 1 else ''} side by side):\n"
+            f"  [cyan]{paths['md']}[/cyan]   ← hand this to a stronger LLM\n"
+            f"  [dim]{paths['json']}[/dim]"
         )
     finally:
         await store.close()
 
 
-def run_list() -> None:
-    """Print what each tier runs + rough time, so nothing has to be remembered."""
-    table = Table(title="blipshell benchmark — what runs in each tier", show_lines=True)
-    table.add_column("Tier", style="cyan", no_wrap=True)
-    table.add_column("Flag", style="dim", no_wrap=True)
-    table.add_column("Covers (BlipShell task types)")
-    table.add_column("Rough time", justify="right")
-    table.add_row(
-        "Quick", "(default)",
-        "Memory pipeline: ranking, importance, rank+importance, contradiction, "
-        "entity extraction, summarization (judge), lessons (judge)",
-        "~minutes",
-    )
-    table.add_row(
-        "Full", "--full",
-        "Quick + reasoning (judge), code-generation (judge), tool-calling, "
-        "session_review (judge), real-data pipeline",
-        "~minutes",
-    )
-    table.add_row(
-        "All", "--all",
-        "Full + embedding retrieval (Precision@5/Recall@10/MRR on sqlite-vec) + "
-        "the real agentic coding executor (sandbox, ~14 tasks)",
-        "~1 hr",
-    )
-    console.print(table)
-    console.print(
-        "\n[bold]Common commands[/bold] (you don't need to remember the rest):\n"
-        "  blipshell benchmark run <model>                 # quick check\n"
-        "  blipshell benchmark run <model> --full          # everyday: all fast tasks\n"
-        "  blipshell benchmark run <model> --full --baseline   # set the current model as reference\n"
-        "  blipshell benchmark run <model> --all           # everything incl. slow coding\n"
-        "  blipshell benchmark scoreboard <model>          # re-show last run vs baseline\n"
-        "  blipshell benchmark leaderboard                 # ALL models side by side (quality + latency)\n"
-        "  blipshell benchmark discover                    # find new models worth testing\n"
-    )
-    console.print(
-        "[dim]Cloud candidate: add --provider openai --url <api-base> --api-key-env <ENV_VAR>.\n"
-        "Coding depth: --coding-tier standard|hard|expert|all. Judge: configure "
-        "benchmark.judge_model/judge_endpoint in config.yaml (off by default).[/dim]"
-    )
-
-
-async def run_scoreboard(model: str, *, config_path: Optional[str] = None) -> None:
-    """Render the most recent stored run for a model vs the baseline."""
+async def run_report(*, config_path: Optional[str] = None) -> None:
+    """Regenerate the shareable report from stored runs, without re-running."""
     config = ConfigManager(config_path).load()
-    bench = config.benchmark
-    store = await BenchmarkStore(_resolve_db_path(bench.db_path, config_path)).initialize()
+    store = await BenchmarkStore(_resolve_db_path(config.benchmark.db_path, config_path)).initialize()
     try:
-        group = await store.latest_run_group(model)
-        if not group:
-            models = await store.models_with_runs()
-            console.print(f"[yellow]No runs for '{model}'.[/yellow] "
-                          f"Models with data: {', '.join(models) or '(none)'}")
-            return
-        rows = await store.metrics_for_group(group)
-        baseline_rows = await store.baseline_metrics()
-        # If this model IS the baseline, render standalone.
-        if rows and rows[0].get("is_baseline"):
-            baseline_rows = []
-        catalog = await store.catalog_lookup(model)
-        sb = build_scoreboard(
-            rows, baseline_rows,
-            task_weights=bench.task_weights, verdict_delta=bench.verdict_delta,
-        )
-        render_scoreboard(sb, model, _baseline_model_desc(config), catalog=catalog, console=console)
-    finally:
-        await store.close()
-
-
-async def run_leaderboard(*, config_path: Optional[str] = None) -> None:
-    """Line every benchmarked model up against the per-job config incumbent."""
-    config = ConfigManager(config_path).load()
-    bench = config.benchmark
-    store = await BenchmarkStore(_resolve_db_path(bench.db_path, config_path)).initialize()
-    try:
-        models = await store.models_with_runs()
-        if not models:
+        paths, n = await _regenerate_report(store, config, config_path)
+        if n == 0:
             console.print("[yellow]No benchmarked models yet.[/yellow] "
-                          "Run `blipshell benchmark run <model> --full` for your current "
-                          "models and any candidates first.")
+                          "Run `blipshell benchmark run <model>` first.")
             return
-        # Latest run per model so re-runs supersede stale numbers.
-        model_rows: dict[str, list[dict]] = {}
-        for m in models:
-            group = await store.latest_run_group(m)
-            if group:
-                model_rows[m] = await store.metrics_for_group(group)
-        lb = build_leaderboard(model_rows, task_weights=bench.task_weights)
-        render_leaderboard(lb, console=console)
+        console.print(
+            f"[bold green]Report regenerated[/bold green] ({n} model{'s' if n != 1 else ''}):\n"
+            f"  [cyan]{paths['md']}[/cyan]\n  [dim]{paths['json']}[/dim]"
+        )
     finally:
         await store.close()
 

@@ -63,6 +63,62 @@ REASONING_TESTS = [
         "response": "Connect VCC to 3.3V, GND to GND, SDA to GPIO 21, and SCL to GPIO 22. Use the Adafruit_SSD1306 library. Call display.begin(SSD1306_SWITCHCAPVCC, 0x3D) to initialize.",
         # Error: default I2C address is 0x3C not 0x3D for most SSD1306
     },
+    {
+        "name": "tradeoff_analysis",
+        "description": "Reason about a design tradeoff",
+        "system": "You are a pragmatic software architect. Be concise and specific.",
+        "prompt": "For a single-user local assistant with 30k memories, compare a dual-store setup (SQLite + a separate vector DB) vs a single store (sqlite-vec inside the SQLite file). What's the main risk of the dual-store approach and when is it nonetheless justified?",
+    },
+    {
+        "name": "root_cause",
+        "description": "Diagnose a described bug from symptoms",
+        "system": "You are a debugging expert. Identify the most likely root cause and the fix.",
+        "prompt": "A python asyncio call to a thread-pool executor never times out even though it's wrapped in asyncio.wait_for. Why doesn't the timeout fire, and what's the correct fix?",
+    },
+    {
+        "name": "prioritization",
+        "description": "Rank competing options with justification",
+        "system": "Be concise. Give a ranked list with one-line justifications.",
+        "prompt": "I have limited GPU. Rank these background jobs by how much they need a large local model vs a small one: memory ranking (1-5), summarization, entity extraction, importance scoring, contradiction detection. Justify each.",
+    },
+    {
+        "name": "ambiguity_handling",
+        "description": "Identify missing info before answering",
+        "system": "Be concise and specific.",
+        "prompt": "A user says 'the search is broken, fix it.' Before changing code, what are the 3 most important clarifying questions, and what would each answer change about your approach?",
+    },
+    {
+        "name": "math_logic",
+        "description": "Quantitative reasoning",
+        "system": "Show the calculation briefly, then give the number.",
+        "prompt": "A free API tier allows 20 requests per minute. You must process 5,000 memories, each needing 1 summarization call. Ignoring failures, what's the minimum wall-clock time in minutes, and what's one way to cut it roughly in half?",
+    },
+    {
+        "name": "spec_compliance",
+        "description": "Follow precise output constraints",
+        "system": "Follow the format EXACTLY.",
+        "prompt": "List exactly 4 reasons local models are attractive for a personal assistant. Output ONLY a numbered list 1-4, each reason 6 words or fewer, no preamble, no trailing commentary.",
+    },
+    {
+        "name": "counterfactual",
+        "description": "Reason about consequences of a change",
+        "system": "Be concise and specific.",
+        "prompt": "If a memory pipeline switched its embedding model but did NOT re-embed the existing corpus, what specifically would degrade, and why would search appear to 'mostly work' while quietly getting worse?",
+    },
+    {
+        "name": "explain_to_level",
+        "description": "Calibrate explanation to an audience",
+        "system": "Be concise.",
+        "prompt": "Explain Reciprocal Rank Fusion (RRF) for combining keyword and vector search results to a competent developer who has never used it. Include the formula and why the constant k matters, in under 120 words.",
+    },
+    {
+        "name": "self_reflection_correct",
+        "description": "Avoid false-positive correction on a CORRECT answer",
+        "prompt_fn": "reflect_on_response",
+        "user_message": "What's the default I2C address of most SSD1306 OLED displays?",
+        "response": "The default I2C address for most SSD1306 OLED displays is 0x3C.",
+        # This response is CORRECT — a good model should NOT invent an error.
+    },
 ]
 
 REASONING_LABELS = [t["name"] for t in REASONING_TESTS]
@@ -124,6 +180,63 @@ CODING_TESTS = [
             '    return {"summary": summary, "rank": rank, "importance": importance}\n'
         ),
     },
+    {
+        "name": "fix_the_bug",
+        "description": "Produce a corrected version of buggy code",
+        "system": "Return only the corrected function. No markdown fences, no explanation.",
+        "prompt": (
+            "This function should return the number of retries actually used, but it's wrong. Fix it:\n\n"
+            "def attempts_used(max_retries, succeeded_on):\n"
+            "    # succeeded_on is the 1-based attempt that succeeded, or None if all failed\n"
+            "    if succeeded_on:\n"
+            "        return succeeded_on - 1\n"
+            "    return max_retries\n"
+            "# Bug: when it succeeds on attempt 1, 0 retries is right, but when succeeded_on is None\n"
+            "# it returns max_retries when it should be max_retries (correct) — the real bug is the\n"
+            "# off-by-one: a success on attempt N used N-1 retries, but the None branch and the truthiness\n"
+            "# check on succeeded_on==0 are wrong. Fix the edge cases."
+        ),
+    },
+    {
+        "name": "generate_with_tests",
+        "description": "Generate a function plus a test",
+        "system": "Return Python code only: the function and one pytest-style test. No prose.",
+        "prompt": "Write `clamp_unit(x: float) -> float | None` that clamps to [0,1], normalizes a value >1 and <=10 by /10, >10 and <=100 by /100, returns None for >100 or NaN or <0 after normalization. Include one pytest test covering the normalization and the None cases.",
+    },
+    {
+        "name": "explain_code",
+        "description": "Explain what a snippet does and spot the subtle issue",
+        "system": "Be concise and specific.",
+        "prompt": (
+            "What does this do, and what's the subtle correctness problem?\n\n"
+            "seen = set()\n"
+            "def dedupe(items):\n"
+            "    out = []\n"
+            "    for it in items:\n"
+            "        if it not in seen:\n"
+            "            seen.add(it)\n"
+            "            out.append(it)\n"
+            "    return out\n"
+        ),
+    },
+    {
+        "name": "api_usage",
+        "description": "Use an API correctly under a constraint",
+        "system": "Return only the code.",
+        "prompt": "Write a Python snippet that calls an httpx client with a hard 30-second total timeout that WILL actually fire even if the server hangs. Show the client construction and one GET call.",
+    },
+    {
+        "name": "regex_task",
+        "description": "Write a precise regex with explanation",
+        "system": "Give the regex on its own line, then one sentence explaining it.",
+        "prompt": "Write a Python regex that extracts a float score from text like `{\"score\": 0.82, ...}` OR `score = .9` OR `Score: 1`. It must capture the number into group 1 and tolerate missing leading zero.",
+    },
+    {
+        "name": "refactor_suggestion",
+        "description": "Propose a concrete refactor",
+        "system": "Be concise; give the refactored shape.",
+        "prompt": "This function does keyword filtering to decide which tools to pass to a model. Successful coding agents don't gate tools this way. Briefly explain why, and what to do instead.",
+    },
 ]
 
 CODING_LABELS = [t["name"] for t in CODING_TESTS]
@@ -180,33 +293,83 @@ MOCK_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_file",
+            "description": "Edit an existing file by replacing text",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path to edit"},
+                    "old": {"type": "string"}, "new": {"type": "string"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Create a new file with the given content",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path to create"},
+                    "content": {"type": "string"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_directory",
+            "description": "List files in a directory",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string", "description": "Directory path"}},
+                "required": ["path"],
+            },
+        },
+    },
 ]
 
+# expected_args: each key must appear in the call's args (exact or loose key
+# match) with the model's value containing the expected substring (case-insensitive).
 TOOL_CALLING_TESTS = [
-    {
-        "name": "web_search",
-        "description": "Should call web_search",
-        "message": "Search the web for ESP32 MAX98357 I2S wiring diagram",
-        "expected_tool": "web_search",
-    },
-    {
-        "name": "read_file",
-        "description": "Should call read_file",
-        "message": "Read the contents of worker.py",
-        "expected_tool": "read_file",
-    },
-    {
-        "name": "memory_recall",
-        "description": "Should call search_memories",
-        "message": "What did we discuss last time about the desk robot connectors?",
-        "expected_tool": "search_memories",
-    },
-    {
-        "name": "tool_selection",
-        "description": "Should pick the right tool (not run_command)",
-        "message": "Look up the current price of a Raspberry Pi 5",
-        "expected_tool": "web_search",
-    },
+    {"name": "web_search", "message": "Search the web for an ESP32 MAX98357 I2S wiring diagram",
+     "expected_tool": "web_search", "expected_args": {"query": "esp32"}},
+    {"name": "read_file", "message": "Read the contents of worker.py",
+     "expected_tool": "read_file", "expected_args": {"path": "worker.py"}},
+    {"name": "memory_recall", "message": "What did we discuss last time about the desk robot connectors?",
+     "expected_tool": "search_memories", "expected_args": {"query": "desk robot"}},
+    {"name": "price_lookup", "message": "Look up the current price of a Raspberry Pi 5",
+     "expected_tool": "web_search", "expected_args": {"query": "raspberry pi"}},
+    {"name": "run_pytest", "message": "Run the test suite with pytest in this repo",
+     "expected_tool": "run_command", "expected_args": {"command": "pytest"}},
+    {"name": "edit_config", "message": "In config.yaml, change the server port to 9000",
+     "expected_tool": "edit_file", "expected_args": {"path": "config.yaml"}},
+    {"name": "list_dir", "message": "List the files in the blipshell/memory folder",
+     "expected_tool": "list_directory", "expected_args": {"path": "memory"}},
+    {"name": "create_file", "message": "Create a new file notes.md containing a short todo list",
+     "expected_tool": "write_file", "expected_args": {"path": "notes.md"}},
+    {"name": "read_readme", "message": "Show me what's in README.md",
+     "expected_tool": "read_file", "expected_args": {"path": "readme.md"}},
+    {"name": "news_search", "message": "Find the latest news on the qwen3 model release",
+     "expected_tool": "web_search", "expected_args": {"query": "qwen3"}},
+    {"name": "recall_fact", "message": "Remind me what my daughter's name is",
+     "expected_tool": "search_memories", "expected_args": {"query": "daughter"}},
+    {"name": "git_status", "message": "Check the git status of the repository",
+     "expected_tool": "run_command", "expected_args": {"command": "git status"}},
+    {"name": "open_cli", "message": "Open blipshell/ui/cli.py so I can see it",
+     "expected_tool": "read_file", "expected_args": {"path": "cli.py"}},
+    {"name": "concept_search", "message": "Search online for how reciprocal rank fusion (RRF) works",
+     "expected_tool": "web_search", "expected_args": {"query": "rank fusion"}},
+    {"name": "edit_doc", "message": "Fix the typo in docs/SYSTEM_REVIEW.md",
+     "expected_tool": "edit_file", "expected_args": {"path": "system_review.md"}},
 ]
 
 TOOL_LABELS = [t["name"] for t in TOOL_CALLING_TESTS]
@@ -216,6 +379,31 @@ console = Console()
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _tool_call_matches(called: dict, expected_tool: str, expected_args: dict | None) -> bool:
+    """True if a tool call has the right name AND every required arg.
+
+    Tool name must match exactly. For each expected arg, the call must include
+    that key (exact or loose substring key match) and the value must contain the
+    expected substring (case-insensitive) — lenient on phrasing, strict on
+    whether the model actually supplied the right argument.
+    """
+    if called.get("name") != expected_tool:
+        return False
+    if not expected_args:
+        return True
+    args = called.get("args")
+    if not isinstance(args, dict):
+        return False
+    lowered = {str(k).lower(): str(v).lower() for k, v in args.items()}
+    for key, want in expected_args.items():
+        actual = lowered.get(key.lower())
+        if actual is None:  # loose key match (e.g. "file_path" contains "path")
+            actual = next((v for k, v in lowered.items() if key.lower() in k), None)
+        if actual is None or str(want).lower() not in actual:
+            return False
+    return True
+
 
 def parse_model_spec(spec: str) -> tuple[str, dict]:
     """Parse a model spec like 'gpt-oss:latest/low' into (model_name, extra_options).
@@ -399,11 +587,15 @@ async def benchmark_tool_calling(router: LLMRouter, extra_options: dict | None =
                     name, args = extract_tool_call_info(tc)
                     called_tools.append({"name": name, "args": args})
 
-            correct = any(t["name"] == test["expected_tool"] for t in called_tools)
+            correct = any(
+                _tool_call_matches(t, test["expected_tool"], test.get("expected_args"))
+                for t in called_tools
+            )
             result = {
                 "content": content,
                 "tool_calls": called_tools,
                 "expected": test["expected_tool"],
+                "expected_args": test.get("expected_args"),
                 "correct": correct,
                 "time": round(time.perf_counter() - start, 2),
             }

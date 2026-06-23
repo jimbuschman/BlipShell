@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from blipshell.benchmark import discovery, embedding_bench, harness, scoreboard
+from blipshell.benchmark import discovery, embedding_bench, harness, report
 from blipshell.benchmark.judge import LLMJudge
 from blipshell.benchmark.store import BenchmarkStore
 
@@ -22,23 +22,29 @@ from blipshell.benchmark.store import BenchmarkStore
 # Pure scorers
 # ---------------------------------------------------------------------------
 
-def test_score_ranking_band():
-    # 8 items aligned to EXPECTED_RANK_BANDS; make 6/8 land in band.
-    parsed = [1, 1, 1, 3, 4, 3, 5, 5]  # last (sanding) band is (1,3); 5 is out
-    # index 7 expected (1,3) -> 5 out; all others in band -> 7/8
-    results = [{"parsed": p} for p in parsed]
-    assert harness.score_ranking(results) == pytest.approx(7 / 8)
+def test_score_ranking_correlation_discriminates():
+    truth = [1, 2, 3, 4, 5, 1, 2, 3, 4, 5]
+    perfect = [{"parsed": t, "truth_rank": t} for t in truth]
+    inverted = [{"parsed": 6 - t, "truth_rank": t} for t in truth]
+    flat = [{"parsed": 3, "truth_rank": t} for t in truth]
+    assert harness.score_ranking(perfect) == pytest.approx(1.0)
+    assert harness.score_ranking(inverted) == pytest.approx(0.0)
+    # rated everything the same while truth varies -> failed to discriminate
+    assert harness.score_ranking(flat) == pytest.approx(0.0)
 
 
 def test_score_ranking_ignores_errors():
-    results = [{"parsed": -1}] * 8  # all errored
+    results = [{"parsed": -1, "truth_rank": 3}] * 8  # all errored -> <2 valid
     assert harness.score_ranking(results) is None
 
 
-def test_score_importance_band():
-    vals = [0.1, 0.1, 0.1, 0.5, 0.6, 0.5, 0.7, 0.9]  # last band (0,0.45) -> 0.9 out
-    results = [{"parsed": v} for v in vals]
-    assert harness.score_importance(results) == pytest.approx(7 / 8)
+def test_score_importance_calibration():
+    truth = [0.1, 0.5, 0.9, 0.3, 0.7]
+    perfect = [{"parsed": t, "truth_importance": t} for t in truth]
+    assert harness.score_importance(perfect) == pytest.approx(1.0)
+    # flat 0.5 guess: poor correlation + ~0.24 MAE -> well below 1.0
+    flat = [{"parsed": 0.5, "truth_importance": t} for t in truth]
+    assert harness.score_importance(flat) < 0.6
 
 
 def test_score_contradiction_only_valid():
@@ -51,20 +57,24 @@ def test_score_contradiction_only_valid():
     assert harness.score_contradiction(results) == pytest.approx(2 / 3)
 
 
-def test_score_entity_presence_match():
-    # EXPECTED_ENTITY_HAS = [T,T,T,T,F]
+def test_score_entity_f1():
     results = [
-        {"triple_count": 2, "raw": "a|b|c"},   # T ok
-        {"triple_count": 0, "raw": ""},          # T miss
-        {"triple_count": 1, "raw": "x"},        # T ok
-        {"triple_count": 3, "raw": "y"},        # T ok
-        {"triple_count": 0, "raw": "NONE"},     # F ok
+        {"extracted": ["user", "desk robot"], "expected": {"user", "desk robot"}},  # F1 1.0
+        {"extracted": ["wrong"], "expected": {"right"}},                              # F1 0.0
+        {"extracted": [], "expected": set()},                                          # both empty -> 1.0
     ]
-    assert harness.score_entity(results) == pytest.approx(4 / 5)
+    # mean(1.0, 0.0, 1.0) = 0.6667
+    assert harness.score_entity(results) == pytest.approx(2 / 3, abs=1e-3)
+
+
+def test_score_entity_partial_f1_and_case_insensitive():
+    # extracted {a,b,c} vs expected {A,B}: precision 2/3, recall 1.0 -> F1 0.8
+    results = [{"extracted": ["A", "B", "C"], "expected": {"a", "b"}}]
+    assert harness.score_entity(results) == pytest.approx(0.8, abs=1e-3)
 
 
 def test_score_entity_skips_errors():
-    results = [{"triple_count": 0, "raw": "ERROR: boom"}] * 5
+    results = [{"raw": "ERROR: boom", "expected": {"x"}}] * 5
     assert harness.score_entity(results) is None
 
 
@@ -78,14 +88,11 @@ def test_score_tool_calling():
 
 
 def test_score_rank_and_importance_average():
+    # perfect on both channels -> 1.0
     results = [
-        {"rank": lo, "importance": (b[0] + b[1]) / 2}
-        for lo, b in zip(
-            [b[0] for b in harness.EXPECTED_RANK_BANDS],
-            harness.EXPECTED_IMPORTANCE_BANDS,
-        )
+        {"rank": t, "importance": t / 5.0, "truth_rank": t, "truth_importance": t / 5.0}
+        for t in [1, 2, 3, 4, 5]
     ]
-    # all rank at band-low, all importance mid -> both fractions 1.0 -> 1.0
     assert harness.score_rank_and_importance(results) == pytest.approx(1.0)
 
 
@@ -203,7 +210,7 @@ async def test_judge_grade_survives_failure():
 
 
 # ---------------------------------------------------------------------------
-# Scoreboard verdict math
+# Report builder (the shareable deliverable — numbers only, no verdict).
 # ---------------------------------------------------------------------------
 
 def _rows(model, scores, is_baseline=False):
@@ -212,134 +219,82 @@ def _rows(model, scores, is_baseline=False):
         {
             "run_group": "g", "model": model, "suite": "pipeline",
             "task_type": tt, "metric": metric, "value": val, "unit": "ratio",
-            "tier": "quick", "is_baseline": is_baseline, "run_ts": "t", "raw_json": None,
+            "tier": "deep", "is_baseline": is_baseline, "run_ts": "t", "raw_json": None,
         }
         for tt, (metric, val) in scores.items()
     ]
 
 
-def test_scoreboard_better_worse_tie():
-    cand = _rows("cand", {
-        "ranking": ("accuracy", 0.90),     # +0.20 better
-        "coding": ("quality", 0.50),       # -0.20 worse
-        "tool_calling": ("tool_pass_rate", 0.80),  # +0.02 tie
-    })
-    base = _rows("base", {
-        "ranking": ("accuracy", 0.70),
-        "coding": ("quality", 0.70),
-        "tool_calling": ("tool_pass_rate", 0.78),
-    }, is_baseline=True)
-    sb = scoreboard.build_scoreboard(cand, base, verdict_delta=0.05)
-    verdicts = {t["task_type"]: t["verdict"] for t in sb["tasks"]}
-    assert verdicts == {"ranking": "better", "coding": "worse", "tool_calling": "tie"}
-    assert sb["have_baseline"] is True
-    # equal weights: composite cand = (0.9+0.5+0.8)/3, base = (0.7+0.7+0.78)/3
-    # composite is rounded to 4dp for display
-    assert sb["composite_candidate"] == pytest.approx((0.9 + 0.5 + 0.8) / 3, abs=1e-3)
-    assert sb["composite_baseline"] == pytest.approx((0.7 + 0.7 + 0.78) / 3, abs=1e-3)
-
-
-def test_scoreboard_no_baseline():
-    cand = _rows("cand", {"ranking": ("accuracy", 0.8)})
-    sb = scoreboard.build_scoreboard(cand, [], verdict_delta=0.05)
-    assert sb["have_baseline"] is False
-    assert sb["overall"] == "no_baseline"
-    assert sb["composite_candidate"] == pytest.approx(0.8)
-
-
-def test_scoreboard_weights_and_latency_excluded():
-    cand = _rows("cand", {
-        "ranking": ("accuracy", 1.0),
-        "coding": ("quality", 0.0),
-    })
-    # add a latency row that must NOT enter the composite
-    cand.append({
-        "run_group": "g", "model": "cand", "suite": "pipeline", "task_type": "pipeline",
-        "metric": "latency_s", "value": 12.3, "unit": "seconds", "tier": "quick",
-        "is_baseline": False, "run_ts": "t", "raw_json": None,
-    })
-    sb = scoreboard.build_scoreboard(cand, [], task_weights={"ranking": 3.0, "coding": 1.0})
-    # weighted: (3*1.0 + 1*0.0)/4 = 0.75
-    assert sb["composite_candidate"] == pytest.approx(0.75)
-    assert sb["latency"] == {"pipeline": 12.3}
-    # only two scoring tasks
-    assert {t["task_type"] for t in sb["tasks"]} == {"ranking", "coding"}
-
-
-# ---------------------------------------------------------------------------
-# Leaderboard (cross-model, numbers-only — no verdict; BlipShell's local/cloud
-# + fallback routing is too rich to model an automated switch recommendation).
-# ---------------------------------------------------------------------------
-
-from blipshell.benchmark import leaderboard  # noqa: E402
-
-
-def _rows_with_latency(model, scores, lats, is_baseline=False):
-    rows = _rows(model, scores, is_baseline)
+def _rows_with_latency(model, scores, lats):
+    rows = _rows(model, scores)
     rows += [{
         "run_group": "g", "model": model, "suite": "s", "task_type": suite,
-        "metric": "latency_s", "value": v, "unit": "seconds", "tier": "full",
-        "is_baseline": is_baseline, "run_ts": "t", "raw_json": None,
+        "metric": "latency_s", "value": v, "unit": "seconds", "tier": "deep",
+        "is_baseline": False, "run_ts": "t", "raw_json": None,
     } for suite, v in lats.items()]
     return rows
 
 
-def test_leaderboard_matrix_scores_and_best_per_task():
+def test_report_quality_matrix_and_best_per_job():
     model_rows = {
-        "a": _rows("a", {"coding": ("quality", 0.80)}),
-        "b": _rows("b", {"coding": ("quality", 0.65)}),
+        "a": _rows("a", {"coding": ("accuracy", 0.80), "ranking": ("accuracy", 0.60)}),
+        "b": _rows("b", {"coding": ("accuracy", 0.40), "ranking": ("accuracy", 1.00)}),
     }
-    lb = leaderboard.build_leaderboard(model_rows)
-    task = next(t for t in lb["tasks"] if t["task_type"] == "coding")
-    assert task["scores"] == {"a": pytest.approx(0.80), "b": pytest.approx(0.65)}
-    assert task["metric"] == "quality"
-    assert task["best_model"] == "a"  # bolding hint only — no verdict emitted
-    # no incumbent/switch concepts in the output at all
-    assert "switch" not in task and "incumbent" not in task
-    assert "switch_suggestions" not in lb
-
-
-def test_leaderboard_handles_models_missing_a_task():
-    model_rows = {
-        "a": _rows("a", {"coding": ("quality", 0.80), "ranking": ("accuracy", 0.50)}),
-        "b": _rows("b", {"coding": ("quality", 0.65)}),  # never benchmarked on ranking
-    }
-    lb = leaderboard.build_leaderboard(model_rows)
-    ranking = next(t for t in lb["tasks"] if t["task_type"] == "ranking")
-    assert set(ranking["scores"]) == {"a"}  # b absent, not zero-filled
-    assert ranking["best_model"] == "a"
-
-
-def test_leaderboard_composite_and_known_job_ordering():
-    model_rows = {
-        "a": _rows("a", {"coding": ("quality", 0.80), "ranking": ("accuracy", 0.60)}),
-        "b": _rows("b", {"coding": ("quality", 0.40), "ranking": ("accuracy", 1.00)}),
-    }
-    lb = leaderboard.build_leaderboard(model_rows, task_weights={"coding": 3.0, "ranking": 1.0})
+    rep = report.build_report(model_rows, task_weights={"coding": 3.0, "ranking": 1.0})
+    coding = next(c for c in rep["categories"] if c["key"] == "coding")
+    assert coding["scores"] == {"a": pytest.approx(0.80), "b": pytest.approx(0.40)}
+    assert coding["best_model"] == "a"
     # composite a = (3*0.8 + 1*0.6)/4 = 0.75 ; b = (3*0.4 + 1*1.0)/4 = 0.55
-    assert lb["composite"]["a"] == pytest.approx(0.75)
-    assert lb["composite"]["b"] == pytest.approx(0.55)
-    # known jobs ordered per KNOWN_JOB_ORDER (ranking before coding)
-    assert [t["task_type"] for t in lb["tasks"]] == ["ranking", "coding"]
+    assert rep["composite"]["a"] == pytest.approx(0.75)
+    assert rep["composite"]["b"] == pytest.approx(0.55)
+    # known job ordering: ranking before coding
+    assert [c["key"] for c in rep["categories"]] == ["ranking", "coding"]
+    # NO verdict/incumbent/switch concepts anywhere
+    assert "switch" not in rep and "incumbent" not in str(rep["categories"])
 
 
-def test_leaderboard_latency_map_round_trips_per_suite():
+def test_report_latency_and_catalog_round_trip():
     model_rows = {
-        "a": _rows_with_latency("a", {"ranking": ("accuracy", 0.80)},
-                                {"pipeline": 1.4, "reasoning_suite": 2.1}),
-        "b": _rows_with_latency("b", {"ranking": ("accuracy", 0.90)},
-                                {"pipeline": 6.0, "reasoning_suite": 8.2}),
+        "local": _rows_with_latency("local", {"ranking": ("accuracy", 0.8)},
+                                    {"pipeline": 0.6, "reasoning_suite": 28.9}),
+        "cloud": _rows_with_latency("cloud", {"ranking": ("accuracy", 0.85)},
+                                    {"pipeline": 2.9, "reasoning_suite": 11.0}),
     }
-    lb = leaderboard.build_leaderboard(model_rows)
-    assert lb["latency"]["a"]["pipeline"] == pytest.approx(1.4)
-    assert lb["latency"]["b"]["reasoning_suite"] == pytest.approx(8.2)
+    catalog = {"cloud": {"price_in": 0.3, "price_out": 1.2, "tok_per_s": 95, "context_length": 131072}}
+    rep = report.build_report(model_rows, catalog=catalog, judge_model="judge-x")
+    assert rep["latency"]["local"]["reasoning_suite"] == pytest.approx(28.9)
+    assert rep["catalog"]["cloud"]["price_in"] == pytest.approx(0.3)
+    assert rep["catalog"]["local"]["price_in"] is None
+    assert rep["judge_model"] == "judge-x"
 
 
-def test_leaderboard_empty():
-    lb = leaderboard.build_leaderboard({})
-    assert lb["tasks"] == []
-    assert lb["composite"] == {}
-    assert lb["latency"] == {}
+def test_report_markdown_is_self_contained():
+    model_rows = {"a": _rows_with_latency("a", {"reasoning": ("quality", 0.7)}, {"reasoning_suite": 5.0})}
+    md = report.render_markdown(report.build_report(model_rows, judge_model="judge-x", generated_ts="2026-06-23"))
+    # the reading LLM needs context: how-to-read, methodology, judge, caveats
+    assert "How to read this" in md
+    assert "Methodology" in md
+    assert "judge-x" in md
+    assert "Caveats" in md
+    assert "Quality by job" in md
+
+
+def test_report_excludes_informational_metrics_from_composite():
+    # realdata 'agreement' and latency must not enter the quality composite.
+    rows = _rows("a", {"ranking": ("accuracy", 1.0)})
+    rows.append({"run_group": "g", "model": "a", "suite": "realdata", "task_type": "ranking",
+                 "metric": "agreement", "value": 0.0, "unit": "ratio", "tier": "deep",
+                 "is_baseline": False, "run_ts": "t", "raw_json": None})
+    rep = report.build_report({"a": rows})
+    assert rep["composite"]["a"] == pytest.approx(1.0)  # agreement 0.0 excluded
+
+
+def test_report_empty():
+    rep = report.build_report({})
+    assert rep["categories"] == []
+    assert rep["composite"] == {}
+    md = report.render_markdown(rep)
+    assert "No benchmarked models" in md
 
 
 # ---------------------------------------------------------------------------

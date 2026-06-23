@@ -71,32 +71,11 @@ ALL_ROLES = [
 # latency, agreement, cost — is shown but informational).
 SCORING_METRICS = {"accuracy", "quality", "tool_pass_rate"}
 
-# Calibration bands for the curated synthetic TEST_MESSAGES (benchmark_models.py),
-# aligned to that file's MESSAGE_LABELS order. A rank/importance is "correct" when
-# it lands inside the band. Deliberately tolerant — we reward calibration, not
-# pinpoint matching.
-EXPECTED_RANK_BANDS = [
-    (1, 2),  # hey (greeting)
-    (1, 2),  # ok thanks (filler)
-    (1, 2),  # system noise
-    (3, 4),  # ESP32 audio issue
-    (3, 5),  # daughter's minecraft
-    (3, 4),  # code review (asst)
-    (4, 5),  # desk robot decision
-    (1, 3),  # sanding paint
-]
-EXPECTED_IMPORTANCE_BANDS = [
-    (0.0, 0.35),
-    (0.0, 0.35),
-    (0.0, 0.35),
-    (0.30, 0.75),
-    (0.40, 0.90),
-    (0.30, 0.80),
-    (0.40, 1.00),
-    (0.0, 0.45),
-]
-# ENTITY_TEST_SUMMARIES order: first 4 contain entities, last ("User said hello") is NONE.
-EXPECTED_ENTITY_HAS = [True, True, True, True, False]
+# Scoring is now ground-truth based (per-item), not band-based: each dataset
+# item carries its own gold value (truth_rank, truth_importance, expected
+# entities, expected tool+args), and the score_* functions below compare the
+# model's output against it. This discriminates capable models instead of
+# saturating everyone at 1.0 the way the old wide bands did.
 
 # Synthetic substantive sessions for session_review (a non-trivial session should
 # yield a filled 5-section reflection; SKIP would be wrong here). Kept self-contained
@@ -135,6 +114,99 @@ SESSION_REVIEW_CASES = [
             "Assistant: Track persist tasks in a list and await them in flush_pending_persists() "
             "before the enqueue reads _memory_db_ids. Make _enqueue_undumped_messages async and "
             "await the flush first."
+        ),
+    },
+    {
+        "summary": (
+            "Fixed search returning almost nothing at 31k memories: compounding filters "
+            "(similarity 0.5 → rank ≥3 → score floor) removed ~85% of candidates. Replaced "
+            "the rank filter with an importance floor, lowered the similarity threshold, and "
+            "added a recency boost."
+        ),
+        "transcript": (
+            "User: search barely returns anything now that the corpus is huge.\n"
+            "Assistant: Your filters compound — similarity 0.5, then rank≥3, then a score floor. "
+            "On 31k memories that strips ~85% of candidates.\n"
+            "User: what should change?\n"
+            "Assistant: Drop the rank filter for a continuous importance floor (0.25), lower "
+            "similarity to ~0.35, give FTS-only hits a baseline similarity, and add a recency boost.\n"
+            "User: recall is way better now."
+        ),
+    },
+    {
+        "summary": (
+            "Resolved cascading 429s on cloud summarization. The free tier's 20-request burst "
+            "limit caused failures; added per-endpoint rate limiting and a RateLimitExhausted "
+            "cascade to the next endpoint, with a local fallback that passes num_ctx."
+        ),
+        "transcript": (
+            "User: cloud summarization keeps dying with 429s during import.\n"
+            "Assistant: Free tier has a 20-request burst cap. We should rate-limit per endpoint "
+            "and cascade to the next on RateLimitExhausted rather than failing.\n"
+            "User: and when everything cloud is exhausted?\n"
+            "Assistant: Fall back to local — but the fallback path must pass num_ctx from the "
+            "endpoint config or it silently truncates context.\n"
+            "User: import ran clean after that."
+        ),
+    },
+    {
+        "summary": (
+            "Made the project-mode executor finish reliably. It was making 37 tool calls without "
+            "completing; added a task_complete tool, per-turn state injection, and an 80%-budget "
+            "wind-down message."
+        ),
+        "transcript": (
+            "User: the executor just spins — 37 tool calls and never finishes.\n"
+            "Assistant: It lacks a completion signal and state awareness. Add a task_complete tool "
+            "instead of a magic string, inject a [STATE] block each turn, and a wind-down nudge at 80% budget.\n"
+            "User: that's the Claude Code pattern?\n"
+            "Assistant: Yes — explicit completion, state awareness, bounded tool output.\n"
+            "User: it completes in ~12 steps now."
+        ),
+    },
+    {
+        "summary": (
+            "Decided to migrate the vector store from ChromaDB to sqlite-vec to eliminate "
+            "dual-store sync drift, accepting a one-time re-embedding cost."
+        ),
+        "transcript": (
+            "User: the chroma/sqlite sync keeps drifting and throwing FK errors.\n"
+            "Assistant: Two stores means two sources of truth. Moving vectors into sqlite-vec "
+            "(vec0 tables in the same DB file) removes the drift class entirely.\n"
+            "User: downside?\n"
+            "Assistant: A one-time full re-embed and losing Chroma's prebuilt index, but for a "
+            "single-user corpus that's a clear win.\n"
+            "User: let's do it."
+        ),
+    },
+    {
+        "summary": (
+            "Built a deterministic loop-integration test harness so chat-loop behavior can be "
+            "validated without Ollama, using a scripted LLM client feeding canned turns."
+        ),
+        "transcript": (
+            "User: I keep breaking the chat loop and only finding out on the Ollama PC.\n"
+            "Assistant: Separate wiring from model behavior. A scripted LLM client can feed canned "
+            "tool-call/text turns into the real loop and assert completion detection deterministically.\n"
+            "User: so logic tests here, quality tests there?\n"
+            "Assistant: Exactly — that split is the key mental model.\n"
+            "User: caught two regressions already."
+        ),
+    },
+    {
+        "summary": (
+            "Fixed an entity graph full of near-duplicate entities by adding a lexical-variant "
+            "merge pass and an embedding-similarity merge with a version guard, archiving rather "
+            "than deleting so re-mentions can revive."
+        ),
+        "transcript": (
+            "User: the entity graph has 'esp32', 'ESP32', 'Esp32' all separate.\n"
+            "Assistant: Run a lexical-variant merge first (case/punctuation), then an embedding "
+            "merge with a version guard so concurrent writes don't clobber.\n"
+            "User: delete the duplicates?\n"
+            "Assistant: Archive, don't delete — a merged name can reappear later and you want to "
+            "revive it on re-mention, not strand the mention.\n"
+            "User: 7k merged, none lost."
         ),
     },
 ]
@@ -185,38 +257,78 @@ def build_candidate_router(
 # These are the unit-test surface.
 # ---------------------------------------------------------------------------
 
-def _band_fraction(values, bands, valid=lambda v: v >= 0) -> Optional[float]:
-    """Fraction of values landing inside their band. None if no valid items."""
-    hits = total = 0
-    for v, (lo, hi) in zip(values, bands):
-        if not valid(v):
-            continue
-        total += 1
-        if lo <= v <= hi:
-            hits += 1
-    return (hits / total) if total else None
+def _pearson(xs: list[float], ys: list[float]) -> Optional[float]:
+    """Pearson correlation, or None if undefined (n<2 or zero variance)."""
+    n = len(xs)
+    if n < 2:
+        return None
+    mx, my = sum(xs) / n, sum(ys) / n
+    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    sxx = sum((x - mx) ** 2 for x in xs)
+    syy = sum((y - my) ** 2 for y in ys)
+    if sxx == 0 or syy == 0:
+        return None
+    return sxy / ((sxx * syy) ** 0.5)
+
+
+def _corr_score(pred: list[float], truth: list[float]) -> Optional[float]:
+    """Correlation mapped to 0-1 ((r+1)/2). A model that tracks the gold ordering
+    scores ~1.0; random ~0.5; inverted ~0.0. If the model gave no usable variance
+    (e.g. rated everything the same) while the truth does vary, that's a failure to
+    discriminate -> 0.0. None only when there's nothing to score."""
+    if len(pred) < 2:
+        return None
+    r = _pearson(pred, truth)
+    if r is None:
+        truth_varies = len(set(truth)) > 1
+        pred_varies = len(set(pred)) > 1
+        if truth_varies and not pred_varies:
+            return 0.0  # flat predictions can't track a varying target
+        return None
+    return round(max(0.0, (r + 1.0) / 2.0), 4)
+
+
+def _mae_score(pred: list[float], truth: list[float]) -> Optional[float]:
+    """1 - mean absolute error, for values already on a 0-1 scale (importance)."""
+    if not pred:
+        return None
+    mae = sum(abs(p - t) for p, t in zip(pred, truth)) / len(pred)
+    return round(max(0.0, 1.0 - mae), 4)
 
 
 def score_ranking(results: list[dict]) -> Optional[float]:
-    return _band_fraction([r.get("parsed", -1) for r in results], EXPECTED_RANK_BANDS)
+    """Rank-correlation of predicted rank vs gold rank (order is what matters)."""
+    pairs = [(float(r["parsed"]), float(r["truth_rank"]))
+             for r in results if r.get("parsed", -1) >= 0 and "truth_rank" in r]
+    if len(pairs) < 2:
+        return None
+    return _corr_score([p for p, _ in pairs], [t for _, t in pairs])
 
 
 def score_importance(results: list[dict]) -> Optional[float]:
-    return _band_fraction(
-        [r.get("parsed", -1.0) for r in results], EXPECTED_IMPORTANCE_BANDS,
-        valid=lambda v: v >= 0.0,
-    )
+    """Average of ordering (correlation) and calibration (1-MAE) vs gold importance."""
+    pairs = [(float(r["parsed"]), float(r["truth_importance"]))
+             for r in results if r.get("parsed", -1) >= 0 and "truth_importance" in r]
+    if len(pairs) < 2:
+        return None
+    pred = [p for p, _ in pairs]
+    truth = [t for _, t in pairs]
+    parts = [s for s in (_corr_score(pred, truth), _mae_score(pred, truth)) if s is not None]
+    return round(sum(parts) / len(parts), 4) if parts else None
 
 
 def score_rank_and_importance(results: list[dict]) -> Optional[float]:
-    """Average of the rank-in-band and importance-in-band fractions."""
-    rank_frac = _band_fraction([r.get("rank", -1) for r in results], EXPECTED_RANK_BANDS)
-    imp_frac = _band_fraction(
-        [r.get("importance", -1.0) for r in results], EXPECTED_IMPORTANCE_BANDS,
-        valid=lambda v: v >= 0.0,
-    )
-    parts = [x for x in (rank_frac, imp_frac) if x is not None]
-    return (sum(parts) / len(parts)) if parts else None
+    """Combined: rank correlation + importance (corr & calibration)."""
+    rank = score_ranking([
+        {"parsed": r.get("rank", -1), "truth_rank": r["truth_rank"]}
+        for r in results if "truth_rank" in r
+    ])
+    imp = score_importance([
+        {"parsed": r.get("importance", -1.0), "truth_importance": r["truth_importance"]}
+        for r in results if "truth_importance" in r
+    ])
+    parts = [x for x in (rank, imp) if x is not None]
+    return round(sum(parts) / len(parts), 4) if parts else None
 
 
 def score_contradiction(results: list[dict]) -> Optional[float]:
@@ -227,25 +339,44 @@ def score_contradiction(results: list[dict]) -> Optional[float]:
     return sum(1 for r in valid if r.get("correct")) / len(valid)
 
 
+def _f1(predicted: set, expected: set) -> float:
+    """F1 of two sets. Both empty -> 1.0 (correctly extracted nothing)."""
+    if not expected and not predicted:
+        return 1.0
+    if not predicted or not expected:
+        return 0.0
+    tp = len(predicted & expected)
+    if tp == 0:
+        return 0.0
+    precision = tp / len(predicted)
+    recall = tp / len(expected)
+    return 2 * precision * recall / (precision + recall)
+
+
 def score_entity(results: list[dict]) -> Optional[float]:
-    """Fraction where presence-of-entities matches expectation."""
-    hits = total = 0
-    for r, expect_has in zip(results, EXPECTED_ENTITY_HAS):
-        if str(r.get("raw", "")).startswith("ERROR:"):
+    """Mean F1 of extracted entities vs the expected entity set per item.
+
+    Rewards extracting the RIGHT entities, not merely producing some output.
+    Each result carries `extracted` (set/list of entity names) and `expected`."""
+    scored = []
+    for r in results:
+        if str(r.get("raw", "")).startswith("ERROR:") or "expected" not in r:
             continue
-        total += 1
-        has = r.get("triple_count", 0) > 0
-        if has == expect_has:
-            hits += 1
-    return (hits / total) if total else None
+        predicted = {str(e).strip().lower() for e in r.get("extracted", [])}
+        expected = {str(e).strip().lower() for e in r.get("expected", [])}
+        scored.append(_f1(predicted, expected))
+    return round(sum(scored) / len(scored), 4) if scored else None
 
 
 def score_tool_calling(results: list[dict]) -> Optional[float]:
-    """tool_pass_rate = mean(correct) over non-errored items."""
+    """Mean over non-errored items of (correct tool name AND required args present).
+
+    `correct` is set by the dataset runner: the called tool must match
+    `expected_tool` and include every key in `expected_args` with matching values."""
     valid = [r for r in results if not str(r.get("content", "")).startswith("ERROR:")]
     if not valid:
         return None
-    return sum(1 for r in valid if r.get("correct")) / len(valid)
+    return round(sum(1 for r in valid if r.get("correct")) / len(valid), 4)
 
 
 def score_reflection_completeness(parsed: dict) -> float:
@@ -593,27 +724,24 @@ class BenchmarkHarness:
         db_path: Optional[str] = None,
         ollama_url: str = "http://localhost:11434",
         full_sample: int = 50,
-        coding_tier: str = "standard",
         coding_timeout: float = 300.0,
         on_status=None,
     ) -> list[dict]:
-        """Run the configured tier and return all metric rows.
+        """Run the ONE deep test: every category at full depth.
 
-        Tiers: quick = pipeline; full = + reasoning + session_review + real-data;
-        all = full + embedding + agentic coding executor (heavy).
+        No tiers — always pipeline + reasoning + session_review + real-data +
+        embedding + the full agentic-coding suite (standard+hard+expert). This is
+        intentionally heavy (~30-90 min/model); shallow runs don't discriminate.
         """
         rows = await self.run_pipeline(on_status=on_status)
-        if self.tier in ("full", "all"):
-            rows += await self.run_reasoning(on_status=on_status)
-            rows += await self.run_session_review(on_status=on_status)
-            if db_path:
-                rows += await self.run_realdata(db_path, full_sample, on_status=on_status)
-        if self.tier == "all":
-            if db_path:
-                rows += await self.run_embedding(db_path, ollama_url, on_status=on_status)
-            else:
-                logger.info("embedding: skipped (no db_path)")
-            rows += await self.run_coding(coding_tier, coding_timeout, on_status=on_status)
+        rows += await self.run_reasoning(on_status=on_status)
+        rows += await self.run_session_review(on_status=on_status)
+        if db_path:
+            rows += await self.run_realdata(db_path, full_sample, on_status=on_status)
+            rows += await self.run_embedding(db_path, ollama_url, on_status=on_status)
+        else:
+            logger.info("realdata + embedding skipped (no db_path)")
+        rows += await self.run_coding("all", coding_timeout, on_status=on_status)
         return rows
 
     # -- judge helpers (no-op when judge is None) -------------------------
