@@ -368,6 +368,57 @@ def test_leaderboard_empty():
     assert lb["composite"] == {}
 
 
+def _rows_with_latency(model, scores, lats, is_baseline=False):
+    rows = _rows(model, scores, is_baseline)
+    rows += [{
+        "run_group": "g", "model": model, "suite": "s", "task_type": suite,
+        "metric": "latency_s", "value": v, "unit": "seconds", "tier": "full",
+        "is_baseline": is_baseline, "run_ts": "t", "raw_json": None,
+    } for suite, v in lats.items()]
+    return rows
+
+
+def test_leaderboard_surfaces_suite_latency_per_job():
+    model_rows = {
+        "incumbent-model": _rows_with_latency(
+            "incumbent-model",
+            {"ranking": ("accuracy", 0.80), "reasoning": ("quality", 0.80)},
+            {"pipeline": 1.4, "reasoning_suite": 2.1},
+        ),
+        "challenger": _rows_with_latency(
+            "challenger",
+            {"ranking": ("accuracy", 0.90), "reasoning": ("quality", 0.82)},
+            {"pipeline": 6.0, "reasoning_suite": 8.2},
+        ),
+    }
+    incumbents = {"ranking": "incumbent-model", "reasoning": "incumbent-model"}
+    lb = leaderboard.build_leaderboard(model_rows, incumbents, verdict_delta=0.05)
+
+    ranking = next(t for t in lb["tasks"] if t["task_type"] == "ranking")
+    # ranking is a pipeline-suite job -> shares the pipeline latency
+    assert ranking["incumbent_latency"] == pytest.approx(1.4)
+    assert ranking["best_latency"] == pytest.approx(6.0)   # challenger won on quality
+    assert ranking["switch"] is True
+
+    reasoning = next(t for t in lb["tasks"] if t["task_type"] == "reasoning")
+    # +0.02 within threshold -> no switch; latency still surfaced for the best model
+    assert reasoning["switch"] is False
+    assert reasoning["best_latency"] is not None
+    # latency map round-trips per model/suite
+    assert lb["latency"]["challenger"]["reasoning_suite"] == pytest.approx(8.2)
+
+
+def test_job_latency_falls_back_and_handles_missing():
+    # coding has no own latency row -> falls back to reasoning_suite
+    assert leaderboard._job_latency({"reasoning_suite": 5.0}, "coding") == 5.0
+    # coding's own latency wins when present
+    assert leaderboard._job_latency({"coding": 9.0, "reasoning_suite": 5.0}, "coding") == 9.0
+    # embedding has no measured latency
+    assert leaderboard._job_latency({"pipeline": 1.0}, "embedding") is None
+    # nothing measured
+    assert leaderboard._job_latency({}, "ranking") is None
+
+
 # ---------------------------------------------------------------------------
 # Dataset loader — must NOT depend on a top-level `tests` package (collides
 # with an unrelated site-packages `tests` under an editable install).

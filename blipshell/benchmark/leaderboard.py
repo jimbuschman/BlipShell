@@ -16,7 +16,7 @@ from typing import Optional
 from rich.console import Console
 from rich.table import Table
 
-from blipshell.benchmark.scoreboard import SCORING_METRICS, _weighted
+from blipshell.benchmark.scoreboard import SCORING_METRICS, _latency_map, _weighted
 
 # Benchmark task_type -> the config.yaml ModelsConfig field whose model serves
 # that job in production. Tasks NOT in this map (none currently) render with no
@@ -36,6 +36,28 @@ TASK_TO_CONFIG_FIELD = {
     "session_review": "session_review",
     "embedding": "embedding",
 }
+
+# Latency is measured per SUITE, not per job, so several jobs share one mean.
+# Each job maps to the suite latency row(s) that cover it (first present wins —
+# coding has its own latency only under --all, else it rode the reasoning suite).
+# Jobs with no measured latency (embedding) map to an empty list.
+JOB_LATENCY_SUITE = {
+    "ranking": ["pipeline"], "importance": ["pipeline"], "rank_importance": ["pipeline"],
+    "contradiction": ["pipeline"], "entity": ["pipeline"], "summarization": ["pipeline"],
+    "lessons": ["pipeline"],
+    "reasoning": ["reasoning_suite"], "tool_calling": ["reasoning_suite"],
+    "coding": ["coding", "reasoning_suite"],
+    "session_review": ["session_review"],
+    "embedding": [],
+}
+
+
+def _job_latency(lat_map: dict[str, float], task_type: str) -> Optional[float]:
+    """Mean s/call for a job, from its suite's latency (first present wins)."""
+    for suite in JOB_LATENCY_SUITE.get(task_type, []):
+        if suite in lat_map:
+            return lat_map[suite]
+    return None
 
 
 def _score_for(rows: list[dict], task_type: str) -> Optional[float]:
@@ -69,6 +91,7 @@ def build_leaderboard(
     """
     task_weights = task_weights or {}
     models = sorted(model_rows)
+    latency = {m: _latency_map(rows) for m, rows in model_rows.items()}
 
     # All task_types that anyone scored, ordered with known jobs first.
     seen: set[str] = set()
@@ -104,13 +127,17 @@ def build_leaderboard(
                 "delta": round(delta, 4),
             })
 
+        inc_lat = _job_latency(latency.get(incumbent, {}), task_type) if incumbent else None
+        best_lat = _job_latency(latency.get(best_model, {}), task_type)
         tasks.append({
             "task_type": task_type,
             "incumbent": incumbent,
             "incumbent_benchmarked": inc_score is not None,
             "incumbent_score": round(inc_score, 4) if inc_score is not None else None,
+            "incumbent_latency": round(inc_lat, 2) if inc_lat is not None else None,
             "best_model": best_model,
             "best_score": round(best_score, 4),
+            "best_latency": round(best_lat, 2) if best_lat is not None else None,
             "delta": round(delta, 4) if delta is not None else None,
             "switch": switch,
             "scores": {m: round(v, 4) for m, v in scores.items()},
@@ -126,6 +153,7 @@ def build_leaderboard(
         "models": models,
         "tasks": tasks,
         "composite": composite,
+        "latency": latency,  # model -> {suite: mean_s}
         "switch_suggestions": suggestions,
     }
 
@@ -148,6 +176,7 @@ def render_leaderboard(lb: dict, console: Optional[Console] = None) -> None:
     dec.add_column("Best tested")
     dec.add_column("Best", justify="right")
     dec.add_column("Delta", justify="right")
+    dec.add_column("Lat", justify="right")
     dec.add_column("Switch?", justify="center")
 
     for t in lb["tasks"]:
@@ -159,15 +188,25 @@ def render_leaderboard(lb: dict, console: Optional[Console] = None) -> None:
         # Bold the best model only when it actually beats the incumbent.
         best_disp = f"[green]{best}[/]" if t["switch"] else best
         delta = f"{t['delta']:+.3f}" if t["delta"] is not None else "—"
+        # Latency of the best model for this job; on a SWITCH, show inc->best so
+        # the quality/speed tradeoff is visible (speed never drives the verdict).
+        if t["switch"] and t["incumbent_latency"] is not None and t["best_latency"] is not None:
+            lat = f"{t['incumbent_latency']:.1f}->{t['best_latency']:.1f}s"
+        elif t["best_latency"] is not None:
+            lat = f"{t['best_latency']:.1f}s"
+        else:
+            lat = "—"
         if t["switch"]:
             verdict = "[bold green]SWITCH[/]"
         elif t["delta"] is not None:
             verdict = "[dim]keep[/]"
         else:
             verdict = "[dim]—[/]"
-        dec.add_row(t["task_type"], inc, inc_s, best_disp, f"{t['best_score']:.3f}", delta, verdict)
+        dec.add_row(t["task_type"], inc, inc_s, best_disp, f"{t['best_score']:.3f}", delta, lat, verdict)
 
     console.print(dec)
+    console.print("[dim]Lat = mean s/call, measured per suite (jobs in the same suite share it); "
+                  "speed is shown, not scored.[/dim]")
 
     # --- Full matrix: models x jobs ---
     models = lb["models"]
@@ -201,6 +240,30 @@ def render_leaderboard(lb: dict, console: Optional[Console] = None) -> None:
             crow.append(f"{v:.3f}")
     matrix.add_row(*crow)
     console.print(matrix)
+
+    # --- Latency by suite (lower = faster); all models side by side ---
+    lat_by_model = lb.get("latency", {})
+    suites = sorted({s for mlat in lat_by_model.values() for s in mlat})
+    if suites:
+        lt = Table(title="Latency (mean s/call, by suite — lower is faster)", show_lines=False)
+        lt.add_column("Suite", style="cyan", no_wrap=True)
+        for m in models:
+            lt.add_column(m, justify="right")
+        for suite in suites:
+            vals = {m: lat_by_model.get(m, {}).get(suite) for m in models}
+            present = {m: v for m, v in vals.items() if v is not None}
+            fastest = min(present, key=lambda m: present[m]) if present else None
+            row = [suite]
+            for m in models:
+                v = vals[m]
+                if v is None:
+                    row.append("—")
+                elif m == fastest:
+                    row.append(f"[bold green]{v:.2f}[/]")
+                else:
+                    row.append(f"{v:.2f}")
+            lt.add_row(*row)
+        console.print(lt)
 
     # --- Switch summary ---
     console.print()
