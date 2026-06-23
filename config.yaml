@@ -285,6 +285,18 @@ reflection:
   inject_rerank_floor: 0.8           # the real gate: judge verdict (1.0/0.0) must clear this
   inject_max: 1                      # thoughts injected per turn
   inject_prefilter_k: 3              # candidates sent to the judge
+  # Self-gravity (step 1): each lingering thought carries a weight — recurrence
+  # reinforces it, surfacing fatigue + age decay erode it. Heaviest-relevant
+  # thought surfaces; heavy ones render "[Thought · recurring]". Self-layer only;
+  # never touches retrieval ranking. The relevance gate is unchanged and still
+  # required, so gravity only re-orders/marks what was already going to surface.
+  gravity_enabled: true              # the switch — turn the feature on
+  gravity_recur_threshold: 0.85      # cosine above which a new thought "echoes" a prior
+  gravity_recur_boost: 0.5           # weight added to an echoed prior
+  gravity_fatigue: 0.6               # weight x this each time a thought surfaces (anti-spiral)
+  gravity_half_life_days: 30.0       # effective weight halves over this span
+  gravity_min_weight: 0.1            # floor so decay/fatigue never zero a thought
+  gravity_marker_weight: 1.5         # render "recurring" marker at/above this weight
 
 # Per-model behavioral settings (Aider-inspired)
 # Configures how the agent interacts with each model.
