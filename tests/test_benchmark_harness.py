@@ -289,6 +289,26 @@ def test_report_excludes_informational_metrics_from_composite():
     assert rep["composite"]["a"] == pytest.approx(1.0)  # agreement 0.0 excluded
 
 
+def test_report_surfaces_output_length():
+    rows = _rows("a", {"summarization": ("quality", 0.9)})
+    rows.append({"run_group": "g", "model": "a", "suite": "pipeline",
+                 "task_type": "summarization", "metric": "length_words", "value": 215.0,
+                 "unit": "words", "tier": "deep", "is_baseline": False, "run_ts": "t", "raw_json": None})
+    rep = report.build_report({"a": rows})
+    assert rep["length"]["a"]["summarization"] == pytest.approx(215.0)
+    md = report.render_markdown(rep)
+    assert "Output length" in md and "215" in md
+    # length must NOT leak into the quality composite
+    assert rep["composite"]["a"] == pytest.approx(0.9)
+
+
+def test_mean_words():
+    assert harness._mean_words(["one two three", "four five"]) == pytest.approx(2.5)
+    assert harness._mean_words(["ERROR: boom", "a b c d"]) == pytest.approx(4.0)  # errors skipped
+    assert harness._mean_words(["ERROR: x"]) is None
+    assert harness._mean_words([]) is None
+
+
 def test_report_empty():
     rep = report.build_report({})
     assert rep["categories"] == []

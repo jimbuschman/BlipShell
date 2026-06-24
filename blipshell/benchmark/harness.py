@@ -413,6 +413,13 @@ def _mean(values: list[Optional[float]]) -> Optional[float]:
     return round(sum(vals) / len(vals), 4) if vals else None
 
 
+def _mean_words(responses: list[str]) -> Optional[float]:
+    """Mean word count over non-errored responses — a verbosity signal so a
+    longer-but-not-better model can't silently win on judged jobs."""
+    counts = [len(str(r).split()) for r in responses if r and not str(r).startswith("ERROR:")]
+    return round(sum(counts) / len(counts), 1) if counts else None
+
+
 # ---------------------------------------------------------------------------
 # Harness
 # ---------------------------------------------------------------------------
@@ -493,12 +500,16 @@ class BenchmarkHarness:
             [s["response"] for s in summ],
         )
         rows.append(self._row("pipeline", "summarization", "quality", summ_q))
+        rows.append(self._row("pipeline", "summarization", "length_words",
+                              _mean_words([s["response"] for s in summ]), unit="words"))
 
         status("pipeline: lessons")
         lessons = await bm.benchmark_lessons(r)
         conv_texts = [bm.build_conversation_text(c) for c in bm.TEST_CONVERSATIONS]
         less_q = await self._judge_lessons(conv_texts, [l["response"] for l in lessons])
         rows.append(self._row("pipeline", "lessons", "quality", less_q))
+        rows.append(self._row("pipeline", "lessons", "length_words",
+                              _mean_words([l["response"] for l in lessons]), unit="words"))
 
         lat = _mean_latency(ranking, importance, rank_imp, contradiction, entity, summ, lessons)
         rows.append(self._row("pipeline", "pipeline", "latency_s", lat, unit="seconds"))
@@ -521,12 +532,16 @@ class BenchmarkHarness:
         reason_tasks = [self._reasoning_task_text(t) for t in br.REASONING_TESTS]
         reason_q = await self._judge_reasoning(reason_tasks, [x["response"] for x in reasoning])
         rows.append(self._row("reasoning", "reasoning", "quality", reason_q))
+        rows.append(self._row("reasoning", "reasoning", "length_words",
+                              _mean_words([x["response"] for x in reasoning]), unit="words"))
 
         status("reasoning: code generation")
         coding = await br.benchmark_coding(r)
         code_tasks = [t.get("prompt", "") for t in br.CODING_TESTS]
         code_q = await self._judge_reasoning(code_tasks, [x["response"] for x in coding])
         rows.append(self._row("reasoning", "coding", "quality", code_q))
+        rows.append(self._row("reasoning", "coding", "length_words",
+                              _mean_words([x["response"] for x in coding]), unit="words"))
 
         status("reasoning: tool calling")
         tools = await br.benchmark_tool_calling(r)
@@ -610,6 +625,7 @@ class BenchmarkHarness:
         completeness_scores = []
         judge_scores = []
         latencies = []
+        responses = []
         for case in SESSION_REVIEW_CASES:
             system, user = reflect_on_session(case["summary"], case["transcript"])
             import time
@@ -623,6 +639,7 @@ class BenchmarkHarness:
             latencies.append(time.perf_counter() - start)
             if str(raw).startswith("ERROR:"):
                 continue
+            responses.append(raw)
             parsed = MemoryProcessor._parse_reflection(raw)
             completeness_scores.append(score_reflection_completeness(parsed))
             if self.judge:
@@ -636,6 +653,8 @@ class BenchmarkHarness:
         quality = _mean(judge_scores) if self.judge else completeness
         rows = [self._row("session_review", "session_review", "quality", quality,
                           raw={"completeness": completeness, "judged": bool(self.judge)})]
+        rows.append(self._row("session_review", "session_review", "length_words",
+                              _mean_words(responses), unit="words"))
         lat = round(sum(latencies) / len(latencies), 3) if latencies else None
         rows.append(self._row("session_review", "session_review", "latency_s", lat, unit="seconds"))
         return rows

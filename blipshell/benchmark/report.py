@@ -72,6 +72,15 @@ def _latency_map(rows: list[dict]) -> dict[str, float]:
     }
 
 
+def _length_map(rows: list[dict]) -> dict[str, float]:
+    """task_type -> mean output length (words) for judged jobs (verbosity check)."""
+    return {
+        r["task_type"]: float(r["value"])
+        for r in rows
+        if r.get("metric") == "length_words" and r.get("value") is not None
+    }
+
+
 def _weighted_composite(scores: dict[str, float], weights: dict[str, float]) -> Optional[float]:
     """Weighted mean over the scoring categories a model measured."""
     num = den = 0.0
@@ -99,6 +108,7 @@ def build_report(
 
     scoring = {m: _scoring_map(rows) for m, rows in model_rows.items()}
     latency = {m: _latency_map(rows) for m, rows in model_rows.items()}
+    length = {m: _length_map(rows) for m, rows in model_rows.items()}
 
     categories = []
     for key, label, measures, method in CATEGORIES:
@@ -134,6 +144,7 @@ def build_report(
         "categories": categories,
         "composite": composite,
         "latency": latency,           # model -> {suite: seconds}
+        "length": length,             # model -> {task_type: mean words} (judged jobs)
         "catalog": cat_info,          # model -> {price/context/speed}
     }
 
@@ -238,6 +249,26 @@ def render_markdown(report: dict) -> str:
         parts.append(_md_table(["Model", "$/1M in/out", "tok/s", "context"], crows))
         parts.append("")
 
+    # Output length (verbosity check) — judged jobs only
+    length = report.get("length", {})
+    judged = [c[0] for c in CATEGORIES if c[0] in
+              {"summarization", "lessons", "reasoning", "coding", "session_review"}]
+    len_jobs = [j for j in judged if any(j in length.get(m, {}) for m in models)]
+    if len_jobs:
+        parts.append("## Output length (mean words, judged jobs) — longer is NOT better")
+        lrows = []
+        for j in len_jobs:
+            label = next((c[1] for c in CATEGORIES if c[0] == j), j)
+            row = [label]
+            for m in models:
+                v = length.get(m, {}).get(j)
+                row.append(f"{v:.0f}" if v is not None else "—")
+            lrows.append(row)
+        parts.append(_md_table(["Job"] + models, lrows))
+        parts.append("\n_The judge is instructed not to reward length, but check this: if a model "
+                     "wins a judged job while writing far more, treat the margin with suspicion._")
+        parts.append("")
+
     # Methodology
     parts.append("## Methodology — what each job measures and how it's scored")
     mrows = [[c["label"], c["measures"], c["scoring"]] for c in report["categories"]]
@@ -248,7 +279,9 @@ def render_markdown(report: dict) -> str:
     parts.append(
         "## Caveats\n"
         "- Latency is a per-suite mean, not per individual job; cloud latency includes network.\n"
-        "- Quality for open-ended jobs depends on the judge model noted above.\n"
+        "- Quality for open-ended jobs depends on the judge model noted above. The judge is told "
+        "not to reward length, but cross-check the output-length table — a much wordier winner is "
+        "a verbosity-bias smell.\n"
         "- Agentic coding executes real tasks; a model with weak tool-calling will score low there "
         "even if its raw code quality is fine — that's intended (it reflects real executor use).\n"
         "- Embedding needs a labeled retrieval set in the DB; it's blank if unavailable."

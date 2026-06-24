@@ -1270,7 +1270,10 @@ _JUDGE_SYSTEM = (
     "against a rubric and return ONLY a JSON object: "
     '{"score": <number 0.0-1.0>, "reason": "<one sentence>"}. '
     "No markdown, no preamble. Be calibrated: 1.0 = flawless, 0.5 = usable "
-    "with real flaws, 0.0 = wrong or unusable."
+    "with real flaws, 0.0 = wrong or unusable. "
+    "CRITICAL: length is NOT quality. Do not give a higher score for a longer, "
+    "more detailed, or more elaborate answer. When two responses are equally "
+    "correct, prefer the more concise one; penalize padding and needless verbosity."
 )
 
 
