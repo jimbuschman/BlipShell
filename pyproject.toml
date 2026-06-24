@@ -40,6 +40,11 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.7.0",
 ]
+# Optional: DeepEval for the judging-methodology spike (G-Eval). The spike script
+# guards its import, so this is only needed to include the G-Eval column.
+benchmark = [
+    "deepeval>=2.0",
+]
 
 [project.scripts]
 blipshell = "blipshell.ui.cli:main"
