@@ -224,24 +224,24 @@ async def main():
     rows = {}
     geval_base = url if args.provider == "ollama" else get_ollama_url(config.endpoints)
     for m in models:
-        console.print(f"[dim]Absolute-scoring {m}…[/dim]")
+        console.print(f"[dim]Absolute-scoring {m}...[/dim]")
         absolute = await _absolute_scores(grade, items, outputs[m])
         ok = [o for o in outputs[m] if not str(o).startswith("ERROR:")]
         mean_len = round(sum(_words(o) for o in ok) / len(ok), 1) if ok else None
         geval = None
         if args.geval_judge:
-            console.print(f"[dim]G-Eval {m} (local judge {args.geval_judge})…[/dim]")
+            console.print(f"[dim]G-Eval {m} (local judge {args.geval_judge})...[/dim]")
             geval = _geval_scores(job, items, outputs[m], args.geval_judge, geval_base)
         rows[m] = {"absolute": absolute, "geval": geval, "mean_len": mean_len}
 
     a, b = models[0], models[1]
-    console.print(f"[dim]Pairwise {a} vs {b} (both orders)…[/dim]")
+    console.print(f"[dim]Pairwise {a} vs {b} (both orders)...[/dim]")
     pw = await _pairwise_winrate(judge, items, outputs[a], outputs[b], JOBS[job]["item_header"], JOBS[job]["pairwise_system"])
 
     # ---- report ----
     console.print()
     show_geval = any(rows[m]["geval"] is not None for m in models)
-    t = Table(title=f"{job} — judging methodology comparison", show_lines=False)
+    t = Table(title=f"{job} - judging methodology comparison", show_lines=False)
     t.add_column("Model", style="cyan")
     t.add_column("Absolute 0-1 (current)", justify="right")
     if show_geval:
@@ -249,10 +249,10 @@ async def main():
     t.add_column("Mean length (words)", justify="right")
     for m in models:
         r = rows[m]
-        row = [m, f"{r['absolute']:.3f}" if r["absolute"] is not None else "—"]
+        row = [m, f"{r['absolute']:.3f}" if r["absolute"] is not None else "-"]
         if show_geval:
-            row.append(f"{r['geval']:.3f}" if r["geval"] is not None else "—")
-        row.append(f"{r['mean_len']}" if r["mean_len"] is not None else "—")
+            row.append(f"{r['geval']:.3f}" if r["geval"] is not None else "-")
+        row.append(f"{r['mean_len']}" if r["mean_len"] is not None else "-")
         t.add_row(*row)
     console.print(t)
 
@@ -264,7 +264,7 @@ async def main():
                       f"(tie rate {pw['tie_rate']:.0%})")
         if pw["position_first_rate"] is not None:
             console.print(f"  [dim]Position-bias check (decided only): first-shown won "
-                          f"{pw['position_first_rate']:.0%} (≈50% = unbiased judge).[/dim]")
+                          f"{pw['position_first_rate']:.0%} (~50% = unbiased judge).[/dim]")
     else:
         console.print("[yellow]Pairwise produced no decided comparisons.[/yellow]")
 
@@ -276,19 +276,19 @@ async def main():
         decisive = pw["a_winrate"] >= 0.65 or pw["a_winrate"] <= 0.35
         if gap < 0.05 and decisive:
             console.print("[bold green]VERDICT:[/bold green] absolute scores ~tied "
-                          f"(Δ {gap:.3f}) but pairwise is decisive — absolute scoring was hiding "
+                          f"(delta {gap:.3f}) but pairwise is decisive - absolute scoring was hiding "
                           "the gap. Pairwise is the upgrade.")
         elif gap >= 0.05 and decisive:
             agree = (abs_a > abs_b) == (pw["a_winrate"] > 0.5)
             console.print(f"[bold]VERDICT:[/bold] both methods show a gap and "
                           f"{'AGREE' if agree else 'DISAGREE'} on the winner"
-                          + ("." if agree else " — investigate."))
+                          + ("." if agree else " - investigate."))
         else:
             console.print("[bold]VERDICT:[/bold] models look genuinely close on this job by both "
                           "methods. If this is the EASY job (summarization), run --job reasoning "
                           "to see whether a gap appears where it should.")
     console.print("[dim]If the higher absolute score is also the wordier model, suspect verbosity "
-                  "bias — confirm against pairwise.[/dim]")
+                  "bias - confirm against pairwise.[/dim]")
 
 
 if __name__ == "__main__":
