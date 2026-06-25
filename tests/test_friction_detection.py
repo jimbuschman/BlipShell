@@ -275,6 +275,28 @@ async def test_analyze_idle_friction(sqlite_store, mock_chroma, memory_config):
 
 
 @pytest.mark.asyncio
+async def test_analyze_session_friction_routes_to_session_review(
+    sqlite_store, mock_chroma, memory_config,
+):
+    """Friction must run on SESSION_REVIEW (fast, large-context), not REASONING
+    (local-only qwen3:14b). Routing it to REASONING fed kimi-sized chunks to a
+    slow local model and blew past the per-session timeout — heavy sessions were
+    skipped forever. Pin the task type so this can't silently regress."""
+    from blipshell.llm.router import TaskType
+
+    router = MagicMock()
+    router.generate = AsyncMock(return_value="NONE")
+    processor = MemoryProcessor(sqlite_store, mock_chroma, router, memory_config)
+
+    await processor.analyze_session_friction(
+        session_id=1, session_summary="s", conversation_text="c",
+    )
+
+    router.generate.assert_awaited_once()
+    assert router.generate.await_args.args[0] == TaskType.SESSION_REVIEW
+
+
+@pytest.mark.asyncio
 async def test_analyze_friction_llm_error(sqlite_store, mock_chroma, memory_config):
     """LLM error returns empty list, doesn't crash."""
     router = MagicMock()

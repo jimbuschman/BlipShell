@@ -772,6 +772,13 @@ class MemoryProcessor:
     ) -> list[dict]:
         """Analyze a session for system-level friction.
 
+        Runs on SESSION_REVIEW (whole-session analysis on the fast, large-context
+        endpoint), NOT REASONING. The conversation chunk is already sized for
+        SESSION_REVIEW by ``prepare_conversation_for_reflection``; routing the
+        call to REASONING (local-only qwen3:14b at 32K ctx) meant a big chunk was
+        fed to a slow local model, blowing past the per-session timeout so heavy
+        sessions were skipped forever. Mirrors the sibling ``_reflect_on_text``.
+
         Returns list of parsed friction items, or empty list if NONE.
         """
         from blipshell.llm.prompts import analyze_session_friction
@@ -779,9 +786,15 @@ class MemoryProcessor:
         system, user_prompt = analyze_session_friction(
             session_summary, conversation_text, project,
         )
+        # Route large chunks to a bigger-context endpoint (same threshold as
+        # session_reflections). Below the threshold, SESSION_REVIEW already
+        # prefers the cloud endpoint by priority, so leave min_ctx unset.
+        est_tokens = estimate_tokens(user_prompt) + estimate_tokens(system)
+        min_ctx = est_tokens + 4096 if est_tokens > 28000 else None
         try:
             raw = await self.router.generate(
-                TaskType.REASONING, user_prompt, system=system,
+                TaskType.SESSION_REVIEW, user_prompt, system=system,
+                min_context_tokens=min_ctx,
             )
         except Exception as e:
             logger.error("Friction analysis LLM call failed: %s", e)

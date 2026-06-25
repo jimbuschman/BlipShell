@@ -70,7 +70,7 @@ _JOB_TIMEOUT = 300  # 5 minutes per job
 _DEFAULT_BUDGET = object()
 
 # Per-session cap for friction analysis. A between-iterations time budget is not
-# enough on its own: one slow/hung REASONING call would block the loop past
+# enough on its own: one slow/hung LLM call would block the loop past
 # _JOB_TIMEOUT (the budget check only runs between sessions). Each session's LLM
 # work is wrapped in wait_for(this), and the loop won't START a session unless a
 # full per-session budget fits before the cap. Module-level so tests can shrink it.
@@ -873,8 +873,8 @@ class NightlyRunner:
     async def _job_friction_analysis(self, on_status) -> dict:
         """Analyze recent sessions for system-level friction.
 
-        Each session needs a REASONING LLM call, so a full 200-session batch
-        far exceeds the per-job timeout. Two layers keep it under the cap:
+        Each session needs a SESSION_REVIEW LLM call, so a full 200-session
+        batch far exceeds the per-job timeout. Two layers keep it under the cap:
         (1) a between-sessions time budget that won't START a session it can't
         finish, and (2) a per-session ``wait_for`` so one slow/hung call can't
         block the loop past the budget check (the bug that let this job time
