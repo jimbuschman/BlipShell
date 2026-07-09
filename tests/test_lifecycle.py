@@ -840,3 +840,23 @@ class TestEndToEnd:
 
         assert found_relevant, \
             f"Results should contain Kortney/Monday content. Got: {[(r.text or r.summary)[:80] for r in results]}"
+
+
+# --- Embedding warmup (startup preload) ---
+
+
+class TestEmbedWarmup:
+    """warmup() preloads the embed model at startup; must always fail open."""
+
+    def test_warmup_fail_open_without_client(self, vectors):
+        # Fixture leaves _ollama_client = None → _embed raises RuntimeError.
+        assert vectors.warmup() is False
+
+    def test_warmup_success(self, vectors):
+        vectors._embed = MagicMock(return_value=[0.0] * 768)
+        assert vectors.warmup() is True
+        vectors._embed.assert_called_once()
+
+    def test_warmup_swallows_embed_errors(self, vectors):
+        vectors._embed = MagicMock(side_effect=ConnectionError("ollama down"))
+        assert vectors.warmup() is False

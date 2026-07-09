@@ -137,6 +137,7 @@ class Agent(
         self._friction_probe_fired: bool = False  # only once per session
         self._background_tasks: set[asyncio.Task] = set()
         self._memory_worker = None  # MemoryWorker — dedicated thread for background processing
+        self._embed_warmup_task: Optional[asyncio.Task] = None  # startup embed-model preload
         self._last_user_activity: float = time.time()
         self._last_endpoint_used: Optional[str] = None
         self._initialized = False
@@ -202,6 +203,14 @@ class Agent(
             embedding_dim=self.config.database.embedding_dimensions,
         )
         self.vectors.initialize()
+
+        # Warm the embedding model before the memory worker can occupy Ollama —
+        # a cold embed model queued behind a big-model load blows EMBED_TIMEOUT
+        # and the first turn runs memory-blind (seen live 2026-07-09).
+        # Fire-and-forget: first into Ollama's queue, never blocks startup.
+        self._embed_warmup_task = asyncio.create_task(
+            asyncio.to_thread(self.vectors.warmup),
+        )
 
         # Endpoint manager
         self.endpoint_manager = EndpointManager(self.config.endpoints, self.config.llm)

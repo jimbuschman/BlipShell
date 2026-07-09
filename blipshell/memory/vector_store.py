@@ -244,6 +244,26 @@ class VectorStore:
         """
         return self._embed(text)
 
+    def warmup(self) -> bool:
+        """Preload the embedding model with a throwaway embed.
+
+        Called at startup before background work can occupy Ollama: if the
+        embed model has to cold-load behind a big-model job, interactive
+        search embeds blow EMBED_TIMEOUT and the first turn runs memory-blind.
+        Fail-open — a failed warmup just means the first real embed pays the
+        load cost, same as before warmup existed.
+        """
+        try:
+            self._embed("warmup")
+            logger.info("Embedding model %s warmed up", self.embedding_model)
+            return True
+        except Exception as e:
+            logger.warning(
+                "Embedding warmup failed (first search may be slow or "
+                "memory-blind): %s", e,
+            )
+            return False
+
     def _embed_batch(self, texts: list[str], chunk_size: int = 32) -> list[list[float]]:
         """Generate embeddings for multiple texts, chunked to avoid overwhelming Ollama."""
         if self._ollama_client is None:
