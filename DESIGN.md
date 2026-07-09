@@ -1,5 +1,12 @@
 # BlipShell Design Document
 
+> **⚠ Point-in-time snapshot (early 2026) — materially stale.** This document
+> predates the sqlite-vec migration (ChromaDB is gone, 2026-04), the agent.py
+> mixin split, the unified ChatLoop, the 7-capability guardrails engine, and
+> current model routing. Read it for design rationale and history only.
+> For current architecture see `CLAUDE.md`; for the build log see
+> `docs/HISTORY.md`; for the improvement roadmap see `docs/SYSTEM_REVIEW.md`.
+
 ## Table of Contents
 1. [Project Overview](#1-project-overview)
 2. [Architecture Overview](#2-architecture-overview)
