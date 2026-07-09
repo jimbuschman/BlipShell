@@ -171,17 +171,47 @@ class SelfThoughtStore:
             logger.warning("Self-thought embedding failed: %s", e)
             return None
 
+    def _stamp_missing_dates(self, items: list[dict]) -> bool:
+        """Backfill created_at on thoughts written before the gravity layer.
+
+        Undated thoughts are exempt from age decay — effectively immortal —
+        which skews weights and the recurring marker toward the oldest
+        content (seen live 2026-07-09: 15 of 24 thoughts undated). Stamping
+        them now starts their clock; within a half-life the store
+        self-corrects. Returns True if anything changed.
+        """
+        changed = False
+        now_iso = self._now().isoformat()
+        for it in items:
+            if not it.get("created_at"):
+                it["created_at"] = now_iso
+                changed = True
+        return changed
+
     async def add(self, text: str) -> None:
         items = await self._load()
+        self._stamp_missing_dates(items)
         emb = await self._embed(text)
-        # Recurrence reinforcement: if this new thought echoes a prior one, the
-        # prior gains weight — "it keeps coming back to this" is gravity. (Only
-        # when gravity is enabled; otherwise weight is inert metadata.)
+        # Recurrence: if this new thought echoes a prior one, the prior gains
+        # weight AND absorbs the new phrasing — "it keeps coming back to this"
+        # is gravity, and the thought evolves in place instead of piling up
+        # near-duplicate copies (seen live 2026-07-09: triplicate thoughts).
+        # created_at stays original, so decay still demands ongoing recurrence.
+        # Only when gravity is enabled; otherwise the store appends as before.
         if self._gravity_enabled and emb:
+            best, best_sim = None, 0.0
             for it in items:
                 ie = it.get("embedding")
-                if ie and _cosine(emb, ie) >= self._recur_threshold:
-                    it["weight"] = it.get("weight", 1.0) + self._recur_boost
+                sim = _cosine(emb, ie) if ie else 0.0
+                if sim >= self._recur_threshold and sim > best_sim:
+                    best, best_sim = it, sim
+            if best is not None:
+                best["weight"] = best.get("weight", 1.0) + self._recur_boost
+                best["text"] = text          # the evolved phrasing wins
+                best["embedding"] = emb
+                best["surfaced"] = False     # an evolved thought is pending again
+                await self._save(items)
+                return
         items.append({
             "text": text, "surfaced": False, "embedding": emb,
             "weight": 1.0, "created_at": self._now().isoformat(),
@@ -250,7 +280,7 @@ class SelfThoughtStore:
         if not query_vec:
             return []
         items = await self._load()
-        backfilled = False
+        backfilled = self._stamp_missing_dates(items)
         scored: list[tuple[str, float]] = []
         for it in items:
             emb = it.get("embedding")

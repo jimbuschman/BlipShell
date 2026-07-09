@@ -54,21 +54,59 @@ def _raw(meta):
 # --- weight mechanics ------------------------------------------------------
 
 class TestWeightMechanics:
-    async def test_recurrence_reinforces_prior(self):
-        s = _store(recur_boost=0.5, recur_threshold=0.85)
+    async def test_recurrence_reinforces_and_folds(self):
+        """An echo boosts the prior AND is absorbed into it — the thought
+        evolves in place instead of piling up near-duplicate copies."""
+        meta = FakeMeta()
+        s = _store(meta, recur_boost=0.5, recur_threshold=0.85)
         await s.add("a thought")
         await s.add("echo of a thought")   # identical vector -> echoes the prior
-        w = await s.effective_weights(["a thought"])
-        assert w["a thought"] == pytest.approx(1.5, abs=0.02)
+        items = _raw(meta)
+        assert len(items) == 1                          # folded, not appended
+        assert items[0]["text"] == "echo of a thought"  # evolved phrasing wins
+        w = await s.effective_weights(["echo of a thought"])
+        assert w["echo of a thought"] == pytest.approx(1.5, abs=0.02)
+
+    async def test_fold_keeps_original_created_at(self):
+        """Decay clocks from the thought's origin — folding must not reset it,
+        or a recurring thought would never have to keep earning its weight."""
+        meta = FakeMeta()
+        s = _store(meta)
+        await s.add("a thought")
+        original_created = _raw(meta)[0]["created_at"]
+        await s.add("echo of a thought")
+        assert _raw(meta)[0]["created_at"] == original_created
+
+    async def test_fold_makes_evolved_thought_pending_again(self):
+        s = _store()
+        await s.add("a thought")
+        assert await s.take_pending() == "a thought"
+        assert not await s.has_pending()
+        await s.add("echo of a thought")   # folds into the surfaced prior
+        assert await s.peek_pending() == "echo of a thought"
 
     async def test_recurrence_is_noop_when_disabled(self):
         meta = FakeMeta()
         s = _store(meta, gravity_enabled=False, recur_boost=0.5)
         await s.add("a thought")
         await s.add("echo of a thought")
-        # raw weight untouched, and effective_weights is empty when disabled
+        # no fold, raw weight untouched, effective_weights empty when disabled
+        assert len(_raw(meta)) == 2
         assert _raw(meta)[0]["weight"] == 1.0
         assert await s.effective_weights(["a thought"]) == {}
+
+    async def test_add_backfills_missing_created_at(self):
+        """Thoughts written before the gravity layer are undated and thus
+        exempt from decay — add() stamps them so their clock starts."""
+        meta = FakeMeta()
+        meta.data[SelfThoughtStore.KEY] = json.dumps([
+            {"text": "ancient thought", "surfaced": True,
+             "embedding": [0.0, 0.0, 1.0], "weight": 1.0},
+        ])
+        s = _store(meta)
+        await s.add("another thought")
+        items = _raw(meta)
+        assert all(it.get("created_at") for it in items)
 
     async def test_fatigue_lowers_weight(self):
         s = _store(fatigue=0.6)
@@ -157,18 +195,20 @@ class TestSnapshot:
     async def test_snapshot_rows(self):
         s = _store()
         await s.add("a thought")
-        await s.add("echo of a thought")   # boosts the prior to 1.5
-        await s.take_pending()             # surfaces "a thought"
+        await s.add("echo of a thought")   # folds into the prior -> weight 1.5
+        await s.add("another thought")     # distinct -> second row
+        await s.take_pending()             # surfaces the folded thought
 
         rows = await s.snapshot()
         assert len(rows) == 2
         first, second = rows
-        assert first["text"] == "a thought"
+        assert first["text"] == "echo of a thought"
         assert first["surfaced"] is True
         assert first["weight"] == pytest.approx(1.5)
         # Fresh thought, no meaningful age decay yet
         assert first["effective_weight"] == pytest.approx(1.5, abs=0.02)
         assert first["has_embedding"] is True
+        assert second["text"] == "another thought"
         assert second["surfaced"] is False
         assert second["weight"] == pytest.approx(1.0)
 

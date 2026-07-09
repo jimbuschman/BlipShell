@@ -1061,8 +1061,6 @@ async def _print_thoughts(agent: Agent):
     lingering-thoughts layer and the self-gravity step-1 readout."""
     from datetime import datetime, timezone
 
-    from blipshell.core.agent_chat import format_relative_time
-
     store = getattr(agent, "_self_thoughts", None)
     if store is None:
         console.print("[yellow]Self-reflection layer not initialized.[/yellow]")
@@ -1087,19 +1085,35 @@ async def _print_thoughts(agent: Agent):
         return
 
     now = datetime.now(timezone.utc)
+
+    def _fmt_age(iso) -> str:
+        """Compact relative age: 12m, 5h, 3d, 2w. '?' when undated."""
+        if not iso:
+            return "?"
+        try:
+            secs = (now - datetime.fromisoformat(iso)).total_seconds()
+        except (TypeError, ValueError):
+            return "?"
+        if secs < 60:
+            return "now"
+        if secs < 3600:
+            return f"{int(secs // 60)}m"
+        if secs < 86400:
+            return f"{int(secs // 3600)}h"
+        if secs < 7 * 86400:
+            return f"{int(secs // 86400)}d"
+        return f"{int(secs // (7 * 86400))}w"
+
     table = Table(title=f"Lingering Thoughts ({len(rows)})")
     table.add_column("#", style="cyan", width=3)
-    table.add_column("Age", style="dim", width=8)
+    table.add_column("Age", style="dim", width=5)
     table.add_column("Status", width=9)
     table.add_column("Weight", justify="right", width=12)
     table.add_column("Thought")
 
     no_embedding = 0
     for i, r in enumerate(rows, 1):
-        try:
-            age = format_relative_time(datetime.fromisoformat(r["created_at"]), now).strip("[] ") or "now"
-        except (TypeError, ValueError):
-            age = "?"
+        age = _fmt_age(r["created_at"])
         status = "[dim]surfaced[/dim]" if r["surfaced"] else "[yellow]pending[/yellow]"
         eff = r["effective_weight"]
         if eff is None:
