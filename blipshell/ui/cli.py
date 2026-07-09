@@ -737,6 +737,9 @@ async def chat_loop(
                     state = "[green]ON[/green]" if agent.reflect_enabled else "[yellow]OFF[/yellow]"
                     console.print(f"[dim]Self-reflection: {state}[/dim]")
                     continue
+                elif cmd[0] == "thoughts":
+                    await _print_thoughts(agent)
+                    continue
                 elif cmd[0] == "guardrails":
                     if len(cmd) > 1 and cmd[1] in ("on", "off"):
                         config.guardrails.enabled = cmd[1] == "on"
@@ -1051,6 +1054,75 @@ async def chat_loop(
             console.print(f"[yellow]Session cleanup error: {e}[/yellow]")
         await agent.force_cleanup()
         console.print("[dim]Session saved. Goodbye![/dim]")
+
+
+async def _print_thoughts(agent: Agent):
+    """Show the self-thought store — the observability surface for the
+    lingering-thoughts layer and the self-gravity step-1 readout."""
+    from datetime import datetime, timezone
+
+    from blipshell.core.agent_chat import format_relative_time
+
+    store = getattr(agent, "_self_thoughts", None)
+    if store is None:
+        console.print("[yellow]Self-reflection layer not initialized.[/yellow]")
+        return
+
+    rows = await store.snapshot()
+    refl = agent.config.reflection
+    gravity_on = getattr(refl, "gravity_enabled", False)
+    marker_w = getattr(refl, "gravity_marker_weight", 1.5)
+
+    state = "[green]ON[/green]" if gravity_on else "[yellow]OFF[/yellow]"
+    console.print(f"[dim]Self-gravity: {state}"
+                  + (f"  (recur ≥{refl.gravity_recur_threshold} → +{refl.gravity_recur_boost},"
+                     f" fatigue ×{refl.gravity_fatigue},"
+                     f" half-life {refl.gravity_half_life_days:g}d,"
+                     f" recurring marker ≥{marker_w:g})" if gravity_on else "")
+                  + "[/dim]")
+
+    if not rows:
+        console.print("[dim]No lingering thoughts stored yet — they form after "
+                      f"~{refl.idle_seconds / 3600:.1f}h of quiet.[/dim]")
+        return
+
+    now = datetime.now(timezone.utc)
+    table = Table(title=f"Lingering Thoughts ({len(rows)})")
+    table.add_column("#", style="cyan", width=3)
+    table.add_column("Age", style="dim", width=8)
+    table.add_column("Status", width=9)
+    table.add_column("Weight", justify="right", width=12)
+    table.add_column("Thought")
+
+    no_embedding = 0
+    for i, r in enumerate(rows, 1):
+        try:
+            age = format_relative_time(datetime.fromisoformat(r["created_at"]), now).strip("[] ") or "now"
+        except (TypeError, ValueError):
+            age = "?"
+        status = "[dim]surfaced[/dim]" if r["surfaced"] else "[yellow]pending[/yellow]"
+        eff = r["effective_weight"]
+        if eff is None:
+            weight = "—"
+        else:
+            weight = f"{r['weight']:.2f} → {eff:.2f}"
+        text = r["text"][:90] + ("..." if len(r["text"]) > 90 else "")
+        if eff is not None and eff >= marker_w:
+            text = f"[bold]{text}[/bold] [magenta]· recurring[/magenta]"
+        if not r["has_embedding"]:
+            no_embedding += 1
+            text += " [red](no embedding — can't resurface)[/red]"
+        table.add_row(str(i), age, status, weight, text)
+    console.print(table)
+
+    if gravity_on:
+        console.print("[dim]Weight is stored → effective (age-decayed). Recurrence "
+                      "reinforces, surfacing fatigues. A thought marked "
+                      "'recurring' keeps coming back on its own — that's the "
+                      "gravity signal.[/dim]")
+    if no_embedding:
+        console.print(f"[dim yellow]{no_embedding} thought(s) lack embeddings and "
+                      "will be backfilled on next relevance check.[/dim yellow]")
 
 
 async def _print_core(agent: Agent):
@@ -2853,6 +2925,7 @@ def _print_help():
         "[bold]/core[/bold]                  - Show core memories and lessons\n"
         "[bold]/think[/bold]                 - Toggle LLM thinking mode on/off\n"
         "[bold]/reflect[/bold]               - Toggle self-reflection on/off\n"
+        "[bold]/thoughts[/bold]              - Show lingering thoughts + gravity weights\n"
         "[bold]/guardrails[/bold] [dim][on|off][/dim]   - Toggle guardrails (completion audit, drift monitor)\n"
         "[bold]/verbose[/bold]               - Toggle verbose tool output on/off\n"
         "[bold]/expand[/bold] [dim][n][/dim]             - Show full output of last n tool batches\n"

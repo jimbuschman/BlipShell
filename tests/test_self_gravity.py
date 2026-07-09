@@ -149,3 +149,66 @@ class TestGateUsesGravity:
         )
         # weight ignored -> cosine-tie resolved by stable order -> 'a thought'
         assert [t for t, _ in out] == ["a thought"]
+
+
+# --- snapshot (observability for /thoughts) --------------------------------
+
+class TestSnapshot:
+    async def test_snapshot_rows(self):
+        s = _store()
+        await s.add("a thought")
+        await s.add("echo of a thought")   # boosts the prior to 1.5
+        await s.take_pending()             # surfaces "a thought"
+
+        rows = await s.snapshot()
+        assert len(rows) == 2
+        first, second = rows
+        assert first["text"] == "a thought"
+        assert first["surfaced"] is True
+        assert first["weight"] == pytest.approx(1.5)
+        # Fresh thought, no meaningful age decay yet
+        assert first["effective_weight"] == pytest.approx(1.5, abs=0.02)
+        assert first["has_embedding"] is True
+        assert second["surfaced"] is False
+        assert second["weight"] == pytest.approx(1.0)
+
+    async def test_snapshot_effective_weight_none_when_disabled(self):
+        s = _store(gravity_enabled=False)
+        await s.add("a thought")
+        rows = await s.snapshot()
+        assert rows[0]["effective_weight"] is None
+        assert rows[0]["weight"] == pytest.approx(1.0)  # inert metadata
+
+    async def test_snapshot_applies_age_decay(self):
+        meta = FakeMeta()
+        s = _store(meta, half_life_days=30.0)
+        await s.add("a thought")
+        # Backdate the thought one half-life
+        items = _raw(meta)
+        items[0]["created_at"] = (
+            datetime.now(timezone.utc) - timedelta(days=30)
+        ).isoformat()
+        meta.data[SelfThoughtStore.KEY] = json.dumps(items)
+
+        rows = await s.snapshot()
+        assert rows[0]["weight"] == pytest.approx(1.0)          # stored untouched
+        assert rows[0]["effective_weight"] == pytest.approx(0.5, abs=0.02)
+
+    async def test_snapshot_flags_missing_embedding(self):
+        meta = FakeMeta()
+        s = SelfThoughtStore(meta, embed_fn=None, gravity_enabled=True)
+        await s.add("a thought")   # embed_fn None -> no embedding stored
+        rows = await s.snapshot()
+        assert rows[0]["has_embedding"] is False
+
+    async def test_snapshot_does_not_mutate(self):
+        meta = FakeMeta()
+        s = _store(meta)
+        await s.add("a thought")
+        before = meta.data[SelfThoughtStore.KEY]
+        await s.snapshot()
+        assert meta.data[SelfThoughtStore.KEY] == before
+
+    async def test_snapshot_empty_store(self):
+        s = _store()
+        assert await s.snapshot() == []

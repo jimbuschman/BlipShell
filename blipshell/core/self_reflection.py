@@ -192,6 +192,31 @@ class SelfThoughtStore:
         items = await self._load()
         return [i["text"] for i in items[-n:]]
 
+    async def snapshot(self) -> list[dict]:
+        """Read-only view of the store for observability (/thoughts).
+
+        One row per stored thought, oldest first: text, created_at (ISO or
+        None), surfaced flag, stored weight, effective (age-decayed) weight —
+        None when gravity is disabled — and whether the thought has an
+        embedding (without one it can never resurface via relevance).
+        Never mutates the store.
+        """
+        now = self._now()
+        rows = []
+        for it in await self._load():
+            rows.append({
+                "text": it["text"],
+                "created_at": it.get("created_at"),
+                "surfaced": bool(it.get("surfaced")),
+                "weight": it.get("weight", 1.0),
+                "effective_weight": (
+                    self._effective_weight(it, now)
+                    if self._gravity_enabled else None
+                ),
+                "has_embedding": bool(it.get("embedding")),
+            })
+        return rows
+
     async def has_pending(self) -> bool:
         return any(not i.get("surfaced") for i in await self._load())
 
