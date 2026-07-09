@@ -2360,8 +2360,8 @@ class SQLiteStore:
 
         Merged-away husks are deliberately NOT revived: their name is recorded
         in entity_aliases, and resurrecting one would recreate the duplicate the
-        merge eliminated. (Resolution doesn't yet route husk names to their
-        canonical — see the known re-mention-of-merged-name gap.) No-op for
+        merge eliminated. (Resolution routes husk names to their canonical via
+        resolve_alias, so new mentions never land on a husk.) No-op for
         already-active entities. Returns the number revived.
         """
         ids = [i for i in set(entity_ids) if i is not None]
@@ -2697,6 +2697,40 @@ class SQLiteStore:
         )
         row = await cursor.fetchone()
         return row["id"] if row else None
+
+    async def resolve_alias(self, name: str, max_hops: int = 5) -> int | None:
+        """Follow entity_aliases from a merged-away name to its terminal canonical.
+
+        merge_entity doesn't re-point older alias rows, so a name can chain
+        through intermediate husks (x → a recorded, then a merged into b leaves
+        both x → a and a → b). Follows the chain with a cycle guard and returns
+        the last entity id that exists, or None if the name has no alias entry
+        or its canonical no longer exists.
+        """
+        current = name.strip().lower()
+        seen = {current}
+        resolved: int | None = None
+        for _ in range(max_hops):
+            cursor = await self._db.execute(
+                "SELECT canonical_entity_id FROM entity_aliases WHERE alias_name = ?",
+                (current,),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                break
+            cursor = await self._db.execute(
+                "SELECT name FROM entities WHERE id = ?",
+                (row["canonical_entity_id"],),
+            )
+            entity = await cursor.fetchone()
+            if entity is None:
+                break
+            resolved = row["canonical_entity_id"]
+            current = entity["name"]
+            if current in seen:
+                break
+            seen.add(current)
+        return resolved
 
     async def record_entity_alias(
         self, alias_name: str, canonical_entity_id: int,

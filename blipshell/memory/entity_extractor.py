@@ -234,8 +234,9 @@ class EntityExtractor:
         return result
 
     async def _resolve_entity(self, name: str, entity_type: str = "concept") -> int:
-        """3-stage entity resolution: exact match → embedding similarity → LLM.
+        """4-stage entity resolution: alias → exact match → embedding → LLM.
 
+        Stage 0: Alias routing (names merged away route to their canonical)
         Stage 1: Exact match (existing UNIQUE constraint in SQLite)
         Stage 2: Embedding similarity (auto-merge above threshold)
         Stage 3: LLM arbitration (ambiguous range)
@@ -247,6 +248,15 @@ class EntityExtractor:
         # Check batch-level cache first
         if name in self._resolution_cache:
             return self._resolution_cache[name]
+
+        # Stage 0: Alias routing (always runs, before exact match — the merged
+        # husk still has an entities row, so exact match would land mentions on
+        # the archived husk instead of the canonical). Aliases are recorded
+        # facts from past merges, so this runs even with resolution disabled.
+        alias_id = await self.sqlite.resolve_alias(name)
+        if alias_id is not None:
+            self._resolution_cache[name] = alias_id
+            return alias_id
 
         # Stage 1: Exact match (always runs)
         existing_id = await self.sqlite.get_entity_id_by_name(name)

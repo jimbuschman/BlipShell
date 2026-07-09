@@ -271,3 +271,92 @@ class TestEntityMerge:
         )
         row = await cursor.fetchone()
         assert row["entity_id"] == canon_id
+
+
+# --- Stage 0: Alias routing (re-mention of merged names) ---
+
+
+class TestAliasRouting:
+    """Names merged away must route to their canonical, not strand on husks."""
+
+    async def _merge(self, store, husk_name, canonical_id):
+        """Simulate what entity_merger.apply_plan records for one merge."""
+        husk_id = await store.get_or_create_entity(husk_name)
+        await store.record_entity_alias(husk_name, canonical_id, merge_method="test")
+        await store.archive_entities([husk_id])
+        return husk_id
+
+    async def _entity_count(self, store):
+        cursor = await store._db.execute("SELECT COUNT(*) AS c FROM entities")
+        return (await cursor.fetchone())["c"]
+
+    async def test_resolve_alias_direct(self, sqlite_store):
+        canonical = await sqlite_store.get_or_create_entity("postgresql")
+        await self._merge(sqlite_store, "postgres", canonical)
+        assert await sqlite_store.resolve_alias("postgres") == canonical
+
+    async def test_resolve_alias_no_entry(self, sqlite_store):
+        await sqlite_store.get_or_create_entity("redis")
+        assert await sqlite_store.resolve_alias("redis") is None
+        assert await sqlite_store.resolve_alias("never-seen") is None
+
+    async def test_resolve_alias_follows_chain(self, sqlite_store):
+        """x → a recorded, then a merged into b: x must resolve to b."""
+        b = await sqlite_store.get_or_create_entity("visual studio code")
+        a = await sqlite_store.get_or_create_entity("vs code")
+        await sqlite_store.record_entity_alias("vscode", a, merge_method="test")
+        # later merge: a into b (a becomes an archived husk with its own alias)
+        await sqlite_store.record_entity_alias("vs code", b, merge_method="test")
+        await sqlite_store.archive_entities([a])
+        assert await sqlite_store.resolve_alias("vscode") == b
+        assert await sqlite_store.resolve_alias("vs code") == b
+
+    async def test_resolve_alias_missing_canonical(self, sqlite_store):
+        await sqlite_store.record_entity_alias("ghost", 99999, merge_method="test")
+        assert await sqlite_store.resolve_alias("ghost") is None
+
+    async def test_resolve_alias_cycle_terminates(self, sqlite_store):
+        """Pathological a↔b alias cycle must terminate and return an existing id."""
+        a = await sqlite_store.get_or_create_entity("cycle-a")
+        b = await sqlite_store.get_or_create_entity("cycle-b")
+        await sqlite_store.record_entity_alias("cycle-a", b, merge_method="test")
+        await sqlite_store.record_entity_alias("cycle-b", a, merge_method="test")
+        resolved = await sqlite_store.resolve_alias("cycle-a")
+        assert resolved in (a, b)
+
+    async def test_merged_name_routes_to_canonical(
+        self, resolution_extractor, sqlite_store, mock_chroma_with_entities,
+    ):
+        """Re-mention of a merged name lands on the canonical, not the husk,
+        creates no new entity, and never consults the embedding stage."""
+        canonical = await sqlite_store.get_or_create_entity("postgresql")
+        husk = await self._merge(sqlite_store, "postgres", canonical)
+        before = await self._entity_count(sqlite_store)
+
+        resolved = await resolution_extractor._resolve_entity("postgres")
+
+        assert resolved == canonical
+        assert resolved != husk
+        assert await self._entity_count(sqlite_store) == before
+        mock_chroma_with_entities.search_similar_entities.assert_not_called()
+
+    async def test_alias_routing_runs_with_resolution_disabled(
+        self, basic_extractor, sqlite_store,
+    ):
+        """Aliases are recorded facts — routing applies even when the
+        embedding/LLM resolution stages are disabled."""
+        canonical = await sqlite_store.get_or_create_entity("postgresql")
+        await self._merge(sqlite_store, "postgres", canonical)
+        assert await basic_extractor._resolve_entity("postgres") == canonical
+
+    async def test_exact_match_unaffected_without_alias(
+        self, resolution_extractor, sqlite_store,
+    ):
+        """Active entities without aliases still resolve by exact match."""
+        eid = await sqlite_store.get_or_create_entity("kubernetes")
+        assert await resolution_extractor._resolve_entity("kubernetes") == eid
+
+    async def test_new_name_still_created(self, resolution_extractor, sqlite_store):
+        """Unknown names still create a new entity."""
+        eid = await resolution_extractor._resolve_entity("brand-new-thing")
+        assert eid == await sqlite_store.get_entity_id_by_name("brand-new-thing")
