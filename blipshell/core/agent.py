@@ -726,7 +726,9 @@ class Agent(
             return
         try:
             from blipshell.core.self_reflection import NOTHING, lingering_thought_prompt
-            prior = await self._self_thoughts.recent(5)
+            # Diversity-sampled, not last-n: last-n after weeks of one theme is
+            # all that theme, and the reflection spirals into its own groove.
+            prior = await self._self_thoughts.diverse_recent(5)
             system, user = lingering_thought_prompt(prior)
             text = (await self.router.generate(TaskType.REASONING, user, system=system)).strip()
             if not text or text.upper().startswith(NOTHING):

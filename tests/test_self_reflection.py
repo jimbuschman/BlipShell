@@ -166,3 +166,77 @@ async def test_no_embedder_yields_no_candidates():
     await s.add("robotics cube")
     assert await s.relevant_candidates([1.0, 0.0, 0.0], floor=0.0, k=3) == []
     assert await s.has_pending() is True
+
+
+# --- diverse_recent (un-rigging the reflection prompt input) -----------------
+
+_THEME_A = [1.0, 0.0, 0.0]
+_THEME_B = [0.0, 1.0, 0.0]
+
+
+def _diverse_store(vecs: dict):
+    async def embed(text):
+        return vecs.get(text)
+    return SelfThoughtStore(FakeStore(), embed_fn=embed)
+
+
+async def test_diverse_recent_returns_all_when_few():
+    s = _diverse_store({})
+    await s.add("first")
+    await s.add("second")
+    assert await s.diverse_recent(5) == ["first", "second"]
+
+
+async def test_diverse_recent_keeps_minority_thread():
+    """Six thoughts: five on theme A, the OLDEST on theme B. recent(5) drops
+    the B thought; diverse_recent(5) must keep it — that's the whole point."""
+    vecs = {f"a{i}": _THEME_A for i in range(5)}
+    vecs["the b thought"] = _THEME_B
+    s = _diverse_store(vecs)
+    await s.add("the b thought")
+    for i in range(5):
+        await s.add(f"a{i}")
+
+    assert "the b thought" not in await s.recent(5)
+    picked = await s.diverse_recent(5)
+    assert "the b thought" in picked
+    assert len(picked) == 5
+
+
+async def test_diverse_recent_seeds_with_newest():
+    vecs = {f"a{i}": _THEME_A for i in range(6)}
+    s = _diverse_store(vecs)
+    for i in range(6):
+        await s.add(f"a{i}")
+    picked = await s.diverse_recent(3)
+    assert "a5" in picked  # newest always present (continuity with now)
+
+
+async def test_diverse_recent_chronological_order():
+    vecs = {f"a{i}": _THEME_A for i in range(5)}
+    vecs["b"] = _THEME_B
+    s = _diverse_store(vecs)
+    await s.add("a0")
+    await s.add("b")
+    for i in range(1, 5):
+        await s.add(f"a{i}")
+    picked = await s.diverse_recent(3)
+    # whatever was picked comes back in stored (chronological) order
+    all_texts = ["a0", "b", "a1", "a2", "a3", "a4"]
+    assert picked == [t for t in all_texts if t in picked]
+
+
+async def test_diverse_recent_includes_unembedded_thoughts():
+    """A thought without an embedding can't be compared — it must count as
+    maximally dissimilar, not be silenced."""
+    vecs = {f"a{i}": _THEME_A for i in range(5)}  # "orphan" missing -> embeds None
+    s = _diverse_store(vecs)
+    await s.add("orphan")
+    for i in range(5):
+        await s.add(f"a{i}")
+    assert "orphan" in await s.diverse_recent(3)
+
+
+def test_prompt_grants_permission_to_leave_threads():
+    system, _ = lingering_thought_prompt(["prior"])
+    assert "don't owe" in system

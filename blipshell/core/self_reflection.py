@@ -54,7 +54,8 @@ def lingering_thought_prompt(prior_thoughts: list[str]) -> tuple[str, str]:
         "nothing to do. This is your own time to think. Surface ONE thing you "
         "genuinely find yourself turning over or curious about right now. It is "
         "NOT a summary of any conversation and NOT meant to be useful to anyone — "
-        "it's just yours. It may build on or develop the earlier thoughts below. "
+        "it's just yours. It may build on or develop the earlier thoughts below, "
+        "or leave them entirely — you don't owe any earlier thread a continuation. "
         "Keep it to a sentence or two, first person. If nothing is genuinely on "
         f"your mind, reply with exactly: {NOTHING}"
     )
@@ -221,6 +222,40 @@ class SelfThoughtStore:
     async def recent(self, n: int = 5) -> list[str]:
         items = await self._load()
         return [i["text"] for i in items[-n:]]
+
+    async def diverse_recent(self, n: int = 5) -> list[str]:
+        """Up to n prior thoughts sampled for diversity, not just recency.
+
+        recent() feeds the reflection prompt the last-n thoughts — after weeks
+        of one theme those are all that theme, and every new reflection gets
+        pulled deeper into the groove (seen live 2026-07-09: 23 of 24 thoughts
+        on one subject). This seeds with the newest thought (continuity with
+        the present), then greedily adds whichever remaining thought is least
+        similar to everything already picked, so minority threads keep a voice
+        in the prompt. Thoughts without embeddings count as maximally
+        dissimilar (they can't be compared; excluding them would silence
+        them). Returns texts in chronological order.
+        """
+        items = await self._load()
+        if len(items) <= n:
+            return [i["text"] for i in items]
+
+        picked = [items[-1]]
+        remaining = list(items[:-1])
+
+        def _dissimilarity(it: dict) -> float:
+            ie = it.get("embedding")
+            if not ie:
+                return 1.0
+            return 1.0 - max(_cosine(ie, p.get("embedding")) for p in picked)
+
+        while remaining and len(picked) < n:
+            best = max(remaining, key=_dissimilarity)
+            picked.append(best)
+            remaining.remove(best)
+
+        picked_ids = {id(p) for p in picked}
+        return [i["text"] for i in items if id(i) in picked_ids]
 
     async def snapshot(self) -> list[dict]:
         """Read-only view of the store for observability (/thoughts).
