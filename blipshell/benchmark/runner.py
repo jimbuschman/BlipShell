@@ -92,9 +92,10 @@ async def run_benchmark(
     url: Optional[str] = None,
     api_key_env: Optional[str] = None,
     coding_timeout: float = 300.0,
+    jobs: Optional[set] = None,
 ) -> None:
-    """Run ONE deep test of a model across every job, store metrics, and
-    regenerate the shareable report. No tiers — always full depth."""
+    """Run a deep test of a model across the requested jobs, store metrics, and
+    regenerate the shareable report. `jobs=None` = every job at full depth."""
     config = ConfigManager(config_path).load()
     bench = config.benchmark
 
@@ -142,11 +143,14 @@ async def run_benchmark(
             model=model, router=router, run_group=group, run_ts=run_ts,
             tier="deep", judge=judge,
         )
+        if jobs:
+            console.print(f"[dim]Scoped to jobs: {', '.join(sorted(jobs))}[/dim]")
         rows = await harness.run(
             db_path=config.database.path,
             ollama_url=ollama_url,
             full_sample=bench.full_sample,
             coding_timeout=coding_timeout,
+            jobs=jobs,
             on_status=lambda m: console.print(f"  [dim]{m}[/dim]"),
         )
         await store.record_many(rows)
@@ -243,7 +247,8 @@ async def run_discover(
         if len(short) > 40:
             console.print(f"[dim]…and {len(short) - 40} more (filters narrow this).[/dim]")
         console.print(
-            "[dim]Test one with:[/dim] blipshell benchmark run --model <id> --quick"
+            "[dim]Test one with:[/dim] blipshell benchmark run <id>   "
+            "[dim](add --jobs pipeline,reasoning to scope)[/dim]"
         )
     finally:
         await store.close()

@@ -27,6 +27,14 @@ from blipshell.models.config import EndpointConfig, LLMConfig, ModelsConfig, res
 
 logger = logging.getLogger(__name__)
 
+# Job groups `run()` can execute, in run order. A run may be scoped to a subset
+# (e.g. skip the slow, cloud-routed `coding` suite when comparing local
+# background models). "pipeline" covers ranking/importance/contradiction/entity/
+# summarization/lessons; realdata + embedding need a db_path.
+BENCHMARK_JOBS = (
+    "pipeline", "reasoning", "session_review", "realdata", "embedding", "coding",
+)
+
 # Repo root = <repo>/blipshell/benchmark/harness.py -> parents[2].
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -744,23 +752,51 @@ class BenchmarkHarness:
         ollama_url: str = "http://localhost:11434",
         full_sample: int = 50,
         coding_timeout: float = 300.0,
+        jobs: Optional[set] = None,
         on_status=None,
     ) -> list[dict]:
-        """Run the ONE deep test: every category at full depth.
+        """Run the deep test across the requested job groups.
 
-        No tiers — always pipeline + reasoning + session_review + real-data +
-        embedding + the full agentic-coding suite (standard+hard+expert). This is
-        intentionally heavy (~30-90 min/model); shallow runs don't discriminate.
+        `jobs=None` runs every category at full depth (the default deep run):
+        pipeline + reasoning + session_review + real-data + embedding + the full
+        agentic-coding suite. Intentionally heavy (~30-90 min/model); shallow
+        runs don't discriminate.
+
+        Pass a subset of `BENCHMARK_JOBS` to scope the run — e.g. comparing
+        local background models (ranking/importance/summarization/reasoning/
+        session_review/embedding) doesn't need the cloud-routed coding suite,
+        which is the slowest part. The report merges partial runs, so a scoped
+        run still shows those jobs side-by-side with other models.
         """
-        rows = await self.run_pipeline(on_status=on_status)
-        rows += await self.run_reasoning(on_status=on_status)
-        rows += await self.run_session_review(on_status=on_status)
-        if db_path:
-            rows += await self.run_realdata(db_path, full_sample, on_status=on_status)
-            rows += await self.run_embedding(db_path, ollama_url, on_status=on_status)
+        if jobs is None:
+            jobs = set(BENCHMARK_JOBS)
         else:
-            logger.info("realdata + embedding skipped (no db_path)")
-        rows += await self.run_coding("all", coding_timeout, on_status=on_status)
+            unknown = jobs - set(BENCHMARK_JOBS)
+            if unknown:
+                raise ValueError(
+                    f"Unknown benchmark job(s): {sorted(unknown)}. "
+                    f"Valid: {sorted(BENCHMARK_JOBS)}"
+                )
+
+        rows: list[dict] = []
+        if "pipeline" in jobs:
+            rows += await self.run_pipeline(on_status=on_status)
+        if "reasoning" in jobs:
+            rows += await self.run_reasoning(on_status=on_status)
+        if "session_review" in jobs:
+            rows += await self.run_session_review(on_status=on_status)
+        if "realdata" in jobs:
+            if db_path:
+                rows += await self.run_realdata(db_path, full_sample, on_status=on_status)
+            else:
+                logger.info("realdata skipped (no db_path)")
+        if "embedding" in jobs:
+            if db_path:
+                rows += await self.run_embedding(db_path, ollama_url, on_status=on_status)
+            else:
+                logger.info("embedding skipped (no db_path)")
+        if "coding" in jobs:
+            rows += await self.run_coding("all", coding_timeout, on_status=on_status)
         return rows
 
     # -- judge helpers (no-op when judge is None) -------------------------

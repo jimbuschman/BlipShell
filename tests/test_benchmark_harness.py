@@ -495,3 +495,61 @@ async def test_store_catalog_upsert(tmp_path):
         assert ("vendor/x", "openrouter") in keys
     finally:
         await store.close()
+
+
+# ---------------------------------------------------------------------------
+# run() job scoping — which run_* methods fire for a given --jobs subset
+# ---------------------------------------------------------------------------
+
+
+def _harness_with_stubbed_jobs():
+    """A harness whose run_* methods are replaced with recorders, so run()'s
+    job-gating can be tested with no router/Ollama."""
+    from unittest.mock import AsyncMock
+
+    h = harness.BenchmarkHarness.__new__(harness.BenchmarkHarness)
+    called = []
+
+    def _stub(name):
+        async def fn(*args, **kwargs):
+            called.append(name)
+            return [{"job": name}]
+        return AsyncMock(side_effect=fn)
+
+    for name in ("run_pipeline", "run_reasoning", "run_session_review",
+                 "run_realdata", "run_embedding", "run_coding"):
+        setattr(h, name, _stub(name))
+    return h, called
+
+
+async def test_run_all_jobs_by_default():
+    h, called = _harness_with_stubbed_jobs()
+    await h.run(db_path="x.db")
+    assert set(called) == {
+        "run_pipeline", "run_reasoning", "run_session_review",
+        "run_realdata", "run_embedding", "run_coding",
+    }
+
+
+async def test_run_scoped_to_subset_skips_coding():
+    h, called = _harness_with_stubbed_jobs()
+    rows = await h.run(db_path="x.db",
+                       jobs={"pipeline", "reasoning", "session_review", "embedding"})
+    assert "run_coding" not in called
+    assert "run_realdata" not in called
+    assert set(called) == {
+        "run_pipeline", "run_reasoning", "run_session_review", "run_embedding",
+    }
+    assert [r["job"] for r in rows]  # rows still returned
+
+
+async def test_run_realdata_and_embedding_need_db_path():
+    h, called = _harness_with_stubbed_jobs()
+    await h.run(db_path=None, jobs={"realdata", "embedding"})
+    assert called == []  # both gated out without a db_path
+
+
+async def test_run_rejects_unknown_job():
+    h, _ = _harness_with_stubbed_jobs()
+    with pytest.raises(ValueError, match="Unknown benchmark job"):
+        await h.run(jobs={"pipeline", "bogus"})

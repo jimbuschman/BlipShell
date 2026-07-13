@@ -3378,21 +3378,24 @@ def benchmark_grp():
 @click.option("--url", default=None, help="Candidate endpoint URL (default: first local Ollama endpoint)")
 @click.option("--api-key-env", default=None, help="Env var holding the API key (for --provider openai)")
 @click.option("--coding-timeout", default=300.0, type=float, help="Per-task timeout for the agentic coding executor (seconds)")
+@click.option("--jobs", default=None, help="Comma-separated subset to run: pipeline,reasoning,session_review,realdata,embedding,coding (default: all). Scope local-background comparisons by dropping the slow cloud-routed 'coding' suite.")
 @click.pass_context
-def benchmark_run_cmd(ctx, model, judge, provider, url, api_key_env, coding_timeout):
-    """Run the ONE deep test of MODEL (e.g. qwen3:14b, minimax/minimax-m3).
+def benchmark_run_cmd(ctx, model, judge, provider, url, api_key_env, coding_timeout, jobs):
+    """Run the deep test of MODEL (e.g. qwen3:14b, minimax/minimax-m3).
 
     Tests every job (ranking, importance, contradiction, entity, summarization,
     lessons, reasoning, coding-gen, agentic coding, tool-calling, session review,
     embedding) for ability and speed, then updates data/benchmark/report.md.
-    Intentionally heavy (~30-90 min). Cloud candidate:
-    --provider openai --url <api-base> --api-key-env <ENV_VAR>.
+    Full run is intentionally heavy (~30-90 min); use --jobs to scope. Cloud
+    candidate: --provider openai --url <api-base> --api-key-env <ENV_VAR>.
     """
     from blipshell.benchmark.runner import run_benchmark
+    job_set = {j.strip() for j in jobs.split(",") if j.strip()} if jobs else None
     asyncio.run(run_benchmark(
         model, config_path=ctx.obj.get("config_path"),
         judge_enabled=judge, provider=provider, url=url,
         api_key_env=api_key_env, coding_timeout=coding_timeout,
+        jobs=job_set,
     ))
 
 
