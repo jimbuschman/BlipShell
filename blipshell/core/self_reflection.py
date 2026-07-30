@@ -16,6 +16,7 @@ Design choices (made with BlipShell's own feedback):
 Stored in app_metadata (lightweight, easy to drop if it's not worth keeping).
 """
 
+import asyncio
 import json
 import logging
 import math
@@ -89,10 +90,16 @@ class SelfThoughtStore:
     def __init__(self, sqlite, max_keep: int = 50, embed_fn: Optional[EmbedFn] = None,
                  *, gravity_enabled: bool = False, recur_threshold: float = 0.85,
                  recur_boost: float = 0.5, fatigue: float = 0.6,
-                 half_life_days: float = 30.0, min_weight: float = 0.1):
+                 half_life_days: float = 30.0, min_weight: float = 0.1,
+                 embed_attempts: int = 3, embed_retry_delay: float = 1.0):
         self._sqlite = sqlite
         self._max = max_keep
         self._embed_fn = embed_fn
+        # Write-path embed retry. A thought stored without a vector can never
+        # fold and never resurface, and reflection fires after hours of idle —
+        # exactly when the embed model is coldest. Worth waiting for.
+        self._embed_attempts = embed_attempts
+        self._embed_retry_delay = embed_retry_delay
         # Self-gravity (off by default). When disabled, every gravity path below
         # is a no-op and the store behaves exactly as before.
         self._gravity_enabled = gravity_enabled
@@ -163,14 +170,107 @@ class SelfThoughtStore:
     async def _save(self, items: list[dict]) -> None:
         await self._sqlite.set_metadata(self.KEY, json.dumps(items[-self._max:]))
 
-    async def _embed(self, text: str) -> Optional[list[float]]:
+    async def _embed(self, text: str, attempts: int = 1) -> Optional[list[float]]:
+        """Embed text, retrying transient failures when ``attempts`` > 1.
+
+        A returned None means embeddings are structurally unavailable (no
+        vector store wired) — not worth retrying. Only a raised exception is
+        treated as transient, which is the cold-model / backend-busy case the
+        write path needs to survive.
+        """
         if self._embed_fn is None:
             return None
-        try:
-            return await self._embed_fn(text)
-        except Exception as e:  # embedding is best-effort — never block a thought
-            logger.warning("Self-thought embedding failed: %s", e)
-            return None
+        for attempt in range(max(1, attempts)):
+            try:
+                return await self._embed_fn(text)
+            except Exception as e:  # embedding is best-effort — never block a thought
+                logger.warning(
+                    "Self-thought embedding failed (attempt %d/%d): %s",
+                    attempt + 1, max(1, attempts), e,
+                )
+                if attempt + 1 >= max(1, attempts):
+                    return None
+                if self._embed_retry_delay > 0:
+                    await asyncio.sleep(self._embed_retry_delay)
+        return None
+
+    async def _backfill_embeddings(self, items: list[dict]) -> bool:
+        """Give every thought missing a vector one. True if any landed.
+
+        A thought without an embedding is invisible twice over: echo matching
+        scores it 0.0 against everything, and it can never resurface via
+        relevance. Stops at the first failure — if one embed call fails the
+        backend is down and fifty more will only be slow.
+        """
+        changed = False
+        for it in items:
+            if it.get("embedding"):
+                continue
+            emb = await self._embed(it["text"])
+            if not emb:
+                break
+            it["embedding"] = emb
+            changed = True
+        return changed
+
+    def _best_echo(self, emb: list[float], candidates) -> tuple[Optional[dict], float]:
+        """The stored thought `emb` most strongly echoes, or (None, 0.0).
+
+        Candidates without an embedding are skipped rather than scored 0.0 —
+        an unembedded prior is unknown, not dissimilar.
+        """
+        best, best_sim = None, 0.0
+        for it in candidates:
+            ie = it.get("embedding")
+            if not ie:
+                continue
+            sim = _cosine(emb, ie)
+            if sim >= self._recur_threshold and sim > best_sim:
+                best, best_sim = it, sim
+        return best, best_sim
+
+    def _fold_duplicates(self, items: list[dict]) -> int:
+        """Merge near-duplicate rows that escaped folding at write time.
+
+        Repairs the store when an echo was appended instead of folded —
+        either the incoming thought had no vector, or the prior didn't have
+        one yet (seen live 2026-07-30: identical thoughts sitting as separate
+        rows at identical weight, which also starved the recurring marker,
+        since every dropped fold denied the prior its boost).
+
+        Each later duplicate collapses into the earliest matching thought:
+        newest phrasing wins, ``created_at`` stays original so decay still
+        demands ongoing recurrence. Weight reconstruction is approximate — the
+        duplicate contributes the boosts it accumulated (``weight - 1.0``,
+        floored at 0 since fatigue may have pushed it below its base) plus one
+        boost for being an echo itself. Under-counting is the safe direction:
+        it never invents gravity that wasn't earned.
+
+        Surfaced state is intersected rather than reset to pending. ``add()``
+        deliberately makes an evolved thought pending again, but that's for a
+        thought the model just formed; resurrecting a backlog of old thoughts
+        as unprompted greetings is not a repair. Returns the number merged.
+        """
+        if not self._gravity_enabled:
+            return 0
+        kept: list[dict] = []
+        merged = 0
+        for it in items:
+            emb = it.get("embedding")
+            best, _sim = self._best_echo(emb, kept) if emb else (None, 0.0)
+            if best is None:
+                kept.append(it)
+                continue
+            carried = max(0.0, it.get("weight", 1.0) - 1.0)
+            best["weight"] = best.get("weight", 1.0) + carried + self._recur_boost
+            best["text"] = it["text"]            # the evolved phrasing wins
+            best["embedding"] = emb
+            best["surfaced"] = bool(best.get("surfaced")) and bool(it.get("surfaced"))
+            merged += 1
+        if merged:
+            logger.info("Self-thought store: folded %d duplicate thought(s)", merged)
+            items[:] = kept
+        return merged
 
     def _stamp_missing_dates(self, items: list[dict]) -> bool:
         """Backfill created_at on thoughts written before the gravity layer.
@@ -192,7 +292,10 @@ class SelfThoughtStore:
     async def add(self, text: str) -> None:
         items = await self._load()
         self._stamp_missing_dates(items)
-        emb = await self._embed(text)
+        # Retry here specifically: this is the write path, it runs on the idle
+        # reflection loop (latency is free), and a thought that lands without a
+        # vector is permanently unfoldable and unresurfaceable.
+        emb = await self._embed(text, attempts=self._embed_attempts)
         # Recurrence: if this new thought echoes a prior one, the prior gains
         # weight AND absorbs the new phrasing — "it keeps coming back to this"
         # is gravity, and the thought evolves in place instead of piling up
@@ -200,12 +303,13 @@ class SelfThoughtStore:
         # created_at stays original, so decay still demands ongoing recurrence.
         # Only when gravity is enabled; otherwise the store appends as before.
         if self._gravity_enabled and emb:
-            best, best_sim = None, 0.0
-            for it in items:
-                ie = it.get("embedding")
-                sim = _cosine(emb, ie) if ie else 0.0
-                if sim >= self._recur_threshold and sim > best_sim:
-                    best, best_sim = it, sim
+            # Before matching, make sure every prior actually has a vector —
+            # an unembedded prior can't be echoed and would silently spawn a
+            # duplicate — then repair any duplicates earlier failures left.
+            # Both are idle-path work, so they cost nothing the user feels.
+            await self._backfill_embeddings(items)
+            self._fold_duplicates(items)
+            best, _best_sim = self._best_echo(emb, items)
             if best is not None:
                 best["weight"] = best.get("weight", 1.0) + self._recur_boost
                 best["text"] = text          # the evolved phrasing wins
@@ -315,21 +419,24 @@ class SelfThoughtStore:
         if not query_vec:
             return []
         items = await self._load()
-        backfilled = self._stamp_missing_dates(items)
+        changed = self._stamp_missing_dates(items)
+        # A thought that just received its vector may be a duplicate that could
+        # never be matched before, so repair-fold — but only when a backfill
+        # actually landed. Folding unconditionally would put an O(n^2) cosine
+        # sweep on the per-turn path to fix a condition that is rare; add()
+        # runs the same repair on the idle path, so the store still heals.
+        if await self._backfill_embeddings(items):
+            changed = True
+            self._fold_duplicates(items)
         scored: list[tuple[str, float]] = []
         for it in items:
             emb = it.get("embedding")
-            if not emb:
-                emb = await self._embed(it["text"])
-                if emb:
-                    it["embedding"] = emb
-                    backfilled = True
             if not emb:
                 continue  # no vector -> no relevance claim (fail-closed)
             sim = _cosine(query_vec, emb)
             if sim >= floor:
                 scored.append((it["text"], sim))
-        if backfilled:
+        if changed:
             await self._save(items)
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:k]

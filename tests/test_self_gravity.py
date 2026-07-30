@@ -142,6 +142,209 @@ class TestWeightMechanics:
         assert await s.effective_weights(["a thought"]) == {}
 
 
+# --- write-path embed failure + duplicate repair ---------------------------
+
+class _FlakyEmbedder:
+    """Raises on the first `fail_times` calls, then embeds normally.
+
+    Models the live failure: reflection fires after hours of idle, the embed
+    model is cold, the first call times out.
+    """
+
+    def __init__(self, fail_times: int):
+        self.fail_times = fail_times
+        self.calls = 0
+
+    async def __call__(self, text):
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise RuntimeError("embed backend cold")
+        return _embed_sync(text)
+
+
+def _dup_row(text, *, weight=1.0, surfaced=True, vec=(1.0, 0.0, 0.0),
+             created_at=None):
+    row = {"text": text, "surfaced": surfaced, "weight": weight,
+           "embedding": list(vec)}
+    if created_at:
+        row["created_at"] = created_at
+    return row
+
+
+def _seed(meta, rows):
+    meta.data[SelfThoughtStore.KEY] = json.dumps(rows)
+
+
+class TestEmbedRetry:
+    async def test_transient_failure_is_retried_and_thought_still_folds(self):
+        """The bug: one failed embed made the thought unfoldable forever, so
+        an echo landed as a permanent duplicate row."""
+        meta = FakeMeta()
+        flaky = _FlakyEmbedder(fail_times=1)
+        s = SelfThoughtStore(meta, embed_fn=flaky, gravity_enabled=True,
+                             embed_retry_delay=0.0)
+        await s.add("a thought")
+        assert flaky.calls == 2          # failed once, retried, succeeded
+        assert _raw(meta)[0]["embedding"] == [1.0, 0.0, 0.0]
+
+        await s.add("echo of a thought")
+        assert len(_raw(meta)) == 1      # folded, not duplicated
+
+    async def test_exhausted_retries_still_store_the_thought(self):
+        """Embedding is best-effort — a total backend outage must never lose
+        the thought, only leave it unembedded for later backfill."""
+        meta = FakeMeta()
+        flaky = _FlakyEmbedder(fail_times=99)
+        s = SelfThoughtStore(meta, embed_fn=flaky, gravity_enabled=True,
+                             embed_attempts=3, embed_retry_delay=0.0)
+        await s.add("a thought")
+        assert flaky.calls == 3
+        rows = _raw(meta)
+        assert len(rows) == 1
+        assert rows[0]["embedding"] is None
+
+    async def test_structurally_unavailable_embedder_is_not_retried(self):
+        """A returned None means there's no vector store at all — retrying
+        that is pure latency for a guaranteed-identical answer."""
+        calls = []
+
+        async def none_embedder(text):
+            calls.append(text)
+            return None
+
+        s = SelfThoughtStore(FakeMeta(), embed_fn=none_embedder,
+                             gravity_enabled=True, embed_attempts=3,
+                             embed_retry_delay=0.0)
+        await s.add("a thought")
+        assert len(calls) == 1
+
+
+class TestDuplicateRepair:
+    async def test_add_collapses_duplicates_left_by_earlier_failures(self):
+        """Three identical rows (the live 2026-07-30 state) become one, with
+        the weight the thought would have had if folding had never failed."""
+        meta = FakeMeta()
+        _seed(meta, [_dup_row("cubes v1"), _dup_row("cubes v2"), _dup_row("cubes v3")])
+        s = _store(meta, recur_boost=0.5)
+
+        await s.add("another thought")   # distinct vector -> triggers repair
+
+        rows = _raw(meta)
+        assert len(rows) == 2
+        assert rows[0]["text"] == "cubes v3"          # newest phrasing wins
+        # 3 emissions == base 1.0 + two boosts
+        assert rows[0]["weight"] == pytest.approx(2.0)
+        assert rows[1]["text"] == "another thought"
+
+    async def test_repair_carries_boosts_the_duplicate_had_accumulated(self):
+        """Two rows that each folded one echo represent four emissions, so the
+        merged weight must be 1.0 + 3 boosts — not a flat single boost."""
+        meta = FakeMeta()
+        _seed(meta, [_dup_row("mirror a", weight=1.5),
+                     _dup_row("mirror b", weight=1.5)])
+        s = _store(meta, recur_boost=0.5)
+
+        await s.add("another thought")
+
+        assert _raw(meta)[0]["weight"] == pytest.approx(2.5)
+
+    async def test_repair_never_invents_weight_from_a_fatigued_duplicate(self):
+        """Fatigue can push a duplicate below its base weight; the carried
+        term floors at zero so repair can't manufacture gravity."""
+        meta = FakeMeta()
+        _seed(meta, [_dup_row("x", weight=1.0), _dup_row("y", weight=0.36)])
+        s = _store(meta, recur_boost=0.5)
+
+        await s.add("another thought")
+
+        assert _raw(meta)[0]["weight"] == pytest.approx(1.5)
+
+    async def test_repair_keeps_the_earliest_created_at(self):
+        old = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
+        new = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        meta = FakeMeta()
+        _seed(meta, [_dup_row("first", created_at=old),
+                     _dup_row("second", created_at=new)])
+        s = _store(meta)
+
+        await s.add("another thought")
+
+        assert _raw(meta)[0]["created_at"] == old
+
+    async def test_repair_does_not_resurrect_surfaced_thoughts(self):
+        """add() makes an evolved thought pending again — but that's for a
+        thought just formed. Repairing a backlog must not fire off a queue of
+        old thoughts as unprompted greetings."""
+        meta = FakeMeta()
+        _seed(meta, [_dup_row("a", surfaced=True), _dup_row("b", surfaced=True)])
+        s = _store(meta)
+
+        await s.add("another thought")
+
+        merged = _raw(meta)[0]
+        assert merged["surfaced"] is True
+
+    async def test_repair_keeps_pending_when_a_duplicate_was_unsurfaced(self):
+        meta = FakeMeta()
+        _seed(meta, [_dup_row("a", surfaced=True), _dup_row("b", surfaced=False)])
+        s = _store(meta)
+
+        await s.add("another thought")
+
+        assert _raw(meta)[0]["surfaced"] is False
+
+    async def test_repair_is_a_noop_when_gravity_disabled(self):
+        """The firewall: with the feature off the store must behave exactly as
+        it did before, duplicates and all."""
+        meta = FakeMeta()
+        _seed(meta, [_dup_row("a"), _dup_row("b"), _dup_row("c")])
+        s = _store(meta, gravity_enabled=False)
+
+        await s.add("another thought")
+
+        assert len(_raw(meta)) == 4
+
+    async def test_unembedded_prior_is_backfilled_so_an_echo_can_fold(self):
+        """The second half of the bug: even with a good incoming vector, a
+        prior missing its own vector scored 0.0 and so could never be echoed.
+        """
+        meta = FakeMeta()
+        _seed(meta, [{"text": "a thought", "surfaced": True,
+                      "weight": 1.0, "embedding": None}])
+        s = _store(meta)
+
+        await s.add("echo of a thought")   # same vector as "a thought"
+
+        rows = _raw(meta)
+        assert len(rows) == 1
+        assert rows[0]["weight"] == pytest.approx(1.5)
+
+
+class TestRelevancePathRepair:
+    async def test_backfill_on_relevance_check_also_folds_the_duplicate(self):
+        meta = FakeMeta()
+        _seed(meta, [_dup_row("a thought"),
+                     {"text": "echo of a thought", "surfaced": True,
+                      "weight": 1.0, "embedding": None}])
+        s = _store(meta)
+
+        out = await s.relevant_candidates([1.0, 0.0, 0.0], floor=0.4, k=5)
+
+        assert len(_raw(meta)) == 1
+        assert [t for t, _ in out] == ["echo of a thought"]
+
+    async def test_relevance_check_does_not_fold_when_nothing_was_backfilled(self):
+        """The per-turn path stays cheap: fully-embedded stores skip the
+        O(n^2) sweep entirely and leave repair to the idle write path."""
+        meta = FakeMeta()
+        _seed(meta, [_dup_row("a"), _dup_row("b")])
+        s = _store(meta)
+
+        await s.relevant_candidates([1.0, 0.0, 0.0], floor=0.4, k=5)
+
+        assert len(_raw(meta)) == 2
+
+
 # --- the gate picks the heaviest relevant thought --------------------------
 
 def _make_search():
