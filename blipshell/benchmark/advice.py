@@ -171,11 +171,27 @@ def build_advice(report: dict, config) -> list[dict]:
             clear = [c for c in contenders if c["gains"] and not c["losses"]]
             mixed = [c for c in contenders if c["gains"] and c["losses"]]
             if clear:
-                best = max(clear, key=lambda c: max(d for _, d in c["gains"]))
+                # Rank by MEAN delta across every job the key controls, not by
+                # the single largest gain. A key is one choice covering all its
+                # jobs, so a candidate that improves all of them beats one that
+                # spikes on a single job and slips on another. Real case:
+                # glm-5.2 (lessons +0.238, session_review -0.025) outranked
+                # minimax-m3 (+0.165, +0.100) under max-gain, despite minimax
+                # being better on BOTH.
+                def _mean_delta(c):
+                    inc_jobs = (inc_row or {}).get("jobs", {})
+                    deltas = [c["jobs"][j] - inc_jobs[j] for j in jobs
+                              if c["jobs"].get(j) is not None
+                              and inc_jobs.get(j) is not None]
+                    return sum(deltas) / len(deltas) if deltas else 0.0
+
+                best = max(clear, key=_mean_delta)
+                improved = ", ".join(f"{j} (+{d:.3f})" for j, d in best["gains"])
                 verdict = "CONSIDER"
-                reason = (f"{best['model']} beats {incumbent} on "
-                          + ", ".join(f"{j} (+{d:.3f})" for j, d in best["gains"])
-                          + " with no regression on this key's other jobs.")
+                reason = (f"{best['model']} beats {incumbent} on {improved} "
+                          f"with no regression on this key's other jobs "
+                          f"(mean gain across all its jobs: "
+                          f"{_mean_delta(best):+.3f}).")
                 action = None
             elif mixed:
                 m = mixed[0]

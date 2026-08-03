@@ -470,6 +470,13 @@ async def benchmark_rank_and_importance(router: LLMRouter) -> list[dict]:
             "raw": raw,
             "rank": rank,
             "importance": importance,
+            # score_rank_and_importance filters on these two keys, so without
+            # them both of its sub-scores got an empty list and the job returned
+            # None -- for every model, in every run ever recorded. The column was
+            # invisible in the report (build_report skips categories nothing
+            # scored), so the busiest key in the config looked simply unmeasured.
+            "truth_rank": msg["truth_rank"],
+            "truth_importance": msg["truth_importance"],
             "time": round(elapsed, 2),
         })
         await asyncio.sleep(0.1)

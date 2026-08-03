@@ -578,3 +578,30 @@ async def test_run_rejects_unknown_job():
     h, _ = _harness_with_stubbed_jobs()
     with pytest.raises(ValueError, match="Unknown benchmark job"):
         await h.run(jobs={"pipeline", "bogus"})
+
+
+def test_rank_importance_results_carry_the_ground_truth_the_scorer_needs():
+    """score_rank_and_importance filters on truth_rank/truth_importance. Without
+    them it scored an empty list and returned None for every model in every run
+    ever recorded, while the report silently omitted the column.
+    """
+    from blipshell.benchmark.harness import _load_dataset, score_rank_and_importance
+    bm = _load_dataset("benchmark_models")
+    msgs = bm.TEST_MESSAGES[:3]
+    # Shape a perfect result set the way benchmark_rank_and_importance now does.
+    results = [{"raw": "x", "rank": m["truth_rank"],
+                "importance": m["truth_importance"],
+                "truth_rank": m["truth_rank"],
+                "truth_importance": m["truth_importance"], "time": 0.1}
+               for m in msgs]
+    score = score_rank_and_importance(results)
+    assert score is not None, "still unscoreable"
+    assert score > 0.9, f"perfect answers should score high, got {score}"
+
+
+def test_rank_importance_without_truth_fields_is_unscoreable():
+    """Pins the failure mode itself, so a future refactor that drops the fields
+    fails loudly here instead of silently emitting None for years."""
+    from blipshell.benchmark.harness import score_rank_and_importance
+    assert score_rank_and_importance(
+        [{"raw": "x", "rank": 4, "importance": 0.8, "time": 0.1}]) is None

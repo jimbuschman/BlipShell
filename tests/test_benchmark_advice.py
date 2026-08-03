@@ -229,3 +229,31 @@ class TestRendering:
         md = render_advice(build_advice(rep, _Cfg(_Models(session_review="mine"))))
         assert "not measured" in md
         assert "0.000" not in md
+
+
+class TestCandidateRanking:
+    """Real case from the 2026-08-03 qwen3 run: ranking by largest single gain
+    picked glm-5.2 for models.session_review (lessons +0.238, session_review
+    -0.025) over minimax-m3 (+0.165, +0.100) -- despite minimax being better on
+    BOTH jobs the key controls. A key is one choice covering all its jobs.
+    """
+
+    def _rep(self):
+        return _report({
+            "qwen3:14b": {"session_review": 0.844, "lessons": 0.420},
+            "glm-5.2:cloud": {"session_review": 0.819, "lessons": 0.658},
+            "minimax-m3:cloud": {"session_review": 0.944, "lessons": 0.585},
+        })
+
+    def test_prefers_the_candidate_better_on_every_job(self):
+        b = _block(build_advice(self._rep(), _Cfg(_Models(session_review="qwen3:14b"))),
+                   "session_review")
+        assert b["verdict"] == "CONSIDER"
+        assert "minimax-m3:cloud" in b["reason"]
+        assert "glm-5.2:cloud" not in b["reason"]
+
+    def test_reason_reports_the_mean_gain_across_the_keys_jobs(self):
+        b = _block(build_advice(self._rep(), _Cfg(_Models(session_review="qwen3:14b"))),
+                   "session_review")
+        # (0.944-0.844 + 0.585-0.420) / 2 = +0.1325
+        assert "+0.132" in b["reason"] or "+0.133" in b["reason"]
