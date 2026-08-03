@@ -24,12 +24,18 @@ SCORING_METRICS = {"accuracy", "quality", "tool_pass_rate"}
 # The job categories, in display order, with what each measures + how it's scored
 # (this text goes into the report so the reading LLM knows what the numbers mean).
 CATEGORIES = [
-    ("ranking", "Ranking (1-5)", "Assigns a memory-importance rank to messages.",
+    ("rank_importance", "Rank+Importance (live pipeline)",
+     "The combined rank+importance+type call every message goes through "
+     "(rank_importance_and_classify, processor.py:185). This is models.ranking_importance.",
+     "Mean of rank-correlation and importance calibration vs gold."),
+    ("ranking", "Ranking (import path)",
+     "Standalone rank prompt used only by the bulk import path "
+     "(rank_memory, import_common.py:598) — NOT the live pipeline.",
      "Rank-correlation of predicted vs gold rank (order matters); flat output scores ~0."),
-    ("importance", "Importance (0-1)", "Scores how important a memory is to retain.",
+    ("importance", "Importance (import path)",
+     "Standalone importance prompt used only by the bulk import path "
+     "(ask_importance, import_common.py:648) — NOT the live pipeline.",
      "Average of correlation and calibration (1-MAE) vs gold importance."),
-    ("rank_importance", "Rank+Importance", "Combined rank and importance in one call.",
-     "Mean of the ranking and importance scores above."),
     ("contradiction", "Contradiction", "Decides whether two memories contradict.",
      "Exact YES/NO accuracy over a balanced set."),
     ("entity", "Entity extraction", "Extracts entities/relationships from text.",
@@ -40,8 +46,14 @@ CATEGORIES = [
      "Neutral judge 0-1 (grounded / reusable / concise)."),
     ("reasoning", "Reasoning", "Plans, analysis, diagnosis, calibrated explanation.",
      "Neutral judge 0-1 (correct / complete / actionable)."),
-    ("coding", "Coding (agentic)", "Real multi-step coding tasks in a sandbox.",
+    ("code_gen", "Code generation", "Writes code for a stated task (no tools, no sandbox).",
+     "Neutral judge 0-1 (correct / complete / idiomatic)."),
+    ("coding_agentic", "Coding (agentic)", "Real multi-step coding tasks in a sandbox.",
      "Fraction of verification checks passed (executes code, runs pytest)."),
+    ("coding", "Coding (legacy - ambiguous)",
+     "Runs before 2026-08-03 reported code generation AND agentic coding under one "
+     "task_type, so this column is whichever one happened to be written last.",
+     "NOT comparable to the two rows above, or between models. Re-run to replace it."),
     ("tool_calling", "Tool calling", "Picks the right tool with the right arguments.",
      "Exact tool name + required-argument match."),
     ("session_review", "Session review", "Produces a structured session reflection.",
@@ -52,6 +64,16 @@ CATEGORIES = [
 
 # Latency is recorded per SUITE (a group of jobs), not per individual job.
 LATENCY_SUITES = ["pipeline", "reasoning_suite", "session_review", "coding", "realdata_suite"]
+
+# Categories that are displayed but must NOT feed the composite or coverage.
+# "coding" is the pre-2026-08-03 row where code generation and agentic coding
+# shared one task_type: the value is whichever was written last, so averaging it
+# in would silently mix two different metrics across models.
+NON_COMPARABLE = {"coding"}
+
+# Judged jobs whose output length is worth showing as a verbosity cross-check.
+JUDGED_JOBS = {"summarization", "lessons", "reasoning", "code_gen", "coding",
+               "session_review"}
 
 
 def _scoring_map(rows: list[dict]) -> dict[str, float]:
@@ -82,11 +104,12 @@ def _length_map(rows: list[dict]) -> dict[str, float]:
 
 
 def _weighted_composite(scores: dict[str, float], weights: dict[str, float]) -> Optional[float]:
-    """Weighted mean over the scoring categories a model measured."""
+    """Weighted mean over the comparable scoring categories a model measured."""
     num = den = 0.0
+    comparable = {c[0] for c in CATEGORIES} - NON_COMPARABLE
     for key, val in scores.items():
-        if key not in {c[0] for c in CATEGORIES}:
-            continue  # exclude informational task_types (e.g. realdata agreement)
+        if key not in comparable:
+            continue  # informational task_types + non-comparable legacy rows
         w = weights.get(key, 1.0)
         num += w * val
         den += w
@@ -134,7 +157,7 @@ def build_report(
     # A composite over 1 of 10 jobs is not comparable to one over 10, and left
     # unmarked the partial model can top the table (kimi-k2.7-code briefly
     # showed the best composite, 0.925, from a single session_review run).
-    cat_keys = {c[0] for c in CATEGORIES}
+    cat_keys = {c[0] for c in CATEGORIES} - NON_COMPARABLE
     coverage = {m: len(set(scoring[m]) & cat_keys) for m in models}
     max_coverage = max(coverage.values()) if coverage else 0
 
@@ -293,8 +316,7 @@ def render_markdown(report: dict) -> str:
 
     # Output length (verbosity check) — judged jobs only
     length = report.get("length", {})
-    judged = [c[0] for c in CATEGORIES if c[0] in
-              {"summarization", "lessons", "reasoning", "coding", "session_review"}]
+    judged = [c[0] for c in CATEGORIES if c[0] in JUDGED_JOBS]
     len_jobs = [j for j in judged if any(j in length.get(m, {}) for m in models)]
     if len_jobs:
         parts.append("## Output length (mean words, judged jobs) — longer is NOT better")

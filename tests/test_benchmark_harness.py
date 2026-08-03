@@ -237,20 +237,43 @@ def _rows_with_latency(model, scores, lats):
 
 def test_report_quality_matrix_and_best_per_job():
     model_rows = {
-        "a": _rows("a", {"coding": ("accuracy", 0.80), "ranking": ("accuracy", 0.60)}),
-        "b": _rows("b", {"coding": ("accuracy", 0.40), "ranking": ("accuracy", 1.00)}),
+        "a": _rows("a", {"coding_agentic": ("accuracy", 0.80),
+                         "ranking": ("accuracy", 0.60)}),
+        "b": _rows("b", {"coding_agentic": ("accuracy", 0.40),
+                         "ranking": ("accuracy", 1.00)}),
     }
-    rep = report.build_report(model_rows, task_weights={"coding": 3.0, "ranking": 1.0})
-    coding = next(c for c in rep["categories"] if c["key"] == "coding")
+    rep = report.build_report(
+        model_rows, task_weights={"coding_agentic": 3.0, "ranking": 1.0})
+    coding = next(c for c in rep["categories"] if c["key"] == "coding_agentic")
     assert coding["scores"] == {"a": pytest.approx(0.80), "b": pytest.approx(0.40)}
     assert coding["best_model"] == "a"
     # composite a = (3*0.8 + 1*0.6)/4 = 0.75 ; b = (3*0.4 + 1*1.0)/4 = 0.55
     assert rep["composite"]["a"] == pytest.approx(0.75)
     assert rep["composite"]["b"] == pytest.approx(0.55)
-    # known job ordering: ranking before coding
-    assert [c["key"] for c in rep["categories"]] == ["ranking", "coding"]
+    # known job ordering: ranking before coding_agentic
+    assert [c["key"] for c in rep["categories"]] == ["ranking", "coding_agentic"]
     # NO verdict/incumbent/switch concepts anywhere
     assert "switch" not in rep and "incumbent" not in str(rep["categories"])
+
+
+def test_legacy_coding_renders_but_is_excluded_from_composite_and_coverage():
+    """Pre-2026-08-03 runs reported code generation AND agentic coding under one
+    task_type, so the stored value is whichever was written last. It must still
+    display (those runs are all we have for four models) but must not be
+    averaged in, or the composite silently mixes two different metrics.
+    """
+    model_rows = {
+        "old": _rows("old", {"coding": ("accuracy", 0.20),
+                             "ranking": ("accuracy", 0.80)}),
+    }
+    rep = report.build_report(model_rows)
+    keys = [c["key"] for c in rep["categories"]]
+    assert "coding" in keys                        # still visible
+    assert rep["composite"]["old"] == pytest.approx(0.80)   # ranking only
+    assert rep["coverage"]["old"] == 1             # legacy row doesn't count
+    md = report.render_markdown(rep)
+    assert "legacy" in md.lower()
+    assert "NOT comparable" in md
 
 
 def test_report_latency_and_catalog_round_trip():

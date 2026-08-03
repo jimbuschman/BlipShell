@@ -29,7 +29,7 @@ from blipshell.llm.prompts import (
     detect_contradiction,
     extract_entities,
     extract_lesson,
-    rank_and_importance,
+    rank_importance_and_classify,
     rank_memory,
     summarize_memory,
 )
@@ -437,15 +437,30 @@ async def benchmark_contradiction(router: LLMRouter) -> list[dict]:
 
 
 async def benchmark_rank_and_importance(router: LLMRouter) -> list[dict]:
+    """Measure the LIVE memory pipeline's combined scoring call.
+
+    Uses `rank_importance_and_classify` + RANKING_IMPORTANCE, matching
+    processor.py:185 — the call that runs on every message. This previously used
+    `rank_and_importance` + RANKING, which only the import/reprocess paths use
+    (import_common.py:361), so `models.ranking_importance` — the busiest key in
+    the config — had no valid number while appearing to have one.
+
+    The extra `type` field the live prompt asks for is parsed and discarded here:
+    scoring rank and importance keeps this comparable to what the column has
+    always meant, and misclassification is a separate concern from miscalibration.
+    """
     results = []
     for msg in TEST_MESSAGES:
-        sys_prompt, user_prompt = rank_and_importance(msg["content"])
+        sys_prompt, user_prompt = rank_importance_and_classify(msg["content"])
         start = time.perf_counter()
         try:
             raw = await router.generate(
-                TaskType.RANKING, user_prompt, system=sys_prompt, think=False,
+                TaskType.RANKING_IMPORTANCE, user_prompt, system=sys_prompt,
+                think=False,
             )
-            rank, importance = MemoryProcessor._parse_rank_and_importance(raw)
+            rank, importance, _mem_type = (
+                MemoryProcessor._parse_rank_importance_type(raw)
+            )
         except Exception as e:
             raw = f"ERROR: {e}"
             rank = -1

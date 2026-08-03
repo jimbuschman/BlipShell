@@ -559,8 +559,13 @@ class BenchmarkHarness:
         coding = await br.benchmark_coding(r)
         code_tasks = [t.get("prompt", "") for t in br.CODING_TESTS]
         code_q = await self._judge_reasoning(code_tasks, [x["response"] for x in coding])
-        rows.append(self._row("reasoning", "coding", "quality", code_q))
-        rows.append(self._row("reasoning", "coding", "length_words",
+        # task_type is "code_gen", NOT "coding": run_coding() also reported
+        # task_type "coding" (its sandbox pass rate), and report._scoring_map
+        # keys by task_type alone — so on a full run the two silently collapsed
+        # and whichever row came last won. This judged generation score was
+        # computed, spent judge tokens, and was then discarded.
+        rows.append(self._row("reasoning", "code_gen", "quality", code_q))
+        rows.append(self._row("reasoning", "code_gen", "length_words",
                               _mean_words([x["response"] for x in coding]), unit="words"))
 
         status("reasoning: tool calling")
@@ -724,7 +729,7 @@ class BenchmarkHarness:
             context = bc.build_project_context(sandbox)
         except Exception as e:  # noqa: BLE001
             logger.warning("coding: sandbox setup failed: %s", e)
-            return [self._row("coding", "coding", "accuracy", None,
+            return [self._row("coding", "coding_agentic", "accuracy", None,
                               raw={"note": f"sandbox setup failed: {e}"})]
 
         passed = total = 0
@@ -750,10 +755,14 @@ class BenchmarkHarness:
             shutil.rmtree(sandbox, ignore_errors=True)
 
         score = (passed / total) if total else None
-        rows = [self._row("coding", "coding", "accuracy", score,
+        # "coding_agentic" so the sandbox pass rate stops colliding with the
+        # reasoning suite's judged "code_gen" score (see run_reasoning).
+        rows = [self._row("coding", "coding_agentic", "accuracy", score,
                           raw={"checks_passed": passed, "checks_total": total,
                                "tasks_completed": completed, "tasks_total": len(task_list)})]
         lat = round(sum(times) / len(times), 2) if times else None
+        # Latency stays keyed on the SUITE name ("coding") — report.LATENCY_SUITES
+        # matches suites, not jobs, so renaming this would drop the row silently.
         rows.append(self._row("coding", "coding", "latency_s", lat, unit="seconds"))
         return rows
 
