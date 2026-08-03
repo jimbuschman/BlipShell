@@ -54,6 +54,20 @@ def _resolve_db_path(db_path: str, config_path: Optional[str]) -> str:
     return str((base / p).resolve())
 
 
+def _print_advice(advice_md: str) -> None:
+    """Echo the assignment advice to the terminal.
+
+    Printed as Markdown so the verdicts and the exact re-run commands are on
+    screen after a run, rather than only inside a file the user then has to open.
+    """
+    if not advice_md.strip():
+        return
+    from rich.markdown import Markdown
+    console.print()
+    console.print(Markdown(advice_md))
+    console.print()
+
+
 def _candidate_context_tokens(config, url: str) -> Optional[int]:
     """Context window to give the candidate: whatever the real endpoint at `url` uses.
 
@@ -109,8 +123,18 @@ async def _regenerate_report(store, config, config_path: Optional[str]) -> tuple
         task_weights=config.benchmark.task_weights,
         provenance=results.provenance(),
     )
-    paths = write_report(report, _report_dir(config_path))
-    return paths, len(model_rows)
+
+    # The per-config-key advice is the part you act on, so it leads the file and
+    # is echoed to the console. The per-job matrix is supporting detail.
+    from blipshell.benchmark.advice import build_advice, render_advice
+    advice_md = ""
+    try:
+        advice_md = render_advice(build_advice(report, config))
+    except Exception as e:  # never let advice break the report itself
+        logger.warning("Could not build assignment advice: %s", e)
+
+    paths = write_report(report, _report_dir(config_path), advice=advice_md)
+    return paths, len(model_rows), advice_md
 
 
 async def run_benchmark(
@@ -216,10 +240,11 @@ async def run_benchmark(
             f"[dim]Commit that file so the other machine sees this run.[/dim]"
         )
 
-        paths, n = await _regenerate_report(store, config, config_path)
+        paths, n, advice_md = await _regenerate_report(store, config, config_path)
+        _print_advice(advice_md)
         console.print(
             f"[bold green]Report updated[/bold green] ({n} model{'s' if n != 1 else ''} side by side):\n"
-            f"  [cyan]{paths['md']}[/cyan]   ← hand this to a stronger LLM\n"
+            f"  [cyan]{paths['md']}[/cyan]\n"
             f"  [dim]{paths['json']}[/dim]"
         )
     finally:
@@ -231,11 +256,12 @@ async def run_report(*, config_path: Optional[str] = None) -> None:
     config = ConfigManager(config_path).load()
     store = await BenchmarkStore(_resolve_db_path(config.benchmark.db_path, config_path)).initialize()
     try:
-        paths, n = await _regenerate_report(store, config, config_path)
+        paths, n, advice_md = await _regenerate_report(store, config, config_path)
         if n == 0:
             console.print("[yellow]No benchmarked models yet.[/yellow] "
                           "Run `blipshell benchmark run <model>` first.")
             return
+        _print_advice(advice_md)
         console.print(
             f"[bold green]Report regenerated[/bold green] ({n} model{'s' if n != 1 else ''}):\n"
             f"  [cyan]{paths['md']}[/cyan]\n  [dim]{paths['json']}[/dim]"

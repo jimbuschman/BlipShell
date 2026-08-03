@@ -179,12 +179,27 @@ blipshell/
   because scores from different commits are not strictly comparable.
   `python -m scripts.migrate_benchmark_results` moves pre-2026-08-03 rows out of
   an old DB (run once, on the machine holding the history).
-- Known benchmark gaps (do NOT read past them): suites call prompts directly, so
+- **Read `report.md`'s first section, "Which model to use where"** — one block per
+  `config.yaml` key, listing every job that key controls, with a verdict
+  (KEEP / CONSIDER / UNKNOWN) and the exact command to resolve an UNKNOWN. Also
+  echoed to the console. `benchmark/advice.py` owns it; `JOB_OWNERS` there maps
+  key → jobs and is derived from real `TaskType` call sites, NOT from
+  `config.yaml`'s comments (which have drifted — the `reasoning:` comment claims
+  it handles lessons; lessons go through SESSION_REVIEW at `processor.py:275`).
+  **Under-specifying a key produces confidently wrong advice**: with only its
+  namesake job attached, `tool_calling` recommended lfm2.5 (0.933 tool calling,
+  0.450 reasoning) for interactive chat. When routing changes, re-verify JOB_OWNERS.
+- Job/prompt correspondence (audited 2026-08-03) — `summarization`, `lessons`,
+  `contradiction`, `entity`, `rank_importance` measure the prompts production
+  actually runs. `ranking` and `importance` measure **import-path-only** prompts
+  and are labelled as such. `coding` in runs before 2026-08-03 conflated judged
+  code-gen with agentic pass rate under one `task_type`; it renders as
+  "Coding (legacy - ambiguous)" and is excluded from the composite. New runs
+  report `code_gen` and `coding_agentic` separately.
+- Known benchmark gap (do NOT read past it): suites call prompts directly, so
   production paths are bypassed — `run_session_review` never exercises
   chunk+merge, and `SESSION_REVIEW_CASES` are 111-190 tokens vs a ~28.6K
-  chunking threshold. Report rows are per-job but decisions are per-config-key,
-  and one key can span jobs (`models.session_review` drives session review AND
-  lesson extraction — `processor.py:275`).
+  chunking threshold. `scripts/audit_reflection_quality.py` covers that for now.
 - `python scripts/test_executor.py --canned|--stress` — headless executor harness
   (Ollama PC).
 

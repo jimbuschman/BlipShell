@@ -201,7 +201,10 @@ def _md_table(header: list[str], rows: list[list[str]]) -> str:
     return "\n".join(out)
 
 
-def render_markdown(report: dict) -> str:
+def render_markdown(report: dict, advice: str = "") -> str:
+    """Render the report. `advice` is the per-config-key section from
+    advice.render_advice(); it goes FIRST because it's the part you act on —
+    the per-job matrix below it is supporting detail."""
     models = report["models"]
     if not report["categories"]:
         return ("# BlipShell model benchmark\n\nNo benchmarked models yet. "
@@ -213,6 +216,10 @@ def render_markdown(report: dict) -> str:
     if report.get("generated"):
         parts.append(f"_Generated {report['generated']}_")
     parts.append("")
+    if advice:
+        parts.append(advice)
+        parts.append("---")
+        parts.append("")
     parts.append(
         "## How to read this\n"
         "BlipShell routes a **mix of local and cloud models per job**, each with a fallback, "
@@ -404,12 +411,12 @@ def render_markdown(report: dict) -> str:
     return "\n".join(parts) + "\n"
 
 
-def write_report(report: dict, out_dir: str) -> dict:
+def write_report(report: dict, out_dir: str, advice: str = "") -> dict:
     """Write report.md + report.json into out_dir. Returns {md, json} paths."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     md_path = out / "report.md"
     json_path = out / "report.json"
-    md_path.write_text(render_markdown(report), encoding="utf-8")
+    md_path.write_text(render_markdown(report, advice=advice), encoding="utf-8")
     json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     return {"md": str(md_path), "json": str(json_path)}
