@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "model": "qwen3:14b",
+  "run_group": "qwen3_14b@2026-08-03T15:12:27.530340+00:00",
+  "run_ts": "2026-08-03T15:12:27.530340+00:00",
+  "tier": "deep",
+  "judge_model": "anthropic/claude-opus-4.8",
+  "jobs": [
+    "pipeline"
+  ],
+  "git_sha": "4b97015",
+  "host": "HPBENDERTWO",
+  "rows": [
+    {
+      "suite": "pipeline",
+      "task_type": "ranking",
+      "metric": "accuracy",
+      "value": 0.9145,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "importance",
+      "metric": "accuracy",
+      "value": 0.9226,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "rank_importance",
+      "metric": "accuracy",
+      "value": null,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "contradiction",
+      "metric": "accuracy",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "entity",
+      "metric": "accuracy",
+      "value": 0.8254,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "quality",
+      "value": 0.8675,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "length_words",
+      "value": 8.2,
+      "unit": "words",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "quality",
+      "value": 0.42,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "length_words",
+      "value": 39.4,
+      "unit": "words",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "pipeline",
+      "metric": "latency_s",
+      "value": 0.886,
+      "unit": "seconds",
+      "raw": null
+    }
+  ]
+}
