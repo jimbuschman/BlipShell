@@ -130,6 +130,14 @@ def build_report(
             "best_model": max(scores, key=lambda m: scores[m]),
         })
 
+    # Coverage = how many scoring categories this model actually measured.
+    # A composite over 1 of 10 jobs is not comparable to one over 10, and left
+    # unmarked the partial model can top the table (kimi-k2.7-code briefly
+    # showed the best composite, 0.925, from a single session_review run).
+    cat_keys = {c[0] for c in CATEGORIES}
+    coverage = {m: len(set(scoring[m]) & cat_keys) for m in models}
+    max_coverage = max(coverage.values()) if coverage else 0
+
     composite = {}
     for m in models:
         c = _weighted_composite(scoring[m], task_weights)
@@ -156,6 +164,8 @@ def build_report(
         "length": length,             # model -> {task_type: mean words} (judged jobs)
         "catalog": cat_info,          # model -> {price/context/speed}
         "provenance": {m: provenance.get(m, {}) for m in models},
+        "coverage": coverage,         # model -> categories measured
+        "max_coverage": max_coverage,
     }
 
 
@@ -212,14 +222,36 @@ def render_markdown(report: dict) -> str:
                 row.append(f"{v:.3f}")
         qrows.append(row)
     comp = report["composite"]
+    cov = report.get("coverage", {})
+    max_cov = report.get("max_coverage", 0)
+    partial_models = [m for m in models if cov.get(m, 0) < max_cov]
     if comp:
-        best_comp = max(comp, key=lambda m: comp[m])
+        # Only models with full coverage compete for "best composite" — a
+        # partial model's average is over a different (easier) set of jobs.
+        full = {m: v for m, v in comp.items() if cov.get(m, 0) >= max_cov}
+        best_comp = max(full, key=lambda m: full[m]) if full else None
         crow = ["**COMPOSITE**"]
         for m in models:
             v = comp.get(m)
-            crow.append("—" if v is None else (f"**{v:.3f}**" if m == best_comp else f"{v:.3f}"))
+            if v is None:
+                crow.append("—")
+            elif m in partial_models:
+                crow.append(f"{v:.3f} (partial)")   # measured fewer jobs
+            elif m == best_comp:
+                crow.append(f"**{v:.3f}**")
+            else:
+                crow.append(f"{v:.3f}")
         qrows.append(crow)
     parts.append(_md_table(header, qrows))
+    if partial_models:
+        detail = ", ".join(f"{m} ({cov.get(m, 0)}/{max_cov} jobs)" for m in partial_models)
+        parts.append(
+            f"\n**(partial) Incomplete coverage:** {detail}. A composite averaged over "
+            "fewer jobs is NOT comparable to a full one and cannot win the row — "
+            "a model that only ran its strongest job would otherwise top the "
+            "table. Blank cells mean 'not measured', never 'scored zero'. "
+            "Re-run those models across all jobs before comparing composites."
+        )
     parts.append("")
 
     # Latency table
@@ -284,16 +316,16 @@ def render_markdown(report: dict) -> str:
     if any(prov.get(m) for m in models):
         parts.append("## Provenance — when each column was measured")
         prows = []
-        partial = False
         for m in models:
             p = prov.get(m) or {}
             ts = (p.get("run_ts") or "—")[:16].replace("T", " ")
-            jobs = p.get("jobs")
-            if jobs:
-                scope = ", ".join(jobs)
-                partial = True
-            else:
-                scope = "all jobs"
+            # Scope is derived from measured coverage, NOT from the run's --jobs
+            # field. Rows merge per metric, so a model can reach full coverage
+            # from several scoped runs; the recorded intent of any single run
+            # would then misdescribe the column. Coverage cannot drift from
+            # what the numbers actually are.
+            n = cov.get(m, 0)
+            scope = "all jobs" if n >= max_cov and max_cov else f"{n}/{max_cov} jobs"
             # Distinguish "migrated from the old DB, commit unknowable" from
             # "git was unavailable" — both would otherwise render as a dash,
             # and the reader needs to know which kind of unknown it is.
@@ -303,22 +335,31 @@ def render_markdown(report: dict) -> str:
                 code = "pre-migration"
             else:
                 code = "—"
+            # Rows are merged per metric, so one model's numbers can span runs.
+            # Show the span rather than pretending it's a single measurement.
+            oldest = (p.get("oldest_ts") or "")[:10]
+            newest = (p.get("run_ts") or "")[:10]
+            span = newest if (not oldest or oldest == newest) else f"{oldest}..{newest}"
+            if p.get("mixed_code"):
+                code += " (mixed)"
             prows.append([
-                m, ts, code, p.get("host") or "—",
+                m, ts, span, str(p.get("run_count") or 1), code,
                 p.get("judge_model") or "—", scope,
             ])
         parts.append(_md_table(
-            ["Model", "Run date (UTC)", "Code (git)", "Host", "Judge", "Scope"], prows))
+            ["Model", "Newest run (UTC)", "Data spans", "Runs", "Code (git)",
+             "Judge", "Scope"], prows))
         parts.append("\n_Results persist across machines and months. Columns measured at "
                      "different dates or different commits are NOT strictly comparable — a "
                      "scorer or prompt change between them moves scores on its own. When two "
                      "rows disagree and their commits differ, re-run the older one before "
                      "concluding anything._")
-        if partial:
-            parts.append("\n_At least one model was benchmarked with `--jobs` and so did not "
-                         "measure every category. Its blank cells above mean 'not run', not "
-                         "'scored zero', and its COMPOSITE is an average over fewer jobs than "
-                         "a full run's — do not compare composites across differing scopes._")
+        if partial_models:
+            parts.append("\n_A model showing fewer than all jobs did not measure every "
+                         "category — usually a `--jobs`-scoped run. Its blank cells mean "
+                         "'not run', not 'scored zero', and its COMPOSITE averages over "
+                         "fewer jobs than a full run's, so do not compare composites across "
+                         "differing scopes._")
         parts.append("")
 
     # Methodology

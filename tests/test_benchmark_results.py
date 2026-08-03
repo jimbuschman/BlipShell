@@ -91,6 +91,77 @@ class TestRoundTrip:
         assert all(r["run_group"] == "g7" for r in rows)
 
 
+class TestPerMetricMerge:
+    """A scoped run must not erase jobs a full run already measured.
+
+    Live failure (2026-08-03): a 3-row `--jobs session_review` run superseded
+    kimi-k2.7-code's 21-row full run. Nine columns went blank and its COMPOSITE
+    became an average of one number — 0.925, the best in the table.
+    """
+
+    def _row(self, task, metric, value):
+        return {"suite": "s", "task_type": task, "metric": metric,
+                "value": value, "unit": "ratio", "raw": None}
+
+    async def _seed(self, tmp_path):
+        s = ResultsStore(tmp_path)
+        s.write_run(model="m", run_group="full", run_ts="2026-06-24T12:00:00+00:00",
+                    rows=[self._row("lessons", "quality", 0.40),
+                          self._row("ranking", "accuracy", 0.95),
+                          self._row("session_review", "quality", 0.95)])
+        s.write_run(model="m", run_group="scoped", run_ts="2026-08-03T12:00:00+00:00",
+                    rows=[self._row("session_review", "quality", 0.92)])
+        return s
+
+    async def test_scoped_run_does_not_erase_other_jobs(self, tmp_path):
+        s = await self._seed(tmp_path)
+        scores = {r["task_type"]: r["value"] for r in s.model_rows()["m"]}
+        assert scores["lessons"] == 0.40        # survived the scoped run
+        assert scores["ranking"] == 0.95
+
+    async def test_scoped_run_still_supersedes_the_job_it_measured(self, tmp_path):
+        s = await self._seed(tmp_path)
+        scores = {r["task_type"]: r["value"] for r in s.model_rows()["m"]}
+        assert scores["session_review"] == 0.92  # newer measurement wins
+
+    async def test_merged_rows_carry_their_own_run_ts(self, tmp_path):
+        """One column can be assembled from several runs, so each row needs its
+        own date rather than inheriting a single run's."""
+        s = await self._seed(tmp_path)
+        by_task = {r["task_type"]: r["run_ts"] for r in s.model_rows()["m"]}
+        assert by_task["lessons"].startswith("2026-06-24")
+        assert by_task["session_review"].startswith("2026-08-03")
+
+    async def test_provenance_reports_the_span_and_run_count(self, tmp_path):
+        s = await self._seed(tmp_path)
+        p = s.provenance()["m"]
+        assert p["run_count"] == 2
+        assert p["oldest_ts"].startswith("2026-06-24")
+        assert p["run_ts"].startswith("2026-08-03")
+
+    async def test_partial_coverage_cannot_win_the_composite_row(self, tmp_path):
+        s = ResultsStore(tmp_path)
+        s.write_run(model="full", run_group="a", run_ts="2026-08-01T10:00:00+00:00",
+                    rows=[self._row("lessons", "quality", 0.60),
+                          self._row("ranking", "accuracy", 0.60)])
+        s.write_run(model="narrow", run_group="b", run_ts="2026-08-02T10:00:00+00:00",
+                    rows=[self._row("ranking", "accuracy", 0.99)])
+        rep = build_report(s.model_rows(), provenance=s.provenance())
+        assert rep["coverage"] == {"full": 2, "narrow": 1}
+        md = render_markdown(rep)
+        assert "0.990 (partial)" in md          # marked, not bolded as winner
+        assert "**0.600**" in md                # full-coverage model wins the row
+        assert "narrow (1/2 jobs)" in md
+
+    def test_report_output_is_ascii_safe_apart_from_em_dash(self, tmp_path):
+        """Windows console is cp1252 — a stray glyph crashes on print."""
+        s = ResultsStore(tmp_path)
+        s.write_run(model="m", run_group="g", run_ts="2026-08-03T10:00:00+00:00",
+                    rows=[self._row("ranking", "accuracy", 0.5)])
+        md = render_markdown(build_report(s.model_rows(), provenance=s.provenance()))
+        assert {ord(c) for c in md if ord(c) > 127} <= {0x2014}
+
+
 class TestLatestWins:
     def test_latest_run_supersedes_earlier_one_for_the_same_model(self, tmp_path):
         s = ResultsStore(tmp_path)
@@ -196,24 +267,41 @@ class TestReportIntegration:
         assert "# BlipShell model benchmark" in md
         assert "## Provenance" not in md
 
-    def test_scoped_run_is_flagged_so_composites_arent_compared_naively(self, tmp_path):
-        """A --jobs run measured fewer categories, so its COMPOSITE averages
-        over fewer jobs. Presenting that next to a full run without saying so
-        invites exactly the wrong conclusion."""
-        s = ResultsStore(tmp_path)
-        s.write_run(model="scoped", run_group="g", rows=_rows(),
-                    run_ts="2026-08-03T10:00:00+00:00", jobs={"pipeline"})
-        md = render_markdown(build_report(s.model_rows(), provenance=s.provenance()))
-        assert "| pipeline |" in md            # scope column
-        assert "did not measure every category" in md
+    def test_scope_is_derived_from_coverage_not_the_jobs_field(self, tmp_path):
+        """Scope must reflect what was MEASURED, not what a run intended.
 
-    def test_full_run_reports_all_jobs_scope(self, tmp_path):
+        Rows merge per metric, so a model can reach full coverage from several
+        scoped runs — at which point any single run's `--jobs` value
+        misdescribes the column. An earlier version read the jobs field and
+        mislabelled columns as a result.
+        """
         s = ResultsStore(tmp_path)
-        s.write_run(model="full", run_group="g", rows=_rows(),
-                    run_ts="2026-08-03T10:00:00+00:00")
-        md = render_markdown(build_report(s.model_rows(), provenance=s.provenance()))
+        # Two scoped runs that together cover both jobs -> reads as complete.
+        s.write_run(model="assembled", run_group="a", jobs={"pipeline"},
+                    run_ts="2026-08-01T10:00:00+00:00",
+                    rows=[{"suite": "s", "task_type": "ranking",
+                           "metric": "accuracy", "value": 0.7, "unit": "ratio",
+                           "raw": None}])
+        s.write_run(model="assembled", run_group="b", jobs={"session_review"},
+                    run_ts="2026-08-02T10:00:00+00:00",
+                    rows=[{"suite": "s", "task_type": "session_review",
+                           "metric": "quality", "value": 0.8, "unit": "ratio",
+                           "raw": None}])
+        rep = build_report(s.model_rows(), provenance=s.provenance())
+        assert rep["coverage"] == {"assembled": 2}
+        md = render_markdown(rep)
         assert "all jobs" in md
         assert "did not measure every category" not in md
+
+    def test_lone_model_is_never_partial(self, tmp_path):
+        """Coverage is relative to the widest model, so a single model has
+        nothing to be incomplete against."""
+        s = ResultsStore(tmp_path)
+        s.write_run(model="only", run_group="g", rows=_rows(),
+                    run_ts="2026-08-03T10:00:00+00:00", jobs={"pipeline"})
+        md = render_markdown(build_report(s.model_rows(), provenance=s.provenance()))
+        assert "all jobs" in md
+        assert "(partial)" not in md
 
     def test_migrated_run_says_pre_migration_not_just_a_dash(self, tmp_path):
         """'Commit unknowable because it predates the migration' and 'git was

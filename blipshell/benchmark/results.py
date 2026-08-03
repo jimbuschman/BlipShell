@@ -163,50 +163,85 @@ class ResultsStore:
         return latest
 
     def model_rows(self) -> dict[str, list[dict]]:
-        """model -> metric rows from its latest run, shaped for build_report().
+        """model -> newest measurement of each metric, shaped for build_report().
+
+        Merged **per metric, not per run.** A `--jobs`-scoped run measures a few
+        jobs; taking the latest run wholesale would let a 3-row session_review
+        run erase a model's 21-row full run and leave it with one column and a
+        composite averaged over a single job — which is exactly what happened to
+        kimi-k2.7-code on 2026-08-03 (it briefly showed the table's best
+        composite, 0.925, computed from one number).
+
+        So each (suite, task_type, metric) is resolved independently and the
+        newest run that measured it wins. Rows therefore carry their own
+        `run_ts`, because one model's column can legitimately be assembled from
+        several runs on different dates. `provenance()` reports that spread.
 
         build_report() reads `task_type`, `metric`, `value` off each row, so the
         hoisted header fields are re-attached here rather than stored per row.
         """
-        out: dict[str, list[dict]] = {}
-        for model, run in self.latest_per_model().items():
-            rows = []
+        merged: dict[str, dict[tuple, dict]] = {}
+        for run in self.load_runs():  # oldest first, so later runs overwrite
+            model = run.get("model")
+            if not model:
+                continue
+            bucket = merged.setdefault(model, {})
             for r in run.get("rows") or []:
                 if not isinstance(r, dict):
                     continue
+                key = (r.get("suite"), r.get("task_type"), r.get("metric"))
                 enriched = dict(r)
                 enriched.update({
                     "model": model,
                     "run_group": run.get("run_group"),
                     "run_ts": run.get("run_ts"),
                     "tier": run.get("tier"),
+                    "git_sha": run.get("git_sha"),
                 })
-                rows.append(enriched)
-            out[model] = rows
-        return out
+                bucket[key] = enriched
+        return {m: list(b.values()) for m, b in merged.items()}
 
     def history(self, model: str) -> list[dict]:
         """Every run for one model, oldest first — for score-drift inspection."""
         return [r for r in self.load_runs() if r.get("model") == model]
 
     def provenance(self) -> dict[str, dict]:
-        """model -> {run_ts, git_sha, host, tier, judge_model} of its latest run.
+        """model -> where its numbers came from, across every contributing run.
 
-        Surfaced in the report so a stale or differently-built number is
-        visible instead of silently comparable.
+        Because model_rows() merges per metric, a model's column can be built
+        from several runs on different dates and different commits. Reporting
+        only the newest run would hide that, so this reports the spread:
+        ``run_ts`` is the newest contributing run, ``oldest_ts`` the oldest, and
+        ``run_count`` how many runs were combined. A wide spread is a signal to
+        re-run, not a reason to trust the row.
         """
-        return {
-            model: {
-                "run_ts": run.get("run_ts"),
-                "git_sha": run.get("git_sha"),
-                "host": run.get("host"),
-                "tier": run.get("tier"),
-                "judge_model": run.get("judge_model"),
-                "jobs": run.get("jobs"),
-                "migrated_from_db": bool(run.get("migrated_from_db")),
-            }
-            for model, run in self.latest_per_model().items()
-        }
+        out: dict[str, dict] = {}
+        for run in self.load_runs():  # oldest first
+            model = run.get("model")
+            if not model:
+                continue
+            p = out.setdefault(model, {
+                "oldest_ts": run.get("run_ts"),
+                "run_count": 0,
+                "shas": [],
+                "migrated_from_db": False,
+            })
+            p["run_ts"] = run.get("run_ts")          # newest wins
+            p["host"] = run.get("host") or p.get("host")
+            p["tier"] = run.get("tier") or p.get("tier")
+            p["judge_model"] = run.get("judge_model") or p.get("judge_model")
+            p["run_count"] += 1
+            if run.get("git_sha"):
+                p["shas"].append(run["git_sha"])
+            if run.get("migrated_from_db"):
+                p["migrated_from_db"] = True
+        for p in out.values():
+            # Newest known sha; None when every contributing run predates
+            # sha capture (all migrated runs).
+            p["git_sha"] = p["shas"][-1] if p["shas"] else None
+            p["mixed_code"] = len(set(p["shas"])) > 1
+            p.pop("shas", None)
+        return out
 
 
 def results_dir(config_path: Optional[str]) -> Path:
