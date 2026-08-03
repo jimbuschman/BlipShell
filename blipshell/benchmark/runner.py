@@ -54,6 +54,30 @@ def _resolve_db_path(db_path: str, config_path: Optional[str]) -> str:
     return str((base / p).resolve())
 
 
+def _candidate_context_tokens(config, url: str) -> Optional[int]:
+    """Context window to give the candidate: whatever the real endpoint at `url` uses.
+
+    Benchmarking a model in a different window than production gives it is
+    measuring a different thing. Matching by URL means a local Ollama candidate
+    inherits the `local` endpoint's 32768 instead of Ollama's own default.
+
+    Takes the SMALLEST matching window, deliberately. localhost:11434 serves
+    both `local` (32K, real local models) and `local-cloud` (128K, cloud
+    passthrough where num_ctx is the remote provider's business anyway). Handing
+    a 14B local model a 128K num_ctx allocates an enormous KV cache — on a GPU
+    that has already failed CUDA init under memory pressure (2026-07-31), and
+    32K is what these models genuinely run at in production.
+    """
+    if not url:
+        return None
+    target = url.rstrip("/")
+    windows = [
+        ep.context_tokens for ep in config.endpoints
+        if (ep.url or "").rstrip("/") == target and ep.context_tokens
+    ]
+    return min(windows) if windows else None
+
+
 def _report_dir(config_path: Optional[str]) -> str:
     """data/benchmark/ next to the config file (repo root by default), cwd-independent."""
     base = Path(config_path).resolve().parent if config_path else DEFAULT_CONFIG_PATH.parent
@@ -132,7 +156,27 @@ async def run_benchmark(
         console.print("[red]--provider openai requires --url[/red]")
         return
     api_key = resolve_env_vars(f"${{{api_key_env}}}") if api_key_env else None
-    router = build_candidate_router(model, provider=provider, url=url, api_key=api_key)
+
+    # Give the candidate the SAME per-call timeout and context window it would
+    # get in production. Both were previously left at library defaults: the
+    # timeout fell back to 120s (config.yaml sets 300 for slow local models) and
+    # num_ctx was never sent at all. A 14B local model then timed out on the
+    # reasoning suite and scored 0 on ability it has (live 2026-08-03, qwen3:14b
+    # on plans/analysis).
+    cand_ctx = _candidate_context_tokens(config, url)
+    if cand_ctx:
+        console.print(f"[dim]Candidate: num_ctx={cand_ctx:,}, "
+                      f"timeout={config.llm.timeout:.0f}s[/dim]")
+    else:
+        console.print(
+            f"[yellow]No configured endpoint matches {url} — sending no num_ctx, "
+            f"so Ollama's default window applies and long prompts may be "
+            f"truncated.[/yellow] [dim]timeout={config.llm.timeout:.0f}s[/dim]"
+        )
+    router = build_candidate_router(
+        model, provider=provider, url=url, api_key=api_key,
+        context_tokens=cand_ctx, llm_config=config.llm,
+    )
     # Embedding benchmark always uses a local Ollama endpoint (embedders are local).
     ollama_url = url if provider == "ollama" else get_ollama_url(config.endpoints)
 

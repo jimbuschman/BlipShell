@@ -231,11 +231,23 @@ def build_candidate_router(
     url: str = "http://localhost:11434",
     api_key: Optional[str] = None,
     context_tokens: Optional[int] = None,
+    llm_config: Optional[LLMConfig] = None,
 ) -> LLMRouter:
     """Build a router that pins every task type to one candidate model+endpoint.
 
     Fallback is disabled — a benchmark must measure THE candidate, never silently
     drift to a fallback model.
+
+    `llm_config` MUST be the real loaded config, not left to default. Passing
+    LLMConfig() here silently ran every candidate at the 120s built-in timeout
+    while config.yaml deliberately sets 300 ("5min for slower local models") —
+    so a 14B local model benchmarking reasoning or coding would time out and
+    score 0 on capability it actually has (hit live 2026-08-03, qwen3:14b).
+
+    `context_tokens` is likewise load-bearing: when None, no num_ctx is sent and
+    Ollama falls back to its own default, silently truncating long prompts. That
+    corrupts scores rather than just slowing them, so the caller should pass the
+    window the model would really get in production.
     """
     models = ModelsConfig(
         reasoning=model, tool_calling=model, coding=model, summarization=model,
@@ -255,7 +267,7 @@ def build_candidate_router(
         # even on an openai-compat endpoint (which only honors its models map).
         models={role: model for role in ALL_ROLES},
     )
-    manager = EndpointManager([ep], LLMConfig())
+    manager = EndpointManager([ep], llm_config or LLMConfig())
     return LLMRouter(models, manager, pii_enabled=False, disable_fallback=True)
 
 
