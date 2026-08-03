@@ -117,11 +117,23 @@ blipshell/
 | coding | minimax/minimax-m3 (OpenRouter) | gpt-oss:latest |
 | reasoning / ranking / importance / ranking_importance | qwen3:14b (local) | qwen3:14b / qwen3.5:9b |
 | summarization | glm4:latest local; Groq gpt-oss-120b via endpoint priority | qwen3:14b |
-| session_review | kimi-k2.5:cloud (big context) / qwen3:14b | gpt-oss:latest |
+| session_review | qwen3:14b (local, 32K) | qwen3:14b |
 | embedding | qwen3-embedding:0.6b | — |
 
 - Gemini endpoint exists but is disabled (free-tier burst limits). Groq serves
   ranking_importance (llama-3.3-70b) + summarization.
+- **session_review is local-only since 2026-07-31.** Ollama retired
+  `kimi-k2.5:cloud` with no notice; it 410'd mid-nightly and, because the 410
+  wasn't classified as a model error, penalized the `local-cloud` endpoint that
+  also serves interactive `tool_calling`. Consequence of going local: sessions
+  over ~28K tokens no longer single-pass — they go through the chunk + merge
+  path (`prepare_conversation_for_reflection` → per-chunk reflection →
+  `merge_chunk_reflections`, N+1 LLM calls). Chunk reflections use a
+  chunk-scoped prompt that forbids rating the session overall and forbids
+  reporting anything as unresolved; without it a fragment gets judged as a
+  whole session and invents "never addressed" findings that reach lessons.
+  NOT yet benchmarked against the old single-pass reflections — do that on the
+  Ollama PC before trusting reflection quality.
 
 ## Alive layer (the v2 soul)
 

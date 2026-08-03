@@ -77,6 +77,34 @@ class TestIsModelError:
         except ImportError:
             pytest.skip("openai not installed")
 
+    def test_retired_model_is_model_level_not_endpoint_failure(self):
+        """A provider retiring a model must not penalize the endpoint.
+
+        Live 2026-07-31: Ollama retired kimi-k2.5 mid-nightly. The message
+        mentions neither 'model' nor 'not found', so it fell through to the
+        penalize-the-endpoint branch — and 3 of those disabled `local-cloud`,
+        which also serves interactive tool_calling.
+        """
+        err = RuntimeError(
+            "kimi-k2.5 was retired at 2026-07-31 00:00:00 -0700 PDT "
+            "(ref: 2b43a12c) (status code: 410)"
+        )
+        assert is_model_error(err) is True
+
+    def test_410_status_code_attribute_is_model_level(self):
+        class Gone(Exception):
+            status_code = 410
+
+        assert is_model_error(Gone("gone")) is True
+
+    def test_retired_wording_alone_is_enough(self):
+        """Ollama relays the provider's 410 as a plain ResponseError, so the
+        wording is sometimes the only signal available."""
+        assert is_model_error(RuntimeError("model was retired")) is True
+
+    def test_unrelated_410_text_does_not_false_trip(self):
+        assert is_model_error(RuntimeError("connection refused")) is False
+
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 

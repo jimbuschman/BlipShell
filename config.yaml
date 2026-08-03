@@ -23,7 +23,7 @@ models:
   ranking_fallback: "qwen3:14b"
   importance_fallback: "qwen3:14b"
   ranking_importance_fallback: "qwen3.5:9b"   # was qwen2.5:7b; qwen3.5:9b scores 98/98% vs 92/90%
-  session_review_fallback: "gpt-oss:latest"   # emergency fallback for session review
+  session_review_fallback: "qwen3:14b"        # was gpt-oss:latest — that forced a large COLD load at 2am and llama-server died on CUDA init (2026-07-31); qwen3:14b is the session_review primary and already resident
   fallback_think: false                  # disable thinking for fallback models (faster chat)
 
 endpoints:
@@ -68,7 +68,7 @@ endpoints:
       summarization: "gemini-2.5-flash"
   - name: "local-cloud"
     url: "http://localhost:11434"
-    roles: ["tool_calling", "session_review"]             # primary for chat; coding goes to OpenRouter
+    roles: ["tool_calling"]                               # primary for chat; coding goes to OpenRouter
     priority: 2                                           # tried first for tool_calling (higher = first)
     max_concurrent: 5
     context_tokens: 131072  # 128K — gpt-oss:120b-cloud context window
@@ -76,7 +76,14 @@ endpoints:
     enabled: true
     models:
       tool_calling: "minimax-m3:cloud"  # Ollama cloud free tier
-      session_review: "kimi-k2.5:cloud"  # 100% contradiction+dedup, 0.65s avg, large context
+      # session_review used to route here to kimi-k2.5:cloud (large context,
+      # single-pass on any session). Ollama RETIRED that model 2026-07-31 with
+      # no notice and it 410'd mid-nightly. session_review now runs local on
+      # qwen3:14b: free, no external dependency that can vanish, and full
+      # conversation transcripts stop leaving the box (this endpoint has
+      # pii_sanitize on, which scrubbed the names/dates the reflection needs
+      # to reason over). Sessions over ~28K tokens chunk + merge instead of
+      # single-passing — see reflect_on_session's chunk-scoped prompt.
   - name: "local"
     url: "http://localhost:11434"
     roles: ["reasoning", "embedding", "summarization", "ranking", "importance", "ranking_importance", "session_review"]
@@ -310,8 +317,9 @@ model_settings:
     vision_capable: true
   minimax/minimax-m3:
     vision_capable: true
-  kimi-k2.5:
-    vision_capable: true
+  # kimi-k2.5 removed 2026-07-31 — Ollama retired the model. Nothing routes
+  # to it, so a vision_capable claim for it is self-description that can only
+  # drift out of sync with what's actually callable.
   qwen3-coder:
     max_tool_calls: 20
     use_repo_map: true

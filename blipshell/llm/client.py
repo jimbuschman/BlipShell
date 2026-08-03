@@ -62,10 +62,14 @@ class LLMClient:
                     await asyncio.sleep(delay)
             except Exception as e:
                 last_error = e
-                # Don't retry 400 errors — they're deterministic (bad params,
-                # invalid model, reasoning_effort rejection, etc.)
+                # Don't retry deterministic failures — the same call will fail
+                # identically. 400 = bad params (invalid model,
+                # reasoning_effort rejection). 410 = the model is Gone,
+                # permanently: a provider retirement (seen live 2026-07-31,
+                # kimi-k2.5 retired mid-run and we burned 3 attempts + 3s of
+                # backoff per call on it).
                 status = getattr(e, "status_code", None)
-                if status == 400:
+                if status in (400, 410):
                     raise
                 if attempt < self.max_retries:
                     delay = self.retry_base_delay * (2 ** attempt)

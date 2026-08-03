@@ -557,6 +557,7 @@ class MemoryProcessor:
                 )
                 chunk_raw = await self._reflect_on_text(
                     session_summary, chunk, project,
+                    part=(i + 1, len(conversation_chunks)),
                 )
                 if chunk_raw.strip().upper() != "SKIP":
                     chunk_reflections.append(chunk_raw)
@@ -625,10 +626,16 @@ class MemoryProcessor:
     async def _reflect_on_text(
         self, session_summary: str, conversation_text: str, project: str | None,
         min_context_tokens: int | None = None,
+        part: tuple[int, int] | None = None,
     ) -> str:
-        """Run the reflection LLM call on a single text. Returns raw output."""
+        """Run the reflection LLM call on a single text. Returns raw output.
+
+        ``part`` is (index, total) when this text is one chunk of a session
+        too big for the context window — it switches to the chunk-scoped
+        prompt so the model doesn't judge a fragment as a whole session.
+        """
         system, user_prompt = reflect_on_session(
-            session_summary, conversation_text, project,
+            session_summary, conversation_text, project, part=part,
         )
         try:
             return await self.router.generate(

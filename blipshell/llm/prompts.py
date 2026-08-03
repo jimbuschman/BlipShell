@@ -971,15 +971,34 @@ def reflect_on_session(
     session_summary: str,
     conversation_text: str,
     project: str | None = None,
+    part: tuple[int, int] | None = None,
 ) -> tuple[str, str]:
     """Prompt for holistic session reflection.
 
     Reviews the entire session and produces a structured assessment of
     effectiveness, what worked/didn't, technical insights, and process insights.
 
+    ``part`` is ``(index, total)``, 1-based, when reflecting on one chunk of a
+    session too large for the context window. Without it the model is told to
+    judge a complete session — which is wrong and actively harmful for a
+    fragment: a middle chunk of a hard debugging session is all dead ends
+    (the resolution lives in a later part), so it rates itself ineffective;
+    a chunk of pure file reads reads as "trivial" and returns SKIP, and
+    enough SKIPs drop the whole session; and a chunk ending on a question
+    whose answer is in the next chunk invites an invented
+    "never addressed this" finding that then gets merged into lessons.
+    The chunk variant keeps the same 5-section contract (the parser and
+    merge_chunk_reflections depend on it) but scopes every judgement to what
+    this part actually shows.
+
     Returns (system_prompt, user_prompt).
     """
     project_ctx = f" The session was in project '{project}'." if project else ""
+
+    if part is not None:
+        return _reflect_on_session_part(
+            session_summary, conversation_text, project_ctx, part,
+        )
 
     system = (
         "You are a session analyst. Your job is to review a completed conversation "
@@ -1011,6 +1030,75 @@ def reflect_on_session(
         f"Review this session and provide your analysis.{project_ctx}\n\n"
         f"Session summary:\n{session_summary}\n\n"
         f"Conversation:\n{conversation_text}"
+    )
+
+    return system, user
+
+
+def _reflect_on_session_part(
+    session_summary: str,
+    conversation_text: str,
+    project_ctx: str,
+    part: tuple[int, int],
+) -> tuple[str, str]:
+    """Chunk-scoped variant of reflect_on_session. See that docstring for why.
+
+    Same 5 sections so _parse_reflection and merge_chunk_reflections keep
+    working; every instruction that assumes a whole session is re-scoped to
+    this part, and the two fabrication paths (false ineffective, invented
+    "unresolved") are named and forbidden outright.
+    """
+    index, total = part
+
+    system = (
+        "You are a session analyst. You are reviewing ONE PART of a longer "
+        f"conversation session — part {index} of {total}. The other parts are "
+        "being reviewed separately and all parts will be merged afterwards.\n\n"
+        "This means you are looking at a FRAGMENT. It may begin mid-task and "
+        "end mid-task. Work that looks abandoned here may be finished in a "
+        "later part; a question that looks ignored here may be answered in a "
+        "later part. You cannot see those parts.\n\n"
+        "Report only what THIS part actually shows. Produce exactly 5 labeled "
+        "sections:\n\n"
+        "EFFECTIVENESS: One word — effective / partially_effective / "
+        "ineffective / unclear\n"
+        "Judge ONLY the work visible in this part, and use 'unclear' whenever "
+        "this part does not show an outcome. Do NOT rate the session overall — "
+        "you cannot see it. Exploration and dead ends inside one part are "
+        "normal and are NOT evidence of an ineffective session.\n\n"
+        "WHAT_WORKED:\n"
+        "1-3 bullet points. Concrete approaches, tools, or strategies that led "
+        "to progress in this part.\n"
+        "Example: '- Breaking the migration into per-table scripts avoided timeout issues'\n\n"
+        "WHAT_DIDNT_WORK:\n"
+        "1-3 bullet points. Only approaches this part shows actually failing — "
+        "an error hit, a method abandoned for a different one.\n"
+        "Example: '- Regex-based parsing failed on nested structures; AST parsing was needed'\n\n"
+        "TECHNICAL_INSIGHTS:\n"
+        "1-5 bullet points. Reusable technical facts, patterns, or gotchas discovered.\n"
+        "Example: '- sqlite-vec vec0 tables need explicit dimension declaration at create time'\n\n"
+        "PROCESS_INSIGHTS:\n"
+        "1-3 bullet points. Generalizable advice about HOW to approach similar work.\n"
+        "Example: '- Test schema changes on a copy before running migrations on production DB'\n\n"
+        "Rules:\n"
+        "- Be SPECIFIC. No generic statements like 'good progress was made'.\n"
+        "- Each bullet must contain a concrete detail from this part.\n"
+        "- Do NOT report anything as unresolved, unaddressed, incomplete, or "
+        "abandoned. You cannot know that from one part — leave it out entirely "
+        "and let the merge decide.\n"
+        "- Do NOT include behavioral/interaction advice (how to talk to the user).\n"
+        "- Do NOT include markdown formatting, headers, or bold text.\n"
+        "- Respond with SKIP only if THIS part contains no substantive content "
+        "at all (e.g. nothing but file reads or searches). The other parts are "
+        "reviewed separately, so skipping this one does not discard the session."
+    )
+
+    user = (
+        f"Review part {index} of {total} of this session and provide your "
+        f"analysis.{project_ctx}\n\n"
+        f"Summary of the session as a whole (for orientation — do not reflect "
+        f"on parts you cannot see):\n{session_summary}\n\n"
+        f"Part {index} of {total} of the conversation:\n{conversation_text}"
     )
 
     return system, user
