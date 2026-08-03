@@ -31,11 +31,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from blipshell.benchmark.results import (  # noqa: E402
     SCHEMA_VERSION,
     _compact_ts,
+    results_dir,
     rows_from_legacy_db,
     slugify_model,
 )
 
 ROW_FIELDS = ("suite", "task_type", "metric", "value", "unit", "raw")
+
+# Anchor both paths to the repo root, NOT the cwd. Same rule as
+# runner._resolve_db_path and results.results_dir: a cwd-relative default writes
+# results into whatever folder you happened to be standing in, and then
+# `git add benchmark_results` finds nothing because the files landed elsewhere.
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def group_runs(rows: list[dict]) -> dict[tuple[str, str], list[dict]]:
@@ -59,15 +66,19 @@ def group_runs(rows: list[dict]) -> dict[tuple[str, str], list[dict]]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--db", default="data/benchmark.db")
-    ap.add_argument("--out", default="benchmark_results")
+    ap.add_argument("--db", default=None,
+                    help="Legacy benchmark DB (default: <repo>/data/benchmark.db)")
+    ap.add_argument("--out", default=None,
+                    help="Results directory (default: <repo>/benchmark_results)")
     ap.add_argument("--dry-run", action="store_true",
                     help="Report what would be written, touch nothing")
     ap.add_argument("--force", action="store_true",
                     help="Overwrite result files that already exist")
     args = ap.parse_args()
 
-    db = Path(args.db)
+    db = Path(args.db) if args.db else REPO_ROOT / "data" / "benchmark.db"
+    out_dir = Path(args.out) if args.out else results_dir(None)
+
     if not db.exists():
         print(f"ERROR: no benchmark DB at {db}")
         print("Nothing to migrate. If this is the dev box, that is expected --")
@@ -76,12 +87,16 @@ def main() -> int:
 
     rows = rows_from_legacy_db(db)
     if not rows:
-        print(f"No benchmark_runs rows in {db} -- nothing to migrate.")
-        print("(The table may already have been dropped, or this box never ran one.)")
+        print(f"No benchmark_runs rows in {db} -- NOTHING WAS WRITTEN.")
+        print()
+        print("The table is present but empty, or absent entirely. An existing")
+        print("data/benchmark/report.md does NOT imply the rows behind it still")
+        print("exist -- the report is a separate generated file and outlives them.")
+        print("If so, that history is gone: the corpus starts fresh at your next")
+        print("`blipshell benchmark run <model>`.")
         return 0
 
     runs = group_runs(rows)
-    out_dir = Path(args.out)
     print(f"Found {len(rows)} rows across {len(runs)} run(s) in {db}")
     print(f"Target: {out_dir}{'  (DRY RUN)' if args.dry_run else ''}")
     print()
@@ -122,13 +137,30 @@ def main() -> int:
     if args.dry_run:
         print(f"DRY RUN: would write {written} file(s), skip {skipped}.")
         print("Re-run without --dry-run to apply.")
-    else:
-        print(f"Wrote {written} file(s), skipped {skipped}.")
+        return 0
+
+    print(f"Wrote {written} file(s) to {out_dir}, skipped {skipped}.")
+    on_disk = len(list(out_dir.glob("*.json"))) if out_dir.is_dir() else 0
+    print(f"{on_disk} result file(s) now in that directory.")
+    if on_disk == 0:
         print()
-        print("Next:")
-        print(f"  git add {out_dir}")
-        print("  git commit -m \"Benchmark: migrate stored results to committed files\"")
-        print("  blipshell benchmark report      # rebuild report.md from them")
+        print("WARNING: the directory is empty. Nothing to commit.")
+        return 0
+
+    # Print a repo-relative pathspec — an absolute path is not usable as a
+    # `git add` argument from an arbitrary cwd, and these files are only useful
+    # once they are actually committed.
+    try:
+        rel = out_dir.resolve().relative_to(REPO_ROOT)
+    except ValueError:
+        rel = out_dir  # --out pointed outside the repo; nothing better to offer
+    print()
+    print("Next (run from the repo root):")
+    print(f"  cd {REPO_ROOT}")
+    print(f"  git add {rel.as_posix()}")
+    print("  git commit -m \"Benchmark: migrate stored results to committed files\"")
+    print("  git push")
+    print("  blipshell benchmark report      # rebuild report.md from them")
     return 0
 
 
