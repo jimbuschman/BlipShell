@@ -144,3 +144,80 @@ class TestCandidateInheritsConfig:
     def test_unknown_url_returns_none_rather_than_guessing(self):
         from blipshell.benchmark.runner import _candidate_context_tokens
         assert _candidate_context_tokens(self._config(), "http://nope.invalid") is None
+
+
+# --- timeouts must not masquerade as measurements (2026-08-03) --------------
+
+class TestTimeoutsAreVisible:
+    """A timed-out call is excluded from judging (good) but the SURVIVING cases
+    were silently averaged with no record of how many failed. The failures are
+    systematically the longest/hardest cases, so the score is biased upward and
+    a 2-of-9 result looked identical to a 9-of-9 one.
+    """
+
+    def _rows(self, model, key, value, scored=None, cases=None):
+        raw = None
+        if scored is not None:
+            raw = {"scored": scored, "cases": cases}
+        return [{"suite": "reasoning", "task_type": key, "metric": "quality",
+                 "value": value, "unit": "ratio", "raw": raw, "model": model}]
+
+    def test_partial_score_is_labelled_with_the_case_count(self):
+        from blipshell.benchmark.report import build_report, render_markdown
+        rep = build_report({"slow": self._rows("slow", "code_gen", 0.62, 2, 9)})
+        md = render_markdown(rep)
+        assert "(2/9 cases)" in md
+        assert "biased UPWARD" in md
+
+    def test_complete_score_is_not_labelled(self):
+        from blipshell.benchmark.report import build_report, render_markdown
+        rep = build_report({"ok": self._rows("ok", "code_gen", 0.62, 9, 9)})
+        md = render_markdown(rep)
+        assert "cases)" not in md
+
+    def test_score_with_no_raw_counts_is_not_labelled(self):
+        """Older stored runs have no scored/cases; they must render unchanged."""
+        from blipshell.benchmark.report import build_report, render_markdown
+        rep = build_report({"old": self._rows("old", "code_gen", 0.62)})
+        assert "cases)" not in render_markdown(rep)
+
+    def test_partial_score_cannot_win_its_row(self):
+        from blipshell.benchmark.report import build_report, render_markdown
+        rep = build_report({
+            "complete": self._rows("complete", "code_gen", 0.70, 9, 9),
+            "partial": self._rows("partial", "code_gen", 0.95, 2, 9),
+        })
+        cat = next(c for c in rep["categories"] if c["key"] == "code_gen")
+        assert cat["best_model"] == "complete"
+        md = render_markdown(rep)
+        assert "**0.700**" in md          # complete model bolded
+        assert "0.950 (2/9 cases)" in md  # higher but flagged, not bolded
+
+    async def test_judge_reports_how_many_it_actually_graded(self):
+        from blipshell.benchmark.harness import BenchmarkHarness
+
+        class _Judge:
+            async def grade_reasoning(self, task, resp):
+                return 0.9
+
+        h = BenchmarkHarness(model="m", router=None, run_group="g", run_ts="t",
+                             judge=_Judge())
+        score, scored, total = await h._judge_reasoning(
+            ["t1", "t2", "t3"],
+            ["fine", "ERROR: Ollama call timed out after 300s", "fine"],
+        )
+        assert (scored, total) == (2, 3)
+        assert score == pytest.approx(0.9)
+
+    async def test_all_failed_scores_none_not_zero(self):
+        from blipshell.benchmark.harness import BenchmarkHarness
+
+        class _Judge:
+            async def grade_reasoning(self, task, resp):
+                raise AssertionError("must not grade an error string")
+
+        h = BenchmarkHarness(model="m", router=None, run_group="g", run_ts="t",
+                             judge=_Judge())
+        score, scored, total = await h._judge_reasoning(
+            ["t1"], ["ERROR: Ollama call timed out after 300s"])
+        assert score is None and (scored, total) == (0, 1)

@@ -147,6 +147,8 @@ async def run_benchmark(
     api_key_env: Optional[str] = None,
     coding_timeout: float = 300.0,
     jobs: Optional[set] = None,
+    timeout_override: Optional[float] = None,
+    context_tokens: Optional[int] = None,
 ) -> None:
     """Run a deep test of a model across the requested jobs, store metrics, and
     regenerate the shareable report. `jobs=None` = every job at full depth."""
@@ -187,19 +189,28 @@ async def run_benchmark(
     # num_ctx was never sent at all. A 14B local model then timed out on the
     # reasoning suite and scored 0 on ability it has (live 2026-08-03, qwen3:14b
     # on plans/analysis).
-    cand_ctx = _candidate_context_tokens(config, url)
+    # Per-call timeout: config.llm.timeout unless overridden. A local 14B running
+    # with thinking on can exceed 300s on generation-heavy jobs, and a timeout
+    # there doesn't fail loudly — it drops that case from the judged set and
+    # biases the score upward, so it's worth being generous here.
+    llm_cfg = config.llm
+    if timeout_override:
+        llm_cfg = llm_cfg.model_copy(update={"timeout": float(timeout_override)})
+
+    cand_ctx = _candidate_context_tokens(config, url) if context_tokens is None \
+        else context_tokens
     if cand_ctx:
         console.print(f"[dim]Candidate: num_ctx={cand_ctx:,}, "
-                      f"timeout={config.llm.timeout:.0f}s[/dim]")
+                      f"timeout={llm_cfg.timeout:.0f}s[/dim]")
     else:
         console.print(
             f"[yellow]No configured endpoint matches {url} — sending no num_ctx, "
             f"so Ollama's default window applies and long prompts may be "
-            f"truncated.[/yellow] [dim]timeout={config.llm.timeout:.0f}s[/dim]"
+            f"truncated.[/yellow] [dim]timeout={llm_cfg.timeout:.0f}s[/dim]"
         )
     router = build_candidate_router(
         model, provider=provider, url=url, api_key=api_key,
-        context_tokens=cand_ctx, llm_config=config.llm,
+        context_tokens=cand_ctx, llm_config=llm_cfg,
     )
     # Embedding benchmark always uses a local Ollama endpoint (embedders are local).
     ollama_url = url if provider == "ollama" else get_ollama_url(config.endpoints)

@@ -85,6 +85,26 @@ def _scoring_map(rows: list[dict]) -> dict[str, float]:
     return out
 
 
+def _partial_map(rows: list[dict]) -> dict[str, tuple[int, int]]:
+    """task_type -> (scored, cases) for scores that graded fewer cases than were run.
+
+    A judged score whose calls timed out covers only what completed, and those
+    are the easier cases — so the number is biased upward. Surfacing the ratio
+    is the difference between "0.62" and "0.62, from 2 of 9 cases".
+    """
+    out: dict[str, tuple[int, int]] = {}
+    for r in rows:
+        if r.get("metric") not in SCORING_METRICS:
+            continue
+        raw = r.get("raw")
+        if not isinstance(raw, dict):
+            continue
+        scored, cases = raw.get("scored"), raw.get("cases")
+        if isinstance(scored, int) and isinstance(cases, int) and 0 <= scored < cases:
+            out[r["task_type"]] = (scored, cases)
+    return out
+
+
 def _latency_map(rows: list[dict]) -> dict[str, float]:
     """suite (task_type of the latency row) -> mean seconds/call."""
     return {
@@ -141,16 +161,24 @@ def build_report(
     scoring = {m: _scoring_map(rows) for m, rows in model_rows.items()}
     latency = {m: _latency_map(rows) for m, rows in model_rows.items()}
     length = {m: _length_map(rows) for m, rows in model_rows.items()}
+    partial = {m: _partial_map(rows) for m, rows in model_rows.items()}
 
     categories = []
     for key, label, measures, method in CATEGORIES:
         scores = {m: scoring[m][key] for m in models if key in scoring[m]}
         if not scores:
             continue  # nothing measured this category yet
+        # Models whose score for this job covers fewer cases than were run.
+        # They cannot win the row: their average is over the subset that didn't
+        # time out, which is the easier subset.
+        incomplete = {m: partial[m][key] for m in models if key in partial.get(m, {})}
+        eligible = {m: v for m, v in scores.items() if m not in incomplete}
         categories.append({
             "key": key, "label": label, "measures": measures, "scoring": method,
             "scores": {m: round(v, 4) for m, v in scores.items()},
-            "best_model": max(scores, key=lambda m: scores[m]),
+            "incomplete": incomplete,
+            "best_model": (max(eligible, key=lambda m: eligible[m]) if eligible
+                           else max(scores, key=lambda m: scores[m])),
         })
 
     # Coverage = how many scoring categories this model actually measured.
@@ -240,12 +268,17 @@ def render_markdown(report: dict, advice: str = "") -> str:
     parts.append("## Quality by job (higher is better)")
     header = ["Job"] + models
     qrows = []
+    any_incomplete = False
     for c in report["categories"]:
         row = [c["label"]]
         for m in models:
             v = c["scores"].get(m)
+            inc = (c.get("incomplete") or {}).get(m)
             if v is None:
                 row.append("—")
+            elif inc:
+                any_incomplete = True
+                row.append(f"{v:.3f} ({inc[0]}/{inc[1]} cases)")
             elif m == c["best_model"]:
                 row.append(f"**{v:.3f}**")
             else:
@@ -273,6 +306,14 @@ def render_markdown(report: dict, advice: str = "") -> str:
                 crow.append(f"{v:.3f}")
         qrows.append(crow)
     parts.append(_md_table(header, qrows))
+    if any_incomplete:
+        parts.append(
+            "\n**(n/m cases)** means some calls for that job failed — almost always "
+            "a timeout — so the score covers only the cases that finished. Those are "
+            "the shorter, easier ones, so the number is biased UPWARD and cannot win "
+            "its row. Raise `llm.timeout`, or reduce the candidate's `num_ctx` if "
+            "generation is slow, then re-run."
+        )
     if partial_models:
         detail = ", ".join(f"{m} ({cov.get(m, 0)}/{max_cov} jobs)" for m in partial_models)
         parts.append(

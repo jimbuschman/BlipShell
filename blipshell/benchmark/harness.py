@@ -550,21 +550,25 @@ class BenchmarkHarness:
         status("reasoning: plans/analysis")
         reasoning = await br.benchmark_reasoning(r)
         reason_tasks = [self._reasoning_task_text(t) for t in br.REASONING_TESTS]
-        reason_q = await self._judge_reasoning(reason_tasks, [x["response"] for x in reasoning])
-        rows.append(self._row("reasoning", "reasoning", "quality", reason_q))
+        reason_q, r_scored, r_total = await self._judge_reasoning(
+            reason_tasks, [x["response"] for x in reasoning])
+        rows.append(self._row("reasoning", "reasoning", "quality", reason_q,
+                              raw={"scored": r_scored, "cases": r_total}))
         rows.append(self._row("reasoning", "reasoning", "length_words",
                               _mean_words([x["response"] for x in reasoning]), unit="words"))
 
         status("reasoning: code generation")
         coding = await br.benchmark_coding(r)
         code_tasks = [t.get("prompt", "") for t in br.CODING_TESTS]
-        code_q = await self._judge_reasoning(code_tasks, [x["response"] for x in coding])
+        code_q, c_scored, c_total = await self._judge_reasoning(
+            code_tasks, [x["response"] for x in coding])
         # task_type is "code_gen", NOT "coding": run_coding() also reported
         # task_type "coding" (its sandbox pass rate), and report._scoring_map
         # keys by task_type alone — so on a full run the two silently collapsed
         # and whichever row came last won. This judged generation score was
         # computed, spent judge tokens, and was then discarded.
-        rows.append(self._row("reasoning", "code_gen", "quality", code_q))
+        rows.append(self._row("reasoning", "code_gen", "quality", code_q,
+                              raw={"scored": c_scored, "cases": c_total}))
         rows.append(self._row("reasoning", "code_gen", "length_words",
                               _mean_words([x["response"] for x in coding]), unit="words"))
 
@@ -842,15 +846,35 @@ class BenchmarkHarness:
             scores.append(await self.judge.grade_lesson(conv, lesson))
         return _mean(scores)
 
-    async def _judge_reasoning(self, tasks: list[str], responses: list[str]) -> Optional[float]:
+    async def _judge_reasoning(
+        self, tasks: list[str], responses: list[str],
+    ) -> tuple[Optional[float], int, int]:
+        """Judge the responses that succeeded. Returns (score, scored, total).
+
+        Failed calls are excluded from grading — never graded as bad answers —
+        but the COUNTS must reach the report. Averaging silently over survivors
+        makes a score from 2 of 9 cases look identical to one from 9 of 9, and
+        the failures are systematically the hardest/longest cases (a 14B local
+        model timing out on code generation loses the big ones first), so the
+        survivors bias the score upward. That's a systematic error, not noise.
+
+        Returns None when nothing succeeded: no cases means no measurement.
+        """
         if not self.judge:
-            return None
+            return None, 0, len(responses)
         scores = []
         for task, resp in zip(tasks, responses):
             if str(resp).startswith("ERROR:"):
                 continue
             scores.append(await self.judge.grade_reasoning(task, resp))
-        return _mean(scores)
+        total = len(responses)
+        if len(scores) < total:
+            logger.warning(
+                "Judged only %d/%d responses — %d call(s) failed (likely timeouts). "
+                "The score covers the cases that completed, which are the easier ones.",
+                len(scores), total, total - len(scores),
+            )
+        return _mean(scores), len(scores), total
 
     @staticmethod
     def _reasoning_task_text(test: dict) -> str:
