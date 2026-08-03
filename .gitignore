@@ -10,9 +10,17 @@ __pycache__/
 data/blipshell.db
 data/blipshell.db-shm
 data/blipshell.db-wal
+# benchmark.db is now ONLY the refetchable discovery catalog; data/benchmark/
+# holds the generated report. Both are derivable, so both stay ignored.
 data/benchmark.db
 data/benchmark.db-shm
 data/benchmark.db-wal
 data/benchmark/
+
+# DO NOT ignore benchmark_results/ — those files ARE the benchmark history and
+# must be committed. They used to live in the gitignored benchmark.db, which is
+# precisely why results never synced between the dev box and the Ollama PC and
+# every report was missing models the other machine had measured.
+!benchmark_results/
 data/chroma/
 data/.blipshell_history

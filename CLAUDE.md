@@ -167,6 +167,24 @@ blipshell/
   `data/benchmark/report.md` (numbers only, no verdict). Ground-truth scorers are
   unit-testable here; real runs need the Ollama PC. Judge = OpenRouter
   (claude-opus-4.8), graceful-fail.
+- **Results are COMMITTED files in `benchmark_results/`** (one JSON per run),
+  not the gitignored `benchmark.db` — that DB now holds only the refetchable
+  discovery catalog. Rationale: a gitignored store can't sync across the two-PC
+  split, so the comparison corpus never accumulated and reports silently omitted
+  models the other machine had measured (the 2026-06-24 report compared four
+  cloud models and left out `qwen3:14b`, which serves half the jobs). One file
+  per run means two machines never conflict — merging results is `git pull`.
+  **Commit the result file after a run**, or the other box never sees it.
+  Each run records `git_sha` + `host`; the report's Provenance table shows them,
+  because scores from different commits are not strictly comparable.
+  `python -m scripts.migrate_benchmark_results` moves pre-2026-08-03 rows out of
+  an old DB (run once, on the machine holding the history).
+- Known benchmark gaps (do NOT read past them): suites call prompts directly, so
+  production paths are bypassed — `run_session_review` never exercises
+  chunk+merge, and `SESSION_REVIEW_CASES` are 111-190 tokens vs a ~28.6K
+  chunking threshold. Report rows are per-job but decisions are per-config-key,
+  and one key can span jobs (`models.session_review` drives session review AND
+  lesson extraction — `processor.py:275`).
 - `python scripts/test_executor.py --canned|--stress` — headless executor harness
   (Ollama PC).
 

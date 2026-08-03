@@ -1,12 +1,20 @@
-"""Dedicated SQLite store for benchmark results and the model catalog.
+"""SQLite cache for the discovery model catalog.
 
 Lives in its own `data/benchmark.db` — deliberately NOT the production memory
-DB. Benchmark data is independent throwaway data, and isolating it means zero
-migrations on `blipshell.db` and a store that can be rebuilt or deleted freely.
+DB, and gitignored, because everything in here is a refetchable third-party
+cache that `benchmark discover` rebuilds on demand.
 
-Two tables:
-  - benchmark_runs: one row per (model, task_type, metric) measured in a run.
-  - model_catalog:  discovery cache (OpenRouter / Artificial Analysis feeds).
+**Results used to live here too, and no longer do** (2026-08-03). A gitignored
+DB cannot sync across the two-PC setup, so the comparison corpus could never
+accumulate and every report was missing models the other machine had measured.
+Results are now committed files — see `benchmark/results.py` for the full
+reasoning. Keeping both would recreate the dual-store drift the ChromaDB ->
+sqlite-vec migration existed to eliminate, so `benchmark_runs` is gone rather
+than deprecated. `results.rows_from_legacy_db()` still reads it out of an old
+DB for the one-shot migration.
+
+One table:
+  - model_catalog: discovery cache (OpenRouter / Artificial Analysis feeds).
 
 Schema is idempotent CREATE TABLE IF NOT EXISTS, mirroring sqlite_store.py.
 """
@@ -14,33 +22,13 @@ Schema is idempotent CREATE TABLE IF NOT EXISTS, mirroring sqlite_store.py.
 import json
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import aiosqlite
 
 logger = logging.getLogger(__name__)
 
 SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS benchmark_runs (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_group     TEXT NOT NULL,            -- ties one `benchmark run` invocation together
-    model         TEXT NOT NULL,
-    suite         TEXT NOT NULL,            -- pipeline | realdata | tool_calling | coding | reasoning
-    task_type     TEXT NOT NULL,            -- ranking | summarization | tool_calling | coding | ...
-    metric        TEXT NOT NULL,            -- accuracy | judge_quality | tool_pass_rate | latency_s | ...
-    value         REAL,                     -- NULL = not measured / judge failed
-    unit          TEXT DEFAULT '',          -- 'ratio' | 'seconds' | 'usd_per_1m' | ...
-    tier          TEXT DEFAULT 'quick',     -- quick | full
-    is_baseline   INTEGER DEFAULT 0,        -- 1 = production baseline for comparison
-    run_ts        TEXT NOT NULL,            -- ISO timestamp (stamped by caller)
-    raw_json      TEXT                      -- optional raw payload for drill-down
-);
-
-CREATE INDEX IF NOT EXISTS idx_bench_model      ON benchmark_runs(model);
-CREATE INDEX IF NOT EXISTS idx_bench_group      ON benchmark_runs(run_group);
-CREATE INDEX IF NOT EXISTS idx_bench_task       ON benchmark_runs(task_type, metric);
-CREATE INDEX IF NOT EXISTS idx_bench_baseline   ON benchmark_runs(is_baseline);
-
 CREATE TABLE IF NOT EXISTS model_catalog (
     model               TEXT NOT NULL,
     source              TEXT NOT NULL,      -- openrouter | artificial_analysis | ollama
@@ -87,86 +75,6 @@ class BenchmarkStore:
 
     async def __aexit__(self, *exc):
         await self.close()
-
-    # ------------------------------------------------------------------ runs
-
-    async def record_run(
-        self,
-        *,
-        run_group: str,
-        model: str,
-        suite: str,
-        task_type: str,
-        metric: str,
-        value: Optional[float],
-        run_ts: str,
-        unit: str = "",
-        tier: str = "quick",
-        is_baseline: bool = False,
-        raw: Any = None,
-    ) -> int:
-        """Insert one measured metric row. Returns the row id."""
-        assert self._db is not None, "BenchmarkStore not initialized"
-        cur = await self._db.execute(
-            """INSERT INTO benchmark_runs
-               (run_group, model, suite, task_type, metric, value, unit, tier,
-                is_baseline, run_ts, raw_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                run_group, model, suite, task_type, metric, value, unit, tier,
-                1 if is_baseline else 0, run_ts,
-                json.dumps(raw) if raw is not None else None,
-            ),
-        )
-        await self._db.commit()
-        return cur.lastrowid
-
-    async def record_many(self, rows: list[dict]) -> None:
-        """Bulk-insert metric rows. Each dict matches record_run kwargs."""
-        for row in rows:
-            await self.record_run(**row)
-
-    async def clear_baseline(self) -> None:
-        """Demote any existing baseline rows (a new --baseline run supersedes)."""
-        assert self._db is not None
-        await self._db.execute("UPDATE benchmark_runs SET is_baseline = 0 WHERE is_baseline = 1")
-        await self._db.commit()
-
-    async def latest_run_group(self, model: str) -> Optional[str]:
-        """Most recent run_group for a model (by run_ts)."""
-        assert self._db is not None
-        cur = await self._db.execute(
-            "SELECT run_group FROM benchmark_runs WHERE model = ? "
-            "ORDER BY run_ts DESC, id DESC LIMIT 1",
-            (model,),
-        )
-        row = await cur.fetchone()
-        return row["run_group"] if row else None
-
-    async def metrics_for_group(self, run_group: str) -> list[dict]:
-        """All metric rows for a run_group."""
-        assert self._db is not None
-        cur = await self._db.execute(
-            "SELECT * FROM benchmark_runs WHERE run_group = ? ORDER BY task_type, metric",
-            (run_group,),
-        )
-        return [dict(r) for r in await cur.fetchall()]
-
-    async def baseline_metrics(self) -> list[dict]:
-        """All metric rows flagged as the production baseline."""
-        assert self._db is not None
-        cur = await self._db.execute(
-            "SELECT * FROM benchmark_runs WHERE is_baseline = 1 ORDER BY task_type, metric"
-        )
-        return [dict(r) for r in await cur.fetchall()]
-
-    async def models_with_runs(self) -> list[str]:
-        """Distinct models that have any recorded run."""
-        assert self._db is not None
-        cur = await self._db.execute(
-            "SELECT DISTINCT model FROM benchmark_runs ORDER BY model"
-        )
-        return [r["model"] for r in await cur.fetchall()]
 
     # -------------------------------------------------------------- catalog
 

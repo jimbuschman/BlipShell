@@ -20,6 +20,7 @@ from blipshell.benchmark.discovery import (
 from blipshell.benchmark.harness import BenchmarkHarness, build_candidate_router
 from blipshell.benchmark.judge import JudgeUnavailable, build_judge
 from blipshell.benchmark.report import build_report, write_report
+from blipshell.benchmark.results import ResultsStore, results_dir
 from blipshell.benchmark.store import BenchmarkStore
 from blipshell.core.config import DEFAULT_CONFIG_PATH, ConfigManager
 from blipshell.llm.endpoints import EndpointManager
@@ -60,24 +61,29 @@ def _report_dir(config_path: Optional[str]) -> str:
 
 
 async def _regenerate_report(store, config, config_path: Optional[str]) -> tuple[dict, int]:
-    """Build the shareable report from the latest stored run of every model.
-    Returns (written_paths, model_count)."""
-    models = await store.models_with_runs()
-    model_rows: dict[str, list[dict]] = {}
+    """Build the shareable report from the latest committed run of every model.
+
+    Results come from `benchmark_results/` (committed, so every model any
+    machine has ever benchmarked is present). `store` is consulted only for the
+    catalog cache — price/context/speed for cloud models.
+
+    Returns (written_paths, model_count).
+    """
+    results = ResultsStore(results_dir(config_path))
+    model_rows = results.model_rows()
+
     catalog: dict[str, dict] = {}
-    for m in models:
-        group = await store.latest_run_group(m)
-        if not group:
-            continue
-        model_rows[m] = await store.metrics_for_group(group)
+    for m in model_rows:
         cat = await store.catalog_lookup(m)
         if cat:
             catalog[m] = cat
+
     report = build_report(
         model_rows, catalog=catalog,
         judge_model=config.benchmark.judge_model or None,
         generated_ts=_now_iso(),
         task_weights=config.benchmark.task_weights,
+        provenance=results.provenance(),
     )
     paths = write_report(report, _report_dir(config_path))
     return paths, len(model_rows)
@@ -153,8 +159,18 @@ async def run_benchmark(
             jobs=jobs,
             on_status=lambda m: console.print(f"  [dim]{m}[/dim]"),
         )
-        await store.record_many(rows)
-        console.print(f"[green]Recorded {len(rows)} metrics for {model}.[/green]")
+        # Results go to a committed file, not the gitignored DB — so the other
+        # machine inherits this run on `git pull` and the comparison corpus
+        # actually accumulates.
+        res_path = ResultsStore(results_dir(config_path)).write_run(
+            model=model, run_group=group, run_ts=run_ts, rows=rows,
+            tier="deep", judge_model=bench.judge_model or None, jobs=jobs,
+        )
+        console.print(
+            f"[green]Recorded {len(rows)} metrics for {model}[/green] "
+            f"-> [cyan]{res_path}[/cyan]\n"
+            f"[dim]Commit that file so the other machine sees this run.[/dim]"
+        )
 
         paths, n = await _regenerate_report(store, config, config_path)
         console.print(

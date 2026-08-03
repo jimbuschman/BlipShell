@@ -100,10 +100,19 @@ def build_report(
     judge_model: Optional[str] = None,
     generated_ts: str = "",
     task_weights: Optional[dict[str, float]] = None,
+    provenance: Optional[dict[str, dict]] = None,
 ) -> dict:
-    """Turn stored metric rows for every model into one structured report. Pure."""
+    """Turn stored metric rows for every model into one structured report. Pure.
+
+    ``provenance`` is model -> {run_ts, git_sha, host, tier, judge_model}. It is
+    rendered as its own table because results now persist indefinitely across
+    machines: two numbers in the same column can come from different weeks and
+    different code, and a comparison that hides that is worse than no
+    comparison.
+    """
     catalog = catalog or {}
     task_weights = task_weights or {}
+    provenance = provenance or {}
     models = sorted(model_rows)
 
     scoring = {m: _scoring_map(rows) for m, rows in model_rows.items()}
@@ -146,6 +155,7 @@ def build_report(
         "latency": latency,           # model -> {suite: seconds}
         "length": length,             # model -> {task_type: mean words} (judged jobs)
         "catalog": cat_info,          # model -> {price/context/speed}
+        "provenance": {m: provenance.get(m, {}) for m in models},
     }
 
 
@@ -267,6 +277,48 @@ def render_markdown(report: dict) -> str:
         parts.append(_md_table(["Job"] + models, lrows))
         parts.append("\n_The judge is instructed not to reward length, but check this: if a model "
                      "wins a judged job while writing far more, treat the margin with suspicion._")
+        parts.append("")
+
+    # Provenance — when/where/what-code produced each column
+    prov = report.get("provenance", {})
+    if any(prov.get(m) for m in models):
+        parts.append("## Provenance — when each column was measured")
+        prows = []
+        partial = False
+        for m in models:
+            p = prov.get(m) or {}
+            ts = (p.get("run_ts") or "—")[:16].replace("T", " ")
+            jobs = p.get("jobs")
+            if jobs:
+                scope = ", ".join(jobs)
+                partial = True
+            else:
+                scope = "all jobs"
+            # Distinguish "migrated from the old DB, commit unknowable" from
+            # "git was unavailable" — both would otherwise render as a dash,
+            # and the reader needs to know which kind of unknown it is.
+            if p.get("git_sha"):
+                code = p["git_sha"]
+            elif p.get("migrated_from_db"):
+                code = "pre-migration"
+            else:
+                code = "—"
+            prows.append([
+                m, ts, code, p.get("host") or "—",
+                p.get("judge_model") or "—", scope,
+            ])
+        parts.append(_md_table(
+            ["Model", "Run date (UTC)", "Code (git)", "Host", "Judge", "Scope"], prows))
+        parts.append("\n_Results persist across machines and months. Columns measured at "
+                     "different dates or different commits are NOT strictly comparable — a "
+                     "scorer or prompt change between them moves scores on its own. When two "
+                     "rows disagree and their commits differ, re-run the older one before "
+                     "concluding anything._")
+        if partial:
+            parts.append("\n_At least one model was benchmarked with `--jobs` and so did not "
+                         "measure every category. Its blank cells above mean 'not run', not "
+                         "'scored zero', and its COMPOSITE is an average over fewer jobs than "
+                         "a full run's — do not compare composites across differing scopes._")
         parts.append("")
 
     # Methodology

@@ -446,27 +446,29 @@ def test_shortlist_filters_and_new_flag():
 # Store round-trip
 # ---------------------------------------------------------------------------
 
-async def test_store_record_and_baseline(tmp_path):
+async def test_store_holds_no_results_only_the_catalog(tmp_path):
+    """Results moved out of this DB into committed files (2026-08-03).
+
+    The old test here covered record_run / baseline_metrics / latest_run_group.
+    Those are gone, not relocated-and-renamed: results live in
+    `benchmark_results/` because a gitignored DB cannot sync across the two-PC
+    setup, so the comparison corpus never accumulated. Equivalent coverage
+    (latest-run-wins, multiple models, provenance) is in
+    tests/test_benchmark_results.py.
+
+    The `is_baseline` concept went with it and was already dead -- no caller
+    ever set it True once the one-deep-run redesign dropped the incumbent
+    verdict.
+    """
     db = str(tmp_path / "bench.db")
     store = await BenchmarkStore(db).initialize()
     try:
-        await store.record_run(
-            run_group="g1", model="m1", suite="pipeline", task_type="ranking",
-            metric="accuracy", value=0.8, run_ts="t1", is_baseline=True,
+        cur = await store._db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
         )
-        await store.record_run(
-            run_group="g2", model="m2", suite="pipeline", task_type="ranking",
-            metric="accuracy", value=0.9, run_ts="t2",
-        )
-        base = await store.baseline_metrics()
-        assert len(base) == 1 and base[0]["model"] == "m1"
-
-        # New baseline supersedes the old one.
-        await store.clear_baseline()
-        assert await store.baseline_metrics() == []
-
-        assert await store.latest_run_group("m2") == "g2"
-        assert set(await store.models_with_runs()) == {"m1", "m2"}
+        tables = {r["name"] for r in await cur.fetchall()}
+        assert "model_catalog" in tables
+        assert "benchmark_runs" not in tables
     finally:
         await store.close()
 
