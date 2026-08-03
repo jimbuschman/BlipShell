@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "model": "qwen3:14b",
+  "run_group": "qwen3_14b@2026-08-03T12:15:02.710264+00:00",
+  "run_ts": "2026-08-03T12:15:02.710264+00:00",
+  "tier": "deep",
+  "judge_model": null,
+  "jobs": null,
+  "git_sha": null,
+  "host": null,
+  "migrated_from_db": true,
+  "rows": [
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "quality",
+      "value": 0.8438,
+      "unit": "ratio",
+      "raw": {
+        "completeness": 1.0,
+        "judged": true
+      }
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "length_words",
+      "value": 184.2,
+      "unit": "words",
+      "raw": null
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "latency_s",
+      "value": 9.385,
+      "unit": "seconds",
+      "raw": null
+    }
+  ]
+}

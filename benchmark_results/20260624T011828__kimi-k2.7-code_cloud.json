@@ -1,0 +1,197 @@
+{
+  "schema": 1,
+  "model": "kimi-k2.7-code:cloud",
+  "run_group": "kimi-k2.7-code_cloud@2026-06-24T01:18:28.484120+00:00",
+  "run_ts": "2026-06-24T01:18:28.484120+00:00",
+  "tier": "deep",
+  "judge_model": null,
+  "jobs": null,
+  "git_sha": null,
+  "host": null,
+  "migrated_from_db": true,
+  "rows": [
+    {
+      "suite": "pipeline",
+      "task_type": "ranking",
+      "metric": "accuracy",
+      "value": 0.9534,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "importance",
+      "metric": "accuracy",
+      "value": 0.9496,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "rank_importance",
+      "metric": "accuracy",
+      "value": null,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "contradiction",
+      "metric": "accuracy",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "entity",
+      "metric": "accuracy",
+      "value": 0.7984,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "quality",
+      "value": 0.8425,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "quality",
+      "value": 0.395,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "pipeline",
+      "metric": "latency_s",
+      "value": 0.932,
+      "unit": "seconds",
+      "raw": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "quality",
+      "value": 0.8375,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "coding",
+      "metric": "quality",
+      "value": 0.8889,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "tool_calling",
+      "metric": "tool_pass_rate",
+      "value": 0.8667,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning_suite",
+      "metric": "latency_s",
+      "value": 9.946,
+      "unit": "seconds",
+      "raw": null
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "quality",
+      "value": 0.95,
+      "unit": "ratio",
+      "raw": {
+        "completeness": 1.0,
+        "judged": true
+      }
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "latency_s",
+      "value": 3.059,
+      "unit": "seconds",
+      "raw": null
+    },
+    {
+      "suite": "realdata",
+      "task_type": "ranking",
+      "metric": "agreement",
+      "value": 0.74,
+      "unit": "ratio",
+      "raw": {
+        "n": 50
+      }
+    },
+    {
+      "suite": "realdata",
+      "task_type": "importance",
+      "metric": "agreement",
+      "value": 0.64,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "realdata",
+      "task_type": "summarization",
+      "metric": "heuristic",
+      "value": 0.7,
+      "unit": "ratio",
+      "raw": {
+        "n": 50,
+        "errors": 0
+      }
+    },
+    {
+      "suite": "realdata",
+      "task_type": "realdata_suite",
+      "metric": "latency_s",
+      "value": 1.031,
+      "unit": "seconds",
+      "raw": null
+    },
+    {
+      "suite": "embedding",
+      "task_type": "embedding",
+      "metric": "accuracy",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "note": "embedding benchmark unavailable (model/db/ground-truth)"
+      }
+    },
+    {
+      "suite": "coding",
+      "task_type": "coding",
+      "metric": "accuracy",
+      "value": 0.8860759493670886,
+      "unit": "ratio",
+      "raw": {
+        "checks_passed": 140,
+        "checks_total": 158,
+        "tasks_completed": 15,
+        "tasks_total": 15
+      }
+    },
+    {
+      "suite": "coding",
+      "task_type": "coding",
+      "metric": "latency_s",
+      "value": 48.88,
+      "unit": "seconds",
+      "raw": null
+    }
+  ]
+}

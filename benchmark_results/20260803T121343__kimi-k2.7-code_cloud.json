@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "model": "kimi-k2.7-code:cloud",
+  "run_group": "kimi-k2.7-code_cloud@2026-08-03T12:13:43.877588+00:00",
+  "run_ts": "2026-08-03T12:13:43.877588+00:00",
+  "tier": "deep",
+  "judge_model": null,
+  "jobs": null,
+  "git_sha": null,
+  "host": null,
+  "migrated_from_db": true,
+  "rows": [
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "quality",
+      "value": 0.925,
+      "unit": "ratio",
+      "raw": {
+        "completeness": 1.0,
+        "judged": true
+      }
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "length_words",
+      "value": 172.4,
+      "unit": "words",
+      "raw": null
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "latency_s",
+      "value": 4.087,
+      "unit": "seconds",
+      "raw": null
+    }
+  ]
+}

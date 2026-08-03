@@ -1,0 +1,197 @@
+{
+  "schema": 1,
+  "model": "minimax-m3:cloud",
+  "run_group": "minimax-m3_cloud@2026-06-23T15:31:35.967830+00:00",
+  "run_ts": "2026-06-23T15:31:35.967830+00:00",
+  "tier": "deep",
+  "judge_model": null,
+  "jobs": null,
+  "git_sha": null,
+  "host": null,
+  "migrated_from_db": true,
+  "rows": [
+    {
+      "suite": "pipeline",
+      "task_type": "ranking",
+      "metric": "accuracy",
+      "value": 0.9731,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "importance",
+      "metric": "accuracy",
+      "value": 0.9544,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "rank_importance",
+      "metric": "accuracy",
+      "value": null,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "contradiction",
+      "metric": "accuracy",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "entity",
+      "metric": "accuracy",
+      "value": 0.8683,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "quality",
+      "value": 0.93,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "quality",
+      "value": 0.585,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "pipeline",
+      "metric": "latency_s",
+      "value": 3.349,
+      "unit": "seconds",
+      "raw": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "quality",
+      "value": 0.9125,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "coding",
+      "metric": "quality",
+      "value": 0.9444,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "tool_calling",
+      "metric": "tool_pass_rate",
+      "value": 0.7333,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning_suite",
+      "metric": "latency_s",
+      "value": 15.922,
+      "unit": "seconds",
+      "raw": null
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "quality",
+      "value": 0.9437,
+      "unit": "ratio",
+      "raw": {
+        "completeness": 1.0,
+        "judged": true
+      }
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "latency_s",
+      "value": 15.683,
+      "unit": "seconds",
+      "raw": null
+    },
+    {
+      "suite": "realdata",
+      "task_type": "ranking",
+      "metric": "agreement",
+      "value": 0.86,
+      "unit": "ratio",
+      "raw": {
+        "n": 50
+      }
+    },
+    {
+      "suite": "realdata",
+      "task_type": "importance",
+      "metric": "agreement",
+      "value": 0.64,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "realdata",
+      "task_type": "summarization",
+      "metric": "heuristic",
+      "value": 0.58,
+      "unit": "ratio",
+      "raw": {
+        "n": 50,
+        "errors": 0
+      }
+    },
+    {
+      "suite": "realdata",
+      "task_type": "realdata_suite",
+      "metric": "latency_s",
+      "value": 3.583,
+      "unit": "seconds",
+      "raw": null
+    },
+    {
+      "suite": "embedding",
+      "task_type": "embedding",
+      "metric": "accuracy",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "note": "embedding benchmark unavailable (model/db/ground-truth)"
+      }
+    },
+    {
+      "suite": "coding",
+      "task_type": "coding",
+      "metric": "accuracy",
+      "value": 0.8607594936708861,
+      "unit": "ratio",
+      "raw": {
+        "checks_passed": 136,
+        "checks_total": 158,
+        "tasks_completed": 15,
+        "tasks_total": 15
+      }
+    },
+    {
+      "suite": "coding",
+      "task_type": "coding",
+      "metric": "latency_s",
+      "value": 100.15,
+      "unit": "seconds",
+      "raw": null
+    }
+  ]
+}
