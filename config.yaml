@@ -68,22 +68,31 @@ endpoints:
       summarization: "gemini-2.5-flash"
   - name: "local-cloud"
     url: "http://localhost:11434"
-    roles: ["tool_calling"]                               # primary for chat; coding goes to OpenRouter
-    priority: 2                                           # tried first for tool_calling (higher = first)
+    roles: ["tool_calling", "session_review"]             # primary for chat; coding goes to OpenRouter
+    priority: 2                                           # tried first for both roles (higher = first)
     max_concurrent: 5
     context_tokens: 131072  # 128K — gpt-oss:120b-cloud context window
     pii_sanitize: true       # cloud models relay to remote server — data leaves machine
     enabled: true
     models:
       tool_calling: "minimax-m3:cloud"  # Ollama cloud free tier
-      # session_review used to route here to kimi-k2.5:cloud (large context,
-      # single-pass on any session). Ollama RETIRED that model 2026-07-31 with
-      # no notice and it 410'd mid-nightly. session_review now runs local on
-      # qwen3:14b: free, no external dependency that can vanish, and full
-      # conversation transcripts stop leaving the box (this endpoint has
-      # pii_sanitize on, which scrubbed the names/dates the reflection needs
-      # to reason over). Sessions over ~28K tokens chunk + merge instead of
-      # single-passing — see reflect_on_session's chunk-scoped prompt.
+      # session_review -> minimax-m3:cloud, chosen on measured evidence 2026-08-04.
+      # It beats local qwen3:14b on BOTH jobs this key controls: session review
+      # 0.944 vs 0.844, and lesson extraction 0.585 vs 0.345. Lessons was the
+      # deciding number — qwen3 scored 0.420 then 0.345 on a re-run, so it's a
+      # real weakness, and lessons feed a permanent context pool plus the
+      # anti-pattern store. (History: this slot held kimi-k2.5:cloud until Ollama
+      # retired it mid-nightly on 2026-07-31; kimi-k2.7-code was rejected at
+      # 0.395 lessons, the worst of every model measured.)
+      #
+      # Two known costs of routing here rather than local:
+      #  1. pii_sanitize scrubs names/dates from the full transcript before the
+      #     model sees it. The benchmark feeds UNSANITIZED synthetic sessions, so
+      #     0.585 is an UPPER BOUND on real lesson quality. Watch actual lessons.
+      #  2. Same free tier that retired kimi with no notice. Now bounded: a 410
+      #     is classified as a model error, so it falls back to local qwen3:14b
+      #     without penalising this endpoint (which also serves interactive chat).
+      session_review: "minimax-m3:cloud"
   - name: "local"
     url: "http://localhost:11434"
     roles: ["reasoning", "embedding", "summarization", "ranking", "importance", "ranking_importance", "session_review"]

@@ -117,23 +117,31 @@ blipshell/
 | coding | minimax/minimax-m3 (OpenRouter) | gpt-oss:latest |
 | reasoning / ranking / importance / ranking_importance | qwen3:14b (local) | qwen3:14b / qwen3.5:9b |
 | summarization | glm4:latest local; Groq gpt-oss-120b via endpoint priority | qwen3:14b |
-| session_review | qwen3:14b (local, 32K) | qwen3:14b |
+| session_review | minimax-m3:cloud (128K) | qwen3:14b (local, 32K) |
 | embedding | qwen3-embedding:0.6b | — |
 
 - Gemini endpoint exists but is disabled (free-tier burst limits). Groq serves
   ranking_importance (llama-3.3-70b) + summarization.
-- **session_review is local-only since 2026-07-31.** Ollama retired
-  `kimi-k2.5:cloud` with no notice; it 410'd mid-nightly and, because the 410
-  wasn't classified as a model error, penalized the `local-cloud` endpoint that
-  also serves interactive `tool_calling`. Consequence of going local: sessions
-  over ~28K tokens no longer single-pass — they go through the chunk + merge
-  path (`prepare_conversation_for_reflection` → per-chunk reflection →
-  `merge_chunk_reflections`, N+1 LLM calls). Chunk reflections use a
+- **session_review → `minimax-m3:cloud`, decided on benchmark evidence 2026-08-04.**
+  It beats local qwen3:14b on BOTH jobs the key controls: session review 0.944 vs
+  0.844, lessons 0.585 vs 0.345. Lessons decided it — qwen3 scored 0.420 then
+  0.345 on a re-run, a real weakness, and lessons feed a permanent context pool
+  plus the anti-pattern store. `kimi-k2.7-code` was rejected at 0.395 lessons,
+  worst of every model measured, despite leading session review at 0.925 — the
+  canonical example of why a key must be judged on *all* the jobs it controls.
+  Two costs, both live: (1) `pii_sanitize` scrubs names/dates from the transcript
+  before the model sees it, and the benchmark feeds UNSANITIZED synthetic
+  sessions, so **0.585 is an upper bound** on real lesson quality; (2) same free
+  tier that retired kimi-k2.5 with no notice — now bounded, since a 410 is
+  classified as a model error and falls back to local without penalising the
+  endpoint that also serves interactive chat.
+- Chunking still matters, on the **fallback** path: cloud gives session_review a
+  128K window so most sessions single-pass, but local qwen3:14b at 32K sends
+  anything over ~28K through `prepare_conversation_for_reflection` → per-chunk
+  reflection → `merge_chunk_reflections` (N+1 calls). Chunk reflections use a
   chunk-scoped prompt that forbids rating the session overall and forbids
-  reporting anything as unresolved; without it a fragment gets judged as a
-  whole session and invents "never addressed" findings that reach lessons.
-  NOT yet benchmarked against the old single-pass reflections — do that on the
-  Ollama PC before trusting reflection quality.
+  reporting anything unresolved; without it a fragment gets judged as a whole
+  session and invents "never addressed" findings that reach lessons.
 
 ## Alive layer (the v2 soul)
 
