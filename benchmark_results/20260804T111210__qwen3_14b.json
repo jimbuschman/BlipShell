@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "model": "qwen3:14b",
+  "run_group": "qwen3_14b@2026-08-04T11:12:10.414337+00:00",
+  "run_ts": "2026-08-04T11:12:10.414337+00:00",
+  "tier": "deep",
+  "judge_model": "anthropic/claude-opus-4.8",
+  "jobs": [
+    "pipeline"
+  ],
+  "git_sha": "0e3de43",
+  "host": "HPBENDERTWO",
+  "rows": [
+    {
+      "suite": "pipeline",
+      "task_type": "ranking",
+      "metric": "accuracy",
+      "value": 0.9145,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "importance",
+      "metric": "accuracy",
+      "value": 0.9337,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "rank_importance",
+      "metric": "accuracy",
+      "value": 0.9638,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "contradiction",
+      "metric": "accuracy",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "entity",
+      "metric": "accuracy",
+      "value": 0.8532,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "quality",
+      "value": 0.8575,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "length_words",
+      "value": 8.4,
+      "unit": "words",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "quality",
+      "value": 0.345,
+      "unit": "ratio",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "length_words",
+      "value": 41.0,
+      "unit": "words",
+      "raw": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "pipeline",
+      "metric": "latency_s",
+      "value": 1.586,
+      "unit": "seconds",
+      "raw": null
+    }
+  ]
+}
