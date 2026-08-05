@@ -624,6 +624,7 @@ class ChatMixin:
             compaction_config=compaction_cfg,
             compaction_router=compaction_rtr,
             compaction_files_read=self._files_read,
+            guardrails=self._build_chat_guardrails(user_message, max_iterations),
         )
 
         result, endpoint_name, model, using_fallback = await self._run_chat_loop(
@@ -960,6 +961,45 @@ class ChatMixin:
             self._pending_thought_fatigue[pool_text] = text
             logger.info("Self-thought resurfaced (cosine %.2f, weight %.2f): %s",
                         score, weights.get(text, 1.0), text[:100])
+
+    def _build_chat_guardrails(self, user_message: str, budget: int):
+        """Guardrails for the SIMPLE chat path (the one carrying the traffic).
+
+        Until now only the executor (`!plan`) attached a GuardrailsEngine, so
+        every guardrail that runs inside ChatLoop was off for ordinary
+        conversation — including the doom-loop detector, which is pure counter
+        logic with zero LLM cost. A model re-reading the same file five times
+        in normal chat got no correction at all (deep-dive 2026-08-04).
+
+        Only the deterministic, chat-appropriate features are enabled here:
+
+        - doom_loop_detector: free, and exactly as useful in chat as in a task.
+        - trajectory_monitor: OFF. It injects a synthetic "[CHECKPOINT n/N]"
+          reminder every `monitor_interval` tool calls, which is built for long
+          autonomous runs where the model drifts unsupervised. In interactive
+          chat the user's next message *is* the course correction, so the
+          injection is noise that also reshapes the conversation.
+        - the LLM critiques stay at their config defaults (off), so this adds
+          no per-turn model cost.
+
+        The completion audit and review-grounding gate need a completion tool
+        and simply never fire without one — correctly executor-only.
+        """
+        gr_config = self.config.guardrails
+        if not gr_config.enabled or not budget:
+            return None
+        try:
+            from blipshell.core.guardrails import GuardrailsEngine
+
+            engine = GuardrailsEngine(
+                gr_config.model_copy(update={"trajectory_monitor": False}),
+                self.router,
+            )
+            engine.original_request = user_message
+            return engine
+        except Exception as e:
+            logger.warning("Could not build chat guardrails (continuing without): %s", e)
+            return None
 
     async def _charge_surfaced_thought_fatigue(self, gathered_texts) -> None:
         """Fatigue only the thoughts that actually reached the prompt.

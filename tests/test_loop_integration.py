@@ -120,3 +120,101 @@ async def test_look_before_review_gate_blocks_then_passes():
     assert result.completion_method == "tool"
     # The first task_complete must NOT have ended the loop — proves the gate fired.
     assert result.tool_call_names == ["task_complete", "read_file", "task_complete"]
+
+
+# --- guardrails on the SIMPLE chat path -----------------------------------
+
+
+async def _run_no_completion_tool(script, registry, guardrails=None, budget=20):
+    """Drive the loop the way _chat_simple does: no completion tool, so the
+    text response terminates and the completion audit never applies."""
+    client = ScriptedLLMClient(script)
+    loop = ChatLoop(registry)
+    config = LoopConfig(
+        budget=budget,
+        enable_compaction=False,
+        guardrails=guardrails,
+    )
+    result = await loop.run(
+        client=client, messages=_messages(), model="fake",
+        tools=None, chat_kwargs={}, config=config,
+    )
+    return result, client
+
+
+@pytest.mark.asyncio
+async def test_doom_loop_fires_on_the_simple_chat_path():
+    """Until 2026-08 only the executor attached a GuardrailsEngine, so the
+    doom-loop detector — pure counters, zero LLM cost — was off for ~all real
+    traffic. A model re-reading the same file got no correction."""
+    router = RecordingRouter()
+    engine = GuardrailsEngine(
+        GuardrailsConfig(doom_loop_detector=True, doom_loop_read_threshold=3,
+                         trajectory_monitor=False),
+        router,
+    )
+    engine.original_request = "look at config.yaml"
+    reg = make_registry(FakeTool("read_file", read_only=True, result="file body"))
+
+    same_read = {"tools": [("read_file", {"path": "config.yaml"})]}
+    result, _ = await _run_no_completion_tool(
+        [same_read, same_read, same_read, same_read, {"text": "done looking"}],
+        reg, guardrails=engine,
+    )
+
+    assert result.response == "done looking"
+    assert engine._file_read_counts["config.yaml"] >= 3
+    assert engine._doom_warnings_sent, (
+        "doom-loop detector never fired on the simple chat path"
+    )
+    assert router.calls == 0, "the doom-loop check must cost no LLM calls"
+
+
+@pytest.mark.asyncio
+async def test_no_guardrails_means_no_doom_loop_correction():
+    """Pins what the bug was: with guardrails absent the same behavior passes
+    unremarked."""
+    reg = make_registry(FakeTool("read_file", read_only=True, result="file body"))
+    same_read = {"tools": [("read_file", {"path": "config.yaml"})]}
+    result, _ = await _run_no_completion_tool(
+        [same_read, same_read, same_read, same_read, {"text": "done"}],
+        reg, guardrails=None,
+    )
+    assert result.response == "done"     # no correction, no error
+
+
+@pytest.mark.asyncio
+async def test_chat_guardrails_disable_trajectory_injection():
+    """Chat gets the deterministic guardrails but NOT the synthetic
+    "[CHECKPOINT n/N]" injection, which is built for long unsupervised runs."""
+    router = RecordingRouter()
+    engine = GuardrailsEngine(
+        GuardrailsConfig(trajectory_monitor=False, monitor_interval=2), router,
+    )
+    engine.original_request = "do a few things"
+    assert engine.build_trajectory_injection(2, 20, ["read_file", "read_file"]) is None
+
+
+@pytest.mark.asyncio
+async def test_chat_guardrails_builder_respects_master_toggle():
+    """_build_chat_guardrails returns None when guardrails are off entirely,
+    and when there are no tools (budget 0) there is nothing to guard."""
+    from blipshell.core.agent_chat import ChatMixin
+
+    class _Host(ChatMixin):
+        def __init__(self, cfg):
+            self.config = cfg
+            self.router = RecordingRouter()
+
+    class _Cfg:
+        def __init__(self, **kw):
+            self.guardrails = GuardrailsConfig(**kw)
+
+    assert _Host(_Cfg(enabled=False))._build_chat_guardrails("hi", 20) is None
+    assert _Host(_Cfg())._build_chat_guardrails("hi", 0) is None
+
+    engine = _Host(_Cfg())._build_chat_guardrails("fix the bug", 20)
+    assert engine is not None
+    assert engine.original_request == "fix the bug"
+    assert engine.config.trajectory_monitor is False   # chat override
+    assert engine.config.doom_loop_detector is True    # kept
