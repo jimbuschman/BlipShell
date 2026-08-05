@@ -243,26 +243,29 @@ class SlashCommandDispatcher:
         else:
             con.print("No active session")
 
+    # Plans live in SQLite, which is where the real CLI reads them from
+    # (_print_active_plan / _print_plans). These used to read
+    # task_planner.active_plan / .plans — attributes TaskPlanner never had, so
+    # both commands raised AttributeError in every simulation run.
     async def _cmd_plan(self, con: Console):
-        if hasattr(self.agent, 'task_planner') and self.agent.task_planner:
-            plan = self.agent.task_planner.active_plan
-            if plan:
-                con.print(f"Active plan: {plan}")
-            else:
-                con.print("No active plan")
-        else:
-            con.print("No task planner")
+        sid = getattr(self.agent.session_manager, "session_id", None)
+        if not (self.agent.sqlite and sid):
+            con.print("No active session")
+            return
+        plan = await self.agent.sqlite.get_active_plan(sid)
+        con.print(f"Active plan: {plan.user_request}" if plan else "No active plan")
 
     async def _cmd_plans(self, con: Console):
-        if hasattr(self.agent, 'task_planner') and self.agent.task_planner:
-            plans = self.agent.task_planner.plans
-            if plans:
-                for p in plans:
-                    con.print(f"Plan: {p}")
-            else:
-                con.print("No plans this session")
+        sid = getattr(self.agent.session_manager, "session_id", None)
+        if not (self.agent.sqlite and sid):
+            con.print("No active session")
+            return
+        plans = await self.agent.sqlite.list_plans(session_id=sid, limit=20)
+        if plans:
+            for pl in plans:
+                con.print(f"Plan #{pl.id}: {pl.status} — {pl.user_request}")
         else:
-            con.print("No task planner")
+            con.print("No plans this session")
 
     async def _cmd_tasks(self, con: Console):
         if hasattr(self.agent, 'background_tasks') and self.agent.background_tasks:

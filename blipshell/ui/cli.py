@@ -1888,7 +1888,6 @@ def _print_status(agent: Agent):
     table.add_row("Messages", str(status["message_count"]))
     table.add_row("Planner", "[green]Enabled[/green]" if status.get("planner_enabled") else "[dim]Disabled[/dim]")
     table.add_row("Workflows", str(status.get("workflows_loaded", 0)))
-    table.add_row("Queue Pending", str(status["job_queue_pending"]))
 
     # Show active background tasks count
     bg_running = len(agent.background_manager._running_tasks) if agent.background_manager else 0

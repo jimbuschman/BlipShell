@@ -56,7 +56,6 @@ class TestOverrides:
     Each flag disables a BS-specific feature to match Claude Code's approach.
     Default (all False) = current BS behavior.
     """
-    no_tool_rules: bool = False       # Disable tool rules engine
     no_iteration_cap: bool = False    # Remove iteration cap (set to 999)
     no_auto_nudge: bool = False       # Disable auto-continue/auto-nudge
     no_budget_winddown: bool = False  # Disable budget winddown in executor
@@ -75,15 +74,6 @@ class TestOverrides:
         Mutates agent and executor configuration in-place so the next
         chat() call uses the modified behavior.
         """
-        from blipshell.core.tool_rules import ToolRuleEngine
-
-        if self.no_tool_rules:
-            # Replace rule engines with empty engines (no filtering)
-            empty = ToolRuleEngine()
-            agent._tool_rules = empty
-            if agent.task_executor:
-                agent.task_executor._tool_rules = empty
-
         if self.no_iteration_cap:
             # Set very high cap instead of removing loop entirely
             agent.config.agent.max_tool_iterations = 999
@@ -1731,7 +1721,6 @@ AB_CONFIGS: dict[str, tuple[TestOverrides, TestOverrides]] = {
     ),
     "tool-rules": (
         TestOverrides(),                          # A: baseline (rules ON)
-        TestOverrides(no_tool_rules=True),        # B: rules OFF (CC way)
     ),
     "budget-winddown": (
         TestOverrides(),                          # A: baseline (winddown ON)
@@ -1907,7 +1896,6 @@ def _compare_results(
 def _parse_overrides(args) -> TestOverrides:
     """Build TestOverrides from CLI args."""
     return TestOverrides(
-        no_tool_rules=args.no_tool_rules,
         no_iteration_cap=args.no_iteration_cap,
         no_auto_nudge=args.no_auto_nudge,
         no_budget_winddown=args.no_budget_winddown,

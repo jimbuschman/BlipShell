@@ -30,12 +30,10 @@ from blipshell.core.agent_tools import ToolsMixin
 from blipshell.core.background import BackgroundTaskManager
 from blipshell.core.config import ConfigManager
 from blipshell.core.executor import TaskExecutor
-from blipshell.core.planner import TaskPlanner
 from blipshell.core.repo_map import RepoMap
 from blipshell.core.tools.base import ToolRegistry
 from blipshell.core.workflows import WorkflowExecutor, WorkflowRegistry
 from blipshell.llm.endpoints import EndpointManager
-from blipshell.llm.job_queue import LLMJobQueue
 from blipshell.llm.model_settings import ModelSettingsRegistry
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.vector_store import VectorStore
@@ -80,7 +78,6 @@ class Agent(
         self.vectors: Optional[VectorStore] = None
         self.endpoint_manager: Optional[EndpointManager] = None
         self.router: Optional[LLMRouter] = None
-        self.job_queue: Optional[LLMJobQueue] = None
         self.model_settings = ModelSettingsRegistry()
 
         # Memory
@@ -94,8 +91,7 @@ class Agent(
         # Tools
         self.tool_registry = ToolRegistry()
 
-        # Task planning + execution (Phase 1)
-        self.task_planner: Optional[TaskPlanner] = None
+        # Task execution (Phase 1)
         self.task_executor: Optional[TaskExecutor] = None
 
         # Background tasks (Phase 2)
@@ -218,10 +214,6 @@ class Agent(
         # Router
         self.router = LLMRouter(self.config.models, self.endpoint_manager, pii_enabled=self.config.pii.enabled)
 
-        # Job queue
-        self.job_queue = LLMJobQueue()
-        self.job_queue.start()
-
         # Memory manager — use endpoint context_tokens for pool sizing
         endpoint_ctx = self.endpoint_manager.get_context_tokens_for_role(
             "tool_calling", default=65536,
@@ -258,12 +250,11 @@ class Agent(
             summary_chunk_size=self.config.session.summary_chunk_size,
         )
 
-        # Task planner + executor
+        # Task executor
         # NOTE: ComplexityClassifier removed — model decides its own complexity.
         # !plan CLI prefix sets force_plan=True directly. See git history for heuristic.
-        self.task_planner = TaskPlanner(
-            self.router, self.sqlite, self.config.planner,
-        )
+        # NOTE: TaskPlanner removed 2026-08-05 — create_plan() had no callers;
+        # the executor plans inline and /plan reads plans from SQLite.
         self.task_executor = TaskExecutor(
             router=self.router,
             sqlite=self.sqlite,
@@ -979,9 +970,6 @@ class Agent(
         if self.session_manager:
             await self.session_manager.end_session(on_status=on_status)
 
-        if self.job_queue:
-            await self.job_queue.stop()
-
         # Second shutdown attempt if worker is still alive (entity extraction
         # may have been running during first shutdown). Give it one more try
         # before closing the VectorStore it depends on.
@@ -1024,11 +1012,6 @@ class Agent(
         if self._friction_probe_task:
             self._friction_probe_task.cancel()
             self._friction_probe_task = None
-        if self.job_queue:
-            try:
-                await self.job_queue.stop()
-            except Exception as e:
-                logger.debug("Job queue shutdown error: %s", e)
         # 2. Close vector store before SQLite
         if self.vectors:
             try:
@@ -1073,7 +1056,6 @@ class Agent(
             "memory_usage": self.memory_manager.get_usage() if self.memory_manager else {},
             "endpoints": self.endpoint_manager.get_status() if self.endpoint_manager else [],
             "tools": self.tool_registry.get_tool_names(),
-            "job_queue_pending": self.job_queue.pending_count if self.job_queue else 0,
             "planner_enabled": self.config.planner.enabled,
             "workflows_loaded": len(self.workflow_registry.list_all()) if self.workflow_registry else 0,
         }
