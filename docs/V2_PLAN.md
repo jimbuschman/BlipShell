@@ -46,9 +46,25 @@ fixing — code moves.
 
 | # | Decision | Options | Blocks |
 |---|---|---|---|
-| D1 | PII on interactive chat | (a) wire sanitize into the chat path; (b) consciously accept raw cloud chat and delete the misleading `pii_sanitize` flags | Phase 1.4 |
+| D1 | PII on interactive chat | (a) wire sanitize into the chat path; (b) consciously accept raw cloud chat and delete the misleading `pii_sanitize` flags | the remaining half of Phase 1.4 |
 | D2 | MCP: commit or archive | (a) invest (resources + supervision + tests); (b) archive the package | Phase 2.6 |
 | D3 | Coding freeze confirmation | watch 2 weeks of real usage; if project mode earns its keep weekly, keep layer 2 "warm" instead of frozen | Phase 2 deletions of anything user-facing |
+
+## Progress
+
+- **Phase 0 — DONE 2026-08-05** (`79c7384`, `bb10e81`). Suite 1021 → 1200.
+  Bonus finds: two test files were silently skipped on Python 3.14 by stale
+  ChromaDB guards (re-enabled); the FTS `fts_match` flag only landed on
+  FTS-only hits, so keyword protection vanished when vector KNN also returned
+  the id with low similarity (fixed); `dump_to_memory` now flushes pending
+  persists first (a Phase 1 item, pulled forward by a re-enabled test).
+- **Phase 1 — DONE 2026-08-05** (`c9cd279`, `71685a1`, `66f4f2e`, `5f24532`,
+  `9d7c8f9`, `46525cc`, `e6bcc07`). Suite 1200 → 1270. All eight items landed
+  except the D1-gated half of 1.4 (interactive-chat sanitization), which is
+  waiting on the decision above; every PII fix that is correct regardless of
+  D1 shipped. Tracing the `end_session` swallow found it repeated at two more
+  layers (`_extract_lessons`, `processor.process_lesson`), and the router's
+  rate-limit test turned out to be asserting the bug.
 
 ---
 
