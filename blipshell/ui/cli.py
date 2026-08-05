@@ -3269,7 +3269,19 @@ def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios):
             if quiet:
                 print(json_str)
 
-    asyncio.run(_run())
+        return suite_result
+
+    suite_result = asyncio.run(_run())
+
+    # Exit nonzero on hard failures so a simulate run can gate anything.
+    # WARN is deliberately not a failure: response-content assertions are soft
+    # because LLM phrasing is nondeterministic.
+    if suite_result and suite_result.failed:
+        if not quiet:
+            console.print(
+                f"[red]{suite_result.failed} of {suite_result.total} scenarios FAILED[/red]"
+            )
+        raise SystemExit(1)
 
 
 # --- Nightly Jobs ---
@@ -3352,10 +3364,27 @@ def nightly_cmd(ctx, job, quiet, loop, local):
                         console.print("[green]Nothing left to process — done.[/green]")
                     break
 
+            return result
         finally:
             await runner.close()
 
-    asyncio.run(_run())
+    result = asyncio.run(_run())
+
+    # Exit nonzero when jobs didn't complete, so a scheduled run can be
+    # monitored. Without this, a night where every job failed was
+    # indistinguishable from success to Task Scheduler / cron.
+    bad = {
+        name: stats.get("status")
+        for name, stats in (result or {}).get("jobs", {}).items()
+        if stats.get("status") in ("error", "timeout")
+    }
+    if bad:
+        if not quiet:
+            console.print(
+                f"[red]{len(bad)} job(s) did not complete: "
+                f"{', '.join(f'{n} ({s})' for n, s in sorted(bad.items()))}[/red]"
+            )
+        raise SystemExit(1)
 
 
 # --- Unified model benchmark harness ---

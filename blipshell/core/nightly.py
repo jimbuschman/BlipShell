@@ -51,6 +51,12 @@ JOB_ORDER = [
 ]
 
 # Jobs that require Ollama (LLM calls or embedding). Skipped if Ollama is down.
+# Getting this set wrong is expensive: an omitted job runs with Ollama down and
+# burns the full _JOB_TIMEOUT instead of skipping in milliseconds.
+#   - tag_discovery -> TagDiscovery.maybe_run() -> router.generate()
+#   - consolidate   -> vectors.search_memories() embeds the query text
+# (centroid_tag is deliberately absent: it only reads stored embeddings via
+# get_embeddings_by_ids and never calls out.)
 _OLLAMA_JOBS = {
     "backfill_vectors", "backfill_summaries", "resummarize",
     "backfill_lessons", "score_lessons", "clean_junk_lessons",
@@ -58,6 +64,8 @@ _OLLAMA_JOBS = {
     "entity_extraction", "batch_tag",
     "merge_entities",
     "rebuild_digests",
+    "tag_discovery",
+    "consolidate",
 }
 
 # Max time per job (seconds). Prevents a single hung job from burning hours.
@@ -1114,15 +1122,42 @@ class NightlyRunner:
         }
 
     async def _build_and_store_report(self, results: dict):
-        """Build a structured nightly report and store in app_metadata."""
+        """Build a structured nightly report and store in app_metadata.
+
+        Every failure mode a job can report has to land in warnings/errors,
+        because the startup notification prints "all clean" whenever both are
+        empty. This used to collect only status == "error", so the worst
+        realistic night — Ollama wedged, every LLM job skipped, two jobs
+        timing out, backup failed — reported itself as clean
+        (deep-dive 2026-08-04).
+        """
         warnings = []
         errors = []
+        statuses: dict[str, int] = {}
+        # Run-level skips are grouped by reason: with Ollama down that's ~14
+        # jobs at once, and 14 identical warnings buries everything else.
+        skipped_by_reason: dict[str, list[str]] = {}
 
         for job_name, job_result in results.get("jobs", {}).items():
-            if job_result.get("status") == "error":
+            status = job_result.get("status", "unknown")
+            statuses[status] = statuses.get(status, 0) + 1
+
+            if status == "error":
                 errors.append(f"{job_name}: {job_result.get('error', 'unknown')}")
+            elif status == "timeout":
+                # A job that ran out of time did NOT finish its work.
+                errors.append(
+                    f"{job_name}: {job_result.get('error', f'timed out after {_JOB_TIMEOUT}s')}"
+                )
+            elif status == "skipped":
+                # Only run-level skips carry this status (Ollama down, unknown
+                # job). Config-gated no-ops finish with status "ok" and a
+                # "skipped" key, and are intentional — not reported here.
+                reason = job_result.get("error", "unknown reason")
+                skipped_by_reason.setdefault(reason, []).append(job_name)
+
             # Collect health check findings
-            if job_name == "health_check" and job_result.get("status") == "ok":
+            if job_name == "health_check" and status == "ok":
                 for finding in job_result.get("findings", []):
                     if finding["severity"] == "ERROR":
                         errors.append(
@@ -1132,15 +1167,39 @@ class NightlyRunner:
                         warnings.append(
                             f"[health] {finding['check']}: {finding['message']}"
                         )
+
             # Flag jobs with failures
             if job_result.get("failed", 0) > 0:
                 warnings.append(f"{job_name}: {job_result['failed']} failures")
+            # Per-item timeouts inside a job that itself finished (friction
+            # analysis reports these as `timed_out`, NOT `failed`, so the
+            # check above misses them entirely).
+            if job_result.get("timed_out", 0) > 0:
+                warnings.append(
+                    f"{job_name}: {job_result['timed_out']} items timed out"
+                )
+            # Partial progress — the job ran out of budget and will resume
+            # next night. Not an error, but the work is not done.
+            if job_result.get("stopped_early"):
+                warnings.append(
+                    f"{job_name}: stopped early (time budget) — work remains"
+                )
+            # A handler that swallowed its own exception and reported it as a
+            # soft warning (e.g. _job_backup returning backup_path=None).
+            if job_result.get("warning"):
+                warnings.append(f"{job_name}: {job_result['warning']}")
+
+        for reason, jobs in skipped_by_reason.items():
+            warnings.append(
+                f"{len(jobs)} job(s) skipped ({reason}): {', '.join(sorted(jobs))}"
+            )
 
         report = {
             "timestamp": results.get("completed_at"),
             "elapsed_s": results.get("elapsed_s"),
             "warnings": warnings,
             "errors": errors,
+            "job_statuses": statuses,
             "summary": {
                 job: {k: v for k, v in data.items() if k != "findings"}
                 for job, data in results.get("jobs", {}).items()

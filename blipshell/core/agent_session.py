@@ -434,15 +434,21 @@ class SessionMixin:
         except Exception as e:
             logger.debug("Failed to load session notes: %s", e)
 
+    # A nightly run needs the app to be alive at 2am. On a desktop that often
+    # doesn't happen, and with no age check the startup line cheerfully
+    # reported the same successful run for weeks. Warn past this age.
+    NIGHTLY_STALE_HOURS = 36
+
     async def _check_nightly_report(self) -> str | None:
         """Check last nightly run status. Always reports when it ran, highlights issues."""
         try:
             import json
+            import time as _time
             from datetime import datetime as _dt
 
             raw = await self.sqlite.get_metadata("nightly_last_run")
             if not raw:
-                return None
+                return "Nightly has never run. Use /nightly to run it now."
             data = json.loads(raw)
             completed_at = data.get("completed_at")
             if not completed_at:
@@ -451,6 +457,17 @@ class SessionMixin:
             last_run = _dt.fromtimestamp(completed_at)
             elapsed = data.get("elapsed_s", 0)
             time_str = last_run.strftime("%Y-%m-%d %I:%M %p")
+
+            # Staleness beats content: a report from two weeks ago being
+            # "clean" says nothing about the state of the corpus today.
+            age_hours = (_time.time() - completed_at) / 3600.0
+            if age_hours > self.NIGHTLY_STALE_HOURS:
+                days = age_hours / 24.0
+                age_str = f"{days:.0f} days" if days >= 1 else f"{age_hours:.0f} hours"
+                return (
+                    f"Nightly hasn't run in {age_str} (last: {time_str}). "
+                    "Maintenance is falling behind — use /nightly to run it now."
+                )
 
             # Check for warnings/errors in the report
             report_raw = await self.sqlite.get_metadata("nightly_report")
