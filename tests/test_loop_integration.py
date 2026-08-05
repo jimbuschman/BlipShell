@@ -218,3 +218,94 @@ async def test_chat_guardrails_builder_respects_master_toggle():
     assert engine.original_request == "fix the bug"
     assert engine.config.trajectory_monitor is False   # chat override
     assert engine.config.doom_loop_detector is True    # kept
+
+
+# --- outbound transform (credential stripping at the wire) -----------------
+
+
+@pytest.mark.asyncio
+async def test_outbound_transform_scrubs_the_wire_not_the_history():
+    """The interactive path bypasses router.generate(), so until 2026-08
+    nothing on it was sanitized despite pii_sanitize: true on the cloud
+    endpoints. The transform must reach the wire while leaving the loop's own
+    messages — which become conversation history and stored memory — intact."""
+    from blipshell.llm.pii import sanitize_messages_secrets
+
+    secret = "ghp_" + "z" * 36
+    reg = make_registry(FakeTool("read_file", read_only=True, result="ok"))
+    client = ScriptedLLMClient([{"text": "understood"}])
+    loop = ChatLoop(reg)
+    messages = [
+        {"role": "system", "content": "be helpful"},
+        {"role": "user", "content": f"deploy using {secret}"},
+    ]
+    config = LoopConfig(
+        budget=5, enable_compaction=False,
+        outbound_transform=sanitize_messages_secrets,
+    )
+
+    result = await loop.run(
+        client=client, messages=messages, model="fake",
+        tools=None, chat_kwargs={}, config=config,
+    )
+
+    assert result.response == "understood"
+    # What the model received: scrubbed
+    wire = client.sent_messages[0]
+    assert secret not in wire[1]["content"]
+    assert "[API_KEY]" in wire[1]["content"]
+    # What the session keeps: intact
+    assert messages[1]["content"] == f"deploy using {secret}"
+    assert secret in result.messages[1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_no_transform_sends_text_unchanged():
+    """Local endpoints get the raw text — that's the point of gating on
+    should_sanitize_pii."""
+    secret = "ghp_" + "y" * 36
+    reg = make_registry(FakeTool("read_file", read_only=True, result="ok"))
+    client = ScriptedLLMClient([{"text": "done"}])
+    loop = ChatLoop(reg)
+    messages = [{"role": "user", "content": f"token {secret}"}]
+
+    await loop.run(
+        client=client, messages=messages, model="fake",
+        tools=None, chat_kwargs={}, config=LoopConfig(
+            budget=5, enable_compaction=False, outbound_transform=None,
+        ),
+    )
+
+    assert secret in client.sent_messages[0][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_transform_applies_to_every_turn_including_tool_results():
+    """A credential can surface mid-loop in a tool result, so the transform
+    has to run on each call, not just the first."""
+    from blipshell.llm.pii import sanitize_messages_secrets
+
+    secret = "AKIAABCDEFGHIJKLMNOP"
+    reg = make_registry(
+        FakeTool("read_file", read_only=True, result=f"config: KEY={secret}")
+    )
+    client = ScriptedLLMClient([
+        {"tools": [("read_file", {"path": ".env"})]},
+        {"text": "found it"},
+    ])
+    loop = ChatLoop(reg)
+
+    await loop.run(
+        client=client, messages=_messages(), model="fake",
+        tools=None, chat_kwargs={}, config=LoopConfig(
+            budget=5, enable_compaction=False,
+            outbound_transform=sanitize_messages_secrets,
+        ),
+    )
+
+    # Second call carries the tool result — it must be scrubbed on the wire
+    assert len(client.sent_messages) >= 2
+    second_turn = "\n".join(
+        m.get("content") or "" for m in client.sent_messages[1]
+    )
+    assert secret not in second_turn

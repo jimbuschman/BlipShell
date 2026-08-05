@@ -324,3 +324,77 @@ class TestExpandedKeyPatterns:
         assert "MIIEowIBAAKCAQEA1234567890" not in result
         assert "[PRIVATE_KEY]" in result
         assert result.endswith("done")
+
+
+class TestSecretsOnlySanitization:
+    """The interactive path strips credentials but NOT identity.
+
+    Redacting a token costs the model nothing (it never needed the real value)
+    and is the one category with immediate concrete harm. Redacting identity
+    would cost a lot and protect little: spaCy tags product names as entities,
+    and a username leaks through every file path regardless. Identity
+    protection belongs at the routing layer (keep it local) — see V2_PLAN D1.
+    """
+
+    def test_api_key_is_removed(self):
+        secret = "ghp_" + "a" * 36
+        result = pii_mod.sanitize_secrets(f"my token is {secret} ok")
+        assert secret not in result
+        assert "[API_KEY]" in result
+
+    def test_names_are_preserved(self):
+        text = "Kortney and I discussed the Ollama gate on Tuesday"
+        assert pii_mod.sanitize_secrets(text) == text
+
+    def test_technical_nouns_survive(self):
+        """The specific failure full sanitization would cause on this path."""
+        text = "Groq rate-limited, so Presidio ran locally against Devstral"
+        assert pii_mod.sanitize_secrets(text) == text
+
+    def test_urls_and_paths_preserved(self):
+        text = r"see https://docs.example.com and C:\Users\[user]\app.py"
+        assert pii_mod.sanitize_secrets(text) == text
+
+    def test_empty_and_none_safe(self):
+        assert pii_mod.sanitize_secrets("") == ""
+        assert pii_mod.sanitize_secrets(None) is None
+
+
+class TestMessageSanitizationIsNonDestructive:
+    def test_returns_a_copy_and_never_mutates_the_caller(self):
+        """The load-bearing property: `messages` becomes conversation history
+        and gets persisted as memory. If the transform mutated it, the
+        redaction would be written back into the session and the store."""
+        secret = "ghp_" + "b" * 36
+        original = [
+            {"role": "system", "content": "be helpful"},
+            {"role": "user", "content": f"deploy with {secret}"},
+        ]
+        snapshot = [dict(m) for m in original]
+
+        cleaned = pii_mod.sanitize_messages_secrets(original)
+
+        assert original == snapshot, "caller's messages were mutated"
+        assert original[1]["content"] == f"deploy with {secret}"
+        assert secret not in cleaned[1]["content"]
+        assert cleaned is not original
+        assert cleaned[1] is not original[1]
+
+    def test_non_string_content_passes_through(self):
+        """Tool-call messages and image payloads must survive untouched."""
+        messages = [
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"function": {"name": "read_file"}}]},
+            {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+        ]
+        cleaned = pii_mod.sanitize_messages_secrets(messages)
+        assert cleaned[0]["content"] is None
+        assert cleaned[0]["tool_calls"] == messages[0]["tool_calls"]
+        assert cleaned[1]["content"] == messages[1]["content"]
+
+    def test_all_roles_are_scrubbed(self):
+        """Secrets can appear in a tool result, not just a user message."""
+        secret = "AKIAABCDEFGHIJKLMNOP"
+        messages = [{"role": "tool", "content": f"env: AWS_KEY={secret}"}]
+        cleaned = pii_mod.sanitize_messages_secrets(messages)
+        assert secret not in cleaned[0]["content"]

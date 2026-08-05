@@ -46,9 +46,46 @@ fixing — code moves.
 
 | # | Decision | Options | Blocks |
 |---|---|---|---|
-| D1 | PII on interactive chat | (a) wire sanitize into the chat path; (b) consciously accept raw cloud chat and delete the misleading `pii_sanitize` flags | the remaining half of Phase 1.4 |
+| D1 | ~~PII on interactive chat~~ **RESOLVED 2026-08-05** | Split by category, not by all-or-nothing: interactive chat strips **credentials only**; background calls keep full sanitization. Identity protection moves to the routing layer. | — |
 | D2 | MCP: commit or archive | (a) invest (resources + supervision + tests); (b) archive the package | Phase 2.6 |
 | D3 | Coding freeze confirmation | watch 2 weeks of real usage; if project mode earns its keep weekly, keep layer 2 "warm" instead of frozen | Phase 2 deletions of anything user-facing |
+
+### D1 resolution + what it leaves open
+
+Sanitizing everything on the interactive path was rejected on evidence: spaCy
+NER tags product names as entities (Groq, Ollama, Presidio, Devstral become
+`[PERSON]`/`[LOCATION]`), so a technical conversation would lose its technical
+nouns; it leaks anyway (a username sits in every `C:\Users\...` path, plus
+nicknames, handles, names in identifiers); and full NER over the whole
+assembled context every turn is too slow for the user-facing path. That is the
+worst quadrant — full comprehension cost for partial protection.
+
+Instead the two categories are separated, because their cost profiles are
+opposite. **Credentials** (keys, tokens, JWTs, private keys) cost the model
+nothing to redact and are the one category with immediate concrete harm →
+always stripped, on every cloud path including chat. **Identity** (names,
+dates, locations, URLs) stays intact on the interactive path.
+
+**Still open — the real privacy control is routing, not redaction.** Usage is a
+genuine mix of personal and technical, and the leak is structural: the recall
+pool is 40% of budget and is filled by semantic search over all 17K memories on
+*every* turn, so a purely technical question still ships whatever personal
+memories matched. Per-message classification cannot fix that. Two candidates,
+neither built:
+
+1. **A deliberate local mode** (`/local` … `/cloud`, or local-by-default for
+   plain chat with explicit escalation). Cheap, comprehensible, and the honest
+   version of "this never left the machine". Favourable asymmetry: personal
+   continuity chat is model-light, while the model-hungry work (agentic coding)
+   is the less sensitive category — so the split costs little.
+2. **Pool-level gating** — when the active endpoint is cloud, restrict which
+   memories are injected (project-scoped only, or filtered by tag/type). Most
+   aligned with the memory-first architecture, but needs a personal/technical
+   signal on memories, so it's a build rather than a tweak.
+
+Worth checking before deciding how much this matters: the current
+data-retention / training-use terms of the OpenRouter and Ollama-cloud free
+tiers.
 
 ## Progress
 

@@ -355,6 +355,19 @@ class ChatMixin:
             else:
                 config.ollama_gate = None
 
+            # Strip credentials when this endpoint relays off the machine.
+            # The interactive path bypasses router.generate() entirely (it goes
+            # get_model_and_client -> stream_chat), so until now NOTHING on this
+            # path was sanitized despite pii_sanitize: true on the cloud
+            # endpoints — the conversation, the memory pools and file contents
+            # all went out raw. Secrets only, by design: see
+            # pii.sanitize_secrets and docs/V2_PLAN.md (D1).
+            if self.config.pii.enabled and endpoint.should_sanitize_pii:
+                from blipshell.llm.pii import sanitize_messages_secrets
+                config.outbound_transform = sanitize_messages_secrets
+            else:
+                config.outbound_transform = None
+
             endpoint.start_request()
             try:
                 result = await loop.run(

@@ -114,6 +114,13 @@ class LoopConfig:
     compaction_file_cache: dict | None = None
     """File path -> content cache (for post-compaction file restoration)."""
 
+    outbound_transform: Optional[Callable[[list[dict]], list[dict]]] = None
+    """Applied to the message list immediately before each LLM call, and only
+    to what goes on the wire. Must RETURN a new list — the loop's own
+    `messages` (which becomes conversation history and memory) is never
+    replaced by the result. Used to strip credentials on cloud endpoints; kept
+    generic so ChatLoop needs no knowledge of PII policy."""
+
 
 @dataclass
 class LoopResult:
@@ -784,15 +791,21 @@ class ChatLoop:
                 iter_tools = tools if (tools and tool_call_count < config.budget) else None
 
             # ── LLM call (gated for local Ollama) ──
+            # outbound_transform sees only what goes on the wire; `messages`
+            # itself stays intact so history and memory keep the real text.
+            wire_messages = (
+                config.outbound_transform(messages)
+                if config.outbound_transform else messages
+            )
             if config.ollama_gate:
                 async with config.ollama_gate.async_gate(config.gate_priority):
                     content, tool_calls = await stream_chat(
-                        client, messages, model, iter_tools, chat_kwargs,
+                        client, wire_messages, model, iter_tools, chat_kwargs,
                         self.on_token, on_stream_done,
                     )
             else:
                 content, tool_calls = await stream_chat(
-                    client, messages, model, iter_tools, chat_kwargs,
+                    client, wire_messages, model, iter_tools, chat_kwargs,
                     self.on_token, on_stream_done,
                 )
 
@@ -1174,16 +1187,21 @@ class ChatLoop:
                 ),
             })
             try:
-                # Gate this call too — same as the main loop LLM calls
+                # Gate this call too — same as the main loop LLM calls, and
+                # same outbound transform (this call ships the whole history).
+                nudge_messages = (
+                    config.outbound_transform(messages)
+                    if config.outbound_transform else messages
+                )
                 if config.ollama_gate:
                     async with config.ollama_gate.async_gate(config.gate_priority):
                         content, _ = await stream_chat(
-                            client, messages, model, None, chat_kwargs,
+                            client, nudge_messages, model, None, chat_kwargs,
                             self.on_token, on_stream_done,
                         )
                 else:
                     content, _ = await stream_chat(
-                        client, messages, model, None, chat_kwargs,
+                        client, nudge_messages, model, None, chat_kwargs,
                         self.on_token, on_stream_done,
                     )
                 final_response = content or f"[Hit tool limit after {len(tool_call_names)} calls]"

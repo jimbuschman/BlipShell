@@ -35,7 +35,9 @@ endpoints:
     priority: 1                          # fallback for chat when Ollama cloud is down; primary for coding
     max_concurrent: 5
     context_tokens: 204800               # MiniMax M3's OpenRouter provider serves 512K; capped at 204.8K to match the Ollama-cloud chat endpoint and bound request cost
-    pii_sanitize: true                   # data leaves machine via OpenRouter
+    pii_sanitize: true                   # data leaves machine via OpenRouter.
+                                         # Interactive chat = credentials only;
+                                         # background calls = full. See `pii:` below.
     enabled: true
     models:
       coding: "minimax/minimax-m3"
@@ -72,7 +74,9 @@ endpoints:
     priority: 2                                           # tried first for both roles (higher = first)
     max_concurrent: 5
     context_tokens: 131072  # 128K — gpt-oss:120b-cloud context window
-    pii_sanitize: true       # cloud models relay to remote server — data leaves machine
+    pii_sanitize: true       # cloud models relay to remote server — data leaves machine.
+                             # Interactive chat = credentials only; background
+                             # calls (session_review) = full. See `pii:` below.
     enabled: true
     models:
       tool_calling: "minimax-m3:cloud"  # Ollama cloud free tier
@@ -207,9 +211,31 @@ tools:
     timeout: 15
     tavily_api_key: "${TAVILY_API_KEY}"  # Sign up at tavily.com (1000 free searches/month)
 
+# PII handling on cloud paths. Two DIFFERENT strengths, by path, because the
+# two categories have opposite cost profiles (see llm/pii.py):
+#
+#  - Background/bulk calls via router.generate() (summarization, session
+#    review, lessons, ranking) get FULL sanitization: credentials AND identity
+#    (names -> [PERSON_1], dates -> [DATE], locations, URLs). The text is
+#    processed once and only the output is stored, so the comprehension cost is
+#    bounded. NOTE: this is why benchmark lesson scores are an upper bound —
+#    the benchmark feeds unsanitized text.
+#
+#  - Interactive chat gets CREDENTIALS ONLY (api keys, tokens, JWTs, private
+#    keys). Redacting those costs the model nothing; redacting identity would
+#    cost a great deal and protect little — spaCy NER tags product names as
+#    entities (Groq, Ollama, Presidio, Devstral become [PERSON]/[LOCATION]),
+#    while a username still leaks through every file path. Full NER over the
+#    whole assembled context on every turn is also too slow for this path.
+#
+# For genuinely private conversations the answer is ROUTING, not redaction:
+# keep the conversation on a local model. See docs/V2_PLAN.md (D1) — that
+# switch is not built yet.
 pii:
-  enabled: true        # sanitize PII (emails, phones, SSNs, etc.) before cloud calls
-  cloud_only: true     # only sanitize for cloud (openai) endpoints, not local Ollama
+  enabled: true        # master switch for both strengths above
+  cloud_only: true     # DEAD — never read. Behavior is hard-coded in
+                       # Endpoint.should_sanitize_pii (endpoints.py), which is
+                       # already cloud-only. Slated for deletion in Phase 2.
 
 noise:
   min_word_count: 3

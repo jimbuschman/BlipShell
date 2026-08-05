@@ -222,6 +222,11 @@ def _sanitize_with_regex(text: str) -> str:
 def sanitize_text(text: str) -> str:
     """Replace PII with placeholders. Uses Presidio if available, regex otherwise.
 
+    FULL sanitization — secrets AND identity (names, dates, locations, URLs).
+    Appropriate for background/bulk calls where the text is processed once and
+    the output is stored. NOT appropriate for interactive chat: see
+    sanitize_secrets() for why.
+
     Returns the sanitized text. If no PII found, returns original string unchanged.
     """
     if not text:
@@ -232,6 +237,60 @@ def sanitize_text(text: str) -> str:
     if result != text:
         logger.debug("PII sanitized before cloud routing")
     return result
+
+
+def sanitize_secrets(text: str) -> str:
+    """Strip credentials only — no NER, no identity redaction.
+
+    This is what the INTERACTIVE path uses on cloud endpoints, because the two
+    PII categories have opposite cost profiles:
+
+    - Secrets (tokens, keys, JWTs, private keys) cost the model NOTHING in
+      comprehension — it never needed the real value to answer — and they're
+      the one category whose leakage has an immediate, concrete cost. Always
+      worth removing.
+    - Identity (names, dates, locations, URLs, orgs) is where redaction gets
+      expensive and where it protects least. spaCy NER tags product names as
+      entities, so a technical conversation loses "Groq", "Ollama",
+      "Presidio", "Devstral" as PERSON/LOCATION/ORG — and it leaks anyway,
+      since no pattern catches a username embedded in every file path
+      (C:\\Users\\<name>\\...), nicknames, handles, or names inside
+      identifiers. Full redaction on this path would pay the whole
+      comprehension cost for partial protection.
+
+    Identity protection belongs at the ROUTING layer instead — keep a
+    conversation local — which is a boundary that can actually be reasoned
+    about. See docs/V2_PLAN.md (D1).
+
+    Regex-only, so it's fast enough for a per-turn interactive path (full
+    sanitization would run spaCy NER over the whole assembled context, recall
+    pool included, on every turn).
+    """
+    if not text:
+        return text
+    result = text
+    for p in _API_KEY_PATTERNS:
+        result = p.pattern.sub(p.replacement, result)
+    if result != text:
+        logger.info("Credentials redacted before cloud routing")
+    return result
+
+
+def sanitize_messages_secrets(messages: list[dict]) -> list[dict]:
+    """Copy of `messages` with credentials stripped from every text field.
+
+    Returns a NEW list with new dicts — the caller's conversation history must
+    not be mutated, or the redaction would be written back into the session
+    and the stored memory.
+    """
+    out: list[dict] = []
+    for msg in messages:
+        new_msg = dict(msg)
+        content = new_msg.get("content")
+        if isinstance(content, str):
+            new_msg["content"] = sanitize_secrets(content)
+        out.append(new_msg)
+    return out
 
 
 def has_pii(text: str) -> bool:
