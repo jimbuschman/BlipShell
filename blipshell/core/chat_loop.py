@@ -1017,31 +1017,6 @@ class ChatLoop:
                     except Exception as e:
                         logger.debug("Doom-loop check error: %s", e)
 
-                # ── Critique: edit review ──
-                # After tool results are in, check if any edits need critique
-                if (config.guardrails and hasattr(config.guardrails, 'critique_edit')
-                        and completion_tool_result is None):
-                    for i, (name, arguments, tc_id) in enumerate(parsed_calls):
-                        if name == "edit_file" and results[i] and results[i].success:
-                            try:
-                                critique = await config.guardrails.critique_edit(
-                                    file_path=arguments.get("path", ""),
-                                    old_text=arguments.get("old_text", ""),
-                                    new_text=arguments.get("new_text", ""),
-                                )
-                                if critique:
-                                    messages.append({
-                                        "role": "user",
-                                        "content": critique,
-                                    })
-                                    if self.on_token:
-                                        self.on_token(
-                                            f"\x1b[33m  [Critique: edit issue found]\x1b[0m\n"
-                                        )
-                            except Exception as e:
-                                logger.debug("Edit critique error: %s", e)
-
-                # ── Completion tool fired ──
                 if completion_tool_result is not None:
                     # Guardrails: look-before-review gate — cheap, deterministic,
                     # runs first so an ungrounded review is rejected without
@@ -1064,9 +1039,9 @@ class ChatLoop:
                         except Exception as e:
                             logger.debug("Review grounding gate error: %s", e)
 
-                    # Guardrails: completion audit — one grounded, difficulty-gated
-                    # check (deterministic first, LLM-judge only on non-trivial tasks).
-                    # Replaces the old two-pass critique_completion + validate_completion.
+                    # Guardrails: completion audit — the ONE grounded,
+                    # difficulty-gated check (deterministic first, LLM-judge
+                    # only on non-trivial tasks).
                     if config.guardrails and hasattr(config.guardrails, 'validate_completion'):
                         try:
                             # Extract files_modified from the task_complete args
@@ -1122,24 +1097,6 @@ class ChatLoop:
                             })
                     except Exception as e:
                         logger.debug("Pause check error: %s", e)
-
-                # ── Guardrails: trajectory critique (heavier, LLM call) ──
-                if config.guardrails and hasattr(config.guardrails, 'critique_trajectory'):
-                    try:
-                        critique = await config.guardrails.critique_trajectory(
-                            tool_call_count, config.budget, tool_call_names,
-                        )
-                        if critique:
-                            messages.append({
-                                "role": "user",
-                                "content": critique,
-                            })
-                            if self.on_token:
-                                self.on_token(
-                                    "\x1b[33m  [Critique: approach concern raised]\x1b[0m\n"
-                                )
-                    except Exception as e:
-                        logger.debug("Trajectory critique error: %s", e)
 
                 # ── Guardrails: trajectory monitor injection ──
                 if config.guardrails and hasattr(config.guardrails, 'build_trajectory_injection'):

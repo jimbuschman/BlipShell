@@ -417,10 +417,6 @@ class GuardrailsConfig(BaseModel):
     monitor_interval: int = 5           # inject trajectory check every N tool calls
     max_audit_retries: int = 2          # max times to reject task_complete before accepting
     completion_audit_min_tool_calls: int = 5  # below this (and no checklist/multi-file), skip the LLM audit — trivial tasks don't need it
-    # Critique provider — active quality review during execution
-    critique_edits: bool = False        # review each edit_file for correctness
-    critique_trajectory: bool = False   # evaluate approach quality at checkpoints (heavier than trajectory_monitor)
-    critique_completion: bool = False   # DEPRECATED — folded into completion_audit (which is now deterministic-first + difficulty-gated); no longer wired into the completion path
     # Look-before-review — ground review/critique requests in a real read/grep.
     # Cheap: prompt guidance (both chat paths) + a zero-LLM completion gate that
     # refuses task_complete when a review finishes with no read/grep this turn.

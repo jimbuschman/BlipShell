@@ -3,14 +3,21 @@
 Toggleable system that reduces specification drift, forgotten requirements,
 and repeated mistakes during LLM execution.
 
-Seven sub-capabilities:
-1. Requirement checklist — confirm_plan tool before execution
-2. Trajectory monitor — periodic state injection with original task reminder
-3. Completion audit — re-check original request before accepting task_complete
-4. Correction detector — detect user corrections → anti-pattern lessons
-5. Context pinning — original task survives compaction
-6. Critique provider — active LLM-based quality review (edits, trajectory, completion)
-7. Doom-loop detector — cheap counter-based stuck-pattern detection (no LLM cost)
+Sub-capabilities (all deterministic except the completion audit, which is
+difficulty-gated so trivial tasks never reach the judge LLM):
+- Requirement checklist — confirm_plan tool before execution
+- Trajectory monitor — periodic state injection with original task reminder
+- Completion audit — re-check original request before accepting task_complete
+- Correction detector — detect user corrections → anti-pattern lessons
+- Context pinning — original task survives compaction
+- Doom-loop detector — cheap counter-based stuck-pattern detection
+- Look-before-review — a review must be grounded in a real read/grep
+
+The three LLM "critique provider" features (edits, trajectory, completion)
+were removed 2026-08-05: the field moved away from stacking LLM-judge layers
+(Snorkel's self-critique paradox — a critic primed to find errors invents
+them), all three defaulted off and config.yaml never enabled them, and the
+completion audit already does this job deterministic-first.
 """
 
 import logging
@@ -104,7 +111,7 @@ class GuardrailsEngine:
         self.checklist = plan_steps
         self.postconditions = postconditions or []
 
-    # ── Trajectory Monitor (#2) ──────────────────────────────────────────
+    # ── Trajectory Monitor ──────────────────────────────────────────
 
     def build_trajectory_injection(
         self,
@@ -145,7 +152,7 @@ class GuardrailsEngine:
 
         return "\n".join(parts)
 
-    # ── Completion Audit (#3) ────────────────────────────────────────────
+    # ── Completion Audit ────────────────────────────────────────────
 
     # Tools that actually mutate state — used to sanity-check completion claims.
     _MUTATING_TOOLS = frozenset({"edit_file", "write_file", "run_command", "shell"})
@@ -265,7 +272,7 @@ class GuardrailsEngine:
 
         return False, rejection
 
-    # ── Doom-Loop Detector (#7) ─────────────────────────────────────────
+    # ── Doom-Loop Detector ─────────────────────────────────────────
 
     # Tools that modify state — if we see these, reset the readonly streak
     _WRITE_TOOLS = frozenset({
@@ -377,155 +384,7 @@ class GuardrailsEngine:
             "before calling task_complete. If you look and find nothing, say so."
         )
 
-    # ── Critique Provider (#6) ──────────────────────────────────────────
-
-    async def critique_edit(
-        self,
-        file_path: str,
-        old_text: str,
-        new_text: str,
-    ) -> str | None:
-        """Review an edit for correctness. Returns critique message or None if OK.
-
-        Calls the REASONING model to check whether the edit is correct.
-        Only runs when critique_edits is enabled.
-        """
-        if not self.config.critique_edits:
-            return None
-
-        from blipshell.llm.prompts import critique_edit as critique_edit_prompt
-        from blipshell.llm.router import TaskType
-
-        system, user = critique_edit_prompt(
-            original_task=self.original_request,
-            file_path=file_path,
-            old_text=old_text,
-            new_text=new_text,
-        )
-
-        try:
-            result = await self.router.generate(
-                TaskType.REASONING, user, system=system,
-            )
-        except Exception as e:
-            logger.warning("Critique edit LLM call failed: %s — skipping", e)
-            return None
-
-        result = result.strip()
-        if result.upper().startswith("OK"):
-            return None
-
-        # Extract the issue
-        feedback = result
-        if feedback.upper().startswith("ISSUE"):
-            feedback = feedback[5:].lstrip(":").lstrip()
-
-        return (
-            f"[CRITIQUE — edit review for {file_path}]\n"
-            f"{feedback}\n"
-            "Consider re-reading the file and verifying your change."
-        )
-
-    async def critique_trajectory(
-        self,
-        tool_call_count: int,
-        budget: int,
-        tool_call_names: list[str],
-    ) -> str | None:
-        """Evaluate whether the current approach is productive.
-
-        Heavier than trajectory_monitor (makes an LLM call) but provides
-        actual analysis instead of just a task reminder.
-        Returns critique message or None if on track.
-        """
-        if not self.config.critique_trajectory:
-            return None
-        if tool_call_count == 0:
-            return None
-        if tool_call_count % self.config.monitor_interval != 0:
-            return None
-
-        from blipshell.llm.prompts import critique_trajectory as critique_traj_prompt
-        from blipshell.llm.router import TaskType
-
-        system, user = critique_traj_prompt(
-            original_task=self.original_request,
-            recent_actions=tool_call_names,
-            tool_call_count=tool_call_count,
-            budget=budget,
-        )
-
-        try:
-            result = await self.router.generate(
-                TaskType.REASONING, user, system=system,
-            )
-        except Exception as e:
-            logger.warning("Critique trajectory LLM call failed: %s — skipping", e)
-            return None
-
-        result = result.strip()
-        if result.upper().startswith("ON TRACK"):
-            return None
-
-        feedback = result
-        if feedback.upper().startswith("CONCERN"):
-            feedback = feedback[7:].lstrip(":").lstrip()
-
-        return (
-            f"[CRITIQUE — approach review at {tool_call_count}/{budget} tool calls]\n"
-            f"{feedback}"
-        )
-
-    async def critique_completion(
-        self,
-        summary: str,
-        files_modified: str = "",
-        tool_call_names: list[str] | None = None,
-    ) -> str | None:
-        """Rich pre-completion quality review. Supplements completion_audit.
-
-        Returns critique message or None if quality is acceptable.
-        Runs BEFORE the standard completion_audit pass/fail check.
-        """
-        if not self.config.critique_completion:
-            return None
-
-        from blipshell.llm.prompts import critique_completion as critique_comp_prompt
-        from blipshell.llm.router import TaskType
-
-        system, user = critique_comp_prompt(
-            original_task=self.original_request,
-            summary=summary,
-            files_modified=files_modified,
-            recent_actions=tool_call_names,
-            checklist=self.checklist,
-        )
-
-        try:
-            result = await self.router.generate(
-                TaskType.REASONING, user, system=system,
-            )
-        except Exception as e:
-            logger.warning("Critique completion LLM call failed: %s — skipping", e)
-            return None
-
-        result = result.strip()
-        if result.upper().startswith("PASS"):
-            return None
-
-        feedback = result
-        if feedback.upper().startswith("ISSUE"):
-            feedback = feedback[5:].lstrip(":").lstrip()
-
-        self.audit_retries += 1
-        return (
-            f"[CRITIQUE — completion quality review, "
-            f"attempt {self.audit_retries}/{self.config.max_audit_retries}]\n"
-            f"{feedback}\n\n"
-            "Fix the issues and call task_complete again."
-        )
-
-    # ── Context Pinning (#5) ─────────────────────────────────────────────
+    # ── Context Pinning ─────────────────────────────────────────────
 
     @property
     def pinned_context(self) -> str:

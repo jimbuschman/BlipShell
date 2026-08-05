@@ -1355,28 +1355,6 @@ SYSTEM_CONFIGS = {
         "disable_winddown": True,
         "enable_compaction": False,
     },
-    "critique_edits": {
-        "description": "Full + critique_edits — REASONING model reviews each edit for correctness",
-        "guardrails_enabled": True,
-        "critique_edits": True,
-    },
-    "critique_trajectory": {
-        "description": "Full + critique_trajectory — REASONING model evaluates approach at checkpoints",
-        "guardrails_enabled": True,
-        "critique_trajectory": True,
-    },
-    "critique_completion": {
-        "description": "Full + critique_completion — richer quality review before accepting task_complete",
-        "guardrails_enabled": True,
-        "critique_completion": True,
-    },
-    "critique_all": {
-        "description": "Full + all three critique providers — maximum quality review",
-        "guardrails_enabled": True,
-        "critique_edits": True,
-        "critique_trajectory": True,
-        "critique_completion": True,
-    },
     "stale_detection": {
         "description": "Full + stale-read detection (already on by default — this is a control)",
         # Stale detection is wired into executor by default, no override needed.
@@ -2206,9 +2184,6 @@ async def run_task(
                 completion_audit=True,
                 monitor_interval=5,
                 max_audit_retries=1,
-                critique_edits=sc.get("critique_edits", False),
-                critique_trajectory=sc.get("critique_trajectory", False),
-                critique_completion=sc.get("critique_completion", False),
             )
 
         wall_start = time.perf_counter()
