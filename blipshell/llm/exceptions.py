@@ -68,6 +68,27 @@ def is_model_retired_error(error: Exception) -> bool:
     return "status code: 410" in msg or "was retired" in msg
 
 
+def is_rate_limit_error(error: Exception) -> bool:
+    """Check if an error is a rate limit (temporary, provider-side throttling).
+
+    Neither the endpoint nor the model is broken: the endpoint is healthy and
+    the model works fine — we simply asked too often. So a rate limit must
+    penalize NOTHING and just move to the next endpoint.
+
+    This is separate from is_model_error() because the router's single
+    "model error?" bit conflated the two and called mark_model_failed() on a
+    429. That blacklisted the model name GLOBALLY, across every endpoint,
+    until the 60s health loop cleared it — so one Groq TPM storm took
+    openai/gpt-oss-120b out of service everywhere, which is the opposite of
+    what RateLimitExhaustedError's own docstring asks for.
+    """
+    if isinstance(error, RateLimitExhaustedError):
+        return True
+    if _openai is not None and isinstance(error, _openai.RateLimitError):
+        return True
+    return False
+
+
 def is_model_error(error: Exception) -> bool:
     """Check if an error is a model-level problem (not an endpoint failure).
 

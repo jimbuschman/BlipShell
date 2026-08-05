@@ -48,7 +48,13 @@ def _get_presidio_analyzer():
         return None
 
 
-# Presidio entity type → placeholder mapping
+# Presidio entity type → placeholder mapping.
+# Anything NOT listed here collapses to a single "[PII]" token, which makes a
+# date, a passport number and a tax ID textually identical — so any type worth
+# distinguishing has to be named. DATE_TIME especially: it's emitted by the
+# default English recognizer set on almost every transcript, and losing
+# temporal ordering ("we tried X Tuesday, it failed, Thursday we switched")
+# destroys the causal spine that lesson extraction depends on.
 _PRESIDIO_PLACEHOLDERS = {
     "PERSON": "[PERSON]",
     "EMAIL_ADDRESS": "[EMAIL]",
@@ -65,11 +71,24 @@ _PRESIDIO_PLACEHOLDERS = {
     "MEDICAL_LICENSE": "[ID]",
     "URL": "[URL]",
     "NRP": "[NRP]",  # nationality, religion, political group
+    "DATE_TIME": "[DATE]",
 }
 
-# IPs to skip — Presidio catches all IPs so we need to whitelist local ranges
+# Entity types that get numbered, per-call-stable pseudonyms instead of one
+# shared token. "[PERSON] asked [PERSON] to review [PERSON]'s PR" destroys
+# coreference and agency — and lesson extraction is specifically asked for
+# concrete detail about who did what and what followed. Numbering restores the
+# distinctions at no privacy cost: the real names are still gone.
+_NUMBERED_ENTITY_TYPES = frozenset({"PERSON"})
+
+# IPs to skip — Presidio catches all IPs so we need to whitelist local ranges.
+# 172.16/12 included: that's the Docker bridge range, and scrubbing it turns
+# container debugging transcripts into mush.
 _LOCAL_IP_PATTERN = re.compile(
-    r'^(?:127\.0\.0\.1|0\.0\.0\.0|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})$'
+    r'^(?:127\.0\.0\.1|0\.0\.0\.0'
+    r'|192\.168\.\d{1,3}\.\d{1,3}'
+    r'|10\.\d{1,3}\.\d{1,3}\.\d{1,3}'
+    r'|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})$'
 )
 
 
@@ -79,12 +98,32 @@ def _sanitize_with_presidio(text: str) -> str:
     if analyzer is None:
         return _sanitize_with_regex(text)
 
-    results = analyzer.analyze(text=text, language="en")
-
-    # Also run our regex patterns for API keys (Presidio doesn't detect these)
+    # Run the API-key regexes FIRST, then analyze the rewritten text.
+    # Presidio's offsets are computed against whatever string it analyzed, so
+    # rewriting the string afterwards invalidated every offset past the first
+    # substitution (ghp_ + 36 chars -> "[API_KEY]" shifts by -31). Later
+    # entities were then sliced at the wrong position — mangling innocent words
+    # while potentially leaving the actual PII in place. A pasted token is
+    # exactly what a debugging transcript contains, so this fired on the sessions
+    # that matter most (deep-dive 2026-08-04).
     result = text
     for p in _API_KEY_PATTERNS:
         result = p.pattern.sub(p.replacement, result)
+
+    results = analyzer.analyze(text=result, language="en")
+
+    # Assign pseudonym numbers in FORWARD reading order, so [PERSON_1] is the
+    # first person mentioned. Application below happens in reverse (to keep
+    # offsets valid), which would otherwise number them backwards.
+    pseudonyms: dict[tuple[str, str], str] = {}
+    for r in sorted(results, key=lambda x: x.start):
+        if r.entity_type not in _NUMBERED_ENTITY_TYPES:
+            continue
+        key = (r.entity_type, result[r.start:r.end].strip().lower())
+        if key not in pseudonyms:
+            base = _PRESIDIO_PLACEHOLDERS.get(r.entity_type, "[PII]").strip("[]")
+            same_type = sum(1 for k in pseudonyms if k[0] == r.entity_type)
+            pseudonyms[key] = f"[{base}_{same_type + 1}]"
 
     # Apply Presidio results in reverse order (so offsets stay valid)
     for r in sorted(results, key=lambda x: x.start, reverse=True):
@@ -98,7 +137,10 @@ def _sanitize_with_presidio(text: str) -> str:
         if r.entity_type == "URL" and ("localhost" in original or "127.0.0.1" in original):
             continue
 
-        placeholder = _PRESIDIO_PLACEHOLDERS.get(r.entity_type, "[PII]")
+        key = (r.entity_type, original.strip().lower())
+        placeholder = pseudonyms.get(
+            key, _PRESIDIO_PLACEHOLDERS.get(r.entity_type, "[PII]")
+        )
         result = result[:r.start] + placeholder + result[r.end:]
 
     return result
@@ -115,11 +157,35 @@ class PIIPattern:
     replacement: str
 
 
-# API key patterns — used by both engines (Presidio doesn't detect these)
+# API key patterns — used by both engines (Presidio doesn't detect these).
+# Ordered most-specific first. These are the credentials most likely to be
+# pasted into a debugging session; a leaked token is the one PII category with
+# an immediate, concrete cost, so breadth here matters more than elsewhere.
 _API_KEY_PATTERNS = [
-    PIIPattern("github_token", re.compile(r'\bghp_[a-zA-Z0-9]{36}\b'), "[API_KEY]"),
-    PIIPattern("aws_key", re.compile(r'\bAKIA[0-9A-Z]{16}\b'), "[API_KEY]"),
-    PIIPattern("generic_api_key", re.compile(r'\b(?:sk|pk|api)[_-][a-zA-Z0-9_-]{20,}\b'), "[API_KEY]"),
+    # GitHub: ghp_ (classic PAT), gho_/ghu_/ghs_ (OAuth/user/server),
+    # github_pat_ (fine-grained). Only ghp_ was covered before.
+    PIIPattern("github_token", re.compile(r'\bgh[pousr]_[a-zA-Z0-9]{36,}\b'), "[API_KEY]"),
+    PIIPattern("github_pat", re.compile(r'\bgithub_pat_[a-zA-Z0-9_]{20,}\b'), "[API_KEY]"),
+    PIIPattern("aws_key", re.compile(r'\b(?:AKIA|ASIA)[0-9A-Z]{16}\b'), "[API_KEY]"),
+    PIIPattern("slack_token", re.compile(r'\bxox[baprs]-[a-zA-Z0-9-]{10,}\b'), "[API_KEY]"),
+    PIIPattern("google_api_key", re.compile(r'\bAIza[0-9A-Za-z_-]{35}\b'), "[API_KEY]"),
+    # Private key blocks — replace the whole armored body, not just the header.
+    PIIPattern("private_key", re.compile(
+        r'-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----',
+        re.DOTALL,
+    ), "[PRIVATE_KEY]"),
+    PIIPattern("bearer_header", re.compile(
+        r'\b[Bb]earer\s+[A-Za-z0-9._~+/-]{20,}=*'
+    ), "Bearer [API_KEY]"),
+    PIIPattern("jwt", re.compile(
+        r'\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b'
+    ), "[JWT]"),
+    # sk-/pk-/api- style. The separator is optional so bare "sk-proj-..." and
+    # "skABC..." style keys both match (the old pattern required _ or - right
+    # after the prefix, so several real formats slipped through).
+    PIIPattern("generic_api_key", re.compile(
+        r'\b(?:sk|pk|api)[_-]?[a-zA-Z0-9_-]{20,}\b'
+    ), "[API_KEY]"),
 ]
 
 # Pre-compiled patterns — ordered from most specific to least

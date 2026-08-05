@@ -10,7 +10,11 @@ from typing import Optional
 
 from blipshell.llm.client import LLMClient
 from blipshell.llm.endpoints import EndpointManager
-from blipshell.llm.exceptions import is_bad_request_error, is_model_error
+from blipshell.llm.exceptions import (
+    is_bad_request_error,
+    is_model_error,
+    is_rate_limit_error,
+)
 from blipshell.models.config import ModelsConfig
 
 logger = logging.getLogger(__name__)
@@ -172,8 +176,12 @@ class LLMRouter:
         # Pre-flight token check: skip cloud endpoint if request would exceed TPM
         estimated_tokens = self._estimate_request_tokens(prompt, system)
         if not self._disable_fallback and endpoint.would_exceed_tpm(estimated_tokens):
+            # min_context_tokens must survive every fallback hop: a 100K-token
+            # session review that lands on a 32K endpoint is silently truncated
+            # by num_ctx rather than failing.
             fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
                 task_type, exclude=endpoint.name,
+                min_context_tokens=min_context_tokens,
             )
             if fallback_ep:
                 fb_model = self._resolve_fallback_model(fallback_ep, task_type)
@@ -192,6 +200,7 @@ class LLMRouter:
             # Must also switch endpoint — can't send a local model name to a cloud API
             fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
                 task_type, exclude=endpoint.name,
+                min_context_tokens=min_context_tokens,
             )
             if fallback_ep:
                 fb_model = self._resolve_fallback_model(fallback_ep, task_type)
@@ -211,7 +220,11 @@ class LLMRouter:
                     model = fallback_model
                     use_fallback = True
 
-        # Sanitize PII before sending to cloud endpoints
+        # Sanitize PII before sending to cloud endpoints. Keep the originals:
+        # a local fallback must not inherit cloud-scrubbed text (it loses the
+        # names and dates that make a summary or lesson specific, for no
+        # privacy benefit — the data never leaves the machine).
+        raw_prompt, raw_system = prompt, system
         if self._pii_enabled and endpoint.should_sanitize_pii:
             from blipshell.llm.pii import sanitize_text
             prompt = sanitize_text(prompt)
@@ -238,6 +251,14 @@ class LLMRouter:
                     "Bad request on '%s'/'%s' (not penalizing): %s",
                     model, endpoint.name, primary_err,
                 )
+            elif is_rate_limit_error(primary_err):
+                # Throttling penalizes NOTHING: the endpoint is healthy and the
+                # model works — we just asked too often. Blacklisting the model
+                # here took it out of service on every OTHER endpoint too.
+                logger.warning(
+                    "Rate limited on '%s' (penalizing nothing, trying next): %s",
+                    endpoint.name, primary_err,
+                )
             elif is_model_error(primary_err):
                 logger.warning(
                     "Model-level error on endpoint '%s' (not penalizing): %s",
@@ -251,6 +272,7 @@ class LLMRouter:
                 try:
                     fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
                         task_type, exclude=endpoint.name,
+                        min_context_tokens=min_context_tokens,
                     )
                     fb_model = None
                     if fallback_ep:
@@ -260,11 +282,13 @@ class LLMRouter:
                             "Primary '%s' on '%s' failed, trying '%s' on '%s'",
                             model, endpoint.name, fb_model, fallback_ep.name,
                         )
-                        # Sanitize PII if falling back to a cloud endpoint
-                        fb_prompt, fb_system = prompt, system
+                        # Start from the UNSANITIZED text: if the primary was a
+                        # cloud endpoint the prompt was scrubbed in place, and a
+                        # local fallback would otherwise inherit that damage.
+                        fb_prompt, fb_system = raw_prompt, raw_system
                         if self._pii_enabled and fallback_ep.should_sanitize_pii:
                             from blipshell.llm.pii import sanitize_text
-                            fb_prompt = sanitize_text(prompt)
+                            fb_prompt = sanitize_text(raw_prompt)
                             if fb_system:
                                 fb_system = sanitize_text(fb_system)
                         fb_kwargs = {}
@@ -272,10 +296,30 @@ class LLMRouter:
                             fb_kwargs["think"] = False
                         if fallback_ep.context_tokens:
                             fb_kwargs["options"] = {"num_ctx": fallback_ep.context_tokens}
-                        result = await self._gated_generate(
-                            fallback_ep, fb_prompt, fb_model, fb_system, fb_kwargs,
+                        # Register the request on the endpoint that actually
+                        # serves it. Without this, fallback traffic was invisible
+                        # to rate-limit accounting and max_concurrent, and its
+                        # success/failure never reached endpoint health — while
+                        # the PRIMARY got a complete_request() for a call that
+                        # ran somewhere else. That matters most on exactly this
+                        # path, which is taken when a cloud primary is flaking.
+                        await self._endpoint_manager.start_request_atomic(
+                            fallback_ep, token_count=estimated_tokens,
                         )
-                        return result
+                        try:
+                            result = await self._gated_generate(
+                                fallback_ep, fb_prompt, fb_model, fb_system, fb_kwargs,
+                            )
+                            fallback_ep.record_success(0)
+                            return result
+                        except Exception as fb_err:
+                            # Same classification as the primary path: only a
+                            # genuine endpoint failure counts against health.
+                            if not is_rate_limit_error(fb_err) and not is_model_error(fb_err):
+                                fallback_ep.record_failure()
+                            raise
+                        finally:
+                            fallback_ep.complete_request()
                 except Exception as fallback_err:
                     logger.error("Fallback also failed: %s", fallback_err)
             raise primary_err

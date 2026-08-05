@@ -228,7 +228,13 @@ class TestGenerateFallbackOnModelError:
         # Endpoint should NOT be penalized for rate limit errors
         primary_ep.record_failure.assert_not_called()
 
-    async def test_model_marked_failed_after_error(self, router, endpoint_manager):
+    async def test_rate_limit_does_not_blacklist_the_model(self, router, endpoint_manager):
+        """A 429 penalizes NOTHING. The endpoint is healthy and the model works
+        — we just asked too often. Blacklisting the model here took it out of
+        service on every OTHER endpoint too, until the 60s health loop cleared
+        it: one Groq TPM storm disabled the model everywhere
+        (deep-dive 2026-08-04). RateLimitExhaustedError's own docstring asks
+        for "try the next endpoint instead of penalizing"."""
         primary_ep = _make_endpoint("primary")
         primary_ep.client.generate = AsyncMock(
             side_effect=RateLimitExhaustedError("primary", "429")
@@ -238,7 +244,27 @@ class TestGenerateFallbackOnModelError:
             side_effect=[primary_ep, fallback_ep]
         )
         await router.generate("reasoning", "hello")
+
+        assert not router.is_model_failed("model-a")
+        primary_ep.record_failure.assert_not_called()
+
+    async def test_genuine_model_error_still_blacklists(self, router, endpoint_manager):
+        """The distinction must stay sharp: a real model-level failure (model
+        not found) still marks the model, without penalizing the endpoint."""
+        import ollama
+
+        primary_ep = _make_endpoint("primary")
+        primary_ep.client.generate = AsyncMock(
+            side_effect=ollama.ResponseError("model 'model-a' not found")
+        )
+        fallback_ep = _make_endpoint("fallback")
+        endpoint_manager.get_endpoint_for_role = AsyncMock(
+            side_effect=[primary_ep, fallback_ep]
+        )
+        await router.generate("reasoning", "hello")
+
         assert router.is_model_failed("model-a")
+        primary_ep.record_failure.assert_not_called()
 
 
 # ── generate() — fallback on endpoint error ──────────────────────────────────

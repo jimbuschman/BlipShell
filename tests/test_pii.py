@@ -168,3 +168,159 @@ class TestHasPII:
 
     def test_lan_not_pii(self):
         assert has_pii("Server at 192.168.0.225") is False
+
+
+# ---------------------------------------------------------------------------
+# Presidio offset handling + pseudonyms, tested with a STUB analyzer.
+#
+# The offset bug is pure index arithmetic, so it's testable without Presidio
+# installed: the API-key regexes used to rewrite the string AFTER Presidio had
+# computed offsets against the original, so every entity past the first key
+# match was sliced at the wrong position (deep-dive 2026-08-04).
+# ---------------------------------------------------------------------------
+
+from dataclasses import dataclass
+
+from blipshell.llm import pii as pii_mod
+
+
+@dataclass
+class _StubResult:
+    entity_type: str
+    start: int
+    end: int
+
+
+class _StubAnalyzer:
+    """Finds fixed substrings and reports real offsets into whatever it was
+    given — which is exactly how Presidio behaves."""
+
+    def __init__(self, wanted: dict):
+        self.wanted = wanted          # {substring: entity_type}
+        self.analyzed_text = None
+
+    def analyze(self, text: str, language: str = "en"):
+        self.analyzed_text = text
+        out = []
+        for needle, etype in self.wanted.items():
+            start = 0
+            while (idx := text.find(needle, start)) != -1:
+                out.append(_StubResult(etype, idx, idx + len(needle)))
+                start = idx + len(needle)
+        return out
+
+
+@pytest.fixture
+def stub_presidio(monkeypatch):
+    def _install(wanted):
+        stub = _StubAnalyzer(wanted)
+        monkeypatch.setattr(pii_mod, "_get_presidio_analyzer", lambda: stub)
+        return stub
+    return _install
+
+
+class TestPresidioOffsetCorrectness:
+    def test_api_key_before_name_does_not_corrupt_the_name(self, stub_presidio):
+        """The regression: a pasted token earlier in the text shifted every
+        later offset, so the name was sliced at the wrong position."""
+        stub = stub_presidio({"Kortney": "PERSON"})
+        text = "token ghp_" + "a" * 36 + " belongs to Kortney here"
+
+        result = pii_mod.sanitize_text(text)
+
+        assert "[API_KEY]" in result
+        assert "Kortney" not in result, "the real name survived the scrub"
+        assert "[PERSON" in result
+        # Nothing around the name got eaten
+        assert result.endswith(" here")
+        assert "belongs to" in result
+
+    def test_analyzer_sees_the_post_regex_text(self, stub_presidio):
+        """Offsets are only valid if the analyzer analyzed the same string we
+        then mutate."""
+        stub = stub_presidio({"Kortney": "PERSON"})
+        pii_mod.sanitize_text("key ghp_" + "b" * 36 + " and Kortney")
+        assert "[API_KEY]" in stub.analyzed_text
+        assert "ghp_" not in stub.analyzed_text
+
+    def test_multiple_keys_and_multiple_entities(self, stub_presidio):
+        stub_presidio({"Alice": "PERSON", "Bob": "PERSON"})
+        text = (
+            "AKIAABCDEFGHIJKLMNOP then Alice, then ghp_" + "c" * 36 + ", then Bob."
+        )
+        result = pii_mod.sanitize_text(text)
+        assert "Alice" not in result and "Bob" not in result
+        assert "AKIAABCDEFGHIJKLMNOP" not in result
+        assert result.endswith(".")
+
+
+class TestPersonPseudonyms:
+    def test_distinct_people_get_distinct_tokens(self, stub_presidio):
+        """One shared [PERSON] token destroyed coreference: "[PERSON] asked
+        [PERSON] to review [PERSON]'s PR" is unusable for lesson extraction."""
+        stub_presidio({"Alice": "PERSON", "Bob": "PERSON"})
+        result = pii_mod.sanitize_text("Alice asked Bob to review Alice's PR")
+
+        assert "[PERSON_1]" in result
+        assert "[PERSON_2]" in result
+        # Same person -> same token, so "who did what" survives
+        assert result.count("[PERSON_1]") == 2
+
+    def test_numbering_follows_reading_order(self, stub_presidio):
+        stub_presidio({"Zach": "PERSON", "Amy": "PERSON"})
+        result = pii_mod.sanitize_text("Zach spoke first, then Amy replied")
+        assert result.index("[PERSON_1]") < result.index("[PERSON_2]")
+        assert "Zach" not in result and "Amy" not in result
+
+    def test_pseudonyms_are_case_insensitive_for_the_same_person(self, stub_presidio):
+        stub_presidio({"Alice": "PERSON", "alice": "PERSON"})
+        result = pii_mod.sanitize_text("Alice and alice are one person")
+        assert "[PERSON_2]" not in result
+
+
+class TestUnmappedEntityTypes:
+    def test_dates_get_a_date_token_not_generic_pii(self, stub_presidio):
+        """DATE_TIME used to fall through to [PII], making a date textually
+        identical to a passport number and destroying event ordering."""
+        stub_presidio({"Tuesday": "DATE_TIME"})
+        result = pii_mod.sanitize_text("we shipped it on Tuesday")
+        assert "[DATE]" in result
+        assert "[PII]" not in result
+
+    def test_docker_bridge_ip_is_preserved(self, stub_presidio):
+        stub_presidio({"172.17.0.2": "IP_ADDRESS"})
+        result = pii_mod.sanitize_text("container at 172.17.0.2 refused")
+        assert "172.17.0.2" in result, "Docker-bridge IP should not be scrubbed"
+
+    def test_public_ip_still_scrubbed(self, stub_presidio):
+        stub_presidio({"8.8.8.8": "IP_ADDRESS"})
+        result = pii_mod.sanitize_text("resolver at 8.8.8.8 responded")
+        assert "8.8.8.8" not in result
+
+
+class TestExpandedKeyPatterns:
+    @pytest.mark.parametrize("secret", [
+        "gho_" + "d" * 36,
+        "github_pat_" + "e" * 30,
+        "xoxb-1234567890-abcdefghij",
+        "AIza" + "f" * 35,
+        "ASIAABCDEFGHIJKLMNOP",
+    ])
+    def test_common_token_formats_are_scrubbed(self, secret):
+        result = sanitize_text(f"the secret is {secret} ok")
+        assert secret not in result
+
+    def test_jwt_scrubbed(self):
+        jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p"
+        assert jwt not in sanitize_text(f"Authorization: {jwt}")
+
+    def test_private_key_block_scrubbed(self):
+        blob = (
+            "-----BEGIN RSA PRIVATE KEY-----\n"
+            "MIIEowIBAAKCAQEA1234567890\nabcdefgh\n"
+            "-----END RSA PRIVATE KEY-----"
+        )
+        result = sanitize_text(f"here it is:\n{blob}\ndone")
+        assert "MIIEowIBAAKCAQEA1234567890" not in result
+        assert "[PRIVATE_KEY]" in result
+        assert result.endswith("done")
