@@ -3205,8 +3205,13 @@ def test_cmd(ctx, task, project, output, canned, stress, quiet, category):
 @click.option("--quiet", "-q", is_flag=True, help="JSON output only")
 @click.option("--output", "-o", default=None, help="Write JSON report to file")
 @click.option("--list", "list_scenarios", is_flag=True, help="List available scenarios")
+@click.option("--db", "db_path", default=None,
+              help="Database to run against (default: a throwaway temp DB)")
+@click.option("--real-db", is_flag=True,
+              help="Run against the CONFIGURED production database. Scenarios create "
+                   "real sessions, lessons and digest updates in your live corpus.")
 @click.pass_context
-def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios):
+def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios, db_path, real_db):
     """Run automated user simulation — exercises BlipShell like a real user.
 
     Boots the real Agent, runs multi-turn scenarios (slash commands, mode
@@ -3270,6 +3275,8 @@ def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios):
             config_path=config_path,
             quiet=quiet,
             on_status=on_status,
+            db_path=db_path,
+            use_real_db=real_db,
         )
 
         if not quiet:

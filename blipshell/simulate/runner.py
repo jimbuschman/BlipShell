@@ -57,11 +57,28 @@ class SimRunner:
         config_path: str | None = None,
         quiet: bool = False,
         on_status: Optional[Callable[[str], None]] = None,
+        db_path: str | None = None,
+        use_real_db: bool = False,
     ):
+        """
+        db_path:      explicit database to run against (implies no temp DB).
+        use_real_db:  run against the configured production database.
+
+        By default the suite runs against a fresh throwaway database. It used
+        to load the ambient config and write straight to the real one: every
+        scenario starts a session and _cleanup calls the full end_session, so
+        a full run wrote ~38 real sessions plus LLM-generated lessons and
+        mutated project digests into the live corpus — the same corpus
+        retrieval reads from and `benchmark realdata` samples
+        (deep-dive 2026-08-04).
+        """
         self.config_path = config_path
         self.quiet = quiet
         self.on_status = on_status or (lambda msg: None)
         self._executor = SimStepExecutor()
+        self.db_path = db_path
+        self.use_real_db = use_real_db
+        self._temp_db_dir: str | None = None
 
     async def run_suite(
         self,
@@ -71,34 +88,47 @@ class SimRunner:
         suite_result = SimSuiteResult()
         t0 = time.monotonic()
 
-        # Pre-flight: validate scenario tool names against actual registry
-        preflight_errors = await self._preflight_validate(scenarios)
-        if preflight_errors:
-            for err in preflight_errors:
-                self.on_status(f"  PREFLIGHT ERROR: {err}")
-            # Abort — these are scenario definition bugs, not LLM issues
+        try:
+            # Pre-flight: validate scenario tool names against actual registry
+            preflight_errors = await self._preflight_validate(scenarios)
+            if preflight_errors:
+                for err in preflight_errors:
+                    self.on_status(f"  PREFLIGHT ERROR: {err}")
+                # Abort — these are scenario definition bugs, not LLM issues
+                suite_result.elapsed_seconds = round(time.monotonic() - t0, 2)
+                # Add a synthetic failed result so the report clearly shows what happened
+                suite_result.scenario_results.append(SimScenarioResult(
+                    name="__preflight_validation__",
+                    category="preflight",
+                    status=ResultStatus.FAIL,
+                    error=f"Scenario definition errors ({len(preflight_errors)}): "
+                          + "; ".join(preflight_errors),
+                ))
+                return suite_result
+
+            for scenario in scenarios:
+                self.on_status(f"Running: {scenario.name}")
+                result = await self.run_scenario(scenario)
+                suite_result.scenario_results.append(result)
+
+                # Log progress
+                status_str = result.status.value.upper()
+                self.on_status(f"  {status_str}: {scenario.name} ({result.elapsed_seconds:.1f}s)")
+
             suite_result.elapsed_seconds = round(time.monotonic() - t0, 2)
-            # Add a synthetic failed result so the report clearly shows what happened
-            suite_result.scenario_results.append(SimScenarioResult(
-                name="__preflight_validation__",
-                category="preflight",
-                status=ResultStatus.FAIL,
-                error=f"Scenario definition errors ({len(preflight_errors)}): "
-                      + "; ".join(preflight_errors),
-            ))
             return suite_result
+        finally:
+            self._discard_temp_db()
 
-        for scenario in scenarios:
-            self.on_status(f"Running: {scenario.name}")
-            result = await self.run_scenario(scenario)
-            suite_result.scenario_results.append(result)
-
-            # Log progress
-            status_str = result.status.value.upper()
-            self.on_status(f"  {status_str}: {scenario.name} ({result.elapsed_seconds:.1f}s)")
-
-        suite_result.elapsed_seconds = round(time.monotonic() - t0, 2)
-        return suite_result
+    def _discard_temp_db(self) -> None:
+        """Delete the throwaway database created for this run (if any)."""
+        if not self._temp_db_dir:
+            return
+        try:
+            shutil.rmtree(self._temp_db_dir, ignore_errors=True)
+            logger.info("Removed simulation temp database %s", self._temp_db_dir)
+        finally:
+            self._temp_db_dir = None
 
     async def run_scenario(
         self,
@@ -241,10 +271,36 @@ class SimRunner:
             self.on_status(f"  Pre-flight OK: {len(all_known)} tools validated")
         return errors
 
+    def _resolve_db_path(self, config: BlipShellConfig) -> str | None:
+        """Which database this run should use. None = leave config alone."""
+        if self.use_real_db:
+            self.on_status(
+                "  [db] WARNING: running against the REAL database — scenarios "
+                "will write sessions, lessons and digests into your live corpus"
+            )
+            return None
+        if self.db_path:
+            return self.db_path
+        # Default: a throwaway DB that lives for this run only.
+        import tempfile
+
+        if self._temp_db_dir is None:
+            self._temp_db_dir = tempfile.mkdtemp(prefix="blipshell_sim_")
+        return str(Path(self._temp_db_dir) / "sim.db")
+
     async def _bootstrap_agent(self) -> tuple[Agent, BlipShellConfig, ConfigManager]:
         """Bootstrap a real Agent instance (same pattern as test_executor.py)."""
         config_manager = ConfigManager(self.config_path)
         config = config_manager.load()
+
+        # Point the agent at an isolated database BEFORE it initializes.
+        db_path = self._resolve_db_path(config)
+        if db_path:
+            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+            config.database.path = db_path
+            if not self.quiet:
+                self.on_status(f"  [db] isolated: {db_path}")
+
         agent = Agent(config, config_manager)
 
         def _on_status(msg: str):
