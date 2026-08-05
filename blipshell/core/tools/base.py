@@ -15,6 +15,25 @@ AuditCallback = Callable[[str, dict[str, Any], bool], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
+# Tools signal failure by RETURNING an error string rather than raising —
+# ~44 sites across the tool modules do this. Without translating that into
+# ToolResult.success, a failed write still looked successful to every
+# consumer: the executor cached content that was never written (so later
+# reads were served phantom text), the completion audit accepted a turn
+# whose only edit had failed, and the red-✘ display branch never fired.
+#
+# Matching is PREFIX-only and deliberately narrow. Tool output that merely
+# *contains* the word error — run_command relaying stderr, read_file
+# returning a log file — must stay a success. A tool whose whole result
+# starts with one of these markers is reporting its own failure.
+_FAILURE_PREFIXES = ("Error:", "Error executing")
+
+
+def result_reports_failure(result_str: str) -> bool:
+    """True if a tool's returned string is itself an error report."""
+    return bool(result_str) and result_str.lstrip().startswith(_FAILURE_PREFIXES)
+
+
 class Tool(ABC):
     """Abstract base class for tools.
 
@@ -210,11 +229,18 @@ class ToolRegistry:
             result_str = await tool.execute(**coerced_args)
             elapsed = (time.monotonic() - start) * 1000
 
+            # No tool raises to signal failure — they return "Error: ...".
+            # Honor that convention here, at the one chokepoint every tool
+            # call passes through, instead of at 44 call sites.
+            failed = result_reports_failure(result_str)
+            if failed:
+                logger.info("Tool %s reported failure: %s", tool_call.name, result_str[:200])
+
             return ToolResult(
                 tool_call_id=tool_call.id,
                 name=tool_call.name,
                 result=result_str,
-                success=True,
+                success=not failed,
                 execution_time_ms=elapsed,
             )
         except Exception as e:

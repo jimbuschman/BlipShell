@@ -68,8 +68,12 @@ class TestView:
         assert "/memories/core/" in result
 
     async def test_invalid_path(self, backend, notes):
+        """Failure returns use the "Error:" prefix so the registry can
+        translate them into ToolResult.success=False."""
         tool = MemoryViewTool(backend, notes)
-        assert "Invalid path" in await tool.execute(path="not a path")
+        result = await tool.execute(path="not a path")
+        assert result.startswith("Error:")
+        assert "invalid path" in result.lower()
 
     async def test_read_lesson(self, backend, notes, sqlite_store):
         lid = await sqlite_store.create_lesson(Lesson(content="A lesson body.", project="p"))

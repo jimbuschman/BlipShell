@@ -105,3 +105,82 @@ class TestToolRegistry:
         assert result.execution_time_ms >= 0
 
 
+
+
+class ErrorStringTool(Tool):
+    """A tool that reports failure the way real tools do: by RETURNING an
+    error string rather than raising."""
+
+    def __init__(self, name="error_tool", result="Error: something broke"):
+        self._name = name
+        self._result = result
+
+    def definition(self) -> ToolDefinition:
+        return ToolDefinition(name=self._name, description="returns an error string")
+
+    async def execute(self, **kwargs) -> str:
+        return self._result
+
+
+class TestErrorStringsAreFailures:
+    """No tool raises to signal failure — ~44 sites return "Error: ...".
+    The registry must translate that into success=False, or a failed write
+    poisons the executor's file cache and satisfies the completion audit
+    (deep-dive 2026-08-04)."""
+
+    async def test_error_prefixed_result_is_failure(self):
+        registry = ToolRegistry()
+        registry.register(ErrorStringTool(result="Error: 'x.py' does not exist."))
+        result = await registry.execute_tool_call(
+            ToolCall(id="1", name="error_tool", arguments={})
+        )
+        assert result.success is False
+        assert "does not exist" in result.result
+
+    async def test_error_executing_prefix_is_failure(self):
+        registry = ToolRegistry()
+        registry.register(ErrorStringTool(result="Error executing command: boom"))
+        result = await registry.execute_tool_call(
+            ToolCall(id="1", name="error_tool", arguments={})
+        )
+        assert result.success is False
+
+    async def test_leading_whitespace_still_detected(self):
+        registry = ToolRegistry()
+        registry.register(ErrorStringTool(result="\n  Error: late newline"))
+        result = await registry.execute_tool_call(
+            ToolCall(id="1", name="error_tool", arguments={})
+        )
+        assert result.success is False
+
+    async def test_output_merely_containing_error_is_success(self):
+        """The false-positive guard that makes prefix-matching safe:
+        run_command relaying stderr and read_file returning a log file both
+        contain the word error and are NOT tool failures."""
+        registry = ToolRegistry()
+        registry.register(ErrorStringTool(
+            name="run_command",
+            result="ran 12 tests\nFAILED test_x.py - Error: assertion failed\n1 failed",
+        ))
+        result = await registry.execute_tool_call(
+            ToolCall(id="1", name="run_command", arguments={})
+        )
+        assert result.success is True, (
+            "tool output that merely mentions an error must stay a success"
+        )
+
+    async def test_empty_result_is_success(self):
+        registry = ToolRegistry()
+        registry.register(ErrorStringTool(result=""))
+        result = await registry.execute_tool_call(
+            ToolCall(id="1", name="error_tool", arguments={})
+        )
+        assert result.success is True
+
+    async def test_normal_result_unaffected(self):
+        registry = ToolRegistry()
+        registry.register(ErrorStringTool(result="Wrote 42 lines to x.py"))
+        result = await registry.execute_tool_call(
+            ToolCall(id="1", name="error_tool", arguments={})
+        )
+        assert result.success is True

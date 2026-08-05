@@ -126,7 +126,7 @@ class MemoryViewTool(_MemoryFSToolBase):
         try:
             parsed = parse(path)
         except PathError as e:
-            return f"Invalid path: {e}"
+            return f"Error: invalid path: {e}"
 
         try:
             if parsed.is_root:
@@ -184,7 +184,7 @@ class MemoryCreateTool(_MemoryFSToolBase):
         try:
             parsed = parse(path)
         except PathError as e:
-            return f"Invalid path: {e}"
+            return f"Error: invalid path: {e}"
 
         # Notes — free write, no DB-vector concerns.
         if parsed.tier == Tier.NOTES:
@@ -248,7 +248,7 @@ class MemoryStrReplaceTool(_MemoryFSToolBase):
         try:
             parsed = parse(path)
         except PathError as e:
-            return f"Invalid path: {e}"
+            return f"Error: invalid path: {e}"
 
         if parsed.is_root or parsed.is_directory:
             return f"Cannot edit a directory: {path}"
@@ -304,7 +304,7 @@ class MemoryDeleteTool(_MemoryFSToolBase):
         try:
             parsed = parse(path)
         except PathError as e:
-            return f"Invalid path: {e}"
+            return f"Error: invalid path: {e}"
 
         if parsed.is_root or parsed.is_directory:
             return f"Cannot delete a directory: {path}"
