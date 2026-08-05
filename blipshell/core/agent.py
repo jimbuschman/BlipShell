@@ -105,9 +105,6 @@ class Agent(
         self.workflow_registry: Optional[WorkflowRegistry] = None
         self.workflow_executor: Optional[WorkflowExecutor] = None
 
-        # MCP (Model Context Protocol) servers
-        self.mcp_manager = None
-
         # Robotics — modular cube system (inert until a cube connects)
         self.robotics = None
         self._cube_server = None  # transport server for cubes (if robotics enabled)
@@ -354,11 +351,6 @@ class Agent(
                 self._cube_server = None
             # Mood loop — decays + renders the face, and registers an idle mood.
             self._mood_task = asyncio.create_task(self._mood_loop())
-
-        # Connect MCP servers (if configured)
-        if self.config.mcp_servers:
-            _status("Connecting MCP servers...")
-            await self._connect_mcp_servers()
 
         # Load per-model behavioral settings
         if self.config.model_settings:
@@ -1037,13 +1029,7 @@ class Agent(
                 await self.job_queue.stop()
             except Exception as e:
                 logger.debug("Job queue shutdown error: %s", e)
-        # 2. Disconnect MCP servers
-        if self.mcp_manager:
-            try:
-                await self.mcp_manager.disconnect_all()
-            except Exception as e:
-                logger.debug("MCP disconnect error: %s", e)
-        # 3. Close vector store before SQLite
+        # 2. Close vector store before SQLite
         if self.vectors:
             try:
                 self.vectors.close()

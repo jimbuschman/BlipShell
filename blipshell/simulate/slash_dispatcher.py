@@ -162,8 +162,6 @@ class SlashCommandDispatcher:
                     # Skip actually running nightly in sim — just verify it doesn't crash
                     con.print(f"[sim] /nightly command acknowledged (job={job_name})")
 
-            elif command_name == "mcp":
-                self._cmd_mcp(con, cmd_args)
 
             elif command_name == "changes":
                 self._cmd_changes(con)
@@ -401,15 +399,6 @@ class SlashCommandDispatcher:
         else:
             con.print("No database")
 
-    def _cmd_mcp(self, con: Console, args: list[str]):
-        if hasattr(self.agent, 'mcp_manager') and self.agent.mcp_manager:
-            servers = self.agent.mcp_manager.connected_servers()
-            con.print(f"MCP servers: {len(servers)} connected")
-            for s in servers:
-                con.print(f"  {s}")
-        else:
-            con.print("MCP: not configured")
-
     def _cmd_changes(self, con: Console):
         if hasattr(self.agent, '_files_created'):
             created = getattr(self.agent, '_files_created', set())
@@ -556,7 +545,7 @@ class SlashCommandDispatcher:
         commands = [
             "/status", "/memory", "/context", "/tokens", "/core", "/feedback",
             "/save", "/think", "/reflect", "/approve", "/code", "/offload",
-            "/health", "/flow", "/cleanup", "/nightly", "/mcp", "/changes",
+            "/health", "/flow", "/cleanup", "/nightly", "/changes",
             "/compact", "/projects", "/project", "/plan", "/plans", "/tasks",
             "/workflow", "/help", "/quit",
         ]

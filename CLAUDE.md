@@ -37,7 +37,6 @@ blipshell/
 │                    # ollama_gate, pii, prompts, model_settings, exceptions
 ├── session/         # SessionManager — messages, persistence, summaries
 ├── ui/              # cli.py (~4.4K lines, Rich/Click), web/ (FastAPI + WS + /v1)
-├── mcp/             # MCP client — stdio transport, tool discovery
 ├── robotics/        # cube system + EmotionEngine (off by default, inert at rest)
 ├── simulate/        # multi-turn scenario runner (26 scenarios, 7 categories)
 ├── benchmark/       # model eval harness (`blipshell benchmark run <model>`)

@@ -166,7 +166,6 @@ def _project_status_commands_all() -> SimScenario:
             SimStep(action=StepAction.SLASH, input="/flow", description="/flow"),
             SimStep(action=StepAction.SLASH, input="/plans", description="/plans"),
             SimStep(action=StepAction.SLASH, input="/tasks", description="/tasks"),
-            SimStep(action=StepAction.SLASH, input="/mcp", description="/mcp"),
             SimStep(action=StepAction.SLASH, input="/approve", description="/approve"),
             SimStep(action=StepAction.SLASH, input="/help", description="/help"),
             # Verify project is still active after all those commands

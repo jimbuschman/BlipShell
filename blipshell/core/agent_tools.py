@@ -218,42 +218,6 @@ class ToolsMixin:
                 self.workflow_executor, session_id,
             ), group="tasks")
 
-    async def _connect_mcp_servers(self):
-        """Connect to configured MCP servers and register their tools."""
-        from blipshell.mcp.manager import MCPManager
-        from blipshell.mcp.tools import MCPTool
-
-        self.mcp_manager = MCPManager()
-
-        for server_config in self.config.mcp_servers:
-            if not server_config.enabled:
-                continue
-            try:
-                definitions = await self.mcp_manager.connect_server(server_config)
-                for defn in definitions:
-                    # Strip prefix to get original name for MCP calls
-                    prefix = f"mcp_{server_config.name}_"
-                    original_name = defn.name[len(prefix):]
-                    tool = MCPTool(
-                        tool_def=defn,
-                        server_name=server_config.name,
-                        original_name=original_name,
-                        manager=self.mcp_manager,
-                        timeout=server_config.timeout,
-                    )
-                    self.tool_registry.register(tool, group=f"mcp_{server_config.name}")
-
-                    # Require approval unless auto_approve
-                    if not server_config.auto_approve:
-                        self.tool_registry._tools_requiring_approval.add(defn.name)
-
-                logger.info(
-                    "MCP server '%s': %d tools registered",
-                    server_config.name, len(definitions),
-                )
-            except Exception as e:
-                logger.error("Failed to connect MCP server '%s': %s", server_config.name, e)
-
     async def _activate_project_callback(self, name: str) -> dict:
         """Callback for ActivateProjectTool — delegates to ProjectMixin."""
         return await self.activate_project(name)

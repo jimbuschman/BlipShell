@@ -47,7 +47,7 @@ fixing — code moves.
 | # | Decision | Options | Blocks |
 |---|---|---|---|
 | D1 | ~~PII on interactive chat~~ **RESOLVED 2026-08-05** | Split by category, not by all-or-nothing: interactive chat strips **credentials only**; background calls keep full sanitization. Identity protection moves to the routing layer. | — |
-| D2 | MCP: commit or archive | (a) invest (resources + supervision + tests); (b) archive the package | Phase 2.6 |
+| D2 | ~~MCP: commit or archive~~ **RESOLVED 2026-08-05** | Archived (removed). Rationale: anything BlipShell actually needs can be coded directly; MCP is integration breadth, which isn't the moat. Reversible — `git checkout 063d06f -- blipshell/mcp` brings it back. | — |
 | D3 | Coding freeze confirmation | watch 2 weeks of real usage; if project mode earns its keep weekly, keep layer 2 "warm" instead of frozen | Phase 2 deletions of anything user-facing |
 
 ### D1 resolution + what it leaves open
@@ -231,10 +231,12 @@ enter the file cache; simulate leaves the production DB untouched.
    notes, follow-ups, and the 5-pool budget system — a memory-continuity regression
    on exactly the path used for hard tasks. This is the "memory is the moat even for
    coding" item.
-6. **MCP (per D2)**: if commit — resources first (external context into pools),
-   then connection supervision, plus a config entry and a first-ever test; if
-   archive — remove the package (it has never run: no `mcp_servers:` key has ever
-   existed, zero tests).
+6. ~~**MCP (per D2)**~~ — **DONE 2026-08-05.** Removed: the package, the
+   `_connect_mcp_servers` registration path, `MCPServerConfig`, the `/mcp`
+   command and renderer, the simulate dispatcher entry and two scenario steps,
+   and the `mcp>=1.0.0` dependency (~400 lines). It had never run — no
+   `mcp_servers:` key ever existed in `config.yaml` and there were zero tests
+   — so there was no behavior to preserve. Restore from `063d06f`.
 7. **Tests for the riskiest untested code**: `MemoryWorker` (zero tests today; the
    only second-event-loop-in-a-thread in the codebase); ChatLoop's six untested
    terminal states (budget, nudge, stopped, empty, text + compaction-in-loop,

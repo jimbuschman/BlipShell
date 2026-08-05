@@ -33,7 +33,6 @@ def _all_display_commands() -> SimScenario:
             SimStep(action=StepAction.SLASH, input="/plan", description="/plan"),
             SimStep(action=StepAction.SLASH, input="/plans", description="/plans"),
             SimStep(action=StepAction.SLASH, input="/tasks", description="/tasks"),
-            SimStep(action=StepAction.SLASH, input="/mcp", description="/mcp"),
             SimStep(action=StepAction.SLASH, input="/approve", description="/approve"),
             SimStep(action=StepAction.SLASH, input="/help", description="/help"),
         ],
