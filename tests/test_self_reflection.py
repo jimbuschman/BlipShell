@@ -240,3 +240,32 @@ async def test_diverse_recent_includes_unembedded_thoughts():
 def test_prompt_grants_permission_to_leave_threads():
     system, _ = lingering_thought_prompt(["prior"])
     assert "don't owe" in system
+
+
+async def test_diverse_recent_seeds_with_outlier_not_newest():
+    """In a monoculture the newest thought IS the dominant theme — seeding
+    the greedy pick with it anchored every reflection sample to the groove
+    (deep-dive 2026-08-04). The seed must be the most atypical thought.
+    n=1 exposes the seed directly."""
+    vecs = {f"a{i}": _THEME_A for i in range(5)}
+    vecs["the b thought"] = _THEME_B
+    s = _diverse_store(vecs)
+    await s.add("a0")
+    await s.add("the b thought")   # neither oldest nor newest
+    for i in range(1, 5):
+        await s.add(f"a{i}")
+    assert await s.diverse_recent(1) == ["the b thought"]
+
+
+async def test_diverse_recent_still_guarantees_newest():
+    """Continuity with the present: whatever seeds the sample, the newest
+    thought keeps a reserved slot (for n >= 2)."""
+    vecs = {f"a{i}": _THEME_A for i in range(5)}
+    vecs["b"] = _THEME_B
+    s = _diverse_store(vecs)
+    await s.add("b")
+    for i in range(5):
+        await s.add(f"a{i}")
+    picked = await s.diverse_recent(2)
+    assert "a4" in picked          # newest present
+    assert "b" in picked           # outlier seed present

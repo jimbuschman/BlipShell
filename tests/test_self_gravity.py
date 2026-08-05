@@ -455,3 +455,80 @@ class TestSnapshot:
     async def test_snapshot_empty_store(self):
         s = _store()
         assert await s.snapshot() == []
+
+
+# --- weight-aware eviction (store cap) ---------------------------------------
+
+_ORTHO = {
+    "t0": [1.0, 0.0, 0.0, 0.0],
+    "t1": [0.0, 1.0, 0.0, 0.0],
+    "t2": [0.0, 0.0, 1.0, 0.0],
+    "t3": [0.0, 0.0, 0.0, 1.0],
+}
+
+
+async def _embed_ortho(text):
+    return _ORTHO.get(text)
+
+
+def _set_fields(meta, text, **fields):
+    items = _raw(meta)
+    for it in items:
+        if it["text"] == text:
+            it.update(fields)
+    meta.data[SelfThoughtStore.KEY] = json.dumps(items)
+
+
+class TestWeightEviction:
+    """The cap must evict the LIGHTEST thought, not the oldest.
+
+    Recurrence updates thoughts in place, so the most-recurred (heaviest)
+    thought is usually the oldest item — recency truncation deleted exactly
+    the thought gravity had decided mattered most (deep-dive 2026-08-04)."""
+
+    async def test_eviction_drops_lightest_not_oldest(self):
+        meta = FakeMeta()
+        s = SelfThoughtStore(meta, embed_fn=_embed_ortho,
+                             gravity_enabled=True, max_keep=3)
+        for t in ("t0", "t1", "t2"):
+            await s.add(t)
+        # t0 is oldest AND heaviest (a recurring thought); t1 has faded.
+        _set_fields(meta, "t0", weight=5.0, surfaced=True)
+        _set_fields(meta, "t1", weight=0.2, surfaced=True)
+
+        await s.add("t3")   # over cap -> one eviction
+
+        texts = [it["text"] for it in _raw(meta)]
+        assert texts == ["t0", "t2", "t3"]   # t1 (lightest) gone, t0 survives
+
+    async def test_newest_thought_survives_heavy_backlog(self):
+        """A just-formed thought (weight 1.0) must not be the eviction victim
+        just because every stored thought is heavier — it would die unseen."""
+        meta = FakeMeta()
+        s = SelfThoughtStore(meta, embed_fn=_embed_ortho,
+                             gravity_enabled=True, max_keep=3)
+        for t in ("t0", "t1", "t2"):
+            await s.add(t)
+        for t in ("t0", "t1", "t2"):
+            _set_fields(meta, t, weight=5.0, surfaced=True)
+
+        await s.add("t3")
+
+        texts = [it["text"] for it in _raw(meta)]
+        assert "t3" in texts                 # newest always lands
+        assert len(texts) == 3
+
+    async def test_disabled_gravity_keeps_recency_eviction(self):
+        """Firewall: with gravity off the store must behave exactly as before
+        — plain last-N truncation, weights ignored."""
+        meta = FakeMeta()
+        s = SelfThoughtStore(meta, embed_fn=_embed_ortho,
+                             gravity_enabled=False, max_keep=3)
+        for t in ("t0", "t1", "t2"):
+            await s.add(t)
+        _set_fields(meta, "t0", weight=5.0)   # heavy but gravity is off
+
+        await s.add("t3")
+
+        texts = [it["text"] for it in _raw(meta)]
+        assert texts == ["t1", "t2", "t3"]   # oldest dropped, weight ignored

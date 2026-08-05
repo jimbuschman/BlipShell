@@ -168,7 +168,25 @@ class SelfThoughtStore:
             return []
 
     async def _save(self, items: list[dict]) -> None:
-        await self._sqlite.set_metadata(self.KEY, json.dumps(items[-self._max:]))
+        if len(items) > self._max:
+            if self._gravity_enabled:
+                # Evict by lowest effective weight, not by age. Recurrence
+                # updates a thought in place, so the most-recurred thought is
+                # usually one of the OLDEST items — recency truncation would
+                # silently delete the heaviest thought first, subordinating
+                # the whole weight system to insertion order. The newest item
+                # is exempt so a just-formed thought can't be starved out by
+                # a heavy backlog before it ever surfaces.
+                now = self._now()
+                ranked = sorted(
+                    items[:-1], key=lambda it: self._effective_weight(it, now),
+                )
+                evict = {id(it) for it in ranked[: len(items) - self._max]}
+                # Survivors keep chronological order — recent() depends on it.
+                items = [it for it in items if id(it) not in evict]
+            else:
+                items = items[-self._max:]
+        await self._sqlite.set_metadata(self.KEY, json.dumps(items))
 
     async def _embed(self, text: str, attempts: int = 1) -> Optional[list[float]]:
         """Embed text, retrying transient failures when ``attempts`` > 1.
@@ -333,19 +351,36 @@ class SelfThoughtStore:
         recent() feeds the reflection prompt the last-n thoughts — after weeks
         of one theme those are all that theme, and every new reflection gets
         pulled deeper into the groove (seen live 2026-07-09: 23 of 24 thoughts
-        on one subject). This seeds with the newest thought (continuity with
-        the present), then greedily adds whichever remaining thought is least
-        similar to everything already picked, so minority threads keep a voice
-        in the prompt. Thoughts without embeddings count as maximally
-        dissimilar (they can't be compared; excluding them would silence
-        them). Returns texts in chronological order.
+        on one subject). Seeding the greedy max-min pick with the NEWEST
+        thought anchored the sample to that groove (in a monoculture the
+        newest thought is by definition the dominant theme), so the seed is
+        instead the most ATYPICAL thought — lowest mean similarity to the rest
+        — which gives minority threads the anchor. The newest thought is still
+        guaranteed a slot (continuity with the present, for n >= 2); the
+        remaining slots go to whichever thoughts are least similar to
+        everything already picked. Thoughts without embeddings count as
+        maximally atypical/dissimilar (they can't be compared; excluding them
+        would silence them). Returns texts in chronological order.
         """
         items = await self._load()
         if len(items) <= n:
             return [i["text"] for i in items]
 
-        picked = [items[-1]]
-        remaining = list(items[:-1])
+        def _mean_similarity(it: dict) -> float:
+            ie = it.get("embedding")
+            if not ie:
+                return -1.0
+            sims = [
+                _cosine(ie, other.get("embedding"))
+                for other in items
+                if other is not it and other.get("embedding")
+            ]
+            return (sum(sims) / len(sims)) if sims else -1.0
+
+        newest = items[-1]
+        seed = min(items, key=_mean_similarity)
+        picked = [seed]
+        remaining = [it for it in items if it is not seed]
 
         def _dissimilarity(it: dict) -> float:
             ie = it.get("embedding")
@@ -354,6 +389,10 @@ class SelfThoughtStore:
             return 1.0 - max(_cosine(ie, p.get("embedding")) for p in picked)
 
         while remaining and len(picked) < n:
+            newest_missing = all(p is not newest for p in picked)
+            if newest_missing and n - len(picked) == 1:
+                picked.append(newest)   # reserved slot: continuity with now
+                break
             best = max(remaining, key=_dissimilarity)
             picked.append(best)
             remaining.remove(best)
