@@ -8,12 +8,6 @@ All LLM calls are mocked with canned responses; SQLite is real (temp files).
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-# ChromaDB uses pydantic v1 which is broken on Python 3.14+
-try:
-    import chromadb  # noqa: F401
-except Exception:
-    pytest.skip("ChromaDB incompatible with Python 3.14+ (pydantic v1)", allow_module_level=True)
-
 from blipshell.memory.entity_extractor import EntityExtractor
 from blipshell.memory.manager import MemoryManager, PoolItem
 from blipshell.memory.processor import MemoryProcessor

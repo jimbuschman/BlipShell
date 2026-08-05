@@ -229,6 +229,11 @@ CREATE TABLE IF NOT EXISTS entities (
     UNIQUE(name, entity_type)
 );
 
+-- Bi-temporal edges: uniqueness applies only to ACTIVE (non-expired) rows,
+-- via a partial unique index created in initialize(). An inline
+-- UNIQUE(subject, predicate, object) would make an expired fact
+-- unrepeatable forever ("Jim rejoined Acme" impossible) — the expired row
+-- must stay as history while a new active row is inserted.
 CREATE TABLE IF NOT EXISTS entity_relationships (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     subject_id INTEGER NOT NULL,
@@ -236,10 +241,12 @@ CREATE TABLE IF NOT EXISTS entity_relationships (
     object_id INTEGER NOT NULL,
     source_memory_id INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    valid_from DATETIME,
+    expired_at DATETIME,
+    expired_by INTEGER,
     FOREIGN KEY (subject_id) REFERENCES entities(id),
     FOREIGN KEY (object_id) REFERENCES entities(id),
-    FOREIGN KEY (source_memory_id) REFERENCES memories(id) ON DELETE CASCADE,
-    UNIQUE(subject_id, predicate, object_id)
+    FOREIGN KEY (source_memory_id) REFERENCES memories(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS entity_mentions (
@@ -443,6 +450,76 @@ class SQLiteStore:
                 await self._db.execute(col_sql)
             except Exception:
                 pass  # column already exists
+
+        # Rebuild entity_relationships if it still carries the inline
+        # UNIQUE(subject, predicate, object) constraint. That constraint made
+        # an expired fact unrepeatable: once "works_at" was expired by "left",
+        # re-asserting "works_at" hit INSERT OR IGNORE and silently vanished.
+        # Uniqueness must apply to ACTIVE rows only (partial index below).
+        # SQLite can't drop an inline constraint, so this is a table rebuild —
+        # transactional: on any failure the old table is left untouched.
+        cursor = await self._db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='entity_relationships'"
+        )
+        row = await cursor.fetchone()
+        if row and "UNIQUE(subject_id, predicate, object_id)" in (row["sql"] or ""):
+            logger.info("Rebuilding entity_relationships: moving uniqueness to active rows only...")
+            try:
+                await self._db.execute("""
+                    CREATE TABLE entity_relationships_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        subject_id INTEGER NOT NULL,
+                        predicate TEXT NOT NULL,
+                        object_id INTEGER NOT NULL,
+                        source_memory_id INTEGER,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        valid_from DATETIME,
+                        expired_at DATETIME,
+                        expired_by INTEGER,
+                        FOREIGN KEY (subject_id) REFERENCES entities(id),
+                        FOREIGN KEY (object_id) REFERENCES entities(id),
+                        FOREIGN KEY (source_memory_id) REFERENCES memories(id) ON DELETE CASCADE
+                    )
+                """)
+                await self._db.execute("""
+                    INSERT INTO entity_relationships_new
+                        (id, subject_id, predicate, object_id, source_memory_id,
+                         created_at, valid_from, expired_at, expired_by)
+                    SELECT id, subject_id, predicate, object_id, source_memory_id,
+                           created_at, valid_from, expired_at, expired_by
+                    FROM entity_relationships
+                """)
+                await self._db.execute("DROP TABLE entity_relationships")
+                await self._db.execute(
+                    "ALTER TABLE entity_relationships_new RENAME TO entity_relationships"
+                )
+                await self._db.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_entity_relationships_subject "
+                    "ON entity_relationships(subject_id)"
+                )
+                await self._db.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_entity_relationships_object "
+                    "ON entity_relationships(object_id)"
+                )
+                await self._db.commit()
+                logger.info("entity_relationships rebuild complete")
+            except Exception as e:
+                await self._db.rollback()
+                logger.error(
+                    "entity_relationships rebuild FAILED (old table left intact, "
+                    "re-assertion of expired facts stays blocked): %s", e,
+                )
+        # Active-rows-only uniqueness. Idempotent; also created on fresh DBs
+        # (the schema deliberately has no inline unique constraint anymore).
+        try:
+            await self._db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_rel_active_unique "
+                "ON entity_relationships(subject_id, predicate, object_id) "
+                "WHERE expired_at IS NULL"
+            )
+        except Exception as e:
+            logger.error("Failed to create active-unique index on entity_relationships: %s", e)
+
         # Entity aliases table (Feature 5: Entity Resolution)
         await self._db.execute("""
             CREATE TABLE IF NOT EXISTS entity_aliases (
@@ -1320,10 +1397,16 @@ class SQLiteStore:
         if not sanitized:
             return []
         try:
+            # Join memories to exclude archived rows: the FTS sync triggers fire
+            # only on summary/content updates, so archiving (an is_archived
+            # update) leaves the row in the index forever. Filtering here is the
+            # only thing keeping archived memories out of keyword search.
             cursor = await self._db.execute(
-                """SELECT rowid AS id, rank AS fts_rank
-                   FROM memories_fts WHERE memories_fts MATCH ?
-                   ORDER BY rank LIMIT ?""",
+                """SELECT f.rowid AS id, f.rank AS fts_rank
+                   FROM memories_fts f
+                   JOIN memories m ON m.id = f.rowid
+                   WHERE memories_fts MATCH ? AND m.is_archived = 0
+                   ORDER BY f.rank LIMIT ?""",
                 (sanitized, limit),
             )
             rows = await cursor.fetchall()
@@ -2333,11 +2416,14 @@ class SQLiteStore:
                    VALUES (?, ?, ?, ?)""",
                 (subject_id, predicate.strip().lower(), object_id, memory_id),
             )
-            rid = cursor.lastrowid
+            # When OR IGNORE skips a duplicate, lastrowid is the *previous*
+            # successful insert on this connection — an unrelated row. Only
+            # rowcount tells us whether this INSERT actually happened.
+            rid = cursor.lastrowid if cursor.rowcount == 1 else None
             # New activity un-archives pruned endpoints (see revive_entities).
             await self.revive_entities([subject_id, object_id], skip_commit=True)
             await self._db.commit()
-            return rid if rid else None
+            return rid
         except Exception as e:
             logger.warning("Failed to create relationship: %s", e)
             return None
@@ -2599,12 +2685,16 @@ class SQLiteStore:
                    VALUES (?, ?, ?, ?, ?)""",
                 (subject_id, predicate, object_id, memory_id, valid_from),
             )
-            rid = cursor.lastrowid
+            # When OR IGNORE skips a duplicate, lastrowid is the *previous*
+            # successful insert on this connection — an unrelated row. Only
+            # rowcount tells us whether this INSERT actually happened. Returning
+            # a stale id here corrupted expired_by in edge invalidation.
+            rid = cursor.lastrowid if cursor.rowcount == 1 else None
             # New activity un-archives pruned endpoints (see revive_entities).
             await self.revive_entities([subject_id, object_id], skip_commit=True)
             if not skip_commit:
                 await self._db.commit()
-            return rid if rid else None
+            return rid
         except Exception as e:
             logger.warning("Failed to create temporal relationship: %s", e)
             return None

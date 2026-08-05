@@ -3,12 +3,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-# ChromaDB uses pydantic v1 which is broken on Python 3.14+
-try:
-    import chromadb  # noqa: F401
-except Exception:
-    pytest.skip("ChromaDB incompatible with Python 3.14+ (pydantic v1)", allow_module_level=True)
-
 from blipshell.memory.search import MemorySearch, SearchResult
 from blipshell.models.config import MemoryConfig
 from blipshell.models.memory import Memory, MemoryType
@@ -58,17 +52,19 @@ class TestMemorySearch:
         result = await memory_search.search("tell me about the project architecture")
         assert len(result) == 0
 
-    async def test_low_rank_filtered(self, memory_search, sqlite_store):
+    async def test_low_importance_filtered(self, memory_search, sqlite_store):
+        """Importance replaced rank as the quality filter (rank threshold is
+        dead config) — a memory below min_importance never surfaces."""
         session_id = await sqlite_store.create_session("Test")
         mem = Memory(session_id=session_id, role="user", content="test content",
-                     summary="test summary", rank=1, importance=0.8)
+                     summary="test summary", rank=1, importance=0.1)
         mid = await sqlite_store.create_memory(mem)
 
         memory_search.vectors.search_memories.return_value = [
             {"id": mid, "similarity": 0.8, "metadata": {}},
         ]
         result = await memory_search.search("tell me about the project architecture")
-        assert len(result) == 0  # rank 1 < min_rank 3
+        assert len(result) == 0  # importance 0.1 < min_importance 0.25
 
     async def test_successful_search_with_boost(self, memory_search, sqlite_store):
         session_id = await sqlite_store.create_session("Test")
@@ -82,9 +78,12 @@ class TestMemorySearch:
         result = await memory_search.search("tell me about the project architecture")
         assert len(result) == 1
         assert result[0].rank == 5
-        # Boost: importance * weight * recency * consolidation
-        # 0.9 * 0.2 * ~1.0 * 1.0 = 0.18 → boosted ≈ 0.85 + 0.18 = 1.03
-        assert result[0].boosted_score == pytest.approx(1.03, abs=0.01)
+        # Additive boosts: similarity + importance + recency (+ rrf/tag/project)
+        # 0.85 + (0.9 * 0.2) + (recency_weight * e^-0 ≈ 0.17 for a fresh memory)
+        # ≈ 1.20. Pin the components that matter: importance lifts the score
+        # above raw similarity, and a fresh memory gets the full recency boost.
+        assert result[0].boosted_score > 0.85 + 0.17  # similarity + importance floor
+        assert result[0].boosted_score == pytest.approx(1.20, abs=0.02)
 
     async def test_current_session_excluded(self, memory_search, sqlite_store):
         session_id = await sqlite_store.create_session("Test")
@@ -103,7 +102,7 @@ class TestMemorySearch:
     async def test_results_sorted_by_boosted_score(self, memory_search, sqlite_store):
         session_id = await sqlite_store.create_session("Test")
         mem1 = Memory(session_id=session_id, role="user", content="low importance",
-                      summary="low importance memory", rank=3, importance=0.2)
+                      summary="low importance memory", rank=3, importance=0.3)
         mid1 = await sqlite_store.create_memory(mem1)
 
         mem2 = Memory(session_id=session_id, role="user", content="high importance",
@@ -116,8 +115,8 @@ class TestMemorySearch:
         ]
         result = await memory_search.search("architecture discussion topic details")
         assert len(result) == 2
-        # mem2 importance boost (0.9*0.2=0.18) overcomes 0.05 similarity gap
-        # mem1: 0.70 + 0.04 + rrf ≈ 0.745  mem2: 0.65 + 0.18 + rrf ≈ 0.835
+        # mem2's importance boost (0.9*0.2=0.18 vs 0.3*0.2=0.06) overcomes the
+        # 0.05 similarity gap; both get the same fresh-memory recency boost.
         assert result[0].rank == 5
 
     async def test_search_lessons_delegates(self, memory_search):

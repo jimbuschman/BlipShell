@@ -156,9 +156,12 @@ class MemoryProcessor:
                 try:
                     action = await self._decide_and_apply_action(memory_id, summary)
                     if action == "NONE":
-                        # Redundant — archive and skip further processing
+                        # Redundant — archive and skip further processing.
+                        # is_processed must be set too, or the startup sweep and
+                        # nightly cleanup re-pick this row forever (they filter
+                        # only on is_processed = 0, not is_archived).
                         step = "dedup_archive_update"
-                        await self.sqlite.update_memory(memory_id, is_archived=True)
+                        await self.sqlite.update_memory(memory_id, is_archived=True, is_processed=True)
                         try:
                             self.vectors.delete_memory(memory_id)
                         except Exception as e:
@@ -596,7 +599,10 @@ class MemoryProcessor:
             what_didnt_work=parsed.get("what_didnt_work"),
         )
 
-        # Embed in ChromaDB lessons collection for search
+        # Embed for search — reflections have their own vec table, keyed by
+        # the real reflection id. (They used to go into the lessons
+        # collection at id+100000, which lesson-search enrichment could
+        # never return.)
         embed_text = self._build_reflection_embed_text(parsed)
         try:
             meta = {
@@ -605,7 +611,7 @@ class MemoryProcessor:
             }
             if project:
                 meta["project"] = project
-            self.vectors.add_lesson(reflection_id + 100000, embed_text, metadata=meta)
+            self.vectors.add_reflection(reflection_id, embed_text, metadata=meta)
         except Exception as e:
             logger.error("Reflection embed failed (will be backfilled): %s", e)
 

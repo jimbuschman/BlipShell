@@ -171,3 +171,167 @@ class TestTemporalRelationships:
         )
         row = await cursor.fetchone()
         assert row["cnt"] == 0
+
+
+class TestDuplicateInsertReturnsNone:
+    """INSERT OR IGNORE + lastrowid: when the insert is ignored as a
+    duplicate, lastrowid is the connection's PREVIOUS insert — an unrelated
+    row. Returning it corrupted expired_by in edge invalidation
+    (deep-dive 2026-08-04). A duplicate must return None."""
+
+    async def test_duplicate_temporal_relationship_returns_none(self, sqlite_store):
+        subj_id = await sqlite_store.get_or_create_entity("user", "person")
+        obj_id = await sqlite_store.get_or_create_entity("acme", "organization")
+
+        first = await sqlite_store.create_entity_relationship_temporal(
+            subj_id, "works_at", obj_id, memory_id=None,
+        )
+        assert first is not None
+
+        # Interleave an unrelated insert so lastrowid points somewhere real —
+        # the exact condition that made the bug look like a valid id.
+        other_id = await sqlite_store.get_or_create_entity("python", "technology")
+        unrelated = await sqlite_store.create_entity_relationship_temporal(
+            subj_id, "uses", other_id, memory_id=None,
+        )
+        assert unrelated is not None
+
+        dup = await sqlite_store.create_entity_relationship_temporal(
+            subj_id, "works_at", obj_id, memory_id=None,
+        )
+        assert dup is None            # was: `unrelated`'s id
+
+    async def test_duplicate_plain_relationship_returns_none(self, sqlite_store):
+        subj_id = await sqlite_store.get_or_create_entity("user", "person")
+        obj_id = await sqlite_store.get_or_create_entity("acme", "organization")
+
+        first = await sqlite_store.create_entity_relationship(
+            subj_id, "works_at", obj_id, None,
+        )
+        assert first is not None
+        dup = await sqlite_store.create_entity_relationship(
+            subj_id, "works_at", obj_id, None,
+        )
+        assert dup is None
+
+
+class TestFactReassertion:
+    """An expired fact must be re-assertable (deep-dive 2026-08-04): the old
+    inline UNIQUE(subject, predicate, object) meant once 'works_at' was
+    expired by 'left', re-asserting 'works_at' was silently dropped forever.
+    Uniqueness now applies to ACTIVE rows only (partial index)."""
+
+    async def test_expired_fact_can_be_reasserted(self, sqlite_store):
+        subj_id = await sqlite_store.get_or_create_entity("user", "person")
+        obj_id = await sqlite_store.get_or_create_entity("acme", "organization")
+
+        works_1 = await sqlite_store.create_entity_relationship_temporal(
+            subj_id, "works_at", obj_id, memory_id=None,
+        )
+        left_id = await sqlite_store.create_entity_relationship_temporal(
+            subj_id, "left", obj_id, memory_id=None,
+        )
+        await sqlite_store.expire_contradicting_relationships(
+            subj_id, obj_id, CONTRADICTING_PREDICATES, "left", left_id,
+        )
+        # Jim rejoins Acme: expire 'left' the same way a new works_at would
+        works_2 = await sqlite_store.create_entity_relationship_temporal(
+            subj_id, "works_at", obj_id, memory_id=None,
+        )
+        assert works_2 is not None, "re-assertion of an expired fact was dropped"
+        assert works_2 != works_1
+        await sqlite_store.expire_contradicting_relationships(
+            subj_id, obj_id, CONTRADICTING_PREDICATES, "works_at", works_2,
+        )
+
+        active = await sqlite_store.get_active_relationships_for_entity(subj_id)
+        active_preds = [r["predicate"] for r in active]
+        assert "works_at" in active_preds
+        assert "left" not in active_preds
+
+        # History is preserved: the ORIGINAL works_at row is still there, expired
+        expired = await sqlite_store.get_expired_relationships_for_entity(subj_id)
+        expired_ids = [r["id"] for r in expired]
+        assert works_1 in expired_ids
+
+    async def test_duplicate_active_fact_still_ignored(self, sqlite_store):
+        """The partial index still deduplicates ACTIVE rows."""
+        subj_id = await sqlite_store.get_or_create_entity("user", "person")
+        obj_id = await sqlite_store.get_or_create_entity("acme", "organization")
+
+        first = await sqlite_store.create_entity_relationship_temporal(
+            subj_id, "works_at", obj_id, memory_id=None,
+        )
+        assert first is not None
+        dup = await sqlite_store.create_entity_relationship_temporal(
+            subj_id, "works_at", obj_id, memory_id=None,
+        )
+        assert dup is None
+
+
+class TestLegacyConstraintRebuild:
+    """A DB created before 2026-08 carries the inline unique constraint —
+    initialize() must rebuild the table (preserving rows) and move
+    uniqueness to the partial index."""
+
+    async def test_legacy_table_rebuilt_with_data_preserved(self, tmp_path):
+        import sqlite3 as _sqlite3
+
+        from blipshell.memory.sqlite_store import SQLiteStore
+
+        db_path = str(tmp_path / "legacy.db")
+        store = SQLiteStore(db_path)
+        await store.initialize()
+        await store.close()
+
+        # Revert entity_relationships to its legacy shape with data in it
+        conn = _sqlite3.connect(db_path)
+        conn.executescript("""
+            DROP INDEX IF EXISTS idx_entity_rel_active_unique;
+            DROP TABLE entity_relationships;
+            CREATE TABLE entity_relationships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject_id INTEGER NOT NULL,
+                predicate TEXT NOT NULL,
+                object_id INTEGER NOT NULL,
+                source_memory_id INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                valid_from DATETIME,
+                expired_at DATETIME,
+                expired_by INTEGER,
+                FOREIGN KEY (subject_id) REFERENCES entities(id),
+                FOREIGN KEY (object_id) REFERENCES entities(id),
+                FOREIGN KEY (source_memory_id) REFERENCES memories(id) ON DELETE CASCADE,
+                UNIQUE(subject_id, predicate, object_id)
+            );
+            INSERT INTO entities (id, name, entity_type)
+                VALUES (1, 'user', 'person'), (2, 'acme', 'organization');
+            INSERT INTO entity_relationships
+                (subject_id, predicate, object_id, valid_from, expired_at)
+                VALUES (1, 'works_at', 2, '2026-01-01T00:00:00', '2026-02-01T00:00:00');
+        """)
+        conn.commit()
+        conn.close()
+
+        store2 = SQLiteStore(db_path)
+        await store2.initialize()
+        try:
+            cursor = await store2._db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='entity_relationships'"
+            )
+            row = await cursor.fetchone()
+            assert "UNIQUE(subject_id, predicate, object_id)" not in row["sql"]
+
+            # Data survived the rebuild
+            cursor = await store2._db.execute(
+                "SELECT COUNT(*) AS n FROM entity_relationships"
+            )
+            assert (await cursor.fetchone())["n"] == 1
+
+            # And the expired fact is now re-assertable
+            rid = await store2.create_entity_relationship_temporal(
+                1, "works_at", 2, memory_id=None,
+            )
+            assert rid is not None
+        finally:
+            await store2.close()

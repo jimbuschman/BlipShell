@@ -77,6 +77,7 @@ def vectors(temp_db_path):
     store._conn.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_core_memories USING vec0(embedding float[768])")
     store._conn.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_lessons USING vec0(embedding float[768])")
     store._conn.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_entities USING vec0(embedding float[768])")
+    store._conn.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_reflections USING vec0(embedding float[768])")
     store._conn.commit()
 
     yield store
@@ -402,6 +403,7 @@ class TestSearch:
         mock_vectors.search_memories.return_value = []  # vector search returns nothing
         mock_vectors.search_core_memories.return_value = []
         mock_vectors.search_lessons.return_value = []
+        mock_vectors.search_reflections.return_value = []
 
         router = MagicMock()
         router.generate = AsyncMock(side_effect=_canned_generate)
@@ -425,7 +427,11 @@ class TestSearch:
     async def test_fts_results_not_dropped_by_similarity_threshold(self, session_mgr, sqlite, search, vectors_with_embed):
         """FTS-only results should NOT be filtered by similarity_threshold."""
         sid = await session_mgr.start_session()
-        session_mgr.add_message(MessageRole.USER, "Xylophone lessons start next Tuesday at the community center near the park.")
+        # Must be >= 80 chars: shorter messages without signal words are
+        # noise-archived (noise.py should_skip_memory), and archived memories
+        # are — correctly — invisible to search. (This test used to pass with
+        # a 76-char message only because archived rows leaked into FTS.)
+        session_mgr.add_message(MessageRole.USER, "Xylophone lessons start next Tuesday at the community center near the park, right after my morning meeting wraps up.")
 
         await session_mgr.flush_pending_persists()
         await session_mgr.dump_to_memory()
@@ -466,6 +472,7 @@ class TestSearch:
         ]
         mock_vectors.search_core_memories.return_value = []
         mock_vectors.search_lessons.return_value = []
+        mock_vectors.search_reflections.return_value = []
 
         router = MagicMock()
         router.generate = AsyncMock(side_effect=_canned_generate)
@@ -797,9 +804,11 @@ class TestEndToEnd:
         """Complete round-trip: messages → process → close → search from new session."""
         # Session 1: have a conversation
         sid1 = await session_mgr.start_session()
+        # >= 80 chars so the noise filter doesn't archive it (see
+        # test_fts_results_not_dropped_by_similarity_threshold).
         session_mgr.add_message(
             MessageRole.USER,
-            "Kortney and I agreed to wait until Monday to talk again. She needs some space."
+            "Kortney and I agreed to wait until Monday to talk again. She needs some space to think things through."
         )
         session_mgr.add_message(
             MessageRole.ASSISTANT,
@@ -860,3 +869,115 @@ class TestEmbedWarmup:
     def test_warmup_swallows_embed_errors(self, vectors):
         vectors._embed = MagicMock(side_effect=ConnectionError("ollama down"))
         assert vectors.warmup() is False
+
+
+from blipshell.models.memory import Memory, MemoryType
+
+
+class TestArchiveCorrectness:
+    """Regressions from the 2026-08-04 deep dive: archived memories must be
+    invisible to every search path, and dedup-archived memories must be
+    marked processed or the startup sweep re-processes them forever."""
+
+    @pytest.mark.asyncio
+    async def test_dedup_archived_memory_is_marked_processed(self, sqlite, config):
+        """The dedup NONE path archives the new memory — it must ALSO set
+        is_processed, or get_unprocessed_memories() re-picks it on every
+        startup sweep and nightly cleanup (a permanent, growing LLM loop)."""
+        from blipshell.memory.processor import MemoryProcessor
+
+        sid = await sqlite.create_session(title="Dedup test")
+
+        # An existing memory the new one will duplicate
+        existing = Memory(
+            session_id=sid, role="user",
+            content="I prefer dark roast coffee in the mornings before work.",
+            summary="User prefers dark roast coffee in the mornings.",
+            timestamp=datetime.now(timezone.utc), rank=3, importance=0.5,
+            memory_type=MemoryType.CONVERSATION,
+        )
+        existing_id = await sqlite.create_memory(existing)
+        await sqlite.update_memory(existing_id, is_processed=True)
+
+        # Vector store: reports the existing memory as highly similar
+        mock_vectors = MagicMock()
+        mock_vectors.search_memories.return_value = [
+            {"id": existing_id, "similarity": 0.95,
+             "document": "User prefers dark roast coffee in the mornings.",
+             "metadata": {}},
+        ]
+
+        # Router: dedup decision is NONE (redundant)
+        def _gen(task_type, prompt="", system=None, think=None, **kwargs):
+            if task_type == "summarization":
+                return "User prefers dark roast coffee in the mornings."
+            if task_type == "ranking_importance":
+                return "3 0.5"
+            return "NONE"
+        router = MagicMock()
+        router.generate = AsyncMock(side_effect=_gen)
+
+        processor = MemoryProcessor(
+            sqlite=sqlite, vectors=mock_vectors, router=router, config=config,
+        )
+        result = await processor.process_message(
+            text="Just so you know, I really prefer dark roast coffee in the mornings before I start work.",
+            role="user", session_id=sid,
+        )
+        assert result is None            # dedup NONE -> not kept
+
+        # The archived duplicate must NOT reappear as unprocessed work
+        unprocessed = await sqlite.get_unprocessed_memories(limit=100)
+        assert unprocessed == [], (
+            "dedup-archived memory came back as unprocessed — zombie loop"
+        )
+
+    @pytest.mark.asyncio
+    async def test_archived_memory_invisible_to_fts(self, sqlite):
+        """Archiving is an is_archived UPDATE, which the FTS sync triggers
+        ignore — search_fts must filter archived rows itself."""
+        sid = await sqlite.create_session(title="FTS archive test")
+        mem = Memory(
+            session_id=sid, role="user",
+            content="The quokka sanctuary visit is booked for the first weekend of September.",
+            summary="Quokka sanctuary visit booked for September.",
+            timestamp=datetime.now(timezone.utc), rank=3, importance=0.5,
+            memory_type=MemoryType.CONVERSATION,
+        )
+        mid = await sqlite.create_memory(mem)
+
+        hits = await sqlite.search_fts("quokka")
+        assert any(h["id"] == mid for h in hits)     # sanity: findable first
+
+        await sqlite.update_memory(mid, is_archived=True)
+        hits = await sqlite.search_fts("quokka")
+        assert not any(h["id"] == mid for h in hits), (
+            "archived memory still surfaced via FTS"
+        )
+
+    @pytest.mark.asyncio
+    async def test_archived_memory_invisible_to_vector_search(
+        self, sqlite, vectors_with_embed
+    ):
+        """Archiving is supposed to delete the vector, but that delete can
+        fail — the enrichment query must filter archived rows as backstop."""
+        sid = await sqlite.create_session(title="Vector archive test")
+        mem = Memory(
+            session_id=sid, role="user",
+            content="The tarsier documentary screening happens downtown on Thursday evening.",
+            summary="Tarsier documentary screening on Thursday.",
+            timestamp=datetime.now(timezone.utc), rank=3, importance=0.5,
+            memory_type=MemoryType.CONVERSATION,
+        )
+        mid = await sqlite.create_memory(mem)
+        vectors_with_embed.add_memory(mid, mem.content, {"session_id": str(sid)})
+
+        results = vectors_with_embed.search_memories("tarsier documentary", n_results=10)
+        assert any(r["id"] == mid for r in results)  # sanity: findable first
+
+        # Archive WITHOUT deleting the vector (the failure case)
+        await sqlite.update_memory(mid, is_archived=True)
+        results = vectors_with_embed.search_memories("tarsier documentary", n_results=10)
+        assert not any(r["id"] == mid for r in results), (
+            "archived memory still surfaced via vector search"
+        )

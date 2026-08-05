@@ -79,6 +79,7 @@ def mock_chroma():
     vectors.search_memories.return_value = []
     vectors.search_core_memories.return_value = []
     vectors.search_lessons.return_value = []
+    vectors.search_reflections.return_value = []
     vectors.add_memory = MagicMock()
     vectors.add_core_memory = MagicMock()
     vectors.add_lesson = MagicMock()

@@ -17,6 +17,7 @@ def mock_chroma_with_entities():
     chroma.search_memories.return_value = []
     chroma.search_core_memories.return_value = []
     chroma.search_lessons.return_value = []
+    chroma.search_reflections.return_value = []
     chroma.add_memory = MagicMock()
     chroma.delete_memory = MagicMock()
     chroma.upsert_entity = MagicMock()

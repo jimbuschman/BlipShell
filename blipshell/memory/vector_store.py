@@ -35,6 +35,7 @@ MEMORIES_COLLECTION = "memories"
 CORE_MEMORIES_COLLECTION = "core_memories"
 LESSONS_COLLECTION = "lessons"
 ENTITIES_COLLECTION = "entities"
+REFLECTIONS_COLLECTION = "reflections"
 
 # Map collection names to vec0 table names
 _VEC_TABLES = {
@@ -42,6 +43,7 @@ _VEC_TABLES = {
     CORE_MEMORIES_COLLECTION: "vec_core_memories",
     LESSONS_COLLECTION: "vec_lessons",
     ENTITIES_COLLECTION: "vec_entities",
+    REFLECTIONS_COLLECTION: "vec_reflections",
 }
 
 # Map collection names to source tables and their text/metadata columns
@@ -70,6 +72,13 @@ _SOURCE_TABLES = {
         "text_col": "name",
         "meta_cols": ["entity_type"],
         "active_filter": None,
+    },
+    REFLECTIONS_COLLECTION: {
+        "table": "session_reflections",
+        "text_col": "reflection_text",
+        "meta_cols": ["session_id"],
+        # Skipped-session placeholders carry no insight — don't embed them.
+        "active_filter": "(effectiveness IS NULL OR effectiveness != 'skipped')",
     },
 }
 
@@ -179,6 +188,44 @@ class VectorStore:
                 f")"
             )
         self._conn.commit()
+
+        # One-time repair (2026-08): reflection embeddings used to be written
+        # into vec_lessons at rowid = reflection_id + 100000. Lesson search
+        # enriches by joining the lessons table, so those rows could never be
+        # returned — embedded, paid for, and invisible. Move them to
+        # vec_reflections under their real reflection id.
+        try:
+            stranded = self._conn.execute(
+                "SELECT rowid, embedding FROM vec_lessons WHERE rowid > 100000"
+            ).fetchall()
+            if stranded:
+                moved = 0
+                for rowid, blob in stranded:
+                    reflection_id = rowid - 100000
+                    exists = self._conn.execute(
+                        "SELECT 1 FROM session_reflections WHERE id = ?",
+                        [reflection_id],
+                    ).fetchone()
+                    if exists:
+                        self._conn.execute(
+                            "DELETE FROM vec_reflections WHERE rowid = ?",
+                            [reflection_id],
+                        )
+                        self._conn.execute(
+                            "INSERT INTO vec_reflections(rowid, embedding) VALUES (?, ?)",
+                            [reflection_id, blob],
+                        )
+                        moved += 1
+                    self._conn.execute(
+                        "DELETE FROM vec_lessons WHERE rowid = ?", [rowid]
+                    )
+                self._conn.commit()
+                logger.info(
+                    "Migrated %d stranded reflection vectors out of vec_lessons "
+                    "(%d orphans dropped)", moved, len(stranded) - moved,
+                )
+        except Exception as e:
+            logger.warning("Reflection-vector migration failed (will retry next start): %s", e)
 
         # Initialize Ollama client (lazy — may not be available on dev machines)
         try:
@@ -353,6 +400,27 @@ class VectorStore:
             self._conn.commit()
 
     @_ollama_gated
+    def add_reflection(self, reflection_id: int, text: str, metadata: Optional[dict] = None):
+        """Add or update a session-reflection embedding.
+
+        Keyed by the real session_reflections id — reflections have their own
+        vec table (they used to be offset into vec_lessons, which made them
+        unretrievable; see the migration in initialize()).
+        """
+        self._require_open()
+        vec = self._embed(text)
+        blob = _serialize_f32(vec)
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM vec_reflections WHERE rowid = ?", [reflection_id]
+            )
+            self._conn.execute(
+                "INSERT INTO vec_reflections(rowid, embedding) VALUES (?, ?)",
+                [reflection_id, blob],
+            )
+            self._conn.commit()
+
+    @_ollama_gated
     def upsert_entity(self, entity_id: int, name: str, entity_type: str = "concept"):
         """Add or update an entity embedding."""
         self._require_open()
@@ -430,10 +498,13 @@ class VectorStore:
         dist_map = {r[0]: r[1] for r in rows}
 
         with self._lock:
+            # is_archived filter: archived memories are supposed to lose their
+            # vector, but that delete can fail (lock contention) and the orphan
+            # sweep only runs nightly — this filter is the backstop.
             placeholders = ",".join("?" * len(row_ids))
             enriched = self._conn.execute(
                 f"SELECT id, summary, session_id, role FROM memories "
-                f"WHERE id IN ({placeholders})",
+                f"WHERE id IN ({placeholders}) AND is_archived = 0",
                 row_ids,
             ).fetchall()
 
@@ -540,6 +611,59 @@ class VectorStore:
                 "id": lesson_id,
                 "document": content or "",
                 "similarity": 1.0 - dist_map[lesson_id],
+                "metadata": meta,
+            })
+
+        results.sort(key=lambda r: r["similarity"], reverse=True)
+        return results
+
+    def search_reflections(self, query: str, n_results: int = 10) -> list[dict]:
+        """Search session reflections by semantic similarity.
+
+        Returns the same {id, document, similarity, metadata} shape as
+        search_lessons; metadata carries source="reflection" plus the
+        session's project when one is set.
+        """
+        self._require_open()
+        vec = self._embed(query)
+        blob = _serialize_f32(vec)
+
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT rowid, distance FROM vec_reflections "
+                "WHERE embedding MATCH ? AND k = ? "
+                "ORDER BY distance",
+                [blob, n_results],
+            ).fetchall()
+
+        if not rows:
+            return []
+
+        row_ids = [r[0] for r in rows]
+        dist_map = {r[0]: r[1] for r in rows}
+
+        with self._lock:
+            placeholders = ",".join("?" * len(row_ids))
+            enriched = self._conn.execute(
+                f"SELECT r.id, r.reflection_text, s.project "
+                f"FROM session_reflections r "
+                f"LEFT JOIN sessions s ON s.id = r.session_id "
+                f"WHERE r.id IN ({placeholders})",
+                row_ids,
+            ).fetchall()
+
+        results = []
+        for row in enriched:
+            reflection_id, text, project = row
+            if reflection_id not in dist_map:
+                continue
+            meta = {"source": "reflection"}
+            if project:
+                meta["project"] = project
+            results.append({
+                "id": reflection_id,
+                "document": text or "",
+                "similarity": 1.0 - dist_map[reflection_id],
                 "metadata": meta,
             })
 

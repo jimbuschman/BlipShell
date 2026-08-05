@@ -232,10 +232,18 @@ class MemorySearch:
             fts_id = fr["id"]
             rrf_scores[fts_id] = rrf_scores.get(fts_id, 0.0) + 1.0 / (rrf_k + rank_pos)
 
-        # Merge FTS-only hits — keyword match gets baseline similarity so they
-        # can compete on other scoring signals (importance, recency, tags).
-        # FTS hits are flagged so they bypass the similarity threshold filter —
-        # a keyword match is a strong signal regardless of embedding distance.
+        # Merge FTS hits — keyword match is a strong signal regardless of
+        # embedding distance, so EVERY fts id is flagged to bypass the
+        # similarity threshold filter. That includes ids the vector search
+        # also returned with low similarity: without the flag there, the
+        # protection vanished exactly when embeddings disagreed with the
+        # keyword match, which is the case it exists for.
+        fts_ids = {fr["id"] for fr in fts_results}
+        for cr in chroma_results:
+            if cr["id"] in fts_ids:
+                cr["fts_match"] = True
+        # FTS-only hits get baseline similarity so they can compete on the
+        # other scoring signals (importance, recency, tags).
         chroma_ids = {cr["id"] for cr in chroma_results}
         for fr in fts_results:
             if fr["id"] not in chroma_ids:
@@ -280,6 +288,11 @@ class MemorySearch:
             # Load full memory from batch
             memory = memories_batch.get(memory_id)
             if not memory:
+                continue
+
+            # Never surface archived memories, whatever path produced the
+            # candidate (stale vector, FTS row the triggers can't clear, ...).
+            if memory.is_archived:
                 continue
 
             # Filter by importance (replaces rank filter — continuous, better at scale)
@@ -723,14 +736,29 @@ class MemorySearch:
         results = await loop.run_in_executor(
             None, functools.partial(self.vectors.search_lessons, query, n_results),
         )
+        # Session reflections search alongside lessons (pre-sqlite-vec they
+        # shared one collection; the migration split them, and reflections
+        # were silently dropped from this path until 2026-08).
+        reflections = await loop.run_in_executor(
+            None, functools.partial(self.vectors.search_reflections, query, n_results),
+        )
+        results = list(results) + list(reflections)
+
         if active_project and results:
             for r in results:
                 meta = r.get("metadata", {})
                 if meta.get("project") == active_project:
                     r["similarity"] = r.get("similarity", 0.0) + self.project_boost
 
-        # Track lesson usage for staleness analysis
-        lesson_ids = [r["id"] for r in results if r.get("id")]
+        results.sort(key=lambda r: r.get("similarity", 0.0), reverse=True)
+        results = results[:n_results]
+
+        # Track lesson usage for staleness analysis. Reflection ids live in a
+        # different table — never count them as lesson hits.
+        lesson_ids = [
+            r["id"] for r in results
+            if r.get("id") and r.get("metadata", {}).get("source") != "reflection"
+        ]
         if lesson_ids:
             try:
                 await self.sqlite.increment_lesson_hits(lesson_ids)

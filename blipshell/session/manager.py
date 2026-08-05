@@ -193,9 +193,8 @@ class SessionManager:
         """Dump undumped messages to persistent memory.
 
         Port of MemoryDB.DumpConversationToMemory().
-        Uses per-message timeouts so a single slow LLM call doesn't block
-        the entire batch. Messages that timeout are skipped (not marked as
-        dumped) so they can be retried next time.
+        No timeouts by design (see the class-level note): a failed message is
+        skipped (not marked as dumped) so it can be retried next time.
         """
         if self._currently_saving or not self.session_id:
             return
@@ -204,6 +203,11 @@ class SessionManager:
         dumped_count = 0
         skipped_count = 0
         try:
+            # The raw-persist tasks must land first: process_message with
+            # memory_id=None creates a SECOND row for a message whose raw
+            # persist is still in flight (duplicate memory, seen when project
+            # activation dumps mid-turn).
+            await self.flush_pending_persists()
             undumped = [
                 (i, msg) for i, msg in enumerate(self._messages)
                 if i not in self._dumped_indices
