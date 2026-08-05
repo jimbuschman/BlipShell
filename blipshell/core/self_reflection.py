@@ -153,6 +153,10 @@ class SelfThoughtStore:
         for it in items:
             if it["text"] in wanted:
                 it["weight"] = max(it.get("weight", 1.0) * self._fatigue, self._min_weight)
+                # How often a thought has actually reached the prompt. Paired
+                # with echo_count this is the readout that answers "is
+                # resurfacing caring or indexing?" — fatigue vs recurrence.
+                it["surface_count"] = it.get("surface_count", 0) + 1
                 changed = True
         if changed:
             await self._save(items)
@@ -284,6 +288,13 @@ class SelfThoughtStore:
             best["text"] = it["text"]            # the evolved phrasing wins
             best["embedding"] = emb
             best["surfaced"] = bool(best.get("surfaced")) and bool(it.get("surfaced"))
+            # Echoes absorbed, carried across the fold. The RATE of recurrence
+            # is the actual gravity signal, and it used to be computed here and
+            # discarded — leaving /thoughts unable to answer the question that
+            # gates self-gravity step 2.
+            best["echo_count"] = (
+                best.get("echo_count", 0) + it.get("echo_count", 0) + 1
+            )
             merged += 1
         if merged:
             logger.info("Self-thought store: folded %d duplicate thought(s)", merged)
@@ -333,6 +344,7 @@ class SelfThoughtStore:
                 best["text"] = text          # the evolved phrasing wins
                 best["embedding"] = emb
                 best["surfaced"] = False     # an evolved thought is pending again
+                best["echo_count"] = best.get("echo_count", 0) + 1
                 await self._save(items)
                 return
         items.append({
@@ -405,9 +417,11 @@ class SelfThoughtStore:
 
         One row per stored thought, oldest first: text, created_at (ISO or
         None), surfaced flag, stored weight, effective (age-decayed) weight —
-        None when gravity is disabled — and whether the thought has an
-        embedding (without one it can never resurface via relevance).
-        Never mutates the store.
+        None when gravity is disabled — whether the thought has an embedding
+        (without one it can never resurface via relevance), and the two
+        counters that make gravity legible: echo_count (times this thought
+        recurred, the reinforcement channel) and surface_count (times it
+        reached the prompt, the fatigue channel). Never mutates the store.
         """
         now = self._now()
         rows = []
@@ -422,6 +436,8 @@ class SelfThoughtStore:
                     if self._gravity_enabled else None
                 ),
                 "has_embedding": bool(it.get("embedding")),
+                "echo_count": it.get("echo_count", 0),
+                "surface_count": it.get("surface_count", 0),
             })
         return rows
 

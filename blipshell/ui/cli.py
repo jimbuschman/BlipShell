@@ -1109,9 +1109,16 @@ async def _print_thoughts(agent: Agent):
     table.add_column("Age", style="dim", width=5)
     table.add_column("Status", width=9)
     table.add_column("Weight", justify="right", width=12)
+    # The two gravity channels, side by side. Echoes reinforce, surfacings
+    # fatigue — seeing the ratio is the whole point of the readout: a thought
+    # with echoes is one it returns to on its own; one with only surfacings is
+    # just being indexed well.
+    table.add_column("Echo", justify="right", width=4)
+    table.add_column("Surf", justify="right", width=4)
     table.add_column("Thought")
 
     no_embedding = 0
+    total_echoes = 0
     for i, r in enumerate(rows, 1):
         age = _fmt_age(r["created_at"])
         status = "[dim]surfaced[/dim]" if r["surfaced"] else "[yellow]pending[/yellow]"
@@ -1120,13 +1127,18 @@ async def _print_thoughts(agent: Agent):
             weight = "—"
         else:
             weight = f"{r['weight']:.2f} → {eff:.2f}"
+        echoes = r.get("echo_count", 0)
+        total_echoes += echoes
+        echo_cell = f"[magenta]{echoes}[/magenta]" if echoes else "[dim]0[/dim]"
+        surfs = r.get("surface_count", 0)
+        surf_cell = str(surfs) if surfs else "[dim]0[/dim]"
         text = r["text"][:90] + ("..." if len(r["text"]) > 90 else "")
         if eff is not None and eff >= marker_w:
             text = f"[bold]{text}[/bold] [magenta]· recurring[/magenta]"
         if not r["has_embedding"]:
             no_embedding += 1
             text += " [red](no embedding — can't resurface)[/red]"
-        table.add_row(str(i), age, status, weight, text)
+        table.add_row(str(i), age, status, weight, echo_cell, surf_cell, text)
     console.print(table)
 
     if gravity_on:
@@ -1134,6 +1146,17 @@ async def _print_thoughts(agent: Agent):
                       "reinforces, surfacing fatigues. A thought marked "
                       "'recurring' keeps coming back on its own — that's the "
                       "gravity signal.[/dim]")
+        console.print(
+            f"[dim]Echo = times a thought recurred (reinforcement); "
+            f"Surf = times it reached the prompt (fatigue). "
+            f"{total_echoes} echo(es) across {len(rows)} thought(s).[/dim]"
+        )
+        if not total_echoes:
+            console.print(
+                "[dim yellow]No echoes recorded yet — nothing has recurred, so "
+                "gravity is only decaying. Re-read this after ≥10 NEW thoughts "
+                "before judging the layer.[/dim yellow]"
+            )
     if no_embedding:
         console.print(f"[dim yellow]{no_embedding} thought(s) lack embeddings and "
                       "will be backfilled on next relevance check.[/dim yellow]")

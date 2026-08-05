@@ -129,6 +129,9 @@ class Agent(
         self._reflection_task = None
         # Thoughts that resurfaced via relevance this turn (dedup vs the greeting).
         self._relevance_injected_thoughts: set = set()
+        # pool_text -> thought text, for thoughts queued into Recall this turn
+        # but not yet charged fatigue (charged at render, see agent_chat).
+        self._pending_thought_fatigue: dict = {}
 
         self._health_check_task: Optional[asyncio.Task] = None
         self._nightly_scheduler_task: Optional[asyncio.Task] = None

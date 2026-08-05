@@ -506,6 +506,12 @@ class ChatMixin:
         # Build message list
         messages = self._build_messages(user_message)
 
+        # Only now has a self-thought actually reached the prompt — charge its
+        # surfacing fatigue (a budget-evicted thought pays nothing).
+        await self._charge_surfaced_thought_fatigue(
+            getattr(self, "_last_rendered_pool_texts", set())
+        )
+
         # Mood awareness: let BlipShell know how it feels so its tone matches its
         # face. Tone only — never affects helpfulness/accuracy (see builder).
         mood_text = self._mood_awareness_text()
@@ -779,6 +785,10 @@ class ChatMixin:
         # Reset per-turn: which self-thoughts surfaced via relevance, so the
         # one-shot return greeting can avoid double-surfacing the same thought.
         self._relevance_injected_thoughts = set()
+        # Thoughts queued this turn but not yet charged fatigue. Cleared here
+        # so a turn that never reaches _build_messages (error, cancel) doesn't
+        # leak a charge into the next one.
+        self._pending_thought_fatigue = {}
 
         def _time_label(ts) -> str:
             return format_relative_time(ts, now)
@@ -935,18 +945,52 @@ class ChatMixin:
             marker = "[Thought]"
             if gravity_on and weights.get(text, 1.0) >= getattr(cfg, "gravity_marker_weight", 1.5):
                 marker = "[Thought · recurring]"
+            pool_text = f"{marker} {text}"
             self.memory_manager.add_memory("Recall", PoolItem(
-                text=f"{marker} {text}",
+                text=pool_text,
                 session_role="system",
                 priority_score=score,
             ))
+            # Fatigue is charged later, only if this survives the budget (see
+            # _charge_surfaced_thought_fatigue). Entering the Recall QUEUE is
+            # not the same as reaching the model: Recall is a 40%-of-budget
+            # pool and a thought competes there against memories whose
+            # boosted_score routinely exceeds 1.0, so a thought could be
+            # evicted before the model ever saw it and still pay x0.6.
+            self._pending_thought_fatigue[pool_text] = text
             logger.info("Self-thought resurfaced (cosine %.2f, weight %.2f): %s",
                         score, weights.get(text, 1.0), text[:100])
 
-        # Surfacing into context fatigues the thought (anti-spiral): injecting it
-        # is the event that decays its weight, so it can't dominate every turn.
-        if gravity_on and matches:
-            await store.apply_fatigue([t for t, _ in matches])
+    async def _charge_surfaced_thought_fatigue(self, gathered_texts) -> None:
+        """Fatigue only the thoughts that actually reached the prompt.
+
+        Surfacing is what decays a thought's weight (anti-spiral: the same
+        thought can't dominate turn after turn) — so the charge belongs at
+        the context boundary, where surfacing actually happens.
+        """
+        pending = getattr(self, "_pending_thought_fatigue", None)
+        if not pending:
+            return
+        store = getattr(self, "_self_thoughts", None)
+        cfg = getattr(self.config, "reflection", None)
+        rendered = [
+            thought for pool_text, thought in pending.items()
+            if pool_text in gathered_texts
+        ]
+        dropped = len(pending) - len(rendered)
+        pending.clear()
+        if dropped:
+            logger.info(
+                "%d self-thought(s) budget-evicted before rendering — not fatigued", dropped,
+            )
+        if not rendered or store is None or cfg is None:
+            return
+        if not getattr(cfg, "gravity_enabled", False):
+            return
+        try:
+            await store.apply_fatigue(rendered)
+        except Exception as e:
+            logger.warning("Self-thought fatigue update failed: %s", e)
 
     def _build_capability_block(self) -> str:
         """Derived per-turn capability block — generated from live config/model
@@ -1009,6 +1053,11 @@ class ChatMixin:
         memory_items = self.memory_manager.gather_memory(
             token_budget=available, pool_budgets=pool_budgets,
         )
+
+        # Record what actually survived the budget so the caller can charge
+        # self-thought fatigue at the real render boundary (_build_messages is
+        # sync; the charge is an async store write).
+        self._last_rendered_pool_texts = {i.text for i in memory_items}
 
         # Build memory context string organized by pool.
         # Order: Core (stable facts) → Recall (most relevant search results) first.

@@ -532,3 +532,69 @@ class TestWeightEviction:
 
         texts = [it["text"] for it in _raw(meta)]
         assert texts == ["t1", "t2", "t3"]   # oldest dropped, weight ignored
+
+
+# --- metering: fatigue at render, and the two visible counters -------------
+
+class TestEchoAndSurfaceCounters:
+    """The RATE of recurrence is the gravity signal, and it was computed at
+    fold time then discarded — leaving /thoughts unable to answer the question
+    that gates step 2 (deep-dive 2026-08-04)."""
+
+    async def test_echo_increments_on_recurrence(self):
+        meta = FakeMeta()
+        s = _store(meta)
+        await s.add("a thought")
+        assert _raw(meta)[0].get("echo_count", 0) == 0
+        await s.add("echo of a thought")          # identical vector -> echo
+        assert _raw(meta)[0]["echo_count"] == 1
+
+    async def test_echo_count_survives_folding(self):
+        """A duplicate that escaped write-time folding carries its echoes
+        across the repair rather than losing them."""
+        meta = FakeMeta()
+        s = _store(meta)
+        await s.add("a thought")
+        # Two rows with the same vector, each already carrying an echo
+        items = _raw(meta)
+        dup = dict(items[0])
+        dup["echo_count"] = 2
+        items[0]["echo_count"] = 1
+        items.append(dup)
+        meta.data[SelfThoughtStore.KEY] = json.dumps(items)
+
+        await s.add("another thought")   # triggers _fold_duplicates
+
+        folded = [i for i in _raw(meta) if i["text"] == "a thought"]
+        assert len(folded) == 1
+        # 1 + 2 carried + 1 for the fold itself
+        assert folded[0]["echo_count"] == 4
+
+    async def test_surface_count_increments_on_fatigue(self):
+        meta = FakeMeta()
+        s = _store(meta)
+        await s.add("a thought")
+        await s.apply_fatigue(["a thought"])
+        await s.apply_fatigue(["a thought"])
+        assert _raw(meta)[0]["surface_count"] == 2
+
+    async def test_snapshot_exposes_both_counters(self):
+        meta = FakeMeta()
+        s = _store(meta)
+        await s.add("a thought")
+        await s.add("echo of a thought")
+        await s.apply_fatigue(["echo of a thought"])
+        row = (await s.snapshot())[0]
+        assert row["echo_count"] == 1
+        assert row["surface_count"] == 1
+
+    async def test_counters_default_to_zero_for_legacy_rows(self):
+        """Thoughts written before these counters existed must not KeyError."""
+        meta = FakeMeta()
+        meta.data[SelfThoughtStore.KEY] = json.dumps(
+            [{"text": "old thought", "surfaced": True, "weight": 1.0}]
+        )
+        s = _store(meta)
+        row = (await s.snapshot())[0]
+        assert row["echo_count"] == 0
+        assert row["surface_count"] == 0
