@@ -133,7 +133,6 @@ def config():
         system_prompt_reserve=256,
         overflow_batch_size=2,
         recall_search_limit=20,
-        min_rank_threshold=1,
         similarity_threshold=0.35,
         importance_boost_weight=0.2,
         search_overfetch_multiplier=2,

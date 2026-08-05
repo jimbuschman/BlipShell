@@ -25,7 +25,6 @@ def memory_config():
         system_prompt_reserve=256,
         overflow_batch_size=2,
         recall_search_limit=10,
-        min_rank_threshold=3,
         similarity_threshold=0.5,
         importance_boost_weight=0.2,
         search_overfetch_multiplier=2,

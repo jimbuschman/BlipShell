@@ -110,52 +110,6 @@ class SessionMixin:
             loaded += 1
         logger.info("Loaded %d/%d lessons (top by importance)", loaded, len(lessons))
 
-    async def _auto_prune_memories(self):
-        """Prune old low-value memories on startup (disabled when auto_prune_days=0)."""
-        cfg = self.config.memory
-        if cfg.auto_prune_days <= 0:
-            return
-        try:
-            # Get IDs before archiving (for ChromaDB cleanup)
-            ids_to_archive = await self.sqlite.get_archived_memory_ids(
-                days_old=cfg.auto_prune_days,
-                max_importance=cfg.prune_max_importance,
-                max_rank=cfg.prune_max_rank,
-            )
-            # Archive in SQLite
-            count = await self.sqlite.archive_old_memories(
-                days_old=cfg.auto_prune_days,
-                max_importance=cfg.prune_max_importance,
-                max_rank=cfg.prune_max_rank,
-            )
-            # Remove from vector store
-            for mid in ids_to_archive:
-                try:
-                    self.vectors.delete_memory(mid)
-                except Exception as e:
-                    logger.warning("Failed to delete memory %d vector: %s", mid, e)
-            if count:
-                logger.info("Auto-pruned %d memories", count)
-        except Exception as e:
-            logger.error("Auto-prune failed: %s", e)
-
-    async def _auto_consolidate_memories(self):
-        """Merge near-duplicate memories on startup (disabled when batch_size=0)."""
-        if self.config.memory.consolidation_batch_size <= 0:
-            return
-        try:
-            consolidator = MemoryConsolidator(
-                self.sqlite, self.vectors, self.config.memory,
-            )
-            stats = await consolidator.consolidate_batch()
-            if stats["merged"] > 0:
-                logger.info(
-                    "Consolidated %d duplicate memories (checked %d)",
-                    stats["merged"], stats["checked"],
-                )
-        except Exception as e:
-            logger.error("Memory consolidation failed: %s", e)
-
     async def _load_discovered_tags(self):
         """Load previously discovered tag patterns into the tagger."""
         try:

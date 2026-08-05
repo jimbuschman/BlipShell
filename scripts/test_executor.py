@@ -17,9 +17,6 @@ Phase 2 config flags (apply to any test mode):
     --no-tool-rules         Disable tool rules engine
     --no-iteration-cap      Remove iteration cap (set to 999)
     --no-auto-nudge         Disable auto-continue/auto-nudge
-    --no-budget-winddown    Disable budget winddown in executor
-    --no-state-block        Disable [STATE] injection in executor
-    --natural-completion    Make task_complete optional (natural completion primary)
     --single-system-msg     Consolidate system messages into one
 """
 
@@ -58,9 +55,6 @@ class TestOverrides:
     """
     no_iteration_cap: bool = False    # Remove iteration cap (set to 999)
     no_auto_nudge: bool = False       # Disable auto-continue/auto-nudge
-    no_budget_winddown: bool = False  # Disable budget winddown in executor
-    no_state_block: bool = False      # Disable [STATE] injection
-    natural_completion: bool = False  # task_complete optional
     single_system_msg: bool = False   # Consolidate system messages
 
     def label(self) -> str:
@@ -81,20 +75,6 @@ class TestOverrides:
                 agent.task_executor.max_tool_iterations = 999
 
         # no_auto_nudge: now controlled by ChatLoop's auto_continue_on_exhaustion config
-
-        if self.no_budget_winddown and agent.task_executor:
-            # Set winddown thresholds above 100% so they never fire
-            # The executor checks: tool_call_count >= int(budget * 0.8)
-            # We'll patch the threshold by setting a flag the executor checks
-            agent.task_executor._disable_winddown = True
-
-        if self.no_state_block and agent.task_executor:
-            # Patch _build_state_block to return empty string
-            agent.task_executor._disable_state_block = True
-
-        if self.natural_completion and agent.task_executor:
-            # Flag for executor to treat natural completion as primary
-            agent.task_executor._natural_completion_primary = True
 
 # ---------------------------------------------------------------------------
 # Built-in canned tests
@@ -1719,21 +1699,6 @@ AB_CONFIGS: dict[str, tuple[TestOverrides, TestOverrides]] = {
         TestOverrides(),                          # A: baseline (auto-nudge ON)
         TestOverrides(no_auto_nudge=True),        # B: auto-nudge OFF (CC way)
     ),
-    "tool-rules": (
-        TestOverrides(),                          # A: baseline (rules ON)
-    ),
-    "budget-winddown": (
-        TestOverrides(),                          # A: baseline (winddown ON)
-        TestOverrides(no_budget_winddown=True),   # B: winddown OFF (CC way)
-    ),
-    "state-block": (
-        TestOverrides(),                          # A: baseline ([STATE] ON)
-        TestOverrides(no_state_block=True),       # B: [STATE] OFF (CC way)
-    ),
-    "completion": (
-        TestOverrides(),                          # A: baseline (task_complete required)
-        TestOverrides(natural_completion=True),   # B: natural completion primary (CC way)
-    ),
 }
 
 
@@ -1898,9 +1863,6 @@ def _parse_overrides(args) -> TestOverrides:
     return TestOverrides(
         no_iteration_cap=args.no_iteration_cap,
         no_auto_nudge=args.no_auto_nudge,
-        no_budget_winddown=args.no_budget_winddown,
-        no_state_block=args.no_state_block,
-        natural_completion=args.natural_completion,
         single_system_msg=args.single_system_msg,
     )
 
@@ -1934,12 +1896,6 @@ def main():
                                  help="Remove iteration cap (set to 999)")
     overrides_group.add_argument("--no-auto-nudge", action="store_true",
                                  help="Disable auto-continue/auto-nudge")
-    overrides_group.add_argument("--no-budget-winddown", action="store_true",
-                                 help="Disable budget winddown in executor")
-    overrides_group.add_argument("--no-state-block", action="store_true",
-                                 help="Disable [STATE] injection in executor")
-    overrides_group.add_argument("--natural-completion", action="store_true",
-                                 help="Make task_complete optional (natural completion primary)")
     overrides_group.add_argument("--single-system-msg", action="store_true",
                                  help="Consolidate system messages into one")
 

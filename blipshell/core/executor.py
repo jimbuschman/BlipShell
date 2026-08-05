@@ -221,9 +221,6 @@ class TaskExecutor:
         # Guardrails configuration (set by Agent from config)
         self.guardrails_config: Optional[GuardrailsConfig] = None
         # Phase 2 test override flags (set by TestOverrides.apply() or benchmark configs)
-        self._disable_winddown: bool = False
-        self._disable_state_block: bool = False
-        self._natural_completion_primary: bool = False
         # A/B benchmark overrides for LoopConfig (None = use defaults)
         self._override_enable_dedup: bool | None = None
         self._override_enable_compaction: bool | None = None
@@ -811,48 +808,3 @@ class TaskExecutor:
         return await self.router.generate(
             task_type, prompt, system=UTILITY_SYSTEM_PROMPT,
         )
-
-    def _build_state_block(
-        self,
-        tool_call_count: int,
-        budget: int,
-        tool_call_names: list[str],
-    ) -> str:
-        """Build a structured state block for injection before each LLM turn.
-
-        Gives the model explicit awareness of what's been done, what it has,
-        and how much budget remains — so it doesn't have to re-parse the
-        full conversation history to figure out where it is.
-        """
-        parts = [f"[STATE] Tool calls: {tool_call_count}/{budget}"]
-
-        # Files read (annotate stale files)
-        if self.files_read:
-            files = sorted(self.files_read)
-            annotated = []
-            for f in files:
-                if f in self._stale_files:
-                    annotated.append(f"{f} (STALE — modified, re-read before using)")
-                else:
-                    annotated.append(f)
-            if len(annotated) > 10:
-                shown = annotated[:10]
-                parts.append(f"Files read ({len(files)}): {', '.join(shown)}, ... +{len(files) - 10} more")
-            else:
-                parts.append(f"Files read: {', '.join(annotated)}")
-
-        # Files created/modified
-        if self._step_files_created:
-            parts.append(f"Files created: {', '.join(self._step_files_created)}")
-        if self._step_files_edited:
-            parts.append(f"Files edited: {', '.join(self._step_files_edited)}")
-
-        # Recent actions (last 5 tool calls)
-        if tool_call_names:
-            recent = tool_call_names[-5:]
-            parts.append(f"Recent actions: {' → '.join(recent)}")
-
-        # Reminder
-        parts.append("Do NOT re-read files listed above. When done, call task_complete.")
-
-        return "\n".join(parts)

@@ -27,16 +27,6 @@ def rank_memory(text: str) -> tuple[str, str]:
     return system, user
 
 
-def rephrase_as_memory_style(text: str) -> str:
-    """Prompt to rephrase a query as a declarative memory-style sentence."""
-    return (
-        "Rephrase the question as a direct, factual sentence someone might have said "
-        "in a conversation. Avoid emotional or poetic language. Be concise and declarative.\n\n"
-        f"Question: {text}\n"
-        "Declarative:"
-    )
-
-
 def summarize_memory(text: str) -> tuple[str, str]:
     """Prompt for summarizing a memory.
 
@@ -99,15 +89,6 @@ def generate_session_title(text: str) -> str:
         "Generate a concise title for this conversation, 1 sentence or less. "
         "Respond with only the title.\n\n"
         f"Conversation: {text}"
-    )
-
-
-def generate_memory_name(text: str) -> str:
-    """Prompt for generating a short memory name."""
-    return (
-        "Generate a concise name for this memory using 2-3 words. "
-        "Respond with only the name.\n\n"
-        f"Memory: {text}"
     )
 
 
@@ -337,29 +318,6 @@ def extract_lesson(text: str) -> tuple[str, str]:
     )
     user = f"Extract lessons from this conversation:\n\n{text}"
     return system, user
-
-
-def summarize_file(text: str) -> str:
-    """Prompt for summarizing a file's contents."""
-    return (
-        "Summarize the following file in 2-3 concise, factual sentences. "
-        "Avoid lists or multiple versions. Focus on core details.\n\n"
-        f"File: {text}"
-    )
-
-
-def classify_task_type(text: str) -> str:
-    """Prompt for classifying what type of task a user message represents."""
-    return (
-        "Classify the following user message into exactly one task type. "
-        "Respond with ONLY the task type, nothing else.\n\n"
-        "Task types:\n"
-        "- reasoning: General conversation, analysis, questions\n"
-        "- coding: Code generation, debugging, programming tasks\n"
-        "- summarization: Summarizing text or conversations\n"
-        "- tool_calling: Requests that need tool/function execution\n\n"
-        f"Message: {text}"
-    )
 
 
 def generate_plan(user_request: str, conversation_context: str = "") -> str:

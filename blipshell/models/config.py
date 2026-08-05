@@ -91,23 +91,6 @@ class MemoryPoolsConfig(BaseModel):
             self.lessons.max_items = 30
 
 
-class DecayRatesConfig(BaseModel):
-    """Per-memory-type temporal decay rates.
-
-    Decay formula: score *= exp(-decay_rate * hours_age)
-    Lower rate = slower decay = longer half-life.
-    """
-    fact: float = 0.0002       # ~50% after 144 days
-    preference: float = 0.0003  # ~50% after 96 days
-    skill: float = 0.0001      # ~50% after 289 days
-    event: float = 0.002       # ~50% after 14 days
-    conversation: float = 0.001  # ~50% after 29 days (current default)
-
-    def get(self, memory_type: str) -> float:
-        """Get decay rate for a memory type, falling back to conversation rate."""
-        return getattr(self, memory_type, self.conversation)
-
-
 class DedupConfig(BaseModel):
     """Memory deduplication configuration."""
     enabled: bool = True
@@ -129,7 +112,6 @@ class MemoryConfig(BaseModel):
     system_prompt_reserve: int = 2048
     overflow_batch_size: int = 4
     recall_search_limit: int = 20
-    min_rank_threshold: int = 3
     importance_recency_bonus: float = 0.1
     importance_tag_bonus: float = 0.05
     similarity_threshold: float = 0.35  # industry standard for semantic search (was 0.5, too strict at scale)
@@ -139,7 +121,6 @@ class MemoryConfig(BaseModel):
     tag_overlap_boost: float = 0.1
     search_overfetch_multiplier: int = 2
     decay_rate: float = 0.001  # temporal decay rate (~50% after 29 days) — global fallback
-    decay_rates: DecayRatesConfig = DecayRatesConfig()
 
     fts_weight: float = 0.3  # weight for FTS5 RRF boost in hybrid search
     auto_prune_days: int = 0  # 0 = disabled; was 90 but archived 1083 imported memories
@@ -174,8 +155,6 @@ class MemoryConfig(BaseModel):
     fadem_base_rate: float = 0.001  # base decay rate (~29 day half-life, modulated by importance)
     fadem_importance_factor: float = 2.0  # how much importance slows decay (higher = slower for imp=1.0)
     fadem_access_hours: float = 24.0  # hours subtracted per access_count (strengthening)
-    score_floor_ratio: float = 0.6  # results must be within this ratio of top score
-    min_score_floor: float = 0.4  # absolute minimum boosted_score to keep
     dedup_jaccard_threshold: float = 0.65  # Jaccard similarity to consider summaries duplicate
     project_session_limit: int = 50  # max recent project sessions for two-pass search
     centroid_tag_similarity: float = 0.75  # cosine similarity threshold for centroid tag assignment
@@ -312,7 +291,6 @@ class PlannerConfig(BaseModel):
 class PIIConfig(BaseModel):
     """PII sanitization configuration."""
     enabled: bool = True  # sanitize PII before cloud calls
-    cloud_only: bool = True  # only sanitize for cloud (openai) endpoints
 
 
 class RoboticsConfig(BaseModel):

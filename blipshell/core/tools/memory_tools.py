@@ -202,27 +202,3 @@ class PromoteToCoreMemoryTool(Tool):
         )
 
 
-class GetSessionSummaryTool(Tool):
-    read_only = True
-
-    def __init__(self, sqlite: SQLiteStore):
-        self.sqlite = sqlite
-
-    def definition(self) -> ToolDefinition:
-        return ToolDefinition(
-            name="get_session_summary",
-            description="Get the detailed summary of a specific conversation session.",
-            parameters=[
-                ToolParameter(name="session_id", type=ToolParameterType.INTEGER,
-                              description="The session ID to get the summary for"),
-            ],
-        )
-
-    async def execute(self, session_id: int, **kwargs) -> str:
-        session = await self.sqlite.get_session(session_id)
-        if not session:
-            return f"Session {session_id} not found."
-
-        title = session.title or "Untitled"
-        summary = session.summary or "No summary available."
-        return f"Session #{session.id}: {title}\nProject: {session.project or 'None'}\n\n{summary}"

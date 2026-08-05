@@ -61,7 +61,6 @@ class MemorySearch:
         vectors: VectorStore,
         router: LLMRouter,
         config: MemoryConfig | None = None,
-        min_rank: int = 3,
         search_limit: int = 20,
         ollama_url: str = "http://localhost:11434",
     ):
@@ -70,14 +69,12 @@ class MemorySearch:
         self.router = router
         # Use config values if provided, else fall back to explicit params
         if config:
-            self.min_rank = config.min_rank_threshold
             self.search_limit = config.recall_search_limit
             self.similarity_threshold = config.similarity_threshold
             self.importance_boost_weight = config.importance_boost_weight
             self.search_overfetch_multiplier = config.search_overfetch_multiplier
             self.tag_overlap_boost = config.tag_overlap_boost
             self.decay_rate = config.decay_rate
-            self.decay_rates = config.decay_rates
             self.fts_weight = config.fts_weight
             self.entity_boost = config.entity_boost
             self.project_boost = getattr(config, "project_boost", 0.15)
@@ -97,15 +94,12 @@ class MemorySearch:
             self.reranker_weight = getattr(config, "reranker_weight", 0.4)
             self.reranker_instruction = getattr(config, "reranker_instruction", "")
         else:
-            self.min_rank = min_rank
             self.search_limit = search_limit
             self.similarity_threshold = 0.5
             self.importance_boost_weight = 0.2
             self.search_overfetch_multiplier = 2
             self.tag_overlap_boost = 0.1
             self.decay_rate = 0.001
-            from blipshell.models.config import DecayRatesConfig
-            self.decay_rates = DecayRatesConfig()
             self.fts_weight = 0.3
             self.entity_boost = 0.15
             self.project_boost = 0.15

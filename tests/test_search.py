@@ -14,7 +14,6 @@ def search_config():
         similarity_threshold=0.5,
         importance_boost_weight=0.2,
         search_overfetch_multiplier=2,
-        min_rank_threshold=3,
         recall_search_limit=10,
     )
 
@@ -136,4 +135,4 @@ class TestMemorySearch:
         assert ms.similarity_threshold == 0.5
         assert ms.importance_boost_weight == 0.2
         assert ms.search_overfetch_multiplier == 2
-        assert ms.min_rank == 3
+        assert ms.min_importance == search_config.min_importance

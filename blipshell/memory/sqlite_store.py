@@ -206,19 +206,6 @@ CREATE TABLE IF NOT EXISTS app_metadata (
     value TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS chroma_retry_queue (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    operation TEXT NOT NULL,           -- 'upsert' or 'delete'
-    collection TEXT NOT NULL,          -- 'memories', 'core_memories', 'lessons', 'entities'
-    item_id INTEGER NOT NULL,
-    document TEXT,                     -- text to embed (for upserts)
-    metadata_json TEXT,                -- JSON metadata (for upserts)
-    error TEXT,                        -- last error message
-    retry_count INTEGER DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(operation, collection, item_id)
-);
-
 CREATE TABLE IF NOT EXISTS entities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

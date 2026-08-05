@@ -390,21 +390,6 @@ class Agent(
         self._initialized = True
         logger.info("Agent initialized")
 
-    async def _backfill_missing_vectors(self, _status):
-        """Backfill any memories/lessons/entities missing vectors.
-
-        Replaces the old ChromaDB repair + retry queue system.
-        With sqlite-vec, missing vectors are detected by LEFT JOIN.
-        """
-        try:
-            for collection in ("core_memories", "lessons", "memories", "entities"):
-                stats = self.vectors.backfill_missing_vectors(collection, limit=200)
-                if stats.get("succeeded", 0) > 0:
-                    _status(f"Backfilled {stats['succeeded']} {collection} vectors")
-                    logger.info("Vector backfill %s: %s", collection, stats)
-        except Exception as e:
-            logger.warning("Vector backfill error (non-fatal): %s", e)
-
     async def _maybe_auto_backup(self):
         """Auto-backup if more than 24 hours since last backup.
 

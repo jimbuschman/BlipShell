@@ -1330,20 +1330,10 @@ SYSTEM_CONFIGS = {
         "use_minimal_prompt": True,
         "enable_dedup": False,
         "enable_compaction": False,
-        "disable_state_block": True,
-        "disable_winddown": True,
-    },
-    "no_state": {
-        "description": "No [STATE] block injection — can the model track its own state?",
-        "disable_state_block": True,
     },
     "no_dedup": {
         "description": "No dedup — does the model waste calls re-reading files?",
         "enable_dedup": False,
-    },
-    "no_winddown": {
-        "description": "No budget wind-down message — does the model run out gracefully?",
-        "disable_winddown": True,
     },
     "guardrails": {
         "description": "Full + guardrails (trajectory monitor + completion audit)",
@@ -1351,8 +1341,6 @@ SYSTEM_CONFIGS = {
     },
     "no_scaffolding": {
         "description": "No state block, no wind-down, no compaction — just dedup and prompt",
-        "disable_state_block": True,
-        "disable_winddown": True,
         "enable_compaction": False,
     },
     "stale_detection": {
@@ -2168,10 +2156,6 @@ async def run_task(
         executor.project_context = ""  # Already baked into system_prompt
 
         # Apply A/B system config overrides to executor
-        if sc.get("disable_state_block"):
-            executor._disable_state_block = True
-        if sc.get("disable_winddown"):
-            executor._disable_winddown = True
         if "enable_dedup" in sc:
             executor._override_enable_dedup = sc["enable_dedup"]
         if "enable_compaction" in sc:

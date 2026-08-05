@@ -5,7 +5,6 @@ from math import exp
 import pytest
 
 from blipshell.memory.processor import MemoryProcessor
-from blipshell.models.config import DecayRatesConfig
 
 
 # --- Classification parser (Feature 1) ---
@@ -179,87 +178,3 @@ class TestParseMemoryAction:
         action, idx = MemoryProcessor._parse_memory_action("UPDATE")
         assert action == "UPDATE"
         assert idx == 0
-
-
-# --- Decay math (Feature 2) ---
-
-
-class TestDecayRates:
-    """Tests for per-type decay rates and the decay formula."""
-
-    def test_default_rates(self):
-        config = DecayRatesConfig()
-        assert config.fact == 0.0002
-        assert config.event == 0.002
-        assert config.preference == 0.0003
-        assert config.skill == 0.0001
-        assert config.conversation == 0.001
-
-    def test_get_known_type(self):
-        config = DecayRatesConfig()
-        assert config.get("fact") == 0.0002
-        assert config.get("event") == 0.002
-        assert config.get("preference") == 0.0003
-
-    def test_get_unknown_type_falls_back(self):
-        config = DecayRatesConfig()
-        assert config.get("unknown") == config.conversation
-
-    def test_fact_decays_slower_than_event(self):
-        """Facts should retain more score than events at the same age."""
-        config = DecayRatesConfig()
-        hours_30_days = 30 * 24  # 720 hours
-
-        fact_factor = exp(-config.fact * hours_30_days)
-        event_factor = exp(-config.event * hours_30_days)
-
-        assert fact_factor > event_factor
-        # Fact should still have >85% after 30 days
-        assert fact_factor > 0.85
-        # Event should be heavily decayed after 30 days
-        assert event_factor < 0.25
-
-    def test_skill_decays_slowest(self):
-        """Skills should have the slowest decay."""
-        config = DecayRatesConfig()
-        hours_90_days = 90 * 24
-
-        skill_factor = exp(-config.skill * hours_90_days)
-        fact_factor = exp(-config.fact * hours_90_days)
-        pref_factor = exp(-config.preference * hours_90_days)
-
-        assert skill_factor > fact_factor > pref_factor
-
-    def test_half_life_fact(self):
-        """Fact decay rate should give ~50% at ~144 days."""
-        config = DecayRatesConfig()
-        hours_144_days = 144 * 24
-        factor = exp(-config.fact * hours_144_days)
-        assert 0.45 < factor < 0.55  # roughly 50%
-
-    def test_half_life_event(self):
-        """Event decay rate should give ~50% at ~14 days."""
-        config = DecayRatesConfig()
-        hours_14_days = 14 * 24
-        factor = exp(-config.event * hours_14_days)
-        assert 0.45 < factor < 0.55
-
-    def test_half_life_conversation(self):
-        """Conversation decay rate should give ~50% at ~29 days."""
-        config = DecayRatesConfig()
-        hours_29_days = 29 * 24
-        factor = exp(-config.conversation * hours_29_days)
-        assert 0.45 < factor < 0.55
-
-    def test_custom_rates(self):
-        """Custom rates should override defaults."""
-        config = DecayRatesConfig(fact=0.001, event=0.01)
-        assert config.get("fact") == 0.001
-        assert config.get("event") == 0.01
-
-    def test_zero_age_full_score(self):
-        """At zero age, all types should have factor ~1.0."""
-        config = DecayRatesConfig()
-        for mtype in ("fact", "event", "preference", "skill", "conversation"):
-            factor = exp(-config.get(mtype) * 0)
-            assert factor == 1.0

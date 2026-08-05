@@ -142,13 +142,6 @@ memory:
   importance_boost_weight: 0.2
   tag_overlap_boost: 0.1
   search_overfetch_multiplier: 2
-  decay_rates:
-    fact: 0.0002          # ~50% after 144 days — stable facts persist
-    preference: 0.0003    # ~50% after 96 days — preferences evolve slowly
-    skill: 0.0001         # ~50% after 289 days — skills are durable
-    event: 0.002          # ~50% after 14 days — events become stale fast
-    conversation: 0.001   # ~50% after 29 days — default for unclassified
-
   dedup:
     enabled: true
     similarity_threshold: 0.7  # min cosine similarity to consider as duplicate candidate
@@ -159,8 +152,6 @@ memory:
     llm_arbitration_threshold: 0.70       # ask LLM between this and auto_merge
     max_candidates: 5
 
-  score_floor_ratio: 0.6        # results must be within 60% of the top score
-  min_score_floor: 0.4          # absolute minimum boosted_score to keep
   dedup_jaccard_threshold: 0.65 # Jaccard similarity to consider summaries duplicate
   project_session_limit: 50     # max recent project sessions for two-pass search
 
@@ -233,9 +224,6 @@ tools:
 # switch is not built yet.
 pii:
   enabled: true        # master switch for both strengths above
-  cloud_only: true     # DEAD — never read. Behavior is hard-coded in
-                       # Endpoint.should_sanitize_pii (endpoints.py), which is
-                       # already cloud-only. Slated for deletion in Phase 2.
 
 noise:
   min_word_count: 3

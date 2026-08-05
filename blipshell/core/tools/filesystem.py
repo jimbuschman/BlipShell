@@ -62,8 +62,6 @@ class ReadFileTool(Tool):
                 "Read the contents of a file. Returns up to 500 lines by default with line numbers.\n"
                 "For large files, a footer shows total lines and how to read the next section.\n\n"
                 "IMPORTANT:\n"
-                "- Check the [STATE] block before calling — if the file is listed in 'Files read', "
-                "it is already in the conversation. Do NOT re-read it.\n"
                 "- For large files, use start_line to continue reading from where you left off.\n"
                 "- Use max_lines to read smaller chunks if you only need a specific section.\n"
                 "- Always read a file BEFORE trying to edit it with edit_file."
