@@ -63,6 +63,12 @@ class SessionManager:
         self._memory_db_ids: dict[int, int] = {}  # message index → memories row ID
         self._pending_persists: list[asyncio.Task] = []  # pending save_raw_memory tasks
         self._currently_saving = False
+        # Sessions already closed. end_session deliberately leaves session_id
+        # intact (callers still read it), so without this a second call would
+        # re-run summarization, lesson extraction and the digest update —
+        # paying for the LLM work twice and duplicating lessons. The web app
+        # and telegram both call end_session more than once.
+        self._ended_sessions: set[int] = set()
 
     async def start_session(
         self, project: Optional[str] = None, resume_session_id: Optional[int] = None
@@ -244,7 +250,7 @@ class SessionManager:
         finally:
             self._currently_saving = False
 
-    async def end_session(self, on_status=None):
+    async def end_session(self, on_status=None) -> dict[str, str]:
         """End the current session: dump remaining messages, generate summary, extract lessons.
 
         No artificial timeouts — each step runs to completion. OllamaGate
@@ -254,60 +260,74 @@ class SessionManager:
         Critical: message_count and a fallback title are saved FIRST so
         that even if LLM calls (summary, lessons) fail, the session is
         still identifiable and recent-session loading works correctly.
+
+        Every step is isolated, so a failure never blocks the rest — but a
+        failure is REPORTED. Previously each step logged and moved on while
+        on_status announced the next one, so a session that produced no
+        summary, no lessons and no digest looked like a clean close
+        (deep-dive 2026-08-04). Returns {step: "ok"|"failed: ..."}.
         """
         if not self.session_id:
-            return
+            return {}
+        if self.session_id in self._ended_sessions:
+            logger.info("Session %d already ended — skipping close work", self.session_id)
+            return {"status": "already_ended"}
 
         def _status(msg: str):
             if on_status:
                 on_status(msg)
             logger.info(msg)
 
+        outcomes: dict[str, str] = {}
+
+        async def _step(name: str, label: str, coro_fn):
+            """Run one close step, reporting its OUTCOME rather than just its
+            intent. A step may return a status string ("skipped: ...") to
+            distinguish a deliberate no-op from work actually done."""
+            _status(label)
+            try:
+                reported = await coro_fn()
+                outcomes[name] = reported if isinstance(reported, str) else "ok"
+            except Exception as e:
+                logger.error("%s failed: %s", name, e, exc_info=True)
+                outcomes[name] = f"failed: {e}"
+                _status(f"  {name} FAILED: {e}")
+
         undumped_count = len(self._messages) - len(self._dumped_indices)
 
         # Save message_count and fallback title FIRST — before any LLM calls.
         # This ensures the session is identifiable even if everything else fails.
-        try:
-            fallback_title = self._make_fallback_title()
-            await self.sqlite.update_session(
+        await _step(
+            "bookkeeping", "Saving session record...",
+            lambda: self.sqlite.update_session(
                 self.session_id,
                 message_count=len(self._messages),
-                title=fallback_title,
+                title=self._make_fallback_title(),
                 last_active=datetime.now(timezone.utc).isoformat(),
-            )
-        except Exception as e:
-            logger.error("Failed to save session bookkeeping: %s", e)
+            ),
+        )
 
-        # Dump any remaining messages
-        _status(f"Saving {undumped_count} messages...")
-        try:
-            await self.dump_to_memory()
-        except Exception as e:
-            logger.error("dump_to_memory failed: %s", e)
-
-        # Generate session summary (overwrites fallback title with LLM-generated one)
-        _status("Generating session summary...")
-        try:
-            await self._create_session_summary()
-        except Exception as e:
-            logger.error("Session summary failed (skipping): %s", e)
-
-        # Extract lessons from the conversation
-        _status("Extracting lessons...")
-        try:
-            await self._extract_lessons()
-        except Exception as e:
-            logger.error("Lesson extraction failed (skipping): %s", e)
-
-        # Update project digest (if session is project-tagged)
+        await _step("dump", f"Saving {undumped_count} messages...", self.dump_to_memory)
+        # Summary overwrites the fallback title with an LLM-generated one
+        await _step("summary", "Generating session summary...", self._create_session_summary)
+        await _step("lessons", "Extracting lessons...", self._extract_lessons)
         if self.project:
-            _status("Updating project digest...")
-            try:
-                await self._update_project_digest()
-            except Exception as e:
-                logger.error("Project digest update failed: %s", e)
+            await _step("digest", "Updating project digest...", self._update_project_digest)
 
-        logger.info("Session %d ended", self.session_id)
+        self._ended_sessions.add(self.session_id)
+
+        failed = {k: v for k, v in outcomes.items() if v != "ok"}
+        if failed:
+            logger.warning(
+                "Session %d ended with %d failed step(s): %s",
+                self.session_id, len(failed), ", ".join(sorted(failed)),
+            )
+            _status(
+                f"Session closed with {len(failed)} problem(s): {', '.join(sorted(failed))}"
+            )
+        else:
+            logger.info("Session %d ended", self.session_id)
+        return outcomes
 
     def _make_fallback_title(self) -> str:
         """Create a fallback title from the first user message.
@@ -336,14 +356,20 @@ class SessionManager:
             self.project, session.summary, session.title or "", self.session_id,
         )
 
-    async def _extract_lessons(self):
+    async def _extract_lessons(self) -> str | None:
         """Extract lessons from the session conversation.
 
         Only runs if there were enough messages to be meaningful (5+).
         Sends the conversation to the LLM for lesson extraction.
+
+        Raises on failure — end_session's step wrapper logs AND reports it.
+        This used to swallow its own exception, which meant end_session saw
+        a successful close for a session that produced no lessons at all.
         """
-        if not self.session_id or len(self._messages) < 5:
-            return
+        if not self.session_id:
+            return "skipped: no session"
+        if len(self._messages) < 5:
+            return f"skipped: only {len(self._messages)} messages (need 5)"
 
         # Build conversation text from messages
         conversation_lines = []
@@ -351,13 +377,11 @@ class SessionManager:
             conversation_lines.append(f"{msg.role.value}: {msg.content}")
         conversation_text = "\n".join(conversation_lines)
 
-        try:
-            await self.processor.process_lesson(
-                conversation_text, self.session_id, project=self.project,
-            )
-            logger.info("Lessons extracted for session %d", self.session_id)
-        except Exception as e:
-            logger.error("Lesson extraction failed for session %d: %s", self.session_id, e)
+        await self.processor.process_lesson(
+            conversation_text, self.session_id, project=self.project,
+        )
+        logger.info("Lessons extracted for session %d", self.session_id)
+        return None
 
     async def _create_session_summary(self):
         """Generate session summary using chunked summarization.
@@ -369,11 +393,11 @@ class SessionManager:
         - Generate title from final summary
         """
         if not self.session_id:
-            return
+            return "skipped: no session"
 
         memories = await self.sqlite.get_memories_by_session(self.session_id)
         if not memories:
-            return
+            return "skipped: no memories to summarize"
 
         texts = [m.summary or m.content for m in memories]
 

@@ -981,3 +981,130 @@ class TestArchiveCorrectness:
         assert not any(r["id"] == mid for r in results), (
             "archived memory still surfaced via vector search"
         )
+
+
+class TestEndSessionHonesty:
+    """end_session isolates each step so one failure can't block the rest —
+    but it used to log-and-continue while on_status announced the NEXT step,
+    so a session that produced no summary, no lessons and no digest looked
+    like a clean close (deep-dive 2026-08-04)."""
+
+    def _router(self, fail_on=()):
+        """Router that raises for the given task types."""
+        async def _gen(task_type, prompt="", system=None, think=None, **kwargs):
+            if task_type in fail_on:
+                raise RuntimeError(f"{task_type} is down")
+            if task_type == "summarization":
+                return f"Summary of: {prompt[:60]}"
+            if task_type == "ranking_importance":
+                return "3 0.5"
+            return "test response"
+        r = MagicMock()
+        r.generate = AsyncMock(side_effect=_gen)
+        r.get_model.return_value = "test-model"
+        r.get_fallback_model.return_value = None
+        return r
+
+    async def _session(self, sqlite, vectors_with_embed, config, router):
+        processor = MemoryProcessor(sqlite, vectors_with_embed, router, config)
+        sm = SessionManager(sqlite, MemoryManager(config), processor, router)
+        await sm.start_session()
+        # 5+ messages so lesson extraction actually runs (it skips below that)
+        for i in range(6):
+            role = MessageRole.USER if i % 2 == 0 else MessageRole.ASSISTANT
+            sm.add_message(
+                role,
+                f"Turn {i}: let's talk through the entity graph merge thresholds "
+                "and why the version guard matters for projectecho_v1 vs v2.",
+            )
+        await sm.flush_pending_persists()
+        return sm
+
+    @pytest.mark.asyncio
+    async def test_clean_close_reports_every_step_ok(
+        self, sqlite, vectors_with_embed, config
+    ):
+        sm = await self._session(sqlite, vectors_with_embed, config, self._router())
+        outcomes = await sm.end_session()
+        assert outcomes["bookkeeping"] == "ok"
+        assert outcomes["dump"] == "ok"
+        assert outcomes["summary"] == "ok"
+        assert outcomes["lessons"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_failed_step_is_reported_not_swallowed(
+        self, sqlite, vectors_with_embed, config
+    ):
+        """The whole point: a failure has to be visible to the caller."""
+        router = self._router(fail_on=("session_review",))
+        sm = await self._session(sqlite, vectors_with_embed, config, router)
+
+        messages = []
+        outcomes = await sm.end_session(on_status=messages.append)
+
+        assert outcomes["lessons"].startswith("failed:"), outcomes
+        assert any("FAILED" in m for m in messages), (
+            "status callback never told the user a step failed"
+        )
+        # ...and the steps that did work still ran
+        assert outcomes["bookkeeping"] == "ok"
+        assert outcomes["dump"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_later_steps_still_run_after_a_failure(
+        self, sqlite, vectors_with_embed, config
+    ):
+        router = self._router(fail_on=("session_review",))
+        sm = await self._session(sqlite, vectors_with_embed, config, router)
+        outcomes = await sm.end_session()
+        # summary uses SUMMARIZATION, lessons use SESSION_REVIEW — the failing
+        # one must not prevent the other from being attempted
+        assert "summary" in outcomes
+        assert "lessons" in outcomes
+
+
+class TestEndSessionIdempotent:
+    """end_session leaves session_id intact, so a second call re-ran
+    summarization, lesson extraction and the digest update — paying for the
+    LLM work twice and duplicating lessons. Both the web app and telegram
+    call it more than once."""
+
+    @pytest.mark.asyncio
+    async def test_second_call_does_no_work(self, sqlite, vectors_with_embed, config, router):
+        processor = MemoryProcessor(sqlite, vectors_with_embed, router, config)
+        sm = SessionManager(sqlite, MemoryManager(config), processor, router)
+        await sm.start_session()
+        sm.add_message(
+            MessageRole.USER,
+            "Kortney and I agreed to wait until Monday to talk again, she needs space to think.",
+        )
+        await sm.flush_pending_persists()
+
+        await sm.end_session()
+        calls_after_first = router.generate.await_count
+
+        second = await sm.end_session()
+
+        assert second == {"status": "already_ended"}
+        assert router.generate.await_count == calls_after_first, (
+            "second end_session re-ran LLM work"
+        )
+
+    @pytest.mark.asyncio
+    async def test_new_session_can_close_again(self, sqlite, vectors_with_embed, config, router):
+        """The guard is per-session, not permanent."""
+        processor = MemoryProcessor(sqlite, vectors_with_embed, router, config)
+        sm = SessionManager(sqlite, MemoryManager(config), processor, router)
+
+        await sm.start_session()
+        sm.add_message(MessageRole.USER, "First session about the benchmark harness redesign and its scoring.")
+        await sm.flush_pending_persists()
+        await sm.end_session()
+
+        await sm.start_session()
+        sm.add_message(MessageRole.USER, "Second session about the nightly job reporting and staleness checks.")
+        await sm.flush_pending_persists()
+        outcomes = await sm.end_session()
+
+        assert outcomes.get("bookkeeping") == "ok"
+        assert "status" not in outcomes      # not short-circuited

@@ -269,20 +269,20 @@ class MemoryProcessor:
     ) -> int | None:
         """Extract and store a lesson from a conversation.
 
-        Returns lesson_id on success, None if the lesson was filtered out.
+        Returns lesson_id on success, None if the lesson was filtered out
+        (SKIP / empty / near-duplicate). RAISES if the LLM call fails —
+        "the model died" is not "there was nothing worth keeping", and
+        collapsing the two hid failures from every caller (all five wrap
+        this call themselves and count/report the failure).
         """
         # Generate lesson text via session review model (needs full-conversation understanding)
-        try:
-            lesson_system, lesson_prompt = extract_lesson(conversation_text)
-            lesson_text = await self.router.generate(
-                TaskType.SESSION_REVIEW,
-                lesson_prompt,
-                system=lesson_system,
-                min_context_tokens=min_context_tokens,
-            )
-        except Exception as e:
-            logger.error("Lesson extraction failed: %s", e)
-            return None
+        lesson_system, lesson_prompt = extract_lesson(conversation_text)
+        lesson_text = await self.router.generate(
+            TaskType.SESSION_REVIEW,
+            lesson_prompt,
+            system=lesson_system,
+            min_context_tokens=min_context_tokens,
+        )
 
         # Validate: filter SKIP, empty, and junk responses
         stripped = lesson_text.strip()
