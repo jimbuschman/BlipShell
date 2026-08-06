@@ -281,12 +281,19 @@ enter the file cache; simulate leaves the production DB untouched.
 
 ## Phase 3 — Throughput + benchmark realism (Ollama PC involved)
 
-1. **Consolidation rewrite** (~20/night → ~2,000/night): reuse *stored* vectors
-   (self-join / `get_embeddings_by_ids` — the current code re-embeds via Ollama per
-   check, comparing summary-embeddings against content-embeddings); resumable time
-   budget like `merge_entities`; **archive-not-delete** (current `delete_memory`
-   cascades away entity edges — violates the mandate at the edge level); dry-run
-   mode before raising throughput; index on `memories(consolidated_at)`.
+1. ~~**Consolidation rewrite**~~ — **DONE 2026-08-06** (`e65714d`). Queries with
+   each memory's stored vector (no Ollama round trip per check), batch default
+   20 → 2000 bounded by a resumable time budget, losers ARCHIVED not deleted
+   (deleting cascaded their entity edges away), plus a dry-run mode, a partial
+   index on `consolidated_at`, and `access_count` in `update_memory`'s allowed
+   set. Also fixed a space mismatch: it used to compare a summary-embedding
+   against content-embeddings, so 0.85 was never really calibrated.
+
+   **BEFORE THE FIRST REAL RUN:** set `consolidation_dry_run: true`, run
+   `blipshell nightly --job consolidate`, and read the merge log. At 2000/night
+   a miscalibrated threshold does far more damage than it could at 20, and
+   merges are one-way. Back up first.
+
 2. **Benchmark closes its known gap**: add 2-3 `SESSION_REVIEW_CASES` above the
    ~28.6K chunk threshold, route `run_session_review` through
    `MemoryProcessor.process_reflection`, score `chunk_merge` as its own job. Retire
