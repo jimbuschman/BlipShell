@@ -154,7 +154,15 @@ memory:
   #
   # RUN IT DRY FIRST. A miscalibrated threshold merges far more at this
   # throughput than it ever could at 20/night, and merges are one-way.
-  consolidation_similarity: 0.85   # min cosine similarity to merge
+  # 0.92, raised from 0.85 after the first dry run over the real corpus
+  # (2026-08-06). At 0.85 it proposed 323 merges from 1967 checks, and the
+  # 0.85-0.88 band was merging unrelated content: an ngrok how-to folded
+  # into "AI cannot make HTTP requests" (opposite facts), and a Gemini
+  # message-format spec folded into "User values real-time exchange".
+  # Vague summaries act as semantic attractors. At >=0.92 the pairs are
+  # near-verbatim: the same 404 logged twice, "Did you make the call?" vs
+  # "did you make the call?".
+  consolidation_similarity: 0.92   # min cosine similarity to merge
   consolidation_batch_size: 2000   # candidates per run (0 disables the job)
   consolidation_dry_run: false     # true = log what would merge, change nothing
 

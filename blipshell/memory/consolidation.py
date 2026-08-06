@@ -153,6 +153,15 @@ class MemoryConsolidator:
                         "Merged memory %d into %d (similarity=%.3f)",
                         loser_id, winner_id, similarity,
                     )
+                    if loser_id == memory_id:
+                        # THIS memory just lost and was archived. Its remaining
+                        # neighbours are no longer ours to merge: continuing
+                        # would fold an already-archived row into a second,
+                        # third, fourth winner, copying its tags and access
+                        # count into each. The first dry run over the real
+                        # corpus showed one memory scheduled to be archived
+                        # into four different winners (2026-08-06).
+                        break
             except Exception as e:
                 stats["errors"] += 1
                 logger.warning(

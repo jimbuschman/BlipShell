@@ -141,7 +141,10 @@ class MemoryConfig(BaseModel):
     entity_merge_llm_threshold: float = 0.80   # LLM arbitration band: this..auto
     entity_merge_max_candidates: int = 5       # similar entities checked per entity
     entity_merge_edge_sample: int = 5          # edges shown to the arbitration LLM
-    consolidation_similarity: float = 0.85  # min cosine similarity to merge
+    # 0.92 not 0.85: measured on the real 17K corpus 2026-08-06. At 0.85 the
+    # 0.85-0.88 band merged semantically unrelated memories, because a vague
+    # summary is close to everything. See config.yaml for examples.
+    consolidation_similarity: float = 0.92
     # Memories checked per nightly run (0 = disabled). Was 20, which against a
     # 17K corpus meant ~14 months for a single sweep. Raised once the per-check
     # Ollama round trip was removed — checks are now a local vector scan, so

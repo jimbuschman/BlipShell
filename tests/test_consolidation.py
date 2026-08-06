@@ -307,3 +307,56 @@ class TestDryRun:
         await _add(sqlite, vectors, sid, content="a", summary="a", vec=_vec(1.0))
         stats = await _consolidator(sqlite, vectors).consolidate_batch()
         assert "would_merge" not in stats
+
+
+class TestNoRepeatedArchiving:
+    """A memory that loses a merge is done — it must not be folded into a
+    second winner as well.
+
+    The first dry run over the real corpus (2026-08-06) showed #18177
+    scheduled to absorb one memory and then be archived into FOUR different
+    winners, copying its tags and access count into each. That's content
+    duplication dressed up as consolidation.
+    """
+
+    async def test_loser_is_not_merged_into_multiple_winners(self, store):
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        # Three memories on one vector; the weak one loses to whichever
+        # strong memory is considered first and must then be left alone.
+        weak = await _add(sqlite, vectors, sid, content="weak", summary="weak",
+                          vec=_vec(1.0), importance=0.1, access=5)
+        strong_a = await _add(sqlite, vectors, sid, content="A", summary="A",
+                              vec=_vec(1.0), importance=0.8, access=0)
+        strong_b = await _add(sqlite, vectors, sid, content="B", summary="B",
+                              vec=_vec(1.0), importance=0.9, access=0)
+
+        await _consolidator(sqlite, vectors).consolidate_batch()
+
+        a = await sqlite.get_memory(strong_a)
+        b = await sqlite.get_memory(strong_b)
+        # The weak memory's access count may land on exactly one winner,
+        # never on both.
+        absorbed = [m for m in (a, b) if (m.access_count or 0) >= 5]
+        assert len(absorbed) <= 1, (
+            "an archived memory was folded into more than one winner"
+        )
+        assert (await sqlite.get_memory(weak)).is_archived is True
+
+    async def test_a_memory_archived_early_stops_being_processed(self, store):
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        loser = await _add(sqlite, vectors, sid, content="l", summary="l",
+                           vec=_vec(1.0), importance=0.1)
+        for i in range(3):
+            await _add(sqlite, vectors, sid, content=f"w{i}", summary=f"w{i}",
+                       vec=_vec(1.0), importance=0.9 + i * 0.01)
+
+        stats = await _consolidator(sqlite, vectors).consolidate_batch()
+
+        archived = [
+            m for m in [await sqlite.get_memory(i) for i in range(1, 5)]
+            if m and m.is_archived
+        ]
+        # Exactly one archive event per losing memory, not one per neighbour.
+        assert stats["merged"] == len(archived)
