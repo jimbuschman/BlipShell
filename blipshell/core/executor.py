@@ -378,6 +378,7 @@ class TaskExecutor:
         chat_history: list[dict] | None = None,
         log_event: Optional[Callable] = None,
         capability_context: str = "",
+        continuity_context: str = "",
         images: list[dict] | None = None,
     ) -> str:
         """Execute a task dynamically — single continuous conversation.
@@ -390,6 +391,9 @@ class TaskExecutor:
             memory_context: Relevant memories from past sessions (injected as system message).
             chat_history: Recent chat messages for design discussion context.
             log_event: Optional async callback(event_type, data) for flow observability.
+            continuity_context: Scratchpad, session notes, follow-ups and the
+                time anchor — the cross-session state simple chat has always
+                had. Built by the caller so one builder serves both paths.
             images: Image refs for a vision turn. These must ride on the TASK
                 message, not just on chat_history — history is truncated to the
                 last 10 turns, so an image attached a few messages back silently
@@ -478,6 +482,12 @@ class TaskExecutor:
             sys_prompt += f"\n\n{capability_context}"
         if memory_context:
             sys_prompt += f"\n\n--- RELEVANT MEMORIES ---\n{memory_context}"
+        # Cross-session continuity (scratchpad, session notes, follow-ups, time
+        # anchor). Simple chat has always had this; the executor got none of it
+        # until 2026-08-06, so the path used for HARD tasks carried less
+        # context than ordinary conversation. Same builder feeds both.
+        if continuity_context:
+            sys_prompt += continuity_context
         messages = [
             {"role": "system", "content": sys_prompt},
         ]

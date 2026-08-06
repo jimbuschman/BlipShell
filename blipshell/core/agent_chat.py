@@ -763,6 +763,7 @@ class ChatMixin:
                 chat_history=chat_history,
                 log_event=self._log_event,
                 capability_context=self._build_capability_block(),
+                continuity_context=self._build_continuity_block(),
                 images=images,
             )
         except Exception as e:
@@ -1223,18 +1224,12 @@ class ChatMixin:
             if ms and ms.chat_instructions:
                 system_prompt += f"\n\nMODEL-SPECIFIC INSTRUCTIONS:\n{ms.chat_instructions}\n\n"
 
-        # Consolidate all context into a single system message (CC approach)
-        scratchpad = self._read_scratchpad()
-        if scratchpad:
-            system_prompt += f"\n\n--- SCRATCHPAD ---\n{scratchpad}"
-
-        # Inject session notes (persistent state surviving compaction)
-        session_notes = getattr(self, "_session_notes", {})
-        if session_notes:
-            notes_text = "\n\n--- SESSION NOTES ---\n"
-            for name, content in session_notes.items():
-                notes_text += f"[{name}]\n{content}\n\n"
-            system_prompt += notes_text
+        # Consolidate all context into a single system message (CC approach).
+        # Scratchpad and session notes come from the shared builder so the
+        # executor path gets the identical block — see _build_continuity_block.
+        system_prompt += self._build_continuity_block(
+            include_followups=False, include_time=False,
+        )
 
         if memory_text.strip():
             system_prompt += f"\n\n{memory_text}"
@@ -1257,15 +1252,8 @@ class ChatMixin:
 
         # Absolute time anchor. Placed at the END so the cacheable prefix of the
         # system prompt stays stable across turns — a changing timestamp near the
-        # top would bust prompt caching on cloud endpoints every turn. Rendered in
-        # local time (stored timestamps are UTC; the per-message stamps below are
-        # relative, so this is the only place an absolute "now" is exposed).
-        now = datetime.now(timezone.utc)
-        now_local = now.astimezone()
-        system_prompt += (
-            f"\n\nCurrent date/time: "
-            f"{now_local.strftime('%Y-%m-%d %H:%M %A')} ({now_local.tzname()})."
-        )
+        # top would bust prompt caching on cloud endpoints every turn.
+        system_prompt += self._render_time_anchor()
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -1288,6 +1276,57 @@ class ChatMixin:
             messages.append(om)
 
         return messages
+
+    @staticmethod
+    def _render_time_anchor() -> str:
+        """Absolute 'now', in local time.
+
+        Stored timestamps are UTC and the per-message stamps are relative, so
+        this is the only place an absolute time is exposed to the model.
+        """
+        now_local = datetime.now(timezone.utc).astimezone()
+        return (
+            f"\n\nCurrent date/time: "
+            f"{now_local.strftime('%Y-%m-%d %H:%M %A')} ({now_local.tzname()})."
+        )
+
+    def _build_continuity_block(
+        self, *, include_followups: bool = True, include_time: bool = True,
+    ) -> str:
+        """Cross-session continuity that BOTH chat paths should carry.
+
+        Scratchpad, session notes, pending follow-ups, and the time anchor.
+        `_chat_simple` assembled these inline and `execute_dynamic` got none of
+        them, so `!plan` — the path you reach for when a task is HARD — ran
+        with less continuity than ordinary conversation. That's backwards for a
+        system whose stated moat is memory (deep-dive 2026-08-04).
+
+        The flags exist because the chat path interleaves follow-ups and the
+        time anchor with its memory pools at specific positions; it opts out
+        and adds those itself. The executor takes the block whole.
+        """
+        parts: list[str] = []
+
+        scratchpad = self._read_scratchpad()
+        if scratchpad:
+            parts.append(f"--- SCRATCHPAD ---\n{scratchpad}")
+
+        session_notes = getattr(self, "_session_notes", {})
+        if session_notes:
+            lines = ["--- SESSION NOTES ---"]
+            for name, content in session_notes.items():
+                lines.append(f"[{name}]\n{content}")
+            parts.append("\n".join(lines))
+
+        if include_followups:
+            follow_ups = getattr(self, "_pending_follow_ups", "") or ""
+            if follow_ups.strip():
+                parts.append(follow_ups.strip())
+
+        block = ("\n\n" + "\n\n".join(parts)) if parts else ""
+        if include_time:
+            block += self._render_time_anchor()
+        return block
 
     def _read_scratchpad(self) -> str:
         """Read scratchpad files (general + project-specific) for context injection.
