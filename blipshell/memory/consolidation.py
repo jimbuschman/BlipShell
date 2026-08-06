@@ -171,6 +171,17 @@ class MemoryConsolidator:
                 for dup_id, similarity in found:
                     if dup_id in archived_ids or similarity < self.similarity_threshold:
                         continue
+                    # An already-archived neighbour is off limits. Archiving
+                    # leaves the vector in place until the nightly orphan
+                    # sweep, so a memory merged away on an earlier pass keeps
+                    # showing up as a candidate — and merging it again copies
+                    # its tags and access count into a second, third, fourth
+                    # winner. The full-corpus survey (2026-08-06) found 290
+                    # memories proposed for archiving up to 4x each, always
+                    # into different winners.
+                    dup = await self.sqlite.get_memory(dup_id)
+                    if dup is None or dup.is_archived:
+                        continue
                     winner_id, loser_id = await self._pick_winner(memory_id, dup_id)
                     if self.dry_run:
                         loser = await self.sqlite.get_memory(loser_id)
@@ -284,3 +295,16 @@ class MemoryConsolidator:
         await self.sqlite.update_memory(winner_id, **updates)
 
         await self.sqlite.update_memory(loser_id, is_archived=True)
+
+        # Drop the loser's vector now rather than waiting for the nightly
+        # orphan sweep. Two reasons: it can't be offered as a neighbour again
+        # on a later pass, and it stops occupying one of the k slots in every
+        # future KNN query — an archived memory crowding out a live candidate
+        # is a silent loss of recall.
+        try:
+            self.vectors.delete_memory(loser_id)
+        except Exception as e:
+            logger.warning(
+                "Could not drop vector for archived memory %d "
+                "(orphan sweep will get it): %s", loser_id, e,
+            )

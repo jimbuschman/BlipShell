@@ -620,3 +620,61 @@ class TestCursorNeverSkipsUnexamined:
 
         assert stats["checked"] == 0        # --loop stops, warning explains why
         assert await c._dry_run_offset() == 0
+
+
+class TestArchivedMemoriesStopBeingCandidates:
+    """Archiving leaves the vector in place until the nightly orphan sweep, so
+    a memory merged away on one pass keeps surfacing as a neighbour on later
+    ones — and merging it again copies its tags and access count into another
+    winner. The full-corpus survey (2026-08-06) found 290 memories proposed
+    for archiving up to 4x each, every time into a different winner."""
+
+    async def test_an_archived_neighbour_is_skipped(self, store):
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        gone = await _add(sqlite, vectors, sid, content="gone", summary="gone",
+                          vec=_vec(1.0), importance=0.1, access=9)
+        live = await _add(sqlite, vectors, sid, content="live", summary="live",
+                          vec=_vec(1.0), importance=0.9)
+        # simulate an earlier pass having archived it, vector still present
+        await sqlite.update_memory(gone, is_archived=True)
+
+        stats = await _consolidator(sqlite, vectors).consolidate_batch()
+
+        assert stats["merged"] == 0, "an already-archived memory was merged again"
+        assert (await sqlite.get_memory(live)).access_count in (0, None)
+
+    async def test_merging_drops_the_losers_vector(self, store):
+        """So it can't come back as a candidate, and stops consuming a k slot
+        in every future KNN query."""
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        await _add(sqlite, vectors, sid, content="keep", summary="keep",
+                   vec=_vec(1.0), importance=0.9)
+        drop = await _add(sqlite, vectors, sid, content="drop", summary="drop",
+                          vec=_vec(1.0), importance=0.1)
+
+        await _consolidator(sqlite, vectors).consolidate_batch()
+
+        assert drop not in vectors.get_all_ids("memories"), (
+            "archived memory kept its vector — it will resurface as a neighbour"
+        )
+
+    async def test_a_second_pass_proposes_nothing_new(self, store):
+        """End-to-end version of the live bug: run twice, the survivors must
+        not keep folding the same corpse into themselves."""
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        for imp in (0.9, 0.5, 0.1):
+            await _add(sqlite, vectors, sid, content=f"c{imp}", summary=f"c{imp}",
+                       vec=_vec(1.0), importance=imp, access=2)
+
+        c = _consolidator(sqlite, vectors)
+        first = await c.consolidate_batch()
+        # re-open the pool as a later nightly pass would
+        for mid in await sqlite.get_unconsolidated_memory_ids(limit=100):
+            pass
+        second = await c.consolidate_batch()
+
+        assert first["merged"] >= 1
+        assert second["merged"] == 0, "archived memories were merged again"
