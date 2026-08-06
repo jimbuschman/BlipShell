@@ -641,8 +641,11 @@ class NightlyRunner:
         # Resumable: leave headroom under the job timeout so a partial pass
         # returns its stats (and its stopped_early flag) instead of being
         # hard-killed with nothing recorded.
+        if consolidator.dry_run:
+            on_status("  consolidate: DRY RUN — proposing merges, changing nothing")
         return await consolidator.consolidate_batch(
             time_budget_seconds=_JOB_TIMEOUT - 30,
+            on_status=on_status,
         )
 
     async def _job_clean_neutral_tags(self, on_status) -> dict:

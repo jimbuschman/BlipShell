@@ -52,12 +52,19 @@ class MemoryConsolidator:
 
     async def consolidate_batch(
         self, time_budget_seconds: float | None = None,
+        on_status: Optional[callable] = None,
     ) -> dict:
         """Process a batch of unchecked memories. Returns stats dict.
 
         Work is resumable: memories are marked consolidated as they're checked,
         so running out of budget just means the rest are picked up next night
         (same pattern as merge_entities and batch_tag).
+
+        In dry-run mode the proposed merges are returned in the stats
+        (`would_merge`) AND pushed through `on_status`. They deliberately do
+        not rely on log output: the CLI logs at WARNING by default, so a
+        dry run whose findings went to logger.info would print nothing and
+        read as "no duplicates found" — the exact opposite of the truth.
         """
         stats = {
             "checked": 0, "merged": 0, "errors": 0,
@@ -65,6 +72,11 @@ class MemoryConsolidator:
         }
         if self.dry_run:
             stats["dry_run"] = True
+            stats["would_merge"] = []
+
+        def _report(msg: str) -> None:
+            if on_status:
+                on_status(msg)
 
         memory_ids = await self.sqlite.get_unconsolidated_memory_ids(
             limit=self.batch_size,
@@ -117,9 +129,21 @@ class MemoryConsolidator:
                         continue
                     winner_id, loser_id = await self._pick_winner(memory_id, dup_id)
                     if self.dry_run:
-                        logger.info(
-                            "[dry-run] would merge %d into %d (similarity=%.3f)",
-                            loser_id, winner_id, similarity,
+                        loser = await self.sqlite.get_memory(loser_id)
+                        winner = await self.sqlite.get_memory(winner_id)
+                        preview = {
+                            "loser_id": loser_id,
+                            "winner_id": winner_id,
+                            "similarity": round(similarity, 3),
+                            "loser": (loser.summary or "")[:90] if loser else "",
+                            "winner": (winner.summary or "")[:90] if winner else "",
+                        }
+                        stats["would_merge"].append(preview)
+                        _report(
+                            f"  would merge #{loser_id} -> #{winner_id} "
+                            f"(sim {similarity:.3f})\n"
+                            f"      drop: {preview['loser']}\n"
+                            f"      keep: {preview['winner']}"
                         )
                     else:
                         await self._merge_memories(winner_id, loser_id)

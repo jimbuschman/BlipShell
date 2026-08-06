@@ -275,3 +275,35 @@ class TestDryRun:
         assert (await sqlite.get_memory(drop)).is_archived is False
         # and nothing was marked consolidated, so a real run still sees them
         assert len(await sqlite.get_unconsolidated_memory_ids(limit=100)) == 2
+
+    async def test_dry_run_findings_are_visible_without_log_config(self, store):
+        """A dry run whose output only went to logger.info printed NOTHING at
+        the CLI's default WARNING level — it would read as "no duplicates
+        found", the opposite of the truth. Findings must come back in the
+        stats and through on_status."""
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        await _add(sqlite, vectors, sid, content="a", summary="keep this one",
+                   vec=_vec(1.0), importance=0.9)
+        drop = await _add(sqlite, vectors, sid, content="b", summary="drop this one",
+                          vec=_vec(1.0), importance=0.1)
+
+        messages = []
+        c = _consolidator(sqlite, vectors, consolidation_dry_run=True)
+        stats = await c.consolidate_batch(on_status=messages.append)
+
+        assert len(stats["would_merge"]) == 1
+        proposal = stats["would_merge"][0]
+        assert proposal["loser_id"] == drop
+        assert "drop this one" in proposal["loser"]
+        assert "keep this one" in proposal["winner"]
+        assert any("would merge" in m for m in messages), (
+            "nothing surfaced through on_status — the dry run would look empty"
+        )
+
+    async def test_live_run_reports_no_proposals_key(self, store):
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        await _add(sqlite, vectors, sid, content="a", summary="a", vec=_vec(1.0))
+        stats = await _consolidator(sqlite, vectors).consolidate_batch()
+        assert "would_merge" not in stats
