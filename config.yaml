@@ -163,7 +163,10 @@ memory:
   # near-verbatim: the same 404 logged twice, "Did you make the call?" vs
   # "did you make the call?".
   consolidation_similarity: 0.92   # min cosine similarity to merge
-  consolidation_batch_size: 2000   # candidates per run (0 disables the job)
+  # 500 fits the job's time budget on a 17K corpus (measured ~7.3/sec
+  # 2026-08-06). At 2000 the neighbour scan consumed the entire budget and
+  # the pass merged nothing. Bigger is not faster here.
+  consolidation_batch_size: 500    # candidates per run (0 disables the job)
   consolidation_dry_run: false     # true = log what would merge, change nothing
 
   entity_resolution:

@@ -33,6 +33,15 @@ logger = logging.getLogger(__name__)
 class MemoryConsolidator:
     """Finds and merges near-duplicate memories."""
 
+    SCAN_BUDGET_SHARE = 0.6
+    """Fraction of the time budget the neighbour scan may use.
+
+    The scan and the merge phase share one budget. Given all of it the scan
+    takes all of it — measured 2026-08-06 on a 17K corpus: ~7.3 memories/sec,
+    so a 2000-memory batch spent the full 270s scanning and the merge loop
+    never ran a single iteration.
+    """
+
     def __init__(
         self,
         sqlite: SQLiteStore,
@@ -93,28 +102,44 @@ class MemoryConsolidator:
                 await self._set_dry_run_offset(0)   # survey complete; rewind
             return stats
         if self.dry_run:
-            await self._set_dry_run_offset(offset + len(memory_ids))
             stats["offset"] = offset
 
         # All vector work in ONE executor hop: the store is synchronous, and a
         # KNN scan per memory would otherwise block the event loop for the
         # whole batch.
         loop = asyncio.get_running_loop()
-        deadline = (
-            time.monotonic() + time_budget_seconds if time_budget_seconds else None
+        started = time.monotonic()
+        deadline = started + time_budget_seconds if time_budget_seconds else None
+        # The scan gets a FRACTION of the budget, not all of it. Given the same
+        # deadline it will happily spend the lot — live 2026-08-06 a 2000-memory
+        # batch used all 270s scanning, so the merge loop broke on its first
+        # iteration and the pass reported checked=0 after four and a half
+        # minutes of work.
+        scan_deadline = (
+            started + time_budget_seconds * self.SCAN_BUDGET_SHARE
+            if time_budget_seconds else None
         )
         try:
-            # The scan gets the SAME deadline as the merge loop: it's a linear
-            # pass over the whole vec table per memory, so on a large batch it
-            # can consume the entire job budget on its own.
             neighbors = await loop.run_in_executor(
                 None, self.vectors.find_neighbors,
-                memory_ids, self.neighbors_k, deadline,
+                memory_ids, self.neighbors_k, scan_deadline,
             )
         except Exception as e:
             logger.error("Consolidation neighbor lookup failed: %s", e)
             stats["errors"] += 1
             return stats
+
+        if len(neighbors) < len(memory_ids):
+            # The batch is too big to scan inside the budget. Say so plainly:
+            # a silent partial scan looks like "no duplicates here".
+            msg = (
+                f"consolidate: scanned only {len(neighbors)}/{len(memory_ids)} "
+                f"within the time budget — lower consolidation_batch_size "
+                f"(currently {self.batch_size})"
+            )
+            logger.warning(msg)
+            _report(f"  {msg}")
+            stats["scan_incomplete"] = True
 
         archived_ids: set[int] = set()
         checked_ids: list[int] = []
@@ -190,6 +215,14 @@ class MemoryConsolidator:
         final_checked = [mid for mid in checked_ids if mid not in archived_ids]
         if final_checked and not self.dry_run:
             await self.sqlite.mark_memories_consolidated(final_checked)
+
+        if self.dry_run:
+            # Advance by what was actually EXAMINED, never by the batch size.
+            # A pass truncated by the budget would otherwise step the cursor
+            # past memories it never looked at, silently dropping them from
+            # the survey. Zero examined means no advance — the pass reports
+            # checked=0, --loop stops, and the warning above says why.
+            await self._set_dry_run_offset(offset + len(neighbors))
 
         return stats
 

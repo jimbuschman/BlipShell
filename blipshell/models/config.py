@@ -149,7 +149,11 @@ class MemoryConfig(BaseModel):
     # 17K corpus meant ~14 months for a single sweep. Raised once the per-check
     # Ollama round trip was removed — checks are now a local vector scan, so
     # the real limit is the job's time budget, not the count.
-    consolidation_batch_size: int = 2000
+    # 500: measured 7.3 memories/sec on a 17K corpus (2026-08-06), so a
+    # 500-batch scans in ~70s and fits comfortably inside the scan's share
+    # of the 270s job budget. 2000 did not — it spent the whole budget
+    # scanning and processed nothing. Raise only with a measurement.
+    consolidation_batch_size: int = 500
     # Log merges without applying them. Worth setting true for the first run
     # at the new throughput: a bad threshold merges far more at 2000/night
     # than it ever could at 20.

@@ -523,3 +523,100 @@ class TestScanRespectsTheDeadline:
 
         assert len(full) == 3
         assert none_ == {}, "the scan ignored its deadline"
+
+
+class TestScanCannotEatTheWholeBudget:
+    """The scan and the merge phase share one budget. Given all of it, the
+    scan takes all of it: live 2026-08-06 a 2000-memory batch spent the full
+    270s scanning, the merge loop broke on iteration one, and the pass
+    reported checked=0 after four and a half minutes."""
+
+    async def test_scan_is_capped_below_the_full_budget(self, store, monkeypatch):
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        for i in range(4):
+            await _add(sqlite, vectors, sid, content=f"m{i}", summary=f"m{i}",
+                       vec=_orthogonal(i))
+
+        seen = {}
+        real = vectors.find_neighbors
+
+        def spy(ids, k=5, deadline=None):
+            seen["deadline"] = deadline
+            seen["at_call"] = __import__("time").monotonic()
+            return real(ids, k, deadline)
+
+        vectors.find_neighbors = spy
+        c = _consolidator(sqlite, vectors)
+        await c.consolidate_batch(time_budget_seconds=10)
+
+        headroom = seen["deadline"] - seen["at_call"]
+        assert headroom < 10 * 0.95, (
+            f"scan got {headroom:.1f}s of a 10s budget — it can starve the merge phase"
+        )
+        assert headroom > 0
+
+    async def test_a_truncated_scan_says_so(self, store):
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        for i in range(3):
+            await _add(sqlite, vectors, sid, content=f"m{i}", summary=f"m{i}",
+                       vec=_orthogonal(i))
+
+        real = vectors.find_neighbors
+        vectors.find_neighbors = lambda ids, k=5, deadline=None: dict(
+            list(real(ids, k, None).items())[:1]      # pretend it ran out of time
+        )
+
+        msgs = []
+        c = _consolidator(sqlite, vectors)
+        stats = await c.consolidate_batch(on_status=msgs.append)
+
+        assert stats.get("scan_incomplete") is True
+        assert any("scanned only" in m for m in msgs), (
+            "a partial scan was silent — it reads as 'no duplicates here'"
+        )
+
+
+class TestCursorNeverSkipsUnexamined:
+    async def test_cursor_advances_only_by_what_was_examined(self, store):
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        for i in range(6):
+            await _add(sqlite, vectors, sid, content=f"m{i}", summary=f"m{i}",
+                       vec=_orthogonal(i))
+
+        cfg = MemoryConfig(consolidation_similarity=0.95,
+                           consolidation_batch_size=4,
+                           consolidation_dry_run=True)
+        c = MemoryConsolidator(sqlite, vectors, cfg)
+
+        real = vectors.find_neighbors
+        vectors.find_neighbors = lambda ids, k=5, deadline=None: dict(
+            list(real(ids, k, None).items())[:2]      # only 2 of 4 examined
+        )
+
+        await c.consolidate_batch()
+
+        assert await c._dry_run_offset() == 2, (
+            "cursor jumped past memories the scan never looked at — they would "
+            "be dropped from the survey entirely"
+        )
+
+    async def test_zero_examined_does_not_advance(self, store):
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        for i in range(3):
+            await _add(sqlite, vectors, sid, content=f"m{i}", summary=f"m{i}",
+                       vec=_orthogonal(i))
+
+        cfg = MemoryConfig(consolidation_similarity=0.95,
+                           consolidation_batch_size=3,
+                           consolidation_dry_run=True)
+        c = MemoryConsolidator(sqlite, vectors, cfg)
+        vectors.find_neighbors = lambda ids, k=5, deadline=None: {}
+
+        stats = await c.consolidate_batch()
+
+        assert stats["checked"] == 0        # --loop stops, warning explains why
+        assert await c._dry_run_offset() == 0
