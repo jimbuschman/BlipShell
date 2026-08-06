@@ -531,7 +531,7 @@ class VectorStore:
         return results[:n_results]
 
     def find_neighbors(
-        self, memory_ids: list[int], k: int = 5,
+        self, memory_ids: list[int], k: int = 5, deadline: float | None = None,
     ) -> dict[int, list[tuple[int, float]]]:
         """Nearest neighbors for memories that are ALREADY embedded.
 
@@ -546,7 +546,16 @@ class VectorStore:
         against content-embeddings, and the 0.85 threshold was never calibrated
         for it.
 
+        `deadline` is a time.monotonic() value; the scan stops when it passes
+        and returns what it has. vec0 has no ANN index, so every query is a
+        linear scan of the whole table — the cost is (batch size x corpus
+        size) and it grows as the corpus does. Without a bound here, a batch
+        that outgrew the caller's job timeout would blow it before the caller
+        got a chance to check anything (seen live 2026-08-06: a 2000-memory
+        batch took ~275s of a 300s job budget, and the next pass tipped over).
+
         Returns {memory_id: [(neighbor_id, similarity), ...]}, self excluded.
+        Callers must treat a missing key as "not examined", not "no matches".
         """
         self._require_open()
         if not memory_ids:
@@ -556,6 +565,12 @@ class VectorStore:
         out: dict[int, list[tuple[int, float]]] = {}
         with self._lock:
             for mid in memory_ids:
+                if deadline is not None and time.monotonic() >= deadline:
+                    logger.info(
+                        "find_neighbors stopped at %d/%d (deadline)",
+                        len(out), len(memory_ids),
+                    )
+                    break
                 vec = vectors.get(mid)
                 if not vec:
                     continue

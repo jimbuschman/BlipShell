@@ -262,7 +262,7 @@ class TestResumability:
 
         stats = await _consolidator(sqlite, vectors).consolidate_batch()
 
-        assert stats["no_vector"] == 1
+        assert stats["not_examined"] == 1
         assert mid in await sqlite.get_unconsolidated_memory_ids(limit=100)
 
 
@@ -418,3 +418,108 @@ class TestLoopTerminationSignal:
 
         assert first["checked"] == 4
         assert second["checked"] == 0, "consolidated memories were re-checked"
+
+
+class TestDryRunSurveyAdvances:
+    """`--loop` + dry-run must sweep the corpus, not re-read batch one.
+
+    A dry run marks nothing (correctly — it mutates nothing), but --loop
+    relies on the candidate pool shrinking to advance. Live 2026-08-06 that
+    produced 14 identical passes over the same 1995 memories, ~70 minutes of
+    work with zero progress, stopped only by a timeout on pass 15.
+    """
+
+    async def test_successive_dry_runs_advance_through_the_corpus(self, store):
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        ids = [
+            await _add(sqlite, vectors, sid, content=f"m{i}", summary=f"m{i}",
+                       vec=_orthogonal(i))
+            for i in range(6)
+        ]
+
+        cfg = MemoryConfig(consolidation_similarity=0.95,
+                           consolidation_batch_size=2,
+                           consolidation_dry_run=True)
+        c = MemoryConsolidator(sqlite, vectors, cfg)
+
+        first = await c.consolidate_batch()
+        second = await c.consolidate_batch()
+        third = await c.consolidate_batch()
+
+        assert [first["offset"], second["offset"], third["offset"]] == [0, 2, 4], (
+            "dry runs re-read the same batch instead of advancing"
+        )
+        assert first["checked"] == second["checked"] == third["checked"] == 2
+
+    async def test_cursor_rewinds_when_the_survey_completes(self, store):
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        for i in range(2):
+            await _add(sqlite, vectors, sid, content=f"m{i}", summary=f"m{i}",
+                       vec=_orthogonal(i))
+
+        cfg = MemoryConfig(consolidation_similarity=0.95,
+                           consolidation_batch_size=2,
+                           consolidation_dry_run=True)
+        c = MemoryConsolidator(sqlite, vectors, cfg)
+
+        await c.consolidate_batch()             # covers both, cursor -> 2
+        exhausted = await c.consolidate_batch()  # nothing left
+
+        assert exhausted["checked"] == 0, "loop would not terminate"
+        # cursor rewound, so a later survey starts from the top
+        assert await c._dry_run_offset() == 0
+
+    async def test_live_runs_ignore_the_cursor(self, store):
+        """A real run advances by marking; it must not skip anything."""
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        for i in range(4):
+            await _add(sqlite, vectors, sid, content=f"m{i}", summary=f"m{i}",
+                       vec=_orthogonal(i))
+        await sqlite.set_metadata(
+            MemoryConsolidator._DRY_CURSOR_KEY, "3",     # stale cursor
+        )
+
+        stats = await _consolidator(sqlite, vectors).consolidate_batch()
+
+        assert stats["checked"] == 4, "a live run honoured the dry-run cursor"
+        assert "offset" not in stats
+
+
+class TestScanRespectsTheDeadline:
+    async def test_unexamined_memories_are_not_marked(self, store):
+        """vec0 has no ANN index, so the scan is linear per memory and can
+        eat the whole job budget on a big batch. Anything it didn't reach
+        must stay in the pool."""
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        for i in range(4):
+            await _add(sqlite, vectors, sid, content=f"m{i}", summary=f"m{i}",
+                       vec=_orthogonal(i))
+
+        # deadline already passed: the scan returns nothing
+        stats = await _consolidator(sqlite, vectors).consolidate_batch(
+            time_budget_seconds=-1,
+        )
+
+        assert stats["checked"] == 0
+        assert len(await sqlite.get_unconsolidated_memory_ids(limit=100)) == 4
+
+    def test_find_neighbors_stops_at_the_deadline(self, store):
+        import time as _t
+        sqlite, vectors = store
+        with vectors._lock:
+            for i in range(3):
+                vectors._conn.execute(
+                    "INSERT INTO vec_memories(rowid, embedding) VALUES (?, ?)",
+                    [100 + i, struct.pack(f"{DIM}f", *_orthogonal(i))],
+                )
+            vectors._conn.commit()
+
+        full = vectors.find_neighbors([100, 101, 102])
+        none_ = vectors.find_neighbors([100, 101, 102], deadline=_t.monotonic() - 1)
+
+        assert len(full) == 3
+        assert none_ == {}, "the scan ignored its deadline"

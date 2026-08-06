@@ -68,7 +68,7 @@ class MemoryConsolidator:
         """
         stats = {
             "checked": 0, "merged": 0, "errors": 0,
-            "no_vector": 0, "stopped_early": False,
+            "not_examined": 0, "stopped_early": False,
         }
         if self.dry_run:
             stats["dry_run"] = True
@@ -78,19 +78,38 @@ class MemoryConsolidator:
             if on_status:
                 on_status(msg)
 
+        # A dry run marks nothing, so it can't rely on the pool shrinking to
+        # advance. Without a cursor, `nightly --job consolidate --loop` re-read
+        # the same first batch on every pass — 14 identical passes over the
+        # same 1995 memories before a timeout finally stopped it
+        # (seen live 2026-08-06). The cursor is persisted so a survey can be
+        # resumed, and resets once it runs off the end.
+        offset = await self._dry_run_offset() if self.dry_run else 0
         memory_ids = await self.sqlite.get_unconsolidated_memory_ids(
-            limit=self.batch_size,
+            limit=self.batch_size, offset=offset,
         )
         if not memory_ids:
+            if self.dry_run:
+                await self._set_dry_run_offset(0)   # survey complete; rewind
             return stats
+        if self.dry_run:
+            await self._set_dry_run_offset(offset + len(memory_ids))
+            stats["offset"] = offset
 
         # All vector work in ONE executor hop: the store is synchronous, and a
         # KNN scan per memory would otherwise block the event loop for the
         # whole batch.
         loop = asyncio.get_running_loop()
+        deadline = (
+            time.monotonic() + time_budget_seconds if time_budget_seconds else None
+        )
         try:
+            # The scan gets the SAME deadline as the merge loop: it's a linear
+            # pass over the whole vec table per memory, so on a large batch it
+            # can consume the entire job budget on its own.
             neighbors = await loop.run_in_executor(
-                None, self.vectors.find_neighbors, memory_ids, self.neighbors_k,
+                None, self.vectors.find_neighbors,
+                memory_ids, self.neighbors_k, deadline,
             )
         except Exception as e:
             logger.error("Consolidation neighbor lookup failed: %s", e)
@@ -99,9 +118,6 @@ class MemoryConsolidator:
 
         archived_ids: set[int] = set()
         checked_ids: list[int] = []
-        deadline = (
-            time.monotonic() + time_budget_seconds if time_budget_seconds else None
-        )
 
         for memory_id in memory_ids:
             if deadline and time.monotonic() >= deadline:
@@ -116,9 +132,12 @@ class MemoryConsolidator:
 
             found = neighbors.get(memory_id)
             if found is None:
-                # Never embedded — nothing to compare against. Do NOT mark it
-                # consolidated, or a backfilled vector would never be checked.
-                stats["no_vector"] += 1
+                # Not examined: either it has no vector, or the scan hit its
+                # deadline before reaching it. Either way it must NOT be marked
+                # consolidated — a backfilled vector would never get checked,
+                # and a deadline-skipped memory would be silently dropped from
+                # the corpus sweep.
+                stats["not_examined"] += 1
                 continue
 
             try:
@@ -173,6 +192,21 @@ class MemoryConsolidator:
             await self.sqlite.mark_memories_consolidated(final_checked)
 
         return stats
+
+    _DRY_CURSOR_KEY = "consolidation_dry_run_cursor"
+
+    async def _dry_run_offset(self) -> int:
+        try:
+            raw = await self.sqlite.get_metadata(self._DRY_CURSOR_KEY)
+            return int(raw) if raw else 0
+        except (TypeError, ValueError):
+            return 0
+
+    async def _set_dry_run_offset(self, value: int) -> None:
+        try:
+            await self.sqlite.set_metadata(self._DRY_CURSOR_KEY, str(value))
+        except Exception as e:
+            logger.warning("Could not persist dry-run cursor: %s", e)
 
     async def _pick_winner(self, id_a: int, id_b: int) -> tuple[int, int]:
         """Decide which memory to keep (winner) and which to archive (loser).

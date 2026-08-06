@@ -1305,13 +1305,19 @@ class SQLiteStore:
                 pass
             raise
 
-    async def get_unconsolidated_memory_ids(self, limit: int = 100) -> list[int]:
-        """Get memory IDs that haven't been consolidation-checked yet."""
+    async def get_unconsolidated_memory_ids(
+        self, limit: int = 100, offset: int = 0,
+    ) -> list[int]:
+        """Get memory IDs that haven't been consolidation-checked yet.
+
+        `offset` is for dry runs, which deliberately don't mark anything — so
+        without it, repeated passes re-read the same first batch forever.
+        """
         cursor = await self._db.execute(
             """SELECT id FROM memories
                WHERE consolidated_at IS NULL AND is_archived = 0 AND summary IS NOT NULL
-               ORDER BY timestamp ASC LIMIT ?""",
-            (limit,),
+               ORDER BY timestamp ASC LIMIT ? OFFSET ?""",
+            (limit, offset),
         )
         rows = await cursor.fetchall()
         return [r["id"] for r in rows]
