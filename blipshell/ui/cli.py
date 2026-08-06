@@ -1609,74 +1609,17 @@ def import_chatgpt():
 @click.pass_context
 def conversations(ctx, file, max_count, skip_lessons):
     """Import conversations from a ChatGPT conversations.json export."""
-    from rich.progress import Progress
+    from blipshell.import_chatgpt import parse_conversations as _parse
+    from blipshell.ui.importers import run_import
 
-    from blipshell.import_chatgpt import parse_conversations
-    from blipshell.import_common import import_conversations
-    from blipshell.llm.endpoints import EndpointManager
-    from blipshell.llm.router import LLMRouter
-    from blipshell.models.config import get_ollama_url
-    from blipshell.memory.vector_store import VectorStore
-    from blipshell.memory.sqlite_store import SQLiteStore
-
-    async def _import():
-        # Parse
-        console.print(f"[cyan]Parsing {file}...[/cyan]")
-        convs = parse_conversations(file)
-        console.print(f"Found [bold]{len(convs)}[/bold] conversations.")
-
-        if max_count:
-            convs = convs[:max_count]
-            console.print(f"Importing first [bold]{max_count}[/bold].")
-
-        if not convs:
-            console.print("[yellow]No conversations to import.[/yellow]")
-            return
-
-        # Initialize infrastructure (same pattern as export command)
-        config_manager = ConfigManager(ctx.obj.get("config_path"))
-        cfg = config_manager.load()
-
-        sqlite = SQLiteStore(cfg.database.path)
-        await sqlite.initialize()
-
-        chroma = VectorStore(
-            db_path=cfg.database.path,
-            embedding_model=cfg.models.embedding,
-            ollama_url=get_ollama_url(cfg.endpoints),
-            embedding_dim=cfg.database.embedding_dimensions,
-        )
-        chroma.initialize()
-
-        endpoint_manager = EndpointManager(cfg.endpoints, cfg.llm)
-        router = LLMRouter(cfg.models, endpoint_manager)
-
-        # Import with progress bar
-        with Progress(console=console) as progress:
-            task = progress.add_task("Importing...", total=len(convs))
-
-            def on_progress(idx, total, title, stats):
-                label = f"[cyan]{title[:40]}[/cyan]"
-                i, s = stats.conversations_imported, stats.conversations_skipped
-                if i or s:
-                    label += f"  [dim]({i} imported, {s} skipped)[/dim]"
-                progress.update(task, completed=idx, description=label)
-
-            stats = await import_conversations(
-                sqlite=sqlite,
-                vectors=chroma,
-                router=router,
-                config=cfg.memory,
-                conversations=convs,
-                on_progress=on_progress,
-                skip_lessons=skip_lessons,
-            )
-            progress.update(task, completed=len(convs))
-
-        await sqlite.close()
-        _print_import_summary(stats)
-
-    asyncio.run(_import())
+    run_import(
+        config_path=ctx.obj.get("config_path"),
+        parse=_parse,
+        source=file,
+        operation="import-chatgpt",
+        max_count=max_count,
+        skip_lessons=skip_lessons,
+    )
 
 
 @import_chatgpt.command()
@@ -1770,71 +1713,17 @@ def import_claude_group():
 @click.pass_context
 def claude_conversations(ctx, file, max_count, skip_lessons):
     """Import conversations from an official Claude conversations.json export."""
-    from rich.progress import Progress
+    from blipshell.import_claude import parse_conversations as _parse
+    from blipshell.ui.importers import run_import
 
-    from blipshell.import_claude import parse_conversations
-    from blipshell.import_common import import_conversations
-    from blipshell.llm.endpoints import EndpointManager
-    from blipshell.llm.router import LLMRouter
-    from blipshell.models.config import get_ollama_url
-    from blipshell.memory.vector_store import VectorStore
-    from blipshell.memory.sqlite_store import SQLiteStore
-
-    async def _import():
-        console.print(f"[cyan]Parsing {file}...[/cyan]")
-        convs = parse_conversations(file)
-        console.print(f"Found [bold]{len(convs)}[/bold] conversations.")
-
-        if max_count:
-            convs = convs[:max_count]
-            console.print(f"Importing first [bold]{max_count}[/bold].")
-
-        if not convs:
-            console.print("[yellow]No conversations to import.[/yellow]")
-            return
-
-        config_manager = ConfigManager(ctx.obj.get("config_path"))
-        cfg = config_manager.load()
-
-        sqlite = SQLiteStore(cfg.database.path)
-        await sqlite.initialize()
-
-        chroma = VectorStore(
-            db_path=cfg.database.path,
-            embedding_model=cfg.models.embedding,
-            ollama_url=get_ollama_url(cfg.endpoints),
-            embedding_dim=cfg.database.embedding_dimensions,
-        )
-        chroma.initialize()
-
-        endpoint_manager = EndpointManager(cfg.endpoints, cfg.llm)
-        router = LLMRouter(cfg.models, endpoint_manager)
-
-        with Progress(console=console) as progress:
-            task = progress.add_task("Importing...", total=len(convs))
-
-            def on_progress(idx, total, title, stats):
-                label = f"[cyan]{title[:40]}[/cyan]"
-                i, s = stats.conversations_imported, stats.conversations_skipped
-                if i or s:
-                    label += f"  [dim]({i} imported, {s} skipped)[/dim]"
-                progress.update(task, completed=idx, description=label)
-
-            stats = await import_conversations(
-                sqlite=sqlite,
-                vectors=chroma,
-                router=router,
-                config=cfg.memory,
-                conversations=convs,
-                on_progress=on_progress,
-                skip_lessons=skip_lessons,
-            )
-            progress.update(task, completed=len(convs))
-
-        await sqlite.close()
-        _print_import_summary(stats)
-
-    asyncio.run(_import())
+    run_import(
+        config_path=ctx.obj.get("config_path"),
+        parse=_parse,
+        source=file,
+        operation="import-claude",
+        max_count=max_count,
+        skip_lessons=skip_lessons,
+    )
 
 
 @import_claude_group.command("scraped")
@@ -1845,71 +1734,17 @@ def claude_conversations(ctx, file, max_count, skip_lessons):
 @click.pass_context
 def claude_scraped(ctx, file, max_count, skip_lessons):
     """Import conversations from a scraped Claude conversations_export.json."""
-    from rich.progress import Progress
+    from blipshell.import_claude import parse_scraped_conversations as _parse
+    from blipshell.ui.importers import run_import
 
-    from blipshell.import_claude import parse_scraped_conversations
-    from blipshell.import_common import import_conversations
-    from blipshell.llm.endpoints import EndpointManager
-    from blipshell.llm.router import LLMRouter
-    from blipshell.models.config import get_ollama_url
-    from blipshell.memory.vector_store import VectorStore
-    from blipshell.memory.sqlite_store import SQLiteStore
-
-    async def _import():
-        console.print(f"[cyan]Parsing {file}...[/cyan]")
-        convs = parse_scraped_conversations(file)
-        console.print(f"Found [bold]{len(convs)}[/bold] conversations.")
-
-        if max_count:
-            convs = convs[:max_count]
-            console.print(f"Importing first [bold]{max_count}[/bold].")
-
-        if not convs:
-            console.print("[yellow]No conversations to import.[/yellow]")
-            return
-
-        config_manager = ConfigManager(ctx.obj.get("config_path"))
-        cfg = config_manager.load()
-
-        sqlite = SQLiteStore(cfg.database.path)
-        await sqlite.initialize()
-
-        chroma = VectorStore(
-            db_path=cfg.database.path,
-            embedding_model=cfg.models.embedding,
-            ollama_url=get_ollama_url(cfg.endpoints),
-            embedding_dim=cfg.database.embedding_dimensions,
-        )
-        chroma.initialize()
-
-        endpoint_manager = EndpointManager(cfg.endpoints, cfg.llm)
-        router = LLMRouter(cfg.models, endpoint_manager)
-
-        with Progress(console=console) as progress:
-            task = progress.add_task("Importing...", total=len(convs))
-
-            def on_progress(idx, total, title, stats):
-                label = f"[cyan]{title[:40]}[/cyan]"
-                i, s = stats.conversations_imported, stats.conversations_skipped
-                if i or s:
-                    label += f"  [dim]({i} imported, {s} skipped)[/dim]"
-                progress.update(task, completed=idx, description=label)
-
-            stats = await import_conversations(
-                sqlite=sqlite,
-                vectors=chroma,
-                router=router,
-                config=cfg.memory,
-                conversations=convs,
-                on_progress=on_progress,
-                skip_lessons=skip_lessons,
-            )
-            progress.update(task, completed=len(convs))
-
-        await sqlite.close()
-        _print_import_summary(stats)
-
-    asyncio.run(_import())
+    run_import(
+        config_path=ctx.obj.get("config_path"),
+        parse=_parse,
+        source=file,
+        operation="import-claude-scraped",
+        max_count=max_count,
+        skip_lessons=skip_lessons,
+    )
 
 
 @import_claude_group.command("code")
@@ -1926,74 +1761,18 @@ def claude_code(ctx, path, max_count, skip_lessons, max_concurrent):
     PATH can be a single .jsonl file, a project directory, or the top-level
     ~/.claude/projects directory to import all sessions at once.
     """
-    from rich.progress import Progress
+    from blipshell.import_claude_code import parse_claude_code_sessions as _parse
+    from blipshell.ui.importers import run_import
 
-    from blipshell.core.import_lock import import_lock
-    from blipshell.import_claude_code import parse_claude_code_sessions
-    from blipshell.import_common import import_conversations
-    from blipshell.llm.endpoints import EndpointManager
-    from blipshell.llm.router import LLMRouter
-    from blipshell.models.config import get_ollama_url
-    from blipshell.memory.vector_store import VectorStore
-    from blipshell.memory.sqlite_store import SQLiteStore
-
-    async def _import():
-        console.print(f"[cyan]Scanning {path} for Claude Code sessions...[/cyan]")
-        convs = parse_claude_code_sessions(path)
-        console.print(f"Found [bold]{len(convs)}[/bold] sessions.")
-
-        if max_count:
-            convs = convs[:max_count]
-            console.print(f"Importing first [bold]{max_count}[/bold].")
-
-        if not convs:
-            console.print("[yellow]No sessions to import.[/yellow]")
-            return
-
-        config_manager = ConfigManager(ctx.obj.get("config_path"))
-        cfg = config_manager.load()
-
-        sqlite = SQLiteStore(cfg.database.path)
-        await sqlite.initialize()
-
-        chroma = VectorStore(
-            db_path=cfg.database.path,
-            embedding_model=cfg.models.embedding,
-            ollama_url=get_ollama_url(cfg.endpoints),
-            embedding_dim=cfg.database.embedding_dimensions,
-        )
-        chroma.initialize()
-
-        endpoint_manager = EndpointManager(cfg.endpoints, cfg.llm)
-        router = LLMRouter(cfg.models, endpoint_manager)
-
-        with import_lock(cfg.database.path, operation="import-claude-code"):
-            with Progress(console=console) as progress:
-                task = progress.add_task("Importing...", total=len(convs))
-
-                def on_progress(idx, total, title, stats):
-                    label = f"[cyan]{title[:40]}[/cyan]"
-                    i, s = stats.conversations_imported, stats.conversations_skipped
-                    if i or s:
-                        label += f"  [dim]({i} imported, {s} skipped)[/dim]"
-                    progress.update(task, completed=idx, description=label)
-
-                stats = await import_conversations(
-                    sqlite=sqlite,
-                    vectors=chroma,
-                    router=router,
-                    config=cfg.memory,
-                    conversations=convs,
-                    on_progress=on_progress,
-                    skip_lessons=skip_lessons,
-                    max_concurrent=max_concurrent,
-                )
-                progress.update(task, completed=len(convs))
-
-        await sqlite.close()
-        _print_import_summary(stats)
-
-    asyncio.run(_import())
+    run_import(
+        config_path=ctx.obj.get("config_path"),
+        parse=_parse,
+        source=path,
+        operation="import-claude-code",
+        max_count=max_count,
+        skip_lessons=skip_lessons,
+        max_concurrent=max_concurrent,
+    )
 
 
 @import_claude_group.command("memories")
@@ -2084,71 +1863,17 @@ def import_deepseek_group():
 @click.pass_context
 def deepseek_conversations(ctx, file, max_count, skip_lessons):
     """Import conversations from a DeepSeek conversations_deepseek.json export."""
-    from rich.progress import Progress
+    from blipshell.import_deepseek import parse_conversations as _parse
+    from blipshell.ui.importers import run_import
 
-    from blipshell.import_common import import_conversations
-    from blipshell.import_deepseek import parse_conversations
-    from blipshell.llm.endpoints import EndpointManager
-    from blipshell.llm.router import LLMRouter
-    from blipshell.models.config import get_ollama_url
-    from blipshell.memory.vector_store import VectorStore
-    from blipshell.memory.sqlite_store import SQLiteStore
-
-    async def _import():
-        console.print(f"[cyan]Parsing {file}...[/cyan]")
-        convs = parse_conversations(file)
-        console.print(f"Found [bold]{len(convs)}[/bold] conversations.")
-
-        if max_count:
-            convs = convs[:max_count]
-            console.print(f"Importing first [bold]{max_count}[/bold].")
-
-        if not convs:
-            console.print("[yellow]No conversations to import.[/yellow]")
-            return
-
-        config_manager = ConfigManager(ctx.obj.get("config_path"))
-        cfg = config_manager.load()
-
-        sqlite = SQLiteStore(cfg.database.path)
-        await sqlite.initialize()
-
-        chroma = VectorStore(
-            db_path=cfg.database.path,
-            embedding_model=cfg.models.embedding,
-            ollama_url=get_ollama_url(cfg.endpoints),
-            embedding_dim=cfg.database.embedding_dimensions,
-        )
-        chroma.initialize()
-
-        endpoint_manager = EndpointManager(cfg.endpoints, cfg.llm)
-        router = LLMRouter(cfg.models, endpoint_manager)
-
-        with Progress(console=console) as progress:
-            task = progress.add_task("Importing...", total=len(convs))
-
-            def on_progress(idx, total, title, stats):
-                label = f"[cyan]{title[:40]}[/cyan]"
-                i, s = stats.conversations_imported, stats.conversations_skipped
-                if i or s:
-                    label += f"  [dim]({i} imported, {s} skipped)[/dim]"
-                progress.update(task, completed=idx, description=label)
-
-            stats = await import_conversations(
-                sqlite=sqlite,
-                vectors=chroma,
-                router=router,
-                config=cfg.memory,
-                conversations=convs,
-                on_progress=on_progress,
-                skip_lessons=skip_lessons,
-            )
-            progress.update(task, completed=len(convs))
-
-        await sqlite.close()
-        _print_import_summary(stats)
-
-    asyncio.run(_import())
+    run_import(
+        config_path=ctx.obj.get("config_path"),
+        parse=_parse,
+        source=file,
+        operation="import-deepseek",
+        max_count=max_count,
+        skip_lessons=skip_lessons,
+    )
 
 
 # --- Generic Conversation Import ---
