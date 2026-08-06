@@ -368,6 +368,17 @@ class ChatMixin:
             else:
                 config.outbound_transform = None
 
+            # ChatLoop mutates `messages` in place — it appends the assistant
+            # turn and every tool result, and compaction replaces the contents
+            # wholesale. Retrying the next endpoint with that same list replayed
+            # the failed attempt as history, reset the tool budget so the
+            # effective cap multiplied by the number of endpoints, and — when
+            # the failure landed between the assistant-with-tool_calls append
+            # and the tool results — handed the next endpoint an assistant
+            # message whose tool_calls have no matching responses, which
+            # OpenAI-compatible endpoints reject with a 400.
+            attempt_snapshot = [dict(m) for m in messages]
+
             endpoint.start_request()
             try:
                 result = await loop.run(
@@ -393,6 +404,10 @@ class ChatMixin:
                     self.router.mark_model_failed(ep_model)
                 else:
                     endpoint.record_failure()
+
+                # Rewind to the pre-attempt state (in place, so the caller's
+                # list is restored too) before handing it to another endpoint.
+                messages[:] = attempt_snapshot
 
                 logger.warning(
                     "Endpoint '%s' failed with '%s', trying next endpoint",
