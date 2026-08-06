@@ -1322,6 +1322,28 @@ class SQLiteStore:
         rows = await cursor.fetchall()
         return [r["id"] for r in rows]
 
+    async def get_integrity_counts(self) -> dict[str, int]:
+        """Row counts that destructive maintenance must never reduce.
+
+        Consolidation archives memories; it must never delete one, and must
+        never take an entity edge or mention with it. Deleting a memory used
+        to cascade both away, so these are the two numbers that prove the
+        archive-never-delete mandate held.
+        """
+        counts: dict[str, int] = {}
+        for label, table in (
+            ("memories", "memories"),
+            ("entity_edges", "entity_relationships"),
+            ("entity_mentions", "entity_mentions"),
+        ):
+            try:
+                cursor = await self._db.execute(f"SELECT COUNT(*) AS n FROM {table}")
+                row = await cursor.fetchone()
+                counts[label] = row["n"] if row else 0
+            except Exception as e:
+                logger.warning("Integrity count failed for %s: %s", table, e)
+        return counts
+
     async def mark_memories_consolidated(self, memory_ids: list[int]):
         """Set consolidated_at timestamp for checked memories."""
         if not memory_ids:

@@ -141,6 +141,9 @@ class MemoryConsolidator:
             _report(f"  {msg}")
             stats["scan_incomplete"] = True
 
+        before_counts = (
+            {} if self.dry_run else await self.sqlite.get_integrity_counts()
+        )
         archived_ids: set[int] = set()
         checked_ids: list[int] = []
 
@@ -226,6 +229,30 @@ class MemoryConsolidator:
         final_checked = [mid for mid in checked_ids if mid not in archived_ids]
         if final_checked and not self.dry_run:
             await self.sqlite.mark_memories_consolidated(final_checked)
+
+        # Self-verify a one-way operation. Archiving must never reduce the
+        # memory count or take entity edges with it — deleting used to cascade
+        # both away. Checking this in the job means the guarantee is visible in
+        # the run output instead of requiring someone to go query the database.
+        if before_counts and not self.dry_run:
+            after = await self.sqlite.get_integrity_counts()
+            lost = {
+                k: before_counts[k] - after.get(k, 0)
+                for k in before_counts
+                if after.get(k, 0) < before_counts[k]
+            }
+            stats["archived_now"] = stats["merged"]
+            stats["integrity_ok"] = not lost
+            if lost:
+                detail = ", ".join(f"{k} -{n}" for k, n in lost.items())
+                msg = (
+                    f"consolidate: INTEGRITY FAILURE — rows disappeared "
+                    f"({detail}). Merges should only archive. Restore from "
+                    f"backup and report this."
+                )
+                logger.error(msg)
+                _report(f"  {msg}")
+                stats["integrity_lost"] = lost
 
         if self.dry_run:
             # Advance by what was actually EXAMINED, never by the batch size.

@@ -678,3 +678,63 @@ class TestArchivedMemoriesStopBeingCandidates:
 
         assert first["merged"] >= 1
         assert second["merged"] == 0, "archived memories were merged again"
+
+
+class TestSelfVerifyingIntegrity:
+    """A one-way operation should prove its own safety in the run output —
+    not require someone to go query the database afterwards."""
+
+    async def test_a_clean_run_reports_integrity_ok(self, store):
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        await _add(sqlite, vectors, sid, content="keep", summary="keep",
+                   vec=_vec(1.0), importance=0.9)
+        await _add(sqlite, vectors, sid, content="drop", summary="drop",
+                   vec=_vec(1.0), importance=0.1)
+
+        stats = await _consolidator(sqlite, vectors).consolidate_batch()
+
+        assert stats["merged"] == 1
+        assert stats["integrity_ok"] is True
+        assert "integrity_lost" not in stats
+
+    async def test_entity_edges_are_counted_not_just_memories(self, store):
+        """The cascade took edges and mentions, not rows — so those are what
+        the check has to watch."""
+        sqlite, vectors = store
+        counts = await sqlite.get_integrity_counts()
+        assert set(counts) == {"memories", "entity_edges", "entity_mentions"}
+
+    async def test_a_deletion_would_be_caught(self, store, monkeypatch):
+        """Simulate the old hard-delete behaviour and confirm the run screams
+        instead of reporting a tidy success."""
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        await _add(sqlite, vectors, sid, content="keep", summary="keep",
+                   vec=_vec(1.0), importance=0.9)
+        drop = await _add(sqlite, vectors, sid, content="drop", summary="drop",
+                          vec=_vec(1.0), importance=0.1)
+
+        c = _consolidator(sqlite, vectors)
+        real_merge = c._merge_memories
+
+        async def deleting_merge(winner_id, loser_id):
+            await real_merge(winner_id, loser_id)
+            await sqlite.delete_memory(loser_id)      # the old behaviour
+
+        c._merge_memories = deleting_merge
+        msgs = []
+        stats = await c.consolidate_batch(on_status=msgs.append)
+
+        assert stats["integrity_ok"] is False
+        assert stats["integrity_lost"]["memories"] == 1
+        assert any("INTEGRITY FAILURE" in m for m in msgs)
+
+    async def test_dry_run_skips_the_check(self, store):
+        """Nothing changed, so there's nothing to verify."""
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        await _add(sqlite, vectors, sid, content="a", summary="a", vec=_vec(1.0))
+        c = _consolidator(sqlite, vectors, consolidation_dry_run=True)
+        stats = await c.consolidate_batch()
+        assert "integrity_ok" not in stats
