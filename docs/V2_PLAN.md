@@ -230,13 +230,23 @@ enter the file cache; simulate leaves the production DB untouched.
      paths through the existing `chat_loop_runner` got the same result without
      moving the vision/fallback logic out of `ChatMixin`. Revisit only if a
      third non-Agent caller appears.
-4. **`cli.py` split (4,518 lines → ~400)**: slash dispatch → `ui/commands/` registry
-   (**deletes `simulate/slash_dispatcher.py`**, a hand-maintained copy already
-   drifted to 24-of-33 commands — the sim harness cannot currently exercise
-   `/thoughts` at all); `_print_*` renderers (~1,900 lines) → `ui/views/`; five
-   copy-paste importers → one parameterized command; terminal plumbing →
-   `ui/terminal.py`. The registry is the frontend-agnostic layer the web UI and
-   Telegram drive later — web parity is NOT pursued feature-by-feature.
+4. ~~**`cli.py` split**~~ — **MOSTLY DONE 2026-08-05/06** (`3526969`,
+   `aca0e24`, `340c529`). 4,518 → 2,184 lines:
+   - renderers → `ui/views.py` (33 functions, moved verbatim)
+   - slash dispatch → `ui/commands.py` registry + `ui/command_handlers.py`;
+     `/help` is now DERIVED from it, and `simulate/slash_dispatcher.py` went
+     from a 564-line hand-maintained copy to a 108-line driver over the same
+     registry (a test asserts the two command sets are equal)
+   - five copy-paste importers → one `ui/importers.py`, which surfaced that
+     four of the five never took `import_lock` and so could collide with
+     nightly
+   - UI globals → `ui/state.py`, so simulation gets isolated state
+
+   **Terminal plumbing (~440 lines) deliberately NOT moved.** It's the one
+   part the dev-box suite can't validate — Esc-cancel and the approval prompt
+   were verified interactively on the Ollama PC — so a subtle break there
+   would pass CI and only show up under your hands. Two functions in views.py
+   and one in command_handlers.py import from it lazily to avoid a cycle.
 5. **Shared context assembly**: extract `_build_messages`' assembly into a
    `ContextBuilder` both paths use. Today `!plan` silently drops scratchpad, session
    notes, follow-ups, and the 5-pool budget system — a memory-continuity regression

@@ -41,7 +41,8 @@ blipshell/
 ├── llm/             # router, endpoints, clients (ollama + openai-compat),
 │                    # ollama_gate, pii, prompts, model_settings, exceptions
 ├── session/         # SessionManager — messages, persistence, summaries
-├── ui/              # cli.py (~4.4K lines, Rich/Click), web/ (FastAPI + WS + /v1)
+├── ui/              # cli.py (~2.2K, Rich/Click) + views/commands/state/importers,
+│                    # web/ (FastAPI + WS + /v1)
 ├── robotics/        # cube system + EmotionEngine (off by default, inert at rest)
 ├── simulate/        # multi-turn scenario runner (37 scenarios, 7 categories;
 │                    # defaults to a throwaway temp DB — see --db / --real-db)
@@ -259,10 +260,10 @@ hard-delete — do not use them.
 See `docs/V2_PLAN.md` for the full phased plan; Phases 0 and 1 are done, Phase 2
 is in progress. Remaining:
 
-- `cli.py` split into a command registry — this also deletes
-  `simulate/slash_dispatcher.py`, a hand-maintained copy that has already
-  drifted (it dispatches fewer commands than the CLI, so simulation cannot
-  exercise `/thoughts` at all).
+- `cli.py`'s terminal plumbing (~440 lines: Windows VT/msvcrt, Esc-cancel,
+  approval prompt) is the last thing left in that file that isn't Click
+  wiring. Deliberately not extracted — the suite can't validate it, so a
+  regression would only surface interactively.
 - Shared context assembly: `!plan` silently drops scratchpad, session notes,
   follow-ups and the 5-pool budgeting that `_chat_simple` gets.
 - Tests for the riskiest untested code: `MemoryWorker` has ZERO tests and is the
