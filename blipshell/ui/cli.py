@@ -1262,12 +1262,20 @@ def nightly_cmd(ctx, job, quiet, loop, local):
                 if not loop:
                     break
 
-                # Check if the job actually did work — stop if nothing left
+                # Check if the job actually did work — stop if nothing left.
+                # "checked" matters as much as the mutation counters:
+                # consolidation examines a batch and usually merges NOTHING
+                # (at a correct threshold most memories aren't duplicates), so
+                # keying only off `merged` made --loop announce "nothing left"
+                # after one pass while thousands of memories were still
+                # unexamined. Consolidation marks what it checks, so the pool
+                # shrinks every pass and this still terminates.
                 job_stats = result.get("jobs", {})
                 did_work = False
                 for stats in job_stats.values():
                     for key in ("resummarized", "scored", "processed", "merged",
-                                "deleted_junk", "deleted_dupes", "pruned", "rebuilt"):
+                                "deleted_junk", "deleted_dupes", "pruned", "rebuilt",
+                                "checked"):
                         if stats.get(key, 0) > 0:
                             did_work = True
                             break

@@ -29,6 +29,14 @@ def _vec(*first):
     return v
 
 
+def _orthogonal(i):
+    """A unit vector on axis i. Scaling one axis (0,0,1) vs (0,0,2) gives
+    PARALLEL vectors — cosine 1.0 — not distinct ones."""
+    v = [0.0] * DIM
+    v[i % DIM] = 1.0
+    return v
+
+
 class _ExplodingEmbedder:
     """Any embedding call is a regression — consolidation must use the vectors
     already stored, never ask Ollama for another one."""
@@ -220,7 +228,7 @@ class TestResumability:
         sid = await sqlite.create_session("s")
         for i in range(5):
             await _add(sqlite, vectors, sid, content=f"m{i}", summary=f"m{i}",
-                       vec=_vec(0.0, 0.0, float(i + 1)))
+                       vec=_orthogonal(i))
 
         c = _consolidator(sqlite, vectors)
         stats = await c.consolidate_batch(time_budget_seconds=-1)   # already expired
@@ -233,7 +241,7 @@ class TestResumability:
         sid = await sqlite.create_session("s")
         for i in range(4):
             await _add(sqlite, vectors, sid, content=f"m{i}", summary=f"m{i}",
-                       vec=_vec(0.0, 0.0, float(i + 1)))
+                       vec=_orthogonal(i))
 
         c = _consolidator(sqlite, vectors)
         await c.consolidate_batch(time_budget_seconds=-1)      # does nothing
@@ -360,3 +368,53 @@ class TestNoRepeatedArchiving:
         ]
         # Exactly one archive event per losing memory, not one per neighbour.
         assert stats["merged"] == len(archived)
+
+
+class TestLoopTerminationSignal:
+    """`nightly --job consolidate --loop` decides whether to keep going from
+    the job's stats. Consolidation usually merges NOTHING on a given batch —
+    at a correct threshold most memories aren't duplicates — so progress has
+    to be signalled by `checked`, not `merged`. Keying off `merged` alone made
+    --loop stop after one pass and print "nothing left to process" with
+    thousands of memories still unexamined."""
+
+    async def test_a_batch_with_no_merges_still_reports_progress(self, store):
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        for i in range(3):
+            await _add(sqlite, vectors, sid, content=f"m{i}", summary=f"m{i}",
+                       vec=_orthogonal(i))
+
+        stats = await _consolidator(sqlite, vectors).consolidate_batch()
+
+        assert stats["merged"] == 0
+        assert stats["checked"] == 3, (
+            "a zero-merge batch reported no progress — --loop would stop early"
+        )
+
+    async def test_checked_is_in_the_cli_progress_keys(self):
+        """Pins the wiring: the CLI must treat `checked` as progress."""
+        import inspect
+        from blipshell.ui import cli
+
+        # nightly_cmd is a Click Command; the function is its .callback
+        src = inspect.getsource(cli.nightly_cmd.callback)
+        start = src.index('"resummarized"')
+        keys_block = src[start:src.index("):", start)]
+        assert '"checked"' in keys_block, (
+            f"'checked' missing from the loop's progress keys: {keys_block}"
+        )
+
+    async def test_pool_shrinks_each_pass_so_the_loop_terminates(self, store):
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        for i in range(4):
+            await _add(sqlite, vectors, sid, content=f"m{i}", summary=f"m{i}",
+                       vec=_orthogonal(i))
+
+        c = _consolidator(sqlite, vectors)
+        first = await c.consolidate_batch()
+        second = await c.consolidate_batch()
+
+        assert first["checked"] == 4
+        assert second["checked"] == 0, "consolidated memories were re-checked"
