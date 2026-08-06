@@ -26,6 +26,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# How long start() waits for the worker to finish building its own SQLite
+# store, router and processor before giving up and continuing anyway.
+# Module-level so tests can shrink it (same convention as nightly's timeouts).
+_START_TIMEOUT = 10.0
+
+# Idle entity extraction: how long the queue must stay empty before the worker
+# chips away at unextracted memories, and how many to take. Module-level for
+# the same reason — a test can't wait 60s to reach the idle branch.
+_IDLE_EXTRACT_INTERVAL = 60.0
+_IDLE_EXTRACT_BATCH = 10
+
 
 class WorkType(Enum):
     PROCESS_MESSAGE = "process_message"
@@ -69,11 +80,17 @@ class MemoryWorker:
             daemon=True,
         )
         self._thread.start()
-        self._started.wait(timeout=10)
+        self._started.wait(timeout=_START_TIMEOUT)
         if self._started.is_set():
             logger.info("Memory worker started (dedicated thread + event loop)")
         else:
-            logger.error("Memory worker failed to start within 10s")
+            # Deliberately continues: the main loop should still come up even
+            # if background memory processing is broken. Enqueued work then
+            # queues until the worker recovers or the process exits.
+            logger.error(
+                "Memory worker failed to start within %.0fs — continuing without it",
+                _START_TIMEOUT,
+            )
 
     def _thread_main(self):
         """Entry point for the worker thread."""
@@ -120,8 +137,6 @@ class MemoryWorker:
     async def _process_loop(self, loop, processor, sqlite, router):
         """Main processing loop. Polls the thread-safe queue."""
         last_idle_extract = time.monotonic()
-        idle_extract_interval = 60  # seconds between idle extraction attempts
-        idle_extract_batch = 10    # smaller batch during idle (vs 50 on startup)
 
         while True:
             try:
@@ -134,8 +149,8 @@ class MemoryWorker:
                     # slow and uses the shared VectorStore which gets closed
                     # shortly after shutdown.
                     if (not self._shutting_down.is_set()
-                            and time.monotonic() - last_idle_extract > idle_extract_interval):
-                        await self._idle_extract_entities(sqlite, router, idle_extract_batch)
+                            and time.monotonic() - last_idle_extract > _IDLE_EXTRACT_INTERVAL):
+                        await self._idle_extract_entities(sqlite, router, _IDLE_EXTRACT_BATCH)
                         last_idle_extract = time.monotonic()
                     continue
 
