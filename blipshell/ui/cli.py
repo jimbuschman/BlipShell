@@ -62,15 +62,16 @@ def _ensure_vt_processing():
         pass
 
 
-# Session-level auto-approve set: tools the user has approved for the rest of the session
-_session_approved_tools: set[str] = set()
+# Session/UI state lives on ui_state so command handlers can mutate it from
+# another module (a `global` statement can't reach across modules).
+from blipshell.ui.state import ui_state
+from blipshell.ui.commands import (
+    QUIT, CommandContext, Rewrite, registry as command_registry,
+)
+import blipshell.ui.command_handlers  # noqa: F401  (registers the commands)
 
 # prompt_toolkit session for tool approval / ask_user (no history)
 _simple_session = None
-
-# Tool display settings
-_verbose_tools: bool = False  # When True, show full tool results (like /verbose toggle)
-_tool_batch_history: list = []  # Stores recent tool batches for /expand
 
 
 from blipshell.ui.diff import generate_colored_diff as _generate_colored_diff
@@ -86,7 +87,7 @@ async def _tool_approval_prompt(tool_name: str, arguments: dict, force: bool = F
     """
     # If user already approved this tool for the session, skip the prompt
     # UNLESS force=True (destructive command detected — always ask)
-    if tool_name in _session_approved_tools and not force:
+    if tool_name in ui_state.session_approved_tools and not force:
         return True
 
     # Build a readable summary of what the tool wants to do
@@ -155,7 +156,7 @@ async def _tool_approval_prompt(tool_name: str, arguments: dict, force: bool = F
     if choice in ("a", "allow", "y", "yes"):
         return True
     elif choice in ("s", "session"):
-        _session_approved_tools.add(tool_name)
+        ui_state.session_approved_tools.add(tool_name)
         console.print(f"[dim]{tool_name} auto-approved for this session[/dim]")
         return True
     else:
@@ -386,10 +387,7 @@ def _display_tool_batch(
     calls: list of (name, arguments) for each tool in the batch.
     results: list of (ToolResult, is_dedup_blocked) for each tool.
     """
-    global _tool_batch_history
-    _tool_batch_history.append((calls, results))
-    if len(_tool_batch_history) > 50:
-        _tool_batch_history = _tool_batch_history[-50:]
+    ui_state.record_tool_batch(calls, results)
 
     for (name, args), (result, blocked) in zip(calls, results):
         arg_summary = _format_tool_arg_summary(name, args)
@@ -423,7 +421,7 @@ def _display_tool_batch(
                 sys.stdout.flush()
 
         # Verbose mode: show extra detail for run_command
-        if _verbose_tools and name == "run_command" and result.success and result.result:
+        if ui_state.verbose_tools and name == "run_command" and result.success and result.result:
             out_lines = result.result.strip().split("\n")
             for extra in out_lines[1:5]:
                 console.print(f"     [dim]{extra[:120]}[/dim]")
@@ -677,231 +675,25 @@ async def chat_loop(
 
             # Handle commands
             if user_input.startswith("/"):
-                cmd = user_input[1:].lower().split()
-                cmd_args = user_input[1:].split()[1:]  # preserve original case for args
-                if cmd[0] in ("quit", "exit", "q"):
+                parts = user_input[1:].lower().split()
+                if not parts:
+                    continue
+                outcome = await command_registry.dispatch(CommandContext(
+                    agent=agent,
+                    config=config,
+                    raw=user_input,
+                    parts=parts,
+                    args=user_input[1:].split()[1:],   # original case preserved
+                    ui=ui_state,
+                    console=console,
+                ))
+                if outcome is QUIT:
                     break
-                elif cmd[0] == "status":
-                    _print_status(agent)
-                    continue
-                elif cmd[0] == "memory":
-                    _print_memory_usage(agent)
-                    continue
-                elif cmd[0] == "save":
-                    await agent.session_manager.dump_to_memory()
-                    console.print("[dim]Session dumped to memory.[/dim]")
-                    continue
-                elif cmd[0] == "plan":
-                    await _print_active_plan(agent)
-                    continue
-                elif cmd[0] == "plans":
-                    await _print_plans(agent)
-                    continue
-                elif cmd[0] == "tasks":
-                    await _print_background_tasks(agent)
-                    continue
-                elif cmd[0] == "task" and len(cmd) > 1:
-                    try:
-                        await _print_task_detail(agent, int(cmd[1]))
-                    except ValueError:
-                        console.print("[yellow]Usage: /task <id> (e.g. /task 1)[/yellow]")
-                    continue
-                elif cmd[0] == "workflow":
-                    await _handle_workflow_command(agent, cmd_args)
-                    continue
-                elif cmd[0] == "core":
-                    if len(cmd) >= 3 and cmd[1] == "delete":
-                        await _delete_core_item(agent, cmd[2:])
-                    else:
-                        await _print_core(agent)
-                    continue
-                elif cmd[0] == "feedback":
-                    if len(cmd) < 2:
-                        console.print("[yellow]Usage: /feedback <your feedback>[/yellow]")
-                        console.print("[dim]Example: /feedback too verbose, keep answers shorter[/dim]")
-                    else:
-                        feedback_text = user_input[len("/feedback "):]
-                        await _save_feedback(agent, feedback_text)
-                    continue
-                elif cmd[0] == "think":
-                    if len(cmd) > 1 and cmd[1] in ("on", "off"):
-                        agent.think_enabled = cmd[1] == "on"
-                    else:
-                        agent.think_enabled = not agent.think_enabled
-                    state = "[green]ON[/green]" if agent.think_enabled else "[yellow]OFF[/yellow]"
-                    console.print(f"[dim]Thinking mode: {state}[/dim]")
-                    continue
-                elif cmd[0] == "reflect":
-                    if len(cmd) > 1 and cmd[1] in ("on", "off"):
-                        agent.reflect_enabled = cmd[1] == "on"
-                    else:
-                        agent.reflect_enabled = not agent.reflect_enabled
-                    state = "[green]ON[/green]" if agent.reflect_enabled else "[yellow]OFF[/yellow]"
-                    console.print(f"[dim]Self-reflection: {state}[/dim]")
-                    continue
-                elif cmd[0] == "thoughts":
-                    await _print_thoughts(agent)
-                    continue
-                elif cmd[0] == "guardrails":
-                    if len(cmd) > 1 and cmd[1] in ("on", "off"):
-                        config.guardrails.enabled = cmd[1] == "on"
-                    else:
-                        config.guardrails.enabled = not config.guardrails.enabled
-                    state = "[green]ON[/green]" if config.guardrails.enabled else "[yellow]OFF[/yellow]"
-                    console.print(f"[dim]Guardrails: {state}[/dim]")
-                    if config.guardrails.enabled:
-                        features = []
-                        if config.guardrails.completion_audit:
-                            features.append("completion audit")
-                        if config.guardrails.correction_detector:
-                            features.append("correction detector")
-                        if config.guardrails.trajectory_monitor:
-                            features.append("trajectory monitor")
-                        if config.guardrails.context_pinning:
-                            features.append("context pinning")
-                        if config.guardrails.requirement_checklist:
-                            features.append("requirement checklist")
-                        console.print(f"[dim]  Active: {', '.join(features)}[/dim]")
-                    continue
-                elif cmd[0] == "verbose":
-                    global _verbose_tools
-                    _verbose_tools = not _verbose_tools
-                    state = "[green]ON[/green]" if _verbose_tools else "[yellow]OFF[/yellow]"
-                    console.print(f"[dim]Verbose tool output: {state}[/dim]")
-                    continue
-                elif cmd[0] == "expand":
-                    if not _tool_batch_history:
-                        console.print("[dim]No tool batches to show.[/dim]")
-                    else:
-                        # Show last N batches (default 1)
-                        n = 1
-                        if cmd_args:
-                            try:
-                                n = int(cmd_args[0])
-                            except ValueError:
-                                pass
-                        batches = _tool_batch_history[-n:]
-                        for batch_idx, (calls, results) in enumerate(batches):
-                            for (name, args), (result, blocked) in zip(calls, results):
-                                if blocked:
-                                    console.print(f"[dim]  {name}: [duplicate blocked][/dim]")
-                                    continue
-                                arg_summary = _format_tool_arg_summary(name, args)
-                                style = "red" if not result.success else "bold"
-                                console.print(f"  [{style}]{name}[/{style}] {arg_summary}", highlight=False)
-                                # Show full result
-                                if result.result:
-                                    text = result.result[:2000]
-                                    console.print(Panel(text, border_style="dim", expand=False))
-                            if batch_idx < len(batches) - 1:
-                                console.print("[dim]---[/dim]")
-                    continue
-                elif cmd[0] == "approve":
-                    if len(cmd) > 1 and cmd[1] == "all":
-                        # Auto-approve everything for this session
-                        for t in config.agent.tools_requiring_approval:
-                            _session_approved_tools.add(t)
-                        console.print("[dim]All tools auto-approved for this session[/dim]")
-                    elif len(cmd) > 1 and cmd[1] == "reset":
-                        _session_approved_tools.clear()
-                        console.print("[dim]Tool approvals reset — will prompt again[/dim]")
-                    else:
-                        approved = ", ".join(sorted(_session_approved_tools)) if _session_approved_tools else "none"
-                        requiring = ", ".join(config.agent.tools_requiring_approval)
-                        console.print(f"[dim]Tools requiring approval: {requiring}[/dim]")
-                        console.print(f"[dim]Session-approved: {approved}[/dim]")
-                        console.print("[dim]  /approve all   — auto-approve all for this session[/dim]")
-                        console.print("[dim]  /approve reset — reset all approvals[/dim]")
-                    continue
-                elif cmd[0] == "research":
-                    query = " ".join(cmd_args) if cmd_args else ""
-                    if not query:
-                        console.print("[yellow]Usage: /research <question or topic>[/yellow]")
-                        console.print("[dim]Triggers deep research with web search and thorough exploration.[/dim]")
-                        continue
-                    # Rewrite user_input so it's handled like !plan below
-                    user_input = "!research " + query
-                    # Fall through (no continue) — handled alongside !plan
-                elif cmd[0] == "code":
-                    if len(cmd) < 2:
-                        console.print("[yellow]Usage: /code [--model name] <file-or-folder> [instruction][/yellow]")
-                        console.print("[dim]Examples:[/dim]")
-                        console.print("[dim]  /code blipshell/core/agent.py[/dim]")
-                        console.print("[dim]  /code blipshell/core/ find potential bugs[/dim]")
-                        console.print("[dim]  /code --model gemma3:4b tests/benchmark_agent_buggy.py[/dim]")
-                    else:
-                        code_args = user_input[len("/code "):]
-                        await _handle_code_command(agent, code_args)
-                    continue
-                elif cmd[0] == "offload":
-                    if len(cmd) < 2:
-                        console.print("[yellow]Usage: /offload <task description>[/yellow]")
-                        console.print("[dim]Example: /offload review this code for errors: ...[/dim]")
-                    else:
-                        offload_msg = user_input[len("/offload "):]
-                        await _submit_offload(agent, offload_msg)
-                    continue
-                elif cmd[0] == "health":
-                    quick = len(cmd) > 1 and cmd[1] == "quick"
-                    await _print_health(agent, config, quick=quick)
-                    continue
-                elif cmd[0] == "flow":
-                    turn = None
-                    if len(cmd) > 1:
-                        try:
-                            turn = int(cmd[1])
-                        except ValueError:
-                            console.print("[yellow]Usage: /flow [turn_number][/yellow]")
-                            continue
-                    await _print_flow(agent, turn)
-                    continue
-                elif cmd[0] == "cleanup":
-                    await _run_cleanup(agent)
-                    continue
-                elif cmd[0] == "nightly":
-                    if cmd_args and cmd_args[0] == "report":
-                        await _print_nightly_report(agent)
-                    else:
-                        job_name = cmd_args[0] if cmd_args else None
-                        await _run_nightly(agent, job_name)
-                    continue
-                elif cmd[0] == "cube":
-                    await _handle_cube_command(agent, cmd_args)
-                    continue
-                elif cmd[0] == "changes":
-                    _print_changes(agent)
-                    continue
-                elif cmd[0] in ("followups", "followup"):
-                    await _print_followups(agent)
-                    continue
-                elif cmd[0] == "friction":
-                    reviewed = len(cmd_args) > 0 and cmd_args[0] == "all"
-                    await _print_friction(agent, show_all=reviewed)
-                    continue
-                elif cmd[0] == "compact":
-                    focus = " ".join(cmd_args) if cmd_args else ""
-                    await _handle_compact(agent, focus)
-                    continue
-                elif cmd[0] == "notes":
-                    await _handle_notes_command(agent, cmd_args)
-                    continue
-                elif cmd[0] == "context":
-                    _print_context(agent)
-                    continue
-                elif cmd[0] == "tokens":
-                    _print_tokens(agent)
-                    continue
-                elif cmd[0] == "projects":
-                    await _list_projects(agent)
-                    continue
-                elif cmd[0] == "project":
-                    await _handle_project_command(agent, cmd_args)
-                    continue
-                elif cmd[0] in ("help", "commands"):
-                    _print_help()
-                    continue
+                if isinstance(outcome, Rewrite):
+                    # e.g. /research -> "!research ..."; fall through to the
+                    # normal message path below rather than looping.
+                    user_input = outcome.text
                 else:
-                    console.print(f"[yellow]Unknown command: /{cmd[0]}[/yellow]")
                     continue
 
             # Check for force-plan and research prefixes
@@ -1091,61 +883,6 @@ from blipshell.ui.views import (  # noqa: F401
     _save_feedback,
     _submit_offload,
 )
-
-def _print_help():
-    """Print help for CLI commands."""
-    console.print(Panel(
-        "[bold]/quit[/bold]                  - Exit BlipShell\n"
-        "[bold]/status[/bold]                - Show agent status, endpoints, routing\n"
-        "[bold]/memory[/bold]                - Show memory pool usage\n"
-        "[bold]/context[/bold]               - Show context window usage breakdown\n"
-        "[bold]/tokens[/bold]                - Show token usage per endpoint this session\n"
-        "[bold]/compact[/bold] [dim][focus][/dim]        - Compact older messages to free context\n"
-        "[bold]/notes[/bold]                 - Show session notes (survive compaction)\n"
-        "[bold]/notes save[/bold] [dim]<name> <text>[/dim] - Save a session note\n"
-        "[bold]/notes delete[/bold] [dim]<name>[/dim]   - Delete a note\n"
-        "[bold]/save[/bold]                  - Force save session to memory\n"
-        "[bold]/core[/bold]                  - Show core memories and lessons\n"
-        "[bold]/think[/bold]                 - Toggle LLM thinking mode on/off\n"
-        "[bold]/reflect[/bold]               - Toggle self-reflection on/off\n"
-        "[bold]/thoughts[/bold]              - Show lingering thoughts + gravity weights\n"
-        "[bold]/guardrails[/bold] [dim][on|off][/dim]   - Toggle guardrails (completion audit, drift monitor)\n"
-        "[bold]/verbose[/bold]               - Toggle verbose tool output on/off\n"
-        "[bold]/expand[/bold] [dim][n][/dim]             - Show full output of last n tool batches\n"
-        "[bold]/approve[/bold] [dim]all|reset[/dim]     - Manage tool approval (write/edit/run)\n"
-        "[bold]/changes[/bold]               - Show files modified this session\n"
-        "[bold]/followups[/bold]             - Show pending follow-up items\n"
-        "[bold]/friction[/bold] [dim][all][/dim]        - Show system friction log (unreviewed, or all)\n"
-        "[bold]/research <query>[/bold]       - Deep research with web + code exploration\n"
-        "[bold]/code <path> [msg][/bold]     - Send code to LLM for review\n"
-        "[bold]/feedback <msg>[/bold]        - Save feedback as a lesson\n"
-        "[bold]/offload <msg>[/bold]         - Run a task on remote PC in background\n"
-        "[bold]/health[/bold] [dim][quick][/dim]          - Database + endpoint health check\n"
-        "[bold]/cleanup[/bold]               - Reprocess failed messages (relaxed timeouts)\n"
-        "[bold]/nightly[/bold] [dim][job|report][/dim]    - Run nightly maintenance or show last report\n"
-        "[bold]/cube[/bold] [dim][<id>|reauthor <id>|disconnect <id>][/dim]  - Cubes: list, inspect behaviors, re-author, disconnect\n"
-        "[bold]/flow[/bold] [dim][n][/dim]              - Show conversation flow events\n"
-        "[bold]/plan[/bold]                  - Show current active plan\n"
-        "[bold]/plans[/bold]                 - List all plans for this session\n"
-        "[bold]/tasks[/bold]                 - Show background tasks\n"
-        "[bold]/task <id>[/bold]             - Show background task detail\n"
-        "[bold]/workflow[/bold] [dim]list|show|run[/dim] - Workflow management\n\n"
-        "[bold cyan]Project Commands[/bold cyan]\n"
-        "[bold]/projects[/bold]              - List all projects\n"
-        "[bold]/project <name>[/bold]        - Activate a project\n"
-        "[bold]/project new <n> <path>[/bold] - Create project from directory\n"
-        "[bold]/project info[/bold]          - Show active project details\n"
-        "[bold]/project off[/bold]           - Deactivate current project\n"
-        "[bold]/project delete <name>[/bold] - Remove project from DB\n"
-        "[bold]/project digest[/bold]        - Show project status digest\n"
-        "[bold]/project digest rebuild[/bold] - Regenerate digest from scratch\n\n"
-        "[bold]/help[/bold]                  - Show this help\n\n"
-        "[dim]Press [bold]Esc[/bold] during a response to cancel the LLM call[/dim]\n"
-        "[dim]Prefix with !plan to force planning: !plan <message>[/dim]",
-        title="Commands",
-        border_style="blue",
-    ))
-
 
 # --- Subcommands ---
 
