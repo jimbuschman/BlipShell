@@ -259,12 +259,6 @@ hard-delete — do not use them.
 See `docs/V2_PLAN.md` for the full phased plan; Phases 0 and 1 are done, Phase 2
 is in progress. Remaining:
 
-- Executor/ChatLoop unification: `_execute_step` (the `/workflow` path) still
-  bypasses `chat_loop_runner`, so it has no endpoint fallback, vision, or
-  compaction; and the executor's task message carries no images, so a vision
-  task loses the image once history passes 10 messages. (The older claim that
-  the executor lacks vision entirely is stale — `execute_dynamic` gets it via
-  `chat_loop_runner`.)
 - `cli.py` split into a command registry — this also deletes
   `simulate/slash_dispatcher.py`, a hand-maintained copy that has already
   drifted (it dispatches fewer commands than the CLI, so simulation cannot

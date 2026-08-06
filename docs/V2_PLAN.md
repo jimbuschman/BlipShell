@@ -212,13 +212,24 @@ enter the file cache; simulate leaves the production DB untouched.
    `classify_task_type`), dead config toggles (`pii.cloud_only`, score-floor keys,
    `min_rank_threshold`, unused `decay_rates` — either wire FadeMem or remove the
    config that implies it), `chroma_retry_queue` table.
-3. **Executor/ChatLoop unification** (SYSTEM_REVIEW E2, scope now known — ~1 day):
-   extract vision gating + endpoint fallback from `_run_chat_loop` into an
-   `EndpointRunner`; point `_execute_step` (workflow path — currently has *no*
-   fallback, vision, guardrails, or compaction) and the legacy branch at it; thread
-   `images` onto the executor's task message (today the image rides on truncatable
-   history); snapshot/restore `messages` per endpoint attempt (the dirty-retry bug:
-   failed attempts replay half-finished tool exchanges and 400 on OpenAI-compat).
+3. ~~**Executor/ChatLoop unification**~~ — **DONE 2026-08-05** (`78eee56`,
+   `885d1c9`). `_execute_step` (the `/workflow` path) now goes through the shared
+   runner, so it finally has endpoint fallback, vision gating and PII scrubbing;
+   `images` ride on the executor's task message instead of truncatable history;
+   and each endpoint attempt snapshots `messages` and rewinds on failure, killing
+   the dirty-retry replay (tool budget multiplying by endpoint count, and
+   orphaned `tool_calls` 400ing on OpenAI-compat).
+
+   Two deviations from the plan as written, both worth remembering:
+   - **Deleting the legacy direct-ChatLoop branch was wrong as specified.**
+     "Tests can inject a runner" doesn't cover it — `tests/benchmark_coding.py`
+     builds a bare `TaskExecutor` with no Agent, so that branch is a live
+     consumer on the Ollama PC. It became a single shared `_run_loop` helper
+     instead of being deleted.
+   - The `EndpointRunner` extraction was **not** needed. Routing both executor
+     paths through the existing `chat_loop_runner` got the same result without
+     moving the vision/fallback logic out of `ChatMixin`. Revisit only if a
+     third non-Agent caller appears.
 4. **`cli.py` split (4,518 lines → ~400)**: slash dispatch → `ui/commands/` registry
    (**deletes `simulate/slash_dispatcher.py`**, a hand-maintained copy already
    drifted to 24-of-33 commands — the sim harness cannot currently exercise
