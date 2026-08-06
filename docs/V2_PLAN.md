@@ -247,11 +247,17 @@ enter the file cache; simulate leaves the production DB untouched.
    were verified interactively on the Ollama PC — so a subtle break there
    would pass CI and only show up under your hands. Two functions in views.py
    and one in command_handlers.py import from it lazily to avoid a cycle.
-5. **Shared context assembly**: extract `_build_messages`' assembly into a
-   `ContextBuilder` both paths use. Today `!plan` silently drops scratchpad, session
-   notes, follow-ups, and the 5-pool budget system — a memory-continuity regression
-   on exactly the path used for hard tasks. This is the "memory is the moat even for
-   coding" item.
+5. **Shared context assembly** — **LIGHT VERSION DONE 2026-08-06** (`b785754`).
+   The executor now gets the scratchpad, session notes, follow-ups and time
+   anchor via one shared `_build_continuity_block()`, so `!plan` no longer
+   carries less continuity than ordinary chat.
+
+   **Still deferred (the full version):** the executor uses a flat 15-result
+   memory search instead of the 5-pool token-budget system. Unifying that is
+   the real refactor — the two paths genuinely want different shapes, so it
+   needs a design decision, not a move. Revisit if the executor's recall feels
+   thin in use.
+
 6. ~~**MCP (per D2)**~~ — **DONE 2026-08-05.** Removed: the package, the
    `_connect_mcp_servers` registration path, `MCPServerConfig`, the `/mcp`
    command and renderer, the simulate dispatcher entry and two scenario steps,
