@@ -1,9 +1,14 @@
 # CLAUDE.md — Project Context for BlipShell
 
-Current architecture, verified against code 2026-07-09. The old feature-by-feature
-build log lives in `docs/HISTORY.md`; the grounded improvement roadmap is
-`docs/SYSTEM_REVIEW.md` (2026-06-08). `config.yaml` is the source of truth for
-models/endpoints/toggles — always check it before asserting an assignment.
+Current architecture, verified against code 2026-08-05. The old feature-by-feature
+build log lives in `docs/HISTORY.md`; the active plan is `docs/V2_PLAN.md`
+(2026-08-04, supersedes the sequencing in `docs/SYSTEM_REVIEW.md`).
+`config.yaml` is the source of truth for models/endpoints/toggles — always check
+it before asserting an assignment.
+
+**Verify before you document.** This file has twice described features that had
+no call site (`[STATE]` injection, budget wind-down) and counts that had drifted
+by 40%. A claim here should be greppable.
 
 ## What is BlipShell?
 
@@ -38,7 +43,8 @@ blipshell/
 ├── session/         # SessionManager — messages, persistence, summaries
 ├── ui/              # cli.py (~4.4K lines, Rich/Click), web/ (FastAPI + WS + /v1)
 ├── robotics/        # cube system + EmotionEngine (off by default, inert at rest)
-├── simulate/        # multi-turn scenario runner (26 scenarios, 7 categories)
+├── simulate/        # multi-turn scenario runner (37 scenarios, 7 categories;
+│                    # defaults to a throwaway temp DB — see --db / --real-db)
 ├── benchmark/       # model eval harness (`blipshell benchmark run <model>`)
 └── models/          # pydantic config + data models
 ```
@@ -57,15 +63,24 @@ blipshell/
   completion check.
 - Completion = `task_complete` tool (plus inline-text fallback). The complexity
   classifier was removed — `!plan` prefix forces the executor path.
-- Executor extras: `[STATE]` block injection, file cache + stale-file detection,
-  budget wind-down at 80%, forced completion at 95%, context compaction
+- Executor extras: file cache + stale-file detection, context compaction
   (mechanical first, LLM summarization when needed, recent messages preserved).
-- **Guardrails** (core/guardrails.py) — 7 capabilities, most deterministic:
-  requirement checklist (`confirm_plan`), trajectory monitor, completion audit
-  (difficulty-gated: trivial tasks never call the judge LLM), correction detector
-  (regex → anti-pattern lessons), context pinning, doom-loop detector,
-  look-before-review gate (review intent → grounding guidance + read-first
-  completion gate; validated live 2026-06-05).
+  (A `[STATE]` block and an 80%/95% budget wind-down were documented here for
+  months; the block had no callers and the wind-down was never implemented.
+  Both removed 2026-08-05 — don't re-document a feature without a call site.)
+- **Guardrails** (core/guardrails.py) — all deterministic except the completion
+  audit, which is difficulty-gated so trivial tasks never reach the judge LLM:
+  requirement checklist (`confirm_plan`), trajectory monitor, completion audit,
+  correction detector (regex → anti-pattern lessons), context pinning,
+  doom-loop detector, look-before-review gate (review intent → grounding
+  guidance + read-first completion gate; validated live 2026-06-05).
+  The three LLM "critique provider" features were deleted 2026-08-05 (all
+  defaulted off, never enabled; the field moved away from stacked judges).
+- **Guardrails attach to BOTH paths** as of 2026-08-05. Chat gets the
+  deterministic set with `trajectory_monitor` overridden off (its synthetic
+  checkpoint injection is for long unsupervised runs; in chat the user's next
+  message is the correction). Completion audit + review gate need a completion
+  tool, so they remain executor-only.
 - Plan mode: LLM self-restricts to read-only tools via enter/exit_plan_mode.
 
 ## Memory
@@ -163,13 +178,16 @@ blipshell/
 
 - **The validation split**: logic/wiring → HERE (pytest, seconds); model
   quality/behavior → Ollama PC only.
-- `tests/` (~60 files, 1021 passing + 7 skipped): `tests/fakes.py`
+- `tests/` (~65 files, 1259 passing + 5 skipped): `tests/fakes.py`
   `ScriptedLLMClient` drives the REAL ChatLoop with canned turns —
   completion detection, guardrails gating, dedup validated deterministically
   (`tests/test_loop_integration.py`). `conftest.py` gives real in-memory SQLite +
   canned router.
-- `blipshell simulate -t quick` — multi-turn scenarios against a real Agent
-  (quick = no LLM; smoke/nightly tags need models).
+- `blipshell simulate` — multi-turn scenarios against a real Agent. Scopes are
+  `-s <scenario>` / `-c <category>`; there is NO `-t` tag flag. Runs against a
+  throwaway temp DB by default (`--db PATH` to pick one, `--real-db` to use the
+  live corpus — it writes real sessions, lessons and digests). Needs the Ollama
+  PC: agent bootstrap requires the `openai` package.
 - `blipshell benchmark run <model>` — ONE deep test across all 9 job types →
   `data/benchmark/report.md` (numbers only, no verdict). Ground-truth scorers are
   unit-testable here; real runs need the Ollama PC. Judge = OpenRouter
@@ -212,7 +230,7 @@ blipshell/
 
 ## Nightly maintenance
 
-`NightlyRunner` (core/nightly.py): ~21 ordered jobs (backup → cleanup →
+`NightlyRunner` (core/nightly.py): 23 ordered jobs (backup → cleanup →
 backfills → entity extraction/merge/prune → taggers → consolidate → digests →
 health check), each isolated, 300s/job timeout, Ollama-dependent jobs skipped
 when it's down. `/nightly` command or `blipshell nightly --quiet`.
@@ -236,15 +254,38 @@ hard-delete — do not use them.
 - `context_tokens` is set at endpoint level and passed as num_ctx.
 - Windows console: keep script output ASCII-safe (cp1252 crashes).
 
-## Known open items (as of 2026-07-09)
+## Known open items (as of 2026-08-05)
 
-- Executor path lacks the vision gating/fallback that `agent_chat._run_chat_loop`
-  has — project-mode vision gap; unify into ChatLoop.
-- Guardrails consolidation: collapse the two LLM-judge features into the one
-  difficulty-gated gate (mostly deletion; difficulty gate already shipped).
+See `docs/V2_PLAN.md` for the full phased plan; Phases 0 and 1 are done, Phase 2
+is in progress. Remaining:
+
+- Executor/ChatLoop unification: `_execute_step` (the `/workflow` path) still
+  bypasses `chat_loop_runner`, so it has no endpoint fallback, vision, or
+  compaction; and the executor's task message carries no images, so a vision
+  task loses the image once history passes 10 messages. (The older claim that
+  the executor lacks vision entirely is stale — `execute_dynamic` gets it via
+  `chat_loop_runner`.)
+- `cli.py` split into a command registry — this also deletes
+  `simulate/slash_dispatcher.py`, a hand-maintained copy that has already
+  drifted (it dispatches fewer commands than the CLI, so simulation cannot
+  exercise `/thoughts` at all).
+- Shared context assembly: `!plan` silently drops scratchpad, session notes,
+  follow-ups and the 5-pool budgeting that `_chat_simple` gets.
+- Tests for the riskiest untested code: `MemoryWorker` has ZERO tests and is the
+  only second-event-loop-in-a-thread in the codebase.
 - Local fallback models are a generation behind — benchmark newer candidates on
   the Ollama PC before swapping (test-first, always).
 - Consolidation throughput: ~20/night vs 17K corpus — effectively decorative.
-- Memory reranker as L2 (different model on a working path) + entity-graph edge
-  invalidation wiring — see docs/SYSTEM_REVIEW.md items C/E.
-- Self-gravity step 2 (graph-relational) — gated on the step-1 live readout.
+  Root cause is `consolidation_batch_size: 20` plus a needless re-embed per
+  check; it also hard-deletes, which violates the archive mandate at the edge
+  level.
+- Benchmark realism: `run_session_review` never exercises chunk+merge, and the
+  cases are far below the chunking threshold.
+- Memory reranker as L2 — NOTE: enabling it as-written would *degrade* ranking
+  (normalization is applied only to the top-N, and `logprobs` is never
+  requested). Fix before any future enable.
+- Self-gravity step 2 (graph-relational) — gated on a clean step-1 readout,
+  which needs ~10 NEW thoughts now that the fatigue/eviction bugs are fixed.
+- Identity privacy on cloud chat: credentials are stripped, but the recall pool
+  still ships matched personal memories to cloud endpoints every turn. The fix
+  is routing (a local mode), not more redaction. See V2_PLAN D1.
