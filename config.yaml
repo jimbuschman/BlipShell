@@ -146,6 +146,18 @@ memory:
     enabled: true
     similarity_threshold: 0.7  # min cosine similarity to consider as duplicate candidate
 
+  # Near-duplicate merging (nightly "consolidate" job). Rewritten 2026-08-06 to
+  # query with each memory's STORED vector instead of re-embedding it, which is
+  # what held throughput at ~20/night against a 17K corpus. It's now bounded by
+  # the job's time budget rather than a count, and losers are ARCHIVED (they
+  # used to be deleted, which cascaded their entity edges away).
+  #
+  # RUN IT DRY FIRST. A miscalibrated threshold merges far more at this
+  # throughput than it ever could at 20/night, and merges are one-way.
+  consolidation_similarity: 0.85   # min cosine similarity to merge
+  consolidation_batch_size: 2000   # candidates per run (0 disables the job)
+  consolidation_dry_run: false     # true = log what would merge, change nothing
+
   entity_resolution:
     enabled: true                # backfill runs automatically on first startup
     embedding_auto_merge_threshold: 0.85  # auto-merge above this

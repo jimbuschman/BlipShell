@@ -638,7 +638,12 @@ class NightlyRunner:
         consolidator = MemoryConsolidator(
             self.sqlite, self.vectors, self.config.memory,
         )
-        return await consolidator.consolidate_batch()
+        # Resumable: leave headroom under the job timeout so a partial pass
+        # returns its stats (and its stopped_early flag) instead of being
+        # hard-killed with nothing recorded.
+        return await consolidator.consolidate_batch(
+            time_budget_seconds=_JOB_TIMEOUT - 30,
+        )
 
     async def _job_clean_neutral_tags(self, on_status) -> dict:
         """Remove 'neutral' tag from memories that have other tags.

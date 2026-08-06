@@ -142,7 +142,15 @@ class MemoryConfig(BaseModel):
     entity_merge_max_candidates: int = 5       # similar entities checked per entity
     entity_merge_edge_sample: int = 5          # edges shown to the arbitration LLM
     consolidation_similarity: float = 0.85  # min cosine similarity to merge
-    consolidation_batch_size: int = 20  # memories to check per nightly run (0 = disabled)
+    # Memories checked per nightly run (0 = disabled). Was 20, which against a
+    # 17K corpus meant ~14 months for a single sweep. Raised once the per-check
+    # Ollama round trip was removed — checks are now a local vector scan, so
+    # the real limit is the job's time budget, not the count.
+    consolidation_batch_size: int = 2000
+    # Log merges without applying them. Worth setting true for the first run
+    # at the new throughput: a bad threshold merges far more at 2000/night
+    # than it ever could at 20.
+    consolidation_dry_run: bool = False
     contradiction_similarity_threshold: float = 0.7  # min similarity to check for contradiction
     tag_discovery_interval_days: int = 7  # days between discovery runs
     tag_discovery_sample_size: int = 20  # poorly-tagged memories to sample

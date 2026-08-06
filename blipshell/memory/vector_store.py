@@ -530,6 +530,45 @@ class VectorStore:
         results.sort(key=lambda r: r["similarity"], reverse=True)
         return results[:n_results]
 
+    def find_neighbors(
+        self, memory_ids: list[int], k: int = 5,
+    ) -> dict[int, list[tuple[int, float]]]:
+        """Nearest neighbors for memories that are ALREADY embedded.
+
+        Uses each memory's stored vector as the query, so this makes no
+        embedding call at all. Consolidation used to re-embed every candidate
+        through Ollama — one HTTP round trip per memory checked, which is most
+        of why it managed ~20 a night against a 17K corpus.
+
+        It also fixes a space mismatch: vectors are built from raw `content`
+        (deliberately, so PII-sanitized summaries don't poison search), but the
+        old code queried with `summary`. That compared a summary-embedding
+        against content-embeddings, and the 0.85 threshold was never calibrated
+        for it.
+
+        Returns {memory_id: [(neighbor_id, similarity), ...]}, self excluded.
+        """
+        self._require_open()
+        if not memory_ids:
+            return {}
+
+        vectors = self.get_embeddings_by_ids(memory_ids)
+        out: dict[int, list[tuple[int, float]]] = {}
+        with self._lock:
+            for mid in memory_ids:
+                vec = vectors.get(mid)
+                if not vec:
+                    continue
+                rows = self._conn.execute(
+                    "SELECT rowid, distance FROM vec_memories "
+                    "WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+                    [_serialize_f32(vec), k],
+                ).fetchall()
+                out[mid] = [
+                    (r[0], 1.0 - r[1]) for r in rows if r[0] != mid
+                ]
+        return out
+
     def search_core_memories(self, query: str, n_results: int = 10) -> list[dict]:
         """Search core memories by semantic similarity."""
         self._require_open()

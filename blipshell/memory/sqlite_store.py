@@ -531,6 +531,13 @@ class SQLiteStore:
             "CREATE INDEX IF NOT EXISTS idx_memories_unprocessed "
             "ON memories(is_processed) WHERE is_processed = 0"
         )
+        # Here rather than in SCHEMA_SQL: consolidated_at is added by an
+        # ALTER TABLE migration above, so a fresh DB has no such column when
+        # the schema script runs.
+        await self._db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_unconsolidated "
+            "ON memories(consolidated_at) WHERE consolidated_at IS NULL"
+        )
         # Tool approval audit trail
         await self._db.execute("""
             CREATE TABLE IF NOT EXISTS tool_approvals (
@@ -1191,7 +1198,11 @@ class SQLiteStore:
 
     async def update_memory(self, memory_id: int, **kwargs):
         """Update memory fields."""
-        allowed = {"summary", "rank", "importance", "is_archived", "metadata_json", "memory_type", "is_processed"}
+        # access_count is here so consolidation can sum it when folding a
+        # duplicate; it used to reach through to self._db with raw SQL because
+        # the field wasn't allowed.
+        allowed = {"summary", "rank", "importance", "is_archived", "metadata_json",
+                   "memory_type", "is_processed", "access_count"}
         set_clause, values = _safe_set_clause(kwargs, allowed)
         if not set_clause:
             return
