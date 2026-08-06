@@ -289,7 +289,7 @@ class SimRunner:
         return str(Path(self._temp_db_dir) / "sim.db")
 
     async def _bootstrap_agent(self) -> tuple[Agent, BlipShellConfig, ConfigManager]:
-        """Bootstrap a real Agent instance (same pattern as test_executor.py)."""
+        """Bootstrap a real Agent instance (same pattern as run_executor.py)."""
         config_manager = ConfigManager(self.config_path)
         config = config_manager.load()
 

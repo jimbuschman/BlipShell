@@ -225,7 +225,7 @@ blipshell/
   production paths are bypassed — `run_session_review` never exercises
   chunk+merge, and `SESSION_REVIEW_CASES` are 111-190 tokens vs a ~28.6K
   chunking threshold. `scripts/audit_reflection_quality.py` covers that for now.
-- `python scripts/test_executor.py --canned|--stress` — headless executor harness
+- `python scripts/run_executor.py --canned|--stress` — headless executor harness
   (Ollama PC).
 
 ## Nightly maintenance

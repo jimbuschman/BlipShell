@@ -41,7 +41,7 @@ async def backfill_project_tags(db, dry_run=True) -> dict:
         'MemorySearch', 'MemoryProcessor', 'ChatLoop',
         'ChromaStore', 'OllamaGate', 'ollama_gate',
         'LoopConfig', 'LoopResult', 'EndpointManager',
-        'nightly.py', 'benchmark_', 'test_executor',
+        'nightly.py', 'benchmark_', 'run_executor',
     ]
 
     # Find sessions with >= 3 mentions of BlipShell or any code term

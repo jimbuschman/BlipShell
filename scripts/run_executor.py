@@ -4,14 +4,14 @@ Bootstraps the full Agent, runs a task through agent.chat(force_plan=True),
 captures tool calls / errors / timing, and outputs a structured JSON report.
 
 Usage:
-    python scripts/test_executor.py "create a hello world script"
-    python scripts/test_executor.py "task" --project blipshell
-    python scripts/test_executor.py "task" --output results.json
-    python scripts/test_executor.py --canned               # quick built-in tests (~5 min)
-    python scripts/test_executor.py --stress               # full stress suite (~1-2 hours)
-    python scripts/test_executor.py --stress --quiet        # overnight, JSON only
-    python scripts/test_executor.py --simple-chat           # simple chat tests (no executor)
-    python scripts/test_executor.py --ab ITEM               # A/B comparison test for a Phase 2 item
+    python scripts/run_executor.py "create a hello world script"
+    python scripts/run_executor.py "task" --project blipshell
+    python scripts/run_executor.py "task" --output results.json
+    python scripts/run_executor.py --canned               # quick built-in tests (~5 min)
+    python scripts/run_executor.py --stress               # full stress suite (~1-2 hours)
+    python scripts/run_executor.py --stress --quiet        # overnight, JSON only
+    python scripts/run_executor.py --simple-chat           # simple chat tests (no executor)
+    python scripts/run_executor.py --ab ITEM               # A/B comparison test for a Phase 2 item
 
 Phase 2 config flags (apply to any test mode):
     --no-tool-rules         Disable tool rules engine

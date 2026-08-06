@@ -3126,7 +3126,7 @@ def telegram_cmd(ctx):
 @click.pass_context
 def test_cmd(ctx, task, project, output, canned, stress, quiet, category):
     """Run a headless test task and output JSON results."""
-    from scripts.test_executor import run_test, run_canned_tests, run_stress_tests
+    from scripts.run_executor import run_test, run_canned_tests, run_stress_tests
 
     config_path = ctx.obj.get("config_path")
 
