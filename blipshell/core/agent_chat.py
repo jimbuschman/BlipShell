@@ -151,7 +151,10 @@ class ChatMixin:
 
         if needs_planning:
             logger.info("Message classified as complex — using planned execution")
-            response = await self._chat_planned(user_message, on_token=on_token, on_tool_display=on_tool_display)
+            response = await self._chat_planned(
+                user_message, on_token=on_token,
+                on_tool_display=on_tool_display, images=image_refs or None,
+            )
         else:
             logger.info("Message classified as simple — using direct chat")
             response = await self._chat_simple(user_message, on_token=on_token, on_tool_display=on_tool_display, research_mode=research_mode)
@@ -685,6 +688,7 @@ class ChatMixin:
         user_message: str,
         on_token: Optional[Callable[[str], None]] = None,
         on_tool_display: Optional[Callable] = None,
+        images: list[dict] | None = None,
     ) -> str:
         """Planned chat path — dynamic iterative execution (no pre-generated plan).
 
@@ -759,6 +763,7 @@ class ChatMixin:
                 chat_history=chat_history,
                 log_event=self._log_event,
                 capability_context=self._build_capability_block(),
+                images=images,
             )
         except Exception as e:
             logger.error("Dynamic execution failed: %s", e)

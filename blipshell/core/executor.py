@@ -378,6 +378,7 @@ class TaskExecutor:
         chat_history: list[dict] | None = None,
         log_event: Optional[Callable] = None,
         capability_context: str = "",
+        images: list[dict] | None = None,
     ) -> str:
         """Execute a task dynamically — single continuous conversation.
 
@@ -389,6 +390,11 @@ class TaskExecutor:
             memory_context: Relevant memories from past sessions (injected as system message).
             chat_history: Recent chat messages for design discussion context.
             log_event: Optional async callback(event_type, data) for flow observability.
+            images: Image refs for a vision turn. These must ride on the TASK
+                message, not just on chat_history — history is truncated to the
+                last 10 turns, so an image attached a few messages back silently
+                vanished and the executor ran a vision task blind, with no error
+                (deep-dive 2026-08-04).
         """
         # Ensure task_complete is available (may not be registered outside project mode)
         if not self.tool_registry.get_tool("task_complete"):
@@ -480,8 +486,12 @@ class TaskExecutor:
         if chat_history:
             messages.extend(chat_history)
 
-        # The actual task instruction
-        messages.append({"role": "user", "content": task_prompt})
+        # The actual task instruction. Image refs go HERE so vision survives
+        # history truncation; _run_chat_loop reads them to gate endpoints.
+        task_message: dict = {"role": "user", "content": task_prompt}
+        if images:
+            task_message["_image_refs"] = images
+        messages.append(task_message)
 
         if on_step_start:
             on_step_start(1)
@@ -539,54 +549,12 @@ class TaskExecutor:
             compaction_file_cache=self._file_cache,
         )
 
-        # Use shared chat loop runner (from Agent) if available — gives us
-        # endpoint fallback, gate setup, and model selection in one place.
-        # Falls back to direct execution if runner not wired (e.g. in tests).
-        if self.chat_loop_runner:
-            result, endpoint_name, model, using_fallback = await self.chat_loop_runner(
-                messages=messages,
-                config=config,
-                on_token=on_token,
-                on_tool_executed=self._on_tool_executed,
-            )
-            if result is None:
-                self.last_messages = messages  # Preserve messages for narrative even on failure
-                raise RuntimeError("No available LLM endpoint")
-        else:
-            # Legacy direct path (kept for backwards compatibility with tests)
-            task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
-            endpoint = await self.router._endpoint_manager.get_endpoint_for_role(task_type)
-            if not endpoint:
-                raise RuntimeError("No available LLM endpoint")
-            model = endpoint.models.get(task_type) or self.router.get_model(task_type)
-            endpoint_name = endpoint.name
-
-            chat_kwargs: dict = {}
-            if endpoint.context_tokens:
-                chat_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
-                config.context_limit = endpoint.context_tokens
-
-            if endpoint.provider == "ollama":
-                from blipshell.llm.ollama_gate import INTERACTIVE, get_gate
-                config.ollama_gate = get_gate()
-                config.gate_priority = INTERACTIVE
-
-            loop = ChatLoop(self.tool_registry, on_token)
-            endpoint.start_request()
-            try:
-                result = await loop.run(
-                    client=endpoint.client,
-                    messages=messages,
-                    model=model,
-                    tools=tools,
-                    chat_kwargs=chat_kwargs,
-                    config=config,
-                    on_tool_executed=self._on_tool_executed,
-                )
-                endpoint.record_success(0)
-            finally:
-                endpoint.complete_request()
-            using_fallback = False
+        result, endpoint_name, model, using_fallback = await self._run_loop(
+            messages, config, tools, on_token,
+        )
+        if result is None:
+            self.last_messages = messages  # Preserve messages for narrative even on failure
+            raise RuntimeError("No available LLM endpoint")
 
         final_response = result.response
 
@@ -642,6 +610,66 @@ class TaskExecutor:
 
         return final_response
 
+    async def _run_loop(
+        self,
+        messages: list[dict],
+        config: "LoopConfig",
+        tools: list[dict] | None,
+        on_token: Optional[Callable[[str], None]] = None,
+    ) -> tuple[object, str, str, bool]:
+        """Run one ChatLoop, preferring the Agent's shared runner.
+
+        The runner (`_run_chat_loop`) is where endpoint fallback, vision
+        gating, PII scrubbing and gate setup live, so every executor path
+        should go through it — production always wires it. The direct path
+        below exists for callers that construct a bare TaskExecutor with no
+        Agent behind it: the benchmark harness does exactly that, and it is
+        deliberately measuring the model rather than the fallback machinery.
+
+        Returns (LoopResult | None, endpoint_name, model, using_fallback).
+        """
+        if self.chat_loop_runner:
+            return await self.chat_loop_runner(
+                messages=messages,
+                config=config,
+                on_token=on_token,
+                on_tool_executed=self._on_tool_executed,
+            )
+
+        # No Agent behind us — single endpoint, no fallback, no vision gating.
+        task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
+        endpoint = await self.router._endpoint_manager.get_endpoint_for_role(task_type)
+        if not endpoint:
+            return None, "", "", False
+        model = endpoint.models.get(task_type) or self.router.get_model(task_type)
+
+        chat_kwargs: dict = {}
+        if endpoint.context_tokens:
+            chat_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
+            config.context_limit = endpoint.context_tokens
+
+        if endpoint.provider == "ollama":
+            from blipshell.llm.ollama_gate import INTERACTIVE, get_gate
+            config.ollama_gate = get_gate()
+            config.gate_priority = INTERACTIVE
+
+        loop = ChatLoop(self.tool_registry, on_token)
+        endpoint.start_request()
+        try:
+            result = await loop.run(
+                client=endpoint.client,
+                messages=messages,
+                model=model,
+                tools=tools,
+                chat_kwargs=chat_kwargs,
+                config=config,
+                on_tool_executed=self._on_tool_executed,
+            )
+            endpoint.record_success(0)
+        finally:
+            endpoint.complete_request()
+        return result, endpoint.name, model, False
+
     async def _execute_step(
         self,
         plan: TaskPlan,
@@ -675,41 +703,21 @@ class TaskExecutor:
             {"role": "user", "content": step_prompt},
         ]
 
-        # Route to coding model when project is active
-        task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
-        endpoint = await self.router._endpoint_manager.get_endpoint_for_role(task_type)
-        if not endpoint:
-            raise RuntimeError("No available LLM endpoint")
-        model = endpoint.models.get(task_type) or self.router.get_model(task_type)
-        client = endpoint.client
-
-        # Pass context window size to Ollama
-        chat_kwargs: dict = {}
-        if endpoint.context_tokens:
-            chat_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
-
         tools = self.tool_registry.get_all_ollama_tools() or None
         max_iterations = self.max_tool_iterations if tools else 0
         if self.active_project and tools:
             max_iterations = max(max_iterations, 30)
 
-        # Run the unified tool-calling loop
-        loop = ChatLoop(self.tool_registry, on_token)
-        config = LoopConfig(budget=max_iterations)
-        # Gate local Ollama calls (cloud endpoints bypass)
-        if endpoint.provider == "ollama":
-            from blipshell.llm.ollama_gate import INTERACTIVE, get_gate
-            config.ollama_gate = get_gate()
-            config.gate_priority = INTERACTIVE
-        result = await loop.run(
-            client=client,
-            messages=messages,
-            model=model,
-            tools=tools,
-            chat_kwargs=chat_kwargs,
-            config=config,
-            on_tool_executed=self._on_tool_executed,
+        # Go through the shared runner like execute_dynamic does. This path
+        # (reached via run_workflow / the /workflow command) used to call
+        # ChatLoop directly, so a workflow step got no endpoint fallback, no
+        # vision gating and no PII scrubbing — a whole execution path missing
+        # the machinery every other path has (deep-dive 2026-08-04).
+        result, _endpoint_name, _model, _fallback = await self._run_loop(
+            messages, LoopConfig(budget=max_iterations), tools, on_token,
         )
+        if result is None:
+            raise RuntimeError("No available LLM endpoint")
 
         return result.response
 
