@@ -210,6 +210,8 @@ class Agent(
 
         # Endpoint manager
         self.endpoint_manager = EndpointManager(self.config.endpoints, self.config.llm)
+        # Local mode (/local): hide off-machine endpoints from routing.
+        self.endpoint_manager.local_only = self.config.pii.local_mode_default
 
         # Router
         self.router = LLMRouter(self.config.models, self.endpoint_manager, pii_enabled=self.config.pii.enabled)

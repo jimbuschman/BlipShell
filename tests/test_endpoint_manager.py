@@ -217,3 +217,131 @@ class TestLLMRouter:
         model, client = await router.get_model_and_client(TaskType.TOOL_CALLING)
         assert model == "glm-5:cloud"
         assert client is not None
+
+
+class TestLocalMode:
+    """/local (V2_PLAN D1): endpoints that relay off the machine become
+    invisible to routing. Mirrors the live config: cloud chat via OpenRouter
+    AND via Ollama-cloud (same daemon URL as local, pii_sanitize: true), with
+    a local endpoint that does NOT serve tool_calling — so chat only reaches
+    it through the any-endpoint fallback branch."""
+
+    def _manager(self):
+        configs = [
+            EndpointConfig(
+                name="openrouter", url="https://openrouter.example/v1",
+                provider="openai", roles=["coding", "tool_calling"],
+                priority=1, max_concurrent=2, context_tokens=204800,
+                pii_sanitize=True, api_key="k",
+            ),
+            # provider="openai" imports the openai package at client
+            # construction, which this box doesn't have (the two-PC split) —
+            # and these tests exercise ROUTING, not clients.
+            EndpointConfig(
+                name="local-cloud", url="http://localhost:11434",
+                roles=["tool_calling", "session_review"], priority=2,
+                max_concurrent=2, context_tokens=131072, pii_sanitize=True,
+            ),
+            EndpointConfig(
+                name="local", url="http://localhost:11434",
+                roles=["reasoning", "summarization"], priority=1,
+                max_concurrent=2, context_tokens=32768,
+            ),
+        ]
+        with patch.object(EndpointManager, "_create_client", return_value=MagicMock()):
+            return EndpointManager(configs, LLMConfig(max_retries=1, retry_base_delay=0.1))
+
+    async def test_cloud_serves_chat_when_off(self):
+        em = self._manager()
+        ep = await em.get_endpoint_for_role("tool_calling")
+        assert ep.name == "local-cloud"      # priority 2 beats openrouter's 1
+
+    async def test_local_mode_hides_every_offmachine_endpoint(self):
+        """The role has NO local endpoint, so this exercises the any-endpoint
+        fallback branch — the exact hole that would silently defeat the mode."""
+        em = self._manager()
+        em.local_only = True
+
+        ep = await em.get_endpoint_for_role("tool_calling")
+
+        assert ep is not None, "local mode left chat with no endpoint at all"
+        assert ep.name == "local", (
+            f"local mode routed chat to '{ep.name}', which relays off-machine"
+        )
+
+    async def test_local_mode_never_yields_a_sanitizing_endpoint(self):
+        """Sweep every role either cloud endpoint serves."""
+        em = self._manager()
+        em.local_only = True
+        for role in ("tool_calling", "coding", "session_review",
+                     "reasoning", "summarization"):
+            ep = await em.get_endpoint_for_role(role)
+            assert ep is None or not ep.should_sanitize_pii, (
+                f"role '{role}' escaped to '{ep.name}' in local mode"
+            )
+
+    async def test_context_sizing_follows_the_mode(self):
+        """After /local, the last-routed shortcut still remembers the cloud
+        endpoint — sizing the prompt at 204K for a 32K model would overflow
+        the context on the first turn."""
+        em = self._manager()
+        await em.get_endpoint_for_role("tool_calling")     # routes to cloud
+        assert em.get_context_tokens_for_role("tool_calling") == 131072
+
+        em.local_only = True
+        assert em.get_context_tokens_for_role("tool_calling") == 32768
+
+    async def test_toggling_back_restores_cloud(self):
+        em = self._manager()
+        em.local_only = True
+        assert (await em.get_endpoint_for_role("tool_calling")).name == "local"
+
+        em.local_only = False
+        assert (await em.get_endpoint_for_role("tool_calling")).name == "local-cloud"
+
+    async def test_default_is_off(self):
+        assert self._manager().local_only is False
+
+
+class TestLocalCommand:
+    def _ctx(self, name, arg=""):
+        from blipshell.ui.commands import CommandContext
+
+        agent = MagicMock()
+        agent.endpoint_manager.local_only = False
+        parts = [name] + ([arg] if arg else [])
+        return CommandContext(
+            agent=agent, config=MagicMock(), raw=f"/{name} {arg}".strip(),
+            parts=parts, args=parts[1:], ui=MagicMock(), console=MagicMock(),
+        )
+
+    async def _run(self, ctx):
+        from blipshell.ui.commands import registry
+        await registry.dispatch(ctx)
+
+    async def test_local_toggles_on(self):
+        import blipshell.ui.command_handlers  # noqa: F401  (registers commands)
+
+        ctx = self._ctx("local")
+        await self._run(ctx)
+        assert ctx.agent.endpoint_manager.local_only is True
+
+    async def test_cloud_always_turns_off(self):
+        import blipshell.ui.command_handlers  # noqa: F401
+
+        ctx = self._ctx("cloud")
+        ctx.agent.endpoint_manager.local_only = True
+        await self._run(ctx)
+        assert ctx.agent.endpoint_manager.local_only is False
+
+    async def test_explicit_on_off(self):
+        import blipshell.ui.command_handlers  # noqa: F401
+
+        ctx = self._ctx("local", "on")
+        await self._run(ctx)
+        assert ctx.agent.endpoint_manager.local_only is True
+
+        ctx2 = self._ctx("local", "off")
+        ctx2.agent.endpoint_manager.local_only = True
+        await self._run(ctx2)
+        assert ctx2.agent.endpoint_manager.local_only is False

@@ -432,8 +432,21 @@ folding ARCHIVE (with `folded_into` provenance). The old JSON blob is kept
 at `self_thoughts_pre_migration`; **rollback is renaming that key back to
 `self_thoughts` and clearing the table**.
 
-### D1 — local-mode routing (decision still with the user)
+### D1 — local-mode routing — BUILT 2026-08-07 (`/local`)
 
+**Shipped as designed** — `/local [on|off]` (alias `/cloud` = off), a
+`local_only` flag on EndpointManager filtering `should_sanitize_pii`
+endpoints from role matching, the any-endpoint fallback branch, AND context
+sizing (the last-routed shortcut otherwise sized prompts at the cloud
+endpoint's 204K for a 32K local model). Config default:
+`pii.local_mode_default`. Known honest boundary, printed by the command
+itself: session-close review follows the mode at close time, so a mixed
+session that ends in cloud mode ships its transcript (identity-scrubbed) to
+the cloud reviewer — stay local until exit for a fully local session.
+Session-scoped stickiness (a session that ever went local reviews locally)
+is the natural follow-up if the boundary chafes.
+
+Original design note:
 Recommendation: an explicit per-session `/local` toggle (+ config default
 `privacy.local_mode_default: false`), implemented as a ROUTER-level endpoint
 filter — local mode excludes every endpoint that has `pii_sanitize: true`

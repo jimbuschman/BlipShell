@@ -306,6 +306,11 @@ class PlannerConfig(BaseModel):
 class PIIConfig(BaseModel):
     """PII sanitization configuration."""
     enabled: bool = True  # sanitize PII before cloud calls
+    # Start sessions in local mode (/local): endpoints that relay off the
+    # machine are invisible to routing until /cloud. Off by default — the
+    # cloud chat model is the reason it's configured; local mode is the
+    # explicit per-conversation privacy choice (V2_PLAN D1).
+    local_mode_default: bool = False
 
 
 class RoboticsConfig(BaseModel):

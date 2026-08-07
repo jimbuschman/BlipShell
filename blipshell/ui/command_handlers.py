@@ -172,6 +172,34 @@ def _guardrails(ctx: CommandContext):
         ctx.console.print(f"[dim]  Active: {', '.join(features)}[/dim]")
 
 
+@cmd("local", "cloud", usage="[on|off]", section="Toggles",
+     help="Local mode: no call leaves this machine (/cloud = /local off)")
+def _local(ctx: CommandContext):
+    em = ctx.agent.endpoint_manager
+    if ctx.name == "cloud":
+        em.local_only = False
+    else:
+        em.local_only = _toggle(em.local_only, ctx.arg(0))
+    if em.local_only:
+        ctx.console.print(
+            "[green]Local mode ON[/green] [dim]— cloud endpoints are invisible "
+            "to routing; every call (chat and background) runs on this "
+            "machine. Expect the local model, not minimax.[/dim]"
+        )
+        ctx.console.print(
+            "[dim]Boundary to know: if you switch back with /local off before "
+            "this session closes, the session-close review of the WHOLE "
+            "session (including this part) may run on a cloud model, "
+            "identity-scrubbed. Stay local until exit for a fully local "
+            "session.[/dim]"
+        )
+    else:
+        ctx.console.print(
+            "[yellow]Local mode OFF[/yellow] [dim]— cloud endpoints are back "
+            "in the rotation.[/dim]"
+        )
+
+
 @cmd("verbose", help="Toggle verbose tool output", section="Toggles")
 def _verbose(ctx: CommandContext):
     ctx.ui.verbose_tools = not ctx.ui.verbose_tools

@@ -133,6 +133,15 @@ class EndpointManager:
         self._lock = asyncio.Lock()
         self._endpoints: list[Endpoint] = []
         self._last_routed: dict[str, str] = {}  # role → endpoint name
+        # Local mode (/local): when True, every endpoint that relays off the
+        # machine is invisible to selection — as if disabled. The criterion is
+        # should_sanitize_pii because that flag already answers exactly this
+        # question ("does data leave the machine?") for every endpoint,
+        # including Ollama-cloud models proxied through the local daemon.
+        # This is THE chokepoint: interactive chat, the router's background
+        # calls and context sizing all pick endpoints here, so one flag covers
+        # every path without touching call sites.
+        self.local_only = False
         llm_cfg = llm_config or LLMConfig()
         for cfg in configs:
             client = self._create_client(cfg, llm_cfg)
@@ -193,6 +202,7 @@ class EndpointManager:
             candidates = [
                 ep for ep in self._endpoints
                 if role in ep.roles and ep.can_accept_request and ep.name != exclude
+                and self._allowed(ep)
             ]
             # Filter by minimum context window if specified
             if min_context_tokens and candidates:
@@ -205,10 +215,15 @@ class EndpointManager:
                 # If no endpoint is big enough, fall through to original candidates (will chunk)
             is_fallback = False
             if not candidates:
-                # Fallback: any enabled endpoint (still excluding the failed one)
+                # Fallback: any enabled endpoint (still excluding the failed
+                # one). Local mode applies HERE TOO — this branch is exactly
+                # how a role served only by cloud (tool_calling) lands on the
+                # local endpoint, and letting a sanitizing endpoint through it
+                # would silently defeat the whole mode.
                 candidates = [
                     ep for ep in self._endpoints
                     if ep.can_accept_request and ep.name != exclude
+                    and self._allowed(ep)
                 ]
                 is_fallback = True
             if not candidates:
@@ -267,19 +282,26 @@ class EndpointManager:
         candidate. Returns the endpoint's context_tokens if set, otherwise
         the provided default.
         """
-        # Check last routed endpoint first
+        # Check last routed endpoint first. The local-mode filter applies
+        # here too: right after /local the last route for the role is still
+        # the cloud endpoint, and sizing the prompt at its 204K for a 32K
+        # local model would overflow the context on the very first turn.
         last_name = self._last_routed.get(role)
         if last_name:
             for ep in self._endpoints:
-                if ep.name == last_name and ep.context_tokens:
+                if ep.name == last_name and ep.context_tokens and self._allowed(ep):
                     return ep.context_tokens
 
         # Fallback: find best endpoint for this role
         for ep in self._endpoints:
-            if role in ep.roles and ep.enabled and ep.context_tokens:
+            if role in ep.roles and ep.enabled and ep.context_tokens and self._allowed(ep):
                 return ep.context_tokens
 
         return default
+
+    def _allowed(self, ep: Endpoint) -> bool:
+        """False for endpoints local mode hides (they relay off the machine)."""
+        return not (self.local_only and ep.should_sanitize_pii)
 
     async def mark_failed(self, endpoint_name: str):
         """Mark an endpoint as failed."""
