@@ -483,6 +483,11 @@ is distorted by the eviction and fatigue bugs._
 4. **Restart the reflection task on re-`start_session`** (it currently dies for the
    process lifetime after any `end_session` in web/telegram flows), and move
    `_backfill_embeddings` off the per-turn path.
+   **DEMOTED 2026-08-07 — user: "web ui is basically dead at this point."** In
+   CLI use, `end_session` means the process is exiting anyway, so the dead
+   reflection loop is unreachable. Not worth a dedicated pass; fix it in
+   passing if session lifecycle is ever touched, or as a prereq if Telegram
+   (5.5) is ever picked up.
 
 ---
 
@@ -509,6 +514,9 @@ is distorted by the eviction and fatigue bugs._
    your phone. Prereqs: the web session race fix (global Agent + shared
    SessionManager; two connections wipe each other), per-connection sessions,
    idempotent `end_session`.
+   (Note 2026-08-07: the web UI is effectively unused — "can't remember the
+   last time I started it." Its session-race prereqs only matter if this item
+   is ever picked up; don't fix them speculatively.)
 6. **Idle anticipation (ProAct-lite)**: during idle, pre-run memory searches for the
    top unresolved follow-up/friction thread; stage warm context for the return.
    Free at 3 AM on a local GPU.
