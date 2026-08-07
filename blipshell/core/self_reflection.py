@@ -149,18 +149,21 @@ class SelfThoughtStore:
         if not self._gravity_enabled or not texts:
             return
         wanted = set(texts)
-        items = await self._load(with_embeddings=False)
-        changed = False
-        for it in items:
+        # Surgical: update ONLY the surfaced rows. This runs per turn, and
+        # writing the whole store here meant fatiguing one thought issued 50
+        # UPDATEs and 50 commits (measured) — the JSON blob it replaced was a
+        # single write. At most one or two thoughts surface per turn.
+        for it in await self._load(with_embeddings=False):
             if it["text"] in wanted:
-                it["weight"] = max(it.get("weight", 1.0) * self._fatigue, self._min_weight)
-                # How often a thought has actually reached the prompt. Paired
-                # with echo_count this is the readout that answers "is
-                # resurfacing caring or indexing?" — fatigue vs recurrence.
-                it["surface_count"] = it.get("surface_count", 0) + 1
-                changed = True
-        if changed:
-            await self._persist(items)
+                # surface_count: how often a thought actually reached the
+                # prompt. Paired with echo_count this is the readout that
+                # answers "is resurfacing caring or indexing?" — fatigue vs
+                # recurrence.
+                await self._sqlite.update_self_thought(
+                    it["id"],
+                    weight=max(it.get("weight", 1.0) * self._fatigue, self._min_weight),
+                    surface_count=it.get("surface_count", 0) + 1,
+                )
 
     async def _load(self, *, with_embeddings: bool = True) -> list[dict]:
         """Active thoughts, oldest first.

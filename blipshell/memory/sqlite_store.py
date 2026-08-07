@@ -1440,9 +1440,22 @@ class SQLiteStore:
                 migrated += 1
             # Rename only after every row landed. If this throws, the rollback
             # below restores an empty table and the JSON key stays put.
+            #
+            # NOT a plain `UPDATE ... SET key = backup`: if a stale backup row
+            # already exists (a rollback drill, a restored DB), that UPDATE
+            # dies on the key's UNIQUE constraint — and then every startup
+            # retries, fails, and leaves the table EMPTY while _load() reads
+            # the table, so the thoughts vanish from the running system until
+            # someone repairs it by hand. Overwriting the stale backup is
+            # correct: the JSON key we just migrated IS the fresher data.
             await self._db.execute(
-                "UPDATE app_metadata SET key = ? WHERE key = ?",
+                "INSERT OR REPLACE INTO app_metadata (key, value) "
+                "SELECT ?, value FROM app_metadata WHERE key = ?",
                 (self._SELF_THOUGHTS_BACKUP_KEY, self._SELF_THOUGHTS_JSON_KEY),
+            )
+            await self._db.execute(
+                "DELETE FROM app_metadata WHERE key = ?",
+                (self._SELF_THOUGHTS_JSON_KEY,),
             )
             await self._db.commit()
         except Exception as e:

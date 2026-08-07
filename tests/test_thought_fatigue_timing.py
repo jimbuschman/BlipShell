@@ -158,3 +158,34 @@ class TestFatigueChargedOnlyWhenRendered:
         gathered = agent.memory_manager.gather_memory()
         assert any("thought A" in i.text for i in gathered)
         assert any(i.text.startswith("[Thought") for i in gathered)
+
+
+class TestFatigueWriteCost:
+    async def test_one_surfaced_thought_writes_one_row(self, thought_harness):
+        """apply_fatigue runs per turn. It used to persist the WHOLE store —
+        fatiguing one thought issued 50 UPDATEs and 50 commits (measured
+        2026-08-07) where the JSON blob it replaced was a single write."""
+        meta = thought_harness.sqlite
+        s = await _store_with(meta, [f"thought {i}" for i in range(20)])
+
+        counts = {"updates": 0}
+        real_exec = meta._db.execute
+
+        async def spy(sql, *a, **k):
+            if sql.lstrip().upper().startswith("UPDATE"):
+                counts["updates"] += 1
+            return await real_exec(sql, *a, **k)
+
+        meta._db.execute = spy
+        try:
+            await s.apply_fatigue(["thought 3"])
+        finally:
+            meta._db.execute = real_exec
+
+        assert counts["updates"] <= 2, (
+            f"fatiguing ONE thought wrote {counts['updates']} rows — "
+            f"the per-turn path is persisting the whole store again"
+        )
+        # And the write actually landed.
+        assert await _weight(meta, "thought 3") == pytest.approx(0.6)
+        assert await _weight(meta, "thought 4") == pytest.approx(1.0)

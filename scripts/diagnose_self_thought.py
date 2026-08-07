@@ -11,6 +11,7 @@ Usage:
 
 import argparse
 import asyncio
+import os
 import logging
 import sys
 from pathlib import Path
@@ -38,17 +39,23 @@ def line(label, value):
     print(f"  {label:<34} {value}")
 
 
-class _MemStore:
-    """In-memory app_metadata stand-in so the diagnostic never touches real data."""
+async def _throwaway_store():
+    """A real SQLiteStore on a temp file, so the diagnostic still never
+    touches real data.
 
-    def __init__(self):
-        self.data = {}
+    Used to be a dict faking get/set_metadata — but thoughts moved from the
+    app_metadata JSON blob to a real table (2026-08-07), so SelfThoughtStore
+    now calls get_self_thoughts/add_self_thought/... and a metadata-only fake
+    crashes on first use. And it only crashes HERE, on the Ollama PC, where
+    the dev-box suite can't see it.
+    """
+    import tempfile
+    from blipshell.memory.sqlite_store import SQLiteStore
 
-    async def get_metadata(self, key):
-        return self.data.get(key)
-
-    async def set_metadata(self, key, value):
-        self.data[key] = value
+    path = os.path.join(tempfile.mkdtemp(prefix="blipshell_diag_"), "diag.db")
+    store = SQLiteStore(path)
+    await store.initialize()
+    return store
 
 
 async def main():
@@ -129,8 +136,9 @@ async def main():
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, vectors.embed_text, text)
 
-    # Throwaway in-memory backing so the diagnostic never touches real data.
-    store = SelfThoughtStore(_MemStore(), max_keep=50, embed_fn=embed_fn)
+    # Throwaway temp-file backing so the diagnostic never touches real data.
+    diag_sqlite = await _throwaway_store()
+    store = SelfThoughtStore(diag_sqlite, max_keep=50, embed_fn=embed_fn)
     await store.add(SEED)
 
     for label, q in [("ON-TOPIC", QUERY), ("OFF-TOPIC", OFFTOPIC)]:
@@ -143,9 +151,9 @@ async def main():
         )
         line(f"{label} -> injected", out if out else "(nothing)")
 
-    if hasattr(sqlite, "close"):
+    for s in (sqlite, diag_sqlite):
         try:
-            await sqlite.close()
+            await s.close()
         except Exception:
             pass
 

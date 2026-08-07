@@ -276,6 +276,40 @@ class TestSelfThoughtsMigration:
         assert rows == []
         assert blob == "{not json", "the unreadable blob was renamed away"
 
+    async def test_stale_backup_key_does_not_wedge_the_migration(self, tmp_path):
+        """A stale backup row plus a restored JSON key (a rollback drill, a
+        restored DB) made the rename die on the key's UNIQUE constraint —
+        and then every startup retried, failed, and left the TABLE empty
+        while _load() reads the table, so the thoughts vanished from the
+        running system until repaired by hand."""
+        path = tmp_path / "t.db"
+        store = SQLiteStore(str(path))
+        await store.initialize()
+        await store.set_metadata(
+            "self_thoughts_pre_migration", json.dumps([{"text": "stale backup"}]),
+        )
+        await store.set_metadata(
+            "self_thoughts", json.dumps([{"text": "restored thought"}]),
+        )
+        await store._db.execute("DELETE FROM self_thoughts")
+        await store._db.commit()
+        await store.close()
+
+        store = SQLiteStore(str(path))
+        await store.initialize()
+        rows = await store.get_self_thoughts()
+        backup = await store.get_metadata("self_thoughts_pre_migration")
+        json_key = await store.get_metadata("self_thoughts")
+        await store.close()
+
+        assert [r["text"] for r in rows] == ["restored thought"], (
+            "the migration wedged on the stale backup and the thoughts "
+            "vanished from the running system"
+        )
+        assert json_key is None
+        # The backup now holds what was just migrated — the fresher data.
+        assert "restored thought" in backup
+
     async def test_populated_table_plus_stale_key_is_left_alone(self, tmp_path):
         """Both present means something is off — importing on top of live rows
         would duplicate the corpus, so it must refuse and say so."""
