@@ -348,6 +348,48 @@ enter the file cache; simulate leaves the production DB untouched.
 4. **Local fallback model refresh** (SYSTEM_REVIEW D): benchmark newer local
    candidates on the Ollama PC, test-first as always.
 
+**PARKED 2026-08-07 — items 2 and 4, deliberately.** The models in production
+are working; there is no pull to change them, so the leverage isn't in scoring
+more of them. Revisit after Phases 4–5. Note that three of the four local
+models in `config.yaml` (`gpt-oss:latest`, `glm4:latest`, `qwen3.5:9b`) have
+never been benchmarked at all — `gpt-oss` is the fallback for tool_calling,
+coding AND reasoning, i.e. the entire interactive path when cloud is down. That
+is a known unmeasured risk, accepted on purpose, not an oversight.
+
+### When it is picked back up: monitoring, not procurement
+
+The harness answers "which model is best" (cross-sectional, judge-scored,
+expensive, rarely run). The actual question is "has my model stopped being good
+enough" — a time series. Evidence from the committed corpus for why the current
+shape can't answer it:
+
+- `contradiction` scores **exactly 1.000** for every model measured
+  (minimax-m3, glm-5.2, kimi-k2.7, qwen3:14b). A saturated metric carries no
+  information.
+- `ranking` and `importance` sit in 0.914–0.973 across everything from local
+  qwen3 to cloud minimax — and both are import-path-only prompts that don't
+  measure production at all.
+- **Within-model variance is ~40% of between-model signal**: qwen3:14b scored
+  entity 0.825 then 0.853; the whole between-model spread is 0.790–0.868.
+  Single runs are reported as precise point scores with no confidence interval.
+
+Three tiers, cheapest first:
+
+1. **Production failure counters** — free, no LLM calls. Unambiguous failures
+   already happening and being discarded: entity extraction yielding no
+   parseable triples (`EntityExtractor`'s `retryable` counter already counts
+   this), empty/over-length summaries, unparseable tool calls, session reviews
+   producing zero lessons, endpoint 410/4xx (the kimi-k2.5-retired class).
+   Count per model per day.
+2. **Canary suite** — ~15 deterministic checkable cases, no judge, nightly,
+   against live assignments only. Detects *change*, not quality: a drifting
+   local model, or a cloud provider swapping a checkpoint underneath you.
+3. **The existing deep benchmark becomes the diagnostic**, run in response to
+   1 or 2 firing (or to evaluate a specific candidate) rather than as a chore.
+
+Build tier 1 first — it needs no Ollama, no new cases, and accumulates
+unattended, so tier 2's thresholds can be set from real data instead of guessed.
+
 ---
 
 ## Phase 4 — Alive layer: step 2, properly gated
