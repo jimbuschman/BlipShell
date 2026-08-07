@@ -138,8 +138,9 @@ class SelfThoughtStore:
             return {}
         now = self._now()
         wanted = set(texts)
+        items = await self._load(with_embeddings=False)
         return {it["text"]: self._effective_weight(it, now)
-                for it in await self._load() if it["text"] in wanted}
+                for it in items if it["text"] in wanted}
 
     async def apply_fatigue(self, texts) -> None:
         """Decay the stored weight of thoughts that just surfaced (anti-spiral:
@@ -148,7 +149,7 @@ class SelfThoughtStore:
         if not self._gravity_enabled or not texts:
             return
         wanted = set(texts)
-        items = await self._load()
+        items = await self._load(with_embeddings=False)
         changed = False
         for it in items:
             if it["text"] in wanted:
@@ -159,38 +160,65 @@ class SelfThoughtStore:
                 it["surface_count"] = it.get("surface_count", 0) + 1
                 changed = True
         if changed:
-            await self._save(items)
+            await self._persist(items)
 
-    async def _load(self) -> list[dict]:
-        raw = await self._sqlite.get_metadata(self.KEY)
-        if not raw:
-            return []
-        try:
-            data = json.loads(raw)
-            return data if isinstance(data, list) else []
-        except (json.JSONDecodeError, TypeError):
-            return []
+    async def _load(self, *, with_embeddings: bool = True) -> list[dict]:
+        """Active thoughts, oldest first.
 
-    async def _save(self, items: list[dict]) -> None:
-        if len(items) > self._max:
-            if self._gravity_enabled:
-                # Evict by lowest effective weight, not by age. Recurrence
-                # updates a thought in place, so the most-recurred thought is
-                # usually one of the OLDEST items — recency truncation would
-                # silently delete the heaviest thought first, subordinating
-                # the whole weight system to insertion order. The newest item
-                # is exempt so a just-formed thought can't be starved out by
-                # a heavy backlog before it ever surfaces.
-                now = self._now()
-                ranked = sorted(
-                    items[:-1], key=lambda it: self._effective_weight(it, now),
-                )
-                evict = {id(it) for it in ranked[: len(items) - self._max]}
-                # Survivors keep chronological order — recent() depends on it.
-                items = [it for it in items if id(it) not in evict]
-            else:
-                items = items[-self._max:]
-        await self._sqlite.set_metadata(self.KEY, json.dumps(items))
+        `with_embeddings=False` skips 50 × 1024 floats of decoding — worth
+        asking for on the metadata-only paths (recent, pending, snapshot),
+        which is most of the per-turn traffic.
+        """
+        return await self._sqlite.get_self_thoughts(with_embeddings=with_embeddings)
+
+    async def _persist(self, items: list[dict], *, embeddings: bool = False) -> None:
+        """Write back mutated rows BY ID, then enforce max_keep.
+
+        Replaces the old read-modify-write of one JSON blob. Only rows the
+        caller actually touched need updating, but the cost of updating all
+        of them is trivial at this scale and it keeps callers from having to
+        track dirtiness — which is exactly the kind of bookkeeping that goes
+        wrong quietly.
+        """
+        for it in items:
+            if it.get("id") is None:
+                continue
+            fields = {
+                "text": it["text"],
+                "weight": it.get("weight", 1.0),
+                "surfaced": bool(it.get("surfaced")),
+                "echo_count": it.get("echo_count", 0),
+                "surface_count": it.get("surface_count", 0),
+            }
+            if embeddings:
+                fields["embedding"] = it.get("embedding")
+            await self._sqlite.update_self_thought(it["id"], **fields)
+        await self._enforce_max_keep(items)
+
+    async def _enforce_max_keep(self, items: list[dict]) -> None:
+        """Archive the excess. ARCHIVE, never delete — the store's own
+        mandate, and an evicted thought is exactly the thing you would want
+        back when asking why the self-layer drifted."""
+        if len(items) <= self._max:
+            return
+        if self._gravity_enabled:
+            # Evict by lowest effective weight, not by age. Recurrence
+            # updates a thought in place, so the most-recurred thought is
+            # usually one of the OLDEST items — recency truncation would
+            # silently evict the heaviest thought first, subordinating the
+            # whole weight system to insertion order. The newest item is
+            # exempt so a just-formed thought can't be starved out by a heavy
+            # backlog before it ever surfaces.
+            now = self._now()
+            ranked = sorted(
+                items[:-1], key=lambda it: self._effective_weight(it, now),
+            )
+            doomed = ranked[: len(items) - self._max]
+        else:
+            doomed = items[: len(items) - self._max]
+        ids = [it["id"] for it in doomed if it.get("id") is not None]
+        if ids:
+            await self._sqlite.archive_self_thoughts(ids)
 
     async def _embed(self, text: str, attempts: int = 1) -> Optional[list[float]]:
         """Embed text, retrying transient failures when ``attempts`` > 1.
@@ -271,12 +299,16 @@ class SelfThoughtStore:
         Surfaced state is intersected rather than reset to pending. ``add()``
         deliberately makes an evolved thought pending again, but that's for a
         thought the model just formed; resurrecting a backlog of old thoughts
-        as unprompted greetings is not a repair. Returns the number merged.
+        as unprompted greetings is not a repair.
+
+        Returns [(loser_id, winner_id)] for the caller to archive — the fold
+        is a soft-archive with provenance now, not a list truncation, so a
+        folded thought stays answerable for where it went.
         """
         if not self._gravity_enabled:
-            return 0
+            return []
         kept: list[dict] = []
-        merged = 0
+        folded: list[tuple[int, int]] = []
         for it in items:
             emb = it.get("embedding")
             best, _sim = self._best_echo(emb, kept) if emb else (None, 0.0)
@@ -295,11 +327,24 @@ class SelfThoughtStore:
             best["echo_count"] = (
                 best.get("echo_count", 0) + it.get("echo_count", 0) + 1
             )
-            merged += 1
-        if merged:
-            logger.info("Self-thought store: folded %d duplicate thought(s)", merged)
+            if it.get("id") is not None and best.get("id") is not None:
+                folded.append((it["id"], best["id"]))
+        if folded:
+            logger.info(
+                "Self-thought store: folded %d duplicate thought(s)", len(folded),
+            )
             items[:] = kept
-        return merged
+        return folded
+
+    async def _archive_folded(self, folded: list[tuple[int, int]]) -> None:
+        """Archive fold losers, grouped by the winner that absorbed them."""
+        by_winner: dict[int, list[int]] = {}
+        for loser_id, winner_id in folded:
+            by_winner.setdefault(winner_id, []).append(loser_id)
+        for winner_id, loser_ids in by_winner.items():
+            await self._sqlite.archive_self_thoughts(
+                loser_ids, folded_into=winner_id,
+            )
 
     def _stamp_missing_dates(self, items: list[dict]) -> bool:
         """Backfill created_at on thoughts written before the gravity layer.
@@ -320,7 +365,6 @@ class SelfThoughtStore:
 
     async def add(self, text: str) -> None:
         items = await self._load()
-        self._stamp_missing_dates(items)
         # Retry here specifically: this is the write path, it runs on the idle
         # reflection loop (latency is free), and a thought that lands without a
         # vector is permanently unfoldable and unresurfaceable.
@@ -336,8 +380,10 @@ class SelfThoughtStore:
             # an unembedded prior can't be echoed and would silently spawn a
             # duplicate — then repair any duplicates earlier failures left.
             # Both are idle-path work, so they cost nothing the user feels.
-            await self._backfill_embeddings(items)
-            self._fold_duplicates(items)
+            backfilled = await self._backfill_embeddings(items)
+            folded = self._fold_duplicates(items)
+            if folded:
+                await self._archive_folded(folded)
             best, _best_sim = self._best_echo(emb, items)
             if best is not None:
                 best["weight"] = best.get("weight", 1.0) + self._recur_boost
@@ -345,16 +391,17 @@ class SelfThoughtStore:
                 best["embedding"] = emb
                 best["surfaced"] = False     # an evolved thought is pending again
                 best["echo_count"] = best.get("echo_count", 0) + 1
-                await self._save(items)
+                await self._persist(items, embeddings=True)
                 return
-        items.append({
-            "text": text, "surfaced": False, "embedding": emb,
-            "weight": 1.0, "created_at": self._now().isoformat(),
-        })
-        await self._save(items)
+            if backfilled or folded:
+                await self._persist(items, embeddings=True)
+        await self._sqlite.add_self_thought(
+            text, self._now().isoformat(), embedding=emb,
+        )
+        await self._enforce_max_keep(await self._load(with_embeddings=False))
 
     async def recent(self, n: int = 5) -> list[str]:
-        items = await self._load()
+        items = await self._load(with_embeddings=False)
         return [i["text"] for i in items[-n:]]
 
     async def diverse_recent(self, n: int = 5) -> list[str]:
@@ -427,6 +474,7 @@ class SelfThoughtStore:
         rows = []
         for it in await self._load():
             rows.append({
+                "id": it.get("id"),
                 "text": it["text"],
                 "created_at": it.get("created_at"),
                 "surfaced": bool(it.get("surfaced")),
@@ -442,22 +490,24 @@ class SelfThoughtStore:
         return rows
 
     async def has_pending(self) -> bool:
-        return any(not i.get("surfaced") for i in await self._load())
+        items = await self._load(with_embeddings=False)
+        return any(not i.get("surfaced") for i in items)
 
     async def peek_pending(self) -> str | None:
         """Return the oldest unsurfaced thought WITHOUT marking it. None if none."""
-        for i in await self._load():
+        for i in await self._load(with_embeddings=False):
             if not i.get("surfaced"):
                 return i["text"]
         return None
 
     async def take_pending(self) -> str | None:
         """Return the oldest unsurfaced thought, marking it surfaced. None if none."""
-        items = await self._load()
-        for i in items:
+        for i in await self._load(with_embeddings=False):
             if not i.get("surfaced"):
-                i["surfaced"] = True
-                await self._save(items)
+                # Mark by ID, and ONLY this row: the old code rewrote the
+                # whole blob, so an unrelated concurrent mutation could be
+                # clobbered by a greeting.
+                await self._sqlite.update_self_thought(i["id"], surfaced=True)
                 return i["text"]
         return None
 
@@ -474,7 +524,7 @@ class SelfThoughtStore:
         if not query_vec:
             return []
         items = await self._load()
-        changed = self._stamp_missing_dates(items)
+        changed = False
         # A thought that just received its vector may be a duplicate that could
         # never be matched before, so repair-fold — but only when a backfill
         # actually landed. Folding unconditionally would put an O(n^2) cosine
@@ -482,7 +532,9 @@ class SelfThoughtStore:
         # runs the same repair on the idle path, so the store still heals.
         if await self._backfill_embeddings(items):
             changed = True
-            self._fold_duplicates(items)
+            folded = self._fold_duplicates(items)
+            if folded:
+                await self._archive_folded(folded)
         scored: list[tuple[str, float]] = []
         for it in items:
             emb = it.get("embedding")
@@ -492,6 +544,6 @@ class SelfThoughtStore:
             if sim >= floor:
                 scored.append((it["text"], sim))
         if changed:
-            await self._save(items)
+            await self._persist(items, embeddings=True)
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:k]

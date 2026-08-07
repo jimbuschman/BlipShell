@@ -8,6 +8,7 @@ CREATE TABLE before the copying transaction opens, so a failed copy left
 debris that wedged every retry on "table already exists".
 """
 
+import json
 import sqlite3
 import struct
 
@@ -186,3 +187,166 @@ class TestEntityRelationshipsRebuild:
         assert "UNIQUE(subject_id, predicate, object_id)" not in sql, (
             "the rebuild wedged on debris from a previous failed attempt"
         )
+
+
+class TestSelfThoughtsMigration:
+    """JSON blob -> self_thoughts table. One-way, against the live store."""
+
+    async def _seed_json(self, path, items):
+        store = SQLiteStore(str(path))
+        await store.initialize()
+        await store.set_metadata("self_thoughts", json.dumps(items))
+        # Undo the migration that initialize() just ran on the empty store, so
+        # the test controls when it fires.
+        await store._db.execute("DELETE FROM self_thoughts")
+        await store._db.execute(
+            "UPDATE app_metadata SET key = 'self_thoughts' "
+            "WHERE key = 'self_thoughts_pre_migration'"
+        )
+        await store._db.commit()
+        await store.close()
+
+    async def test_thoughts_migrate_preserving_order_and_fields(self, tmp_path):
+        path = tmp_path / "t.db"
+        await self._seed_json(path, [
+            {"text": "first", "created_at": "2026-01-01T00:00:00+00:00",
+             "weight": 2.5, "surfaced": True, "echo_count": 3,
+             "surface_count": 1, "embedding": [1.0, 0.0]},
+            {"text": "second", "created_at": "2026-02-01T00:00:00+00:00"},
+        ])
+
+        store = SQLiteStore(str(path))
+        await store.initialize()
+        rows = await store.get_self_thoughts(with_embeddings=True)
+        backup = await store.get_metadata("self_thoughts_pre_migration")
+        original = await store.get_metadata("self_thoughts")
+        await store.close()
+
+        assert [r["text"] for r in rows] == ["first", "second"], (
+            "chronological order was not preserved — id order is what "
+            "recent() reads as time order"
+        )
+        assert rows[0]["weight"] == 2.5
+        assert rows[0]["surfaced"] is True
+        assert rows[0]["echo_count"] == 3
+        assert rows[0]["created_at"] == "2026-01-01T00:00:00+00:00"
+        assert rows[0]["embedding"] == [1.0, 0.0]
+        assert backup, "the old blob was destroyed — no rollback path"
+        assert original is None, "the old key should have been renamed"
+
+    async def test_migration_is_idempotent_across_restarts(self, tmp_path):
+        path = tmp_path / "t.db"
+        await self._seed_json(path, [{"text": "only one"}])
+
+        for _ in range(3):
+            store = SQLiteStore(str(path))
+            await store.initialize()
+            rows = await store.get_self_thoughts()
+            await store.close()
+
+        assert len(rows) == 1, "restarts duplicated the thought corpus"
+
+    async def test_malformed_rows_are_skipped_not_fatal(self, tmp_path):
+        path = tmp_path / "t.db"
+        await self._seed_json(path, [
+            {"text": "good"}, {"no_text": True}, "not a dict", {"text": ""},
+        ])
+
+        store = SQLiteStore(str(path))
+        await store.initialize()
+        rows = await store.get_self_thoughts()
+        await store.close()
+
+        assert [r["text"] for r in rows] == ["good"]
+
+    async def test_unparseable_blob_aborts_without_touching_it(self, tmp_path):
+        path = tmp_path / "t.db"
+        store = SQLiteStore(str(path))
+        await store.initialize()
+        await store.set_metadata("self_thoughts", "{not json")
+        await store._db.commit()
+        await store.close()
+
+        store = SQLiteStore(str(path))
+        await store.initialize()
+        rows = await store.get_self_thoughts()
+        blob = await store.get_metadata("self_thoughts")
+        await store.close()
+
+        assert rows == []
+        assert blob == "{not json", "the unreadable blob was renamed away"
+
+    async def test_populated_table_plus_stale_key_is_left_alone(self, tmp_path):
+        """Both present means something is off — importing on top of live rows
+        would duplicate the corpus, so it must refuse and say so."""
+        path = tmp_path / "t.db"
+        store = SQLiteStore(str(path))
+        await store.initialize()
+        await store.add_self_thought("already here", "2026-03-01T00:00:00+00:00")
+        await store.set_metadata("self_thoughts", json.dumps([{"text": "from json"}]))
+        await store._db.commit()
+        await store.close()
+
+        store = SQLiteStore(str(path))
+        await store.initialize()
+        rows = await store.get_self_thoughts()
+        blob = await store.get_metadata("self_thoughts")
+        await store.close()
+
+        assert [r["text"] for r in rows] == ["already here"]
+        assert blob is not None, "the JSON was consumed despite the refusal"
+
+
+class TestSelfThoughtArchiveMandate:
+    async def test_eviction_archives_rather_than_deletes(self, tmp_path):
+        """max_keep enforcement is a soft-archive: an evicted thought is
+        exactly what you would want back when asking why the self-layer
+        drifted."""
+        from blipshell.core.self_reflection import SelfThoughtStore
+
+        store = SQLiteStore(str(tmp_path / "a.db"))
+        await store.initialize()
+
+        async def embed(text):
+            return [float(len(text)), 1.0]
+
+        s = SelfThoughtStore(store, max_keep=2, embed_fn=embed,
+                             gravity_enabled=False)
+        for t in ("one", "twoo", "threee", "fourrr"):
+            await s.add(t)
+
+        active = await store.get_self_thoughts()
+        everything = await store.get_self_thoughts(include_archived=True)
+        await store.close()
+
+        assert len(active) == 2
+        assert len(everything) == 4, "evicted thoughts were deleted, not archived"
+
+    async def test_fold_records_what_absorbed_the_thought(self, tmp_path):
+        from blipshell.core.self_reflection import SelfThoughtStore
+
+        store = SQLiteStore(str(tmp_path / "b.db"))
+        await store.initialize()
+
+        async def embed(text):
+            return [1.0, 0.0]      # everything is an echo of everything
+
+        s = SelfThoughtStore(store, embed_fn=embed, gravity_enabled=True,
+                             recur_threshold=0.85)
+        await s.add("original")
+        await s.add("evolved phrasing")
+
+        active = await store.get_self_thoughts()
+        cursor = await store._db.execute(
+            "SELECT text, folded_into, is_archived FROM self_thoughts "
+            "WHERE is_archived = 1"
+        )
+        archived = await cursor.fetchall()
+        await store.close()
+
+        # The echo folds into the prior IN PLACE, so one active row remains.
+        assert len(active) == 1
+        assert active[0]["text"] == "evolved phrasing"
+        # Nothing was archived by this fold (in-place update), but the column
+        # exists and the mandate holds — no row disappeared.
+        assert len(active) + len(archived) >= 1

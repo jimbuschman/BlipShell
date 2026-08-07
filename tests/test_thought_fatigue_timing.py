@@ -23,17 +23,6 @@ from blipshell.memory.manager import MemoryManager, PoolItem
 from blipshell.models.config import MemoryConfig
 
 
-class FakeMeta:
-    def __init__(self):
-        self.data = {}
-
-    async def get_metadata(self, key):
-        return self.data.get(key)
-
-    async def set_metadata(self, key, value):
-        self.data[key] = value
-
-
 class _Reflection:
     """Stand-in for config.reflection with gravity on."""
     enabled = True
@@ -82,31 +71,31 @@ async def _store_with(meta, texts):
     return s
 
 
-def _weight(meta, text):
-    for it in json.loads(meta.data[SelfThoughtStore.KEY]):
+async def _weight(sqlite, text):
+    for it in await sqlite.get_self_thoughts():
         if it["text"] == text:
             return it["weight"]
     raise AssertionError(f"{text!r} not in store")
 
 
 class TestFatigueChargedOnlyWhenRendered:
-    async def test_rendered_thought_is_fatigued(self):
-        meta = FakeMeta()
+    async def test_rendered_thought_is_fatigued(self, thought_harness):
+        meta = thought_harness.sqlite
         store = await _store_with(meta, ["thought A"])
         agent = _Agent(store, [("thought A", 0.9)])
 
         await agent._search_self_thoughts("query")
-        assert _weight(meta, "thought A") == 1.0, "fatigue charged too early"
+        assert await _weight(meta, "thought A") == 1.0, "fatigue charged too early"
 
         # The thought made it into the rendered context
         pool_text = next(iter(agent._pending_thought_fatigue))
         await agent._charge_surfaced_thought_fatigue({pool_text})
 
-        assert _weight(meta, "thought A") == pytest.approx(0.6)
+        assert await _weight(meta, "thought A") == pytest.approx(0.6)
 
-    async def test_budget_evicted_thought_pays_nothing(self):
+    async def test_budget_evicted_thought_pays_nothing(self, thought_harness):
         """The actual bug: queued but never rendered must cost nothing."""
-        meta = FakeMeta()
+        meta = thought_harness.sqlite
         store = await _store_with(meta, ["thought A"])
         agent = _Agent(store, [("thought A", 0.9)])
 
@@ -114,12 +103,12 @@ class TestFatigueChargedOnlyWhenRendered:
         # Nothing survived the budget
         await agent._charge_surfaced_thought_fatigue(set())
 
-        assert _weight(meta, "thought A") == 1.0, (
+        assert await _weight(meta, "thought A") == 1.0, (
             "a thought the model never saw was still fatigued"
         )
 
-    async def test_partial_render_charges_only_the_survivor(self):
-        meta = FakeMeta()
+    async def test_partial_render_charges_only_the_survivor(self, thought_harness):
+        meta = thought_harness.sqlite
         store = await _store_with(meta, ["thought A", "thought B"])
         agent = _Agent(store, [("thought A", 0.9), ("thought B", 0.8)])
 
@@ -129,12 +118,12 @@ class TestFatigueChargedOnlyWhenRendered:
 
         await agent._charge_surfaced_thought_fatigue({survivor})
 
-        assert _weight(meta, "thought A") == pytest.approx(0.6)
-        assert _weight(meta, "thought B") == 1.0
+        assert await _weight(meta, "thought A") == pytest.approx(0.6)
+        assert await _weight(meta, "thought B") == 1.0
 
-    async def test_charge_is_idempotent_within_a_turn(self):
+    async def test_charge_is_idempotent_within_a_turn(self, thought_harness):
         """The pending set is consumed, so a second call can't double-charge."""
-        meta = FakeMeta()
+        meta = thought_harness.sqlite
         store = await _store_with(meta, ["thought A"])
         agent = _Agent(store, [("thought A", 0.9)])
 
@@ -143,11 +132,11 @@ class TestFatigueChargedOnlyWhenRendered:
         await agent._charge_surfaced_thought_fatigue({pool_text})
         await agent._charge_surfaced_thought_fatigue({pool_text})
 
-        assert _weight(meta, "thought A") == pytest.approx(0.6)
+        assert await _weight(meta, "thought A") == pytest.approx(0.6)
 
-    async def test_gravity_off_never_charges(self):
+    async def test_gravity_off_never_charges(self, thought_harness):
         """Firewall: with gravity disabled the store must be untouched."""
-        meta = FakeMeta()
+        meta = thought_harness.sqlite
         store = await _store_with(meta, ["thought A"])
         agent = _Agent(store, [("thought A", 0.9)])
         agent.config.reflection.gravity_enabled = False
@@ -156,11 +145,11 @@ class TestFatigueChargedOnlyWhenRendered:
         pending = dict(agent._pending_thought_fatigue)
         await agent._charge_surfaced_thought_fatigue(set(pending))
 
-        assert _weight(meta, "thought A") == 1.0
+        assert await _weight(meta, "thought A") == 1.0
 
-    async def test_thought_still_reaches_the_recall_pool(self):
+    async def test_thought_still_reaches_the_recall_pool(self, thought_harness):
         """The fix must not stop thoughts from surfacing at all."""
-        meta = FakeMeta()
+        meta = thought_harness.sqlite
         store = await _store_with(meta, ["thought A"])
         agent = _Agent(store, [("thought A", 0.9)])
 

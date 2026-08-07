@@ -86,3 +86,50 @@ def make_registry(*tools: Tool) -> ToolRegistry:
     for t in tools:
         reg.register(t)
     return reg
+
+
+class ThoughtHarness:
+    """Real SQLiteStore behind the self-thought API, with seed/read helpers.
+
+    Self-thoughts moved from one app_metadata JSON row to a real table
+    (2026-08-07). The tests used to seed and assert against that JSON blob
+    directly, so they were coupled to the storage format — and a fake
+    reimplementing the new SQL semantics would leave the actual SQL, which is
+    where the new bugs are, untested. This wraps the REAL store instead.
+    """
+
+    def __init__(self, sqlite):
+        self.sqlite = sqlite
+
+    async def seed(self, items: list[dict]) -> list[int]:
+        """Set the store to EXACTLY these thoughts, in order.
+
+        Replaces rather than appends, matching the semantics of the JSON blob
+        these tests were written against (`meta.data[KEY] = json.dumps(...)`)
+        — several do a read-modify-write of the whole list. Deleting is fine
+        here; the archive-never-delete mandate is about the live store, and a
+        seeding helper that archived would leave rows visible to
+        include_archived assertions.
+        """
+        await self.sqlite._db.execute("DELETE FROM self_thoughts")
+        await self.sqlite._db.commit()
+        ids = []
+        for it in items:
+            ids.append(await self.sqlite.add_self_thought(
+                it["text"],
+                it.get("created_at") or "2026-01-01T00:00:00+00:00",
+                embedding=it.get("embedding"),
+                weight=it.get("weight", 1.0),
+                surfaced=bool(it.get("surfaced")),
+                echo_count=it.get("echo_count", 0),
+                surface_count=it.get("surface_count", 0),
+            ))
+        return ids
+
+    async def rows(self, *, include_archived: bool = False) -> list[dict]:
+        return await self.sqlite.get_self_thoughts(
+            with_embeddings=True, include_archived=include_archived,
+        )
+
+    async def texts(self) -> list[str]:
+        return [r["text"] for r in await self.rows()]

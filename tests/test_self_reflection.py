@@ -15,19 +15,6 @@ from blipshell.core.self_reflection import (
 )
 
 
-class FakeStore:
-    """Stand-in for sqlite app_metadata (get/set_metadata over a dict)."""
-
-    def __init__(self):
-        self.data: dict[str, str] = {}
-
-    async def get_metadata(self, key):
-        return self.data.get(key)
-
-    async def set_metadata(self, key, value):
-        self.data[key] = value
-
-
 # --- prompt ----------------------------------------------------------------
 
 def test_prompt_excludes_conversation_and_allows_nothing():
@@ -46,15 +33,15 @@ def test_prompt_feeds_prior_thoughts_for_threading():
 
 # --- store -----------------------------------------------------------------
 
-async def test_add_and_recent():
-    s = SelfThoughtStore(FakeStore())
+async def test_add_and_recent(thought_harness):
+    s = SelfThoughtStore(thought_harness.sqlite)
     await s.add("first")
     await s.add("second")
     assert await s.recent(5) == ["first", "second"]
 
 
-async def test_pending_lifecycle():
-    s = SelfThoughtStore(FakeStore())
+async def test_pending_lifecycle(thought_harness):
+    s = SelfThoughtStore(thought_harness.sqlite)
     assert await s.has_pending() is False
     await s.add("a thought")
     assert await s.has_pending() is True
@@ -65,8 +52,8 @@ async def test_pending_lifecycle():
     assert await s.take_pending() is None         # nothing left
 
 
-async def test_surfaced_only_once_across_reload():
-    store = FakeStore()
+async def test_surfaced_only_once_across_reload(thought_harness):
+    store = thought_harness.sqlite
     s = SelfThoughtStore(store)
     await s.add("remember me")
     await s.take_pending()
@@ -75,19 +62,27 @@ async def test_surfaced_only_once_across_reload():
     assert await s2.has_pending() is False
 
 
-async def test_caps_retained_thoughts():
-    s = SelfThoughtStore(FakeStore(), max_keep=3)
+async def test_caps_retained_thoughts(thought_harness):
+    s = SelfThoughtStore(thought_harness.sqlite, max_keep=3)
     for i in range(6):
         await s.add(f"t{i}")
     kept = await s.recent(99)
     assert kept == ["t3", "t4", "t5"]            # only the last max_keep
 
 
-async def test_corrupt_store_is_safe():
-    store = FakeStore()
-    store.data[SelfThoughtStore.KEY] = "{not json"
+async def test_unparseable_legacy_blob_does_not_block_startup(thought_harness):
+    """The JSON store could be corrupted; the table replaced it (2026-08-07),
+    so the equivalent risk is a migration that aborts on bad JSON. It must
+    leave the blob alone and let the store carry on empty."""
+    store = thought_harness.sqlite
+    await store.set_metadata(store._SELF_THOUGHTS_JSON_KEY, "{not json")
+
+    await store._migrate_self_thoughts_to_table()
+
     s = SelfThoughtStore(store)
-    assert await s.recent(5) == []                # falls back to empty, no crash
+    assert await s.recent(5) == []                # no crash, no rows
+    # The unparseable blob is preserved for inspection, not silently dropped.
+    assert await store.get_metadata(store._SELF_THOUGHTS_JSON_KEY) == "{not json"
     await s.add("recovers")
     assert await s.recent(5) == ["recovers"]
 
@@ -106,8 +101,8 @@ async def _toy_embed(text):
     return _VECS.get(text, [0.0, 0.0, 1.0])
 
 
-async def test_relevant_candidates_filters_by_cosine_floor():
-    s = SelfThoughtStore(FakeStore(), embed_fn=_toy_embed)
+async def test_relevant_candidates_filters_by_cosine_floor(thought_harness):
+    s = SelfThoughtStore(thought_harness.sqlite, embed_fn=_toy_embed)
     await s.add("robotics cube")
     await s.add("continuity of self")
     # Query identical to the robotics vector -> only that thought clears the floor.
@@ -116,8 +111,8 @@ async def test_relevant_candidates_filters_by_cosine_floor():
     assert matches[0][1] == pytest.approx(1.0)
 
 
-async def test_relevant_candidates_respects_k_and_ordering():
-    s = SelfThoughtStore(FakeStore(), embed_fn=_toy_embed)
+async def test_relevant_candidates_respects_k_and_ordering(thought_harness):
+    s = SelfThoughtStore(thought_harness.sqlite, embed_fn=_toy_embed)
     await s.add("robotics cube")          # cosine 1.0 with the query below
     await s.add("continuity of self")     # cosine ~0.0
     # A query that leans toward robotics but also overlaps continuity a little.
@@ -126,10 +121,10 @@ async def test_relevant_candidates_respects_k_and_ordering():
     assert matches[0][0] == "robotics cube"   # higher cosine ranks first
 
 
-async def test_surfaced_thought_still_resurfaces_via_relevance():
+async def test_surfaced_thought_still_resurfaces_via_relevance(thought_harness):
     """The keystone: take_pending (the one-shot greeting) must NOT remove a
     thought from the standing relevance path. It sticks around and comes back."""
-    s = SelfThoughtStore(FakeStore(), embed_fn=_toy_embed)
+    s = SelfThoughtStore(thought_harness.sqlite, embed_fn=_toy_embed)
     await s.add("robotics cube")
     await s.take_pending()                       # greeting consumed it
     assert await s.has_pending() is False
@@ -137,32 +132,30 @@ async def test_surfaced_thought_still_resurfaces_via_relevance():
     assert [t for t, _ in matches] == ["robotics cube"]   # still retrievable
 
 
-async def test_peek_pending_does_not_consume():
-    s = SelfThoughtStore(FakeStore(), embed_fn=_toy_embed)
+async def test_peek_pending_does_not_consume(thought_harness):
+    s = SelfThoughtStore(thought_harness.sqlite, embed_fn=_toy_embed)
     await s.add("robotics cube")
     assert await s.peek_pending() == "robotics cube"
     assert await s.has_pending() is True         # peek left it unsurfaced
     assert await s.take_pending() == "robotics cube"
 
 
-async def test_missing_embedding_is_backfilled_and_persisted():
-    store = FakeStore()
-    # Simulate a thought written before this layer existed (no embedding field).
-    store.data[SelfThoughtStore.KEY] = json.dumps(
-        [{"text": "robotics cube", "surfaced": False}]
-    )
+async def test_missing_embedding_is_backfilled_and_persisted(thought_harness):
+    store = thought_harness.sqlite
+    # Simulate a thought written before this layer existed (no embedding).
+    await thought_harness.seed([{"text": "robotics cube", "surfaced": False}])
     s = SelfThoughtStore(store, embed_fn=_toy_embed)
     matches = await s.relevant_candidates([1.0, 0.0, 0.0], floor=0.5, k=3)
     assert [t for t, _ in matches] == ["robotics cube"]
     # The backfilled embedding is now persisted, so a reload doesn't re-embed.
-    reloaded = json.loads(store.data[SelfThoughtStore.KEY])
+    reloaded = await thought_harness.rows()
     assert reloaded[0]["embedding"] == [1.0, 0.0, 0.0]
 
 
-async def test_no_embedder_yields_no_candidates():
+async def test_no_embedder_yields_no_candidates(thought_harness):
     # Without an embedder, thoughts have no vectors and the standing path stays
     # silent (the one-shot greeting still works — that path needs no embedding).
-    s = SelfThoughtStore(FakeStore())
+    s = SelfThoughtStore(thought_harness.sqlite)
     await s.add("robotics cube")
     assert await s.relevant_candidates([1.0, 0.0, 0.0], floor=0.0, k=3) == []
     assert await s.has_pending() is True
@@ -174,25 +167,25 @@ _THEME_A = [1.0, 0.0, 0.0]
 _THEME_B = [0.0, 1.0, 0.0]
 
 
-def _diverse_store(vecs: dict):
+def _diverse_store(thought_harness, vecs: dict):
     async def embed(text):
         return vecs.get(text)
-    return SelfThoughtStore(FakeStore(), embed_fn=embed)
+    return SelfThoughtStore(thought_harness.sqlite, embed_fn=embed)
 
 
-async def test_diverse_recent_returns_all_when_few():
-    s = _diverse_store({})
+async def test_diverse_recent_returns_all_when_few(thought_harness):
+    s = _diverse_store(thought_harness, {})
     await s.add("first")
     await s.add("second")
     assert await s.diverse_recent(5) == ["first", "second"]
 
 
-async def test_diverse_recent_keeps_minority_thread():
+async def test_diverse_recent_keeps_minority_thread(thought_harness):
     """Six thoughts: five on theme A, the OLDEST on theme B. recent(5) drops
     the B thought; diverse_recent(5) must keep it — that's the whole point."""
     vecs = {f"a{i}": _THEME_A for i in range(5)}
     vecs["the b thought"] = _THEME_B
-    s = _diverse_store(vecs)
+    s = _diverse_store(thought_harness, vecs)
     await s.add("the b thought")
     for i in range(5):
         await s.add(f"a{i}")
@@ -203,19 +196,19 @@ async def test_diverse_recent_keeps_minority_thread():
     assert len(picked) == 5
 
 
-async def test_diverse_recent_seeds_with_newest():
+async def test_diverse_recent_seeds_with_newest(thought_harness):
     vecs = {f"a{i}": _THEME_A for i in range(6)}
-    s = _diverse_store(vecs)
+    s = _diverse_store(thought_harness, vecs)
     for i in range(6):
         await s.add(f"a{i}")
     picked = await s.diverse_recent(3)
     assert "a5" in picked  # newest always present (continuity with now)
 
 
-async def test_diverse_recent_chronological_order():
+async def test_diverse_recent_chronological_order(thought_harness):
     vecs = {f"a{i}": _THEME_A for i in range(5)}
     vecs["b"] = _THEME_B
-    s = _diverse_store(vecs)
+    s = _diverse_store(thought_harness, vecs)
     await s.add("a0")
     await s.add("b")
     for i in range(1, 5):
@@ -226,11 +219,11 @@ async def test_diverse_recent_chronological_order():
     assert picked == [t for t in all_texts if t in picked]
 
 
-async def test_diverse_recent_includes_unembedded_thoughts():
+async def test_diverse_recent_includes_unembedded_thoughts(thought_harness):
     """A thought without an embedding can't be compared — it must count as
     maximally dissimilar, not be silenced."""
     vecs = {f"a{i}": _THEME_A for i in range(5)}  # "orphan" missing -> embeds None
-    s = _diverse_store(vecs)
+    s = _diverse_store(thought_harness, vecs)
     await s.add("orphan")
     for i in range(5):
         await s.add(f"a{i}")
@@ -242,14 +235,14 @@ def test_prompt_grants_permission_to_leave_threads():
     assert "don't owe" in system
 
 
-async def test_diverse_recent_seeds_with_outlier_not_newest():
+async def test_diverse_recent_seeds_with_outlier_not_newest(thought_harness):
     """In a monoculture the newest thought IS the dominant theme — seeding
     the greedy pick with it anchored every reflection sample to the groove
     (deep-dive 2026-08-04). The seed must be the most atypical thought.
     n=1 exposes the seed directly."""
     vecs = {f"a{i}": _THEME_A for i in range(5)}
     vecs["the b thought"] = _THEME_B
-    s = _diverse_store(vecs)
+    s = _diverse_store(thought_harness, vecs)
     await s.add("a0")
     await s.add("the b thought")   # neither oldest nor newest
     for i in range(1, 5):
@@ -257,12 +250,12 @@ async def test_diverse_recent_seeds_with_outlier_not_newest():
     assert await s.diverse_recent(1) == ["the b thought"]
 
 
-async def test_diverse_recent_still_guarantees_newest():
+async def test_diverse_recent_still_guarantees_newest(thought_harness):
     """Continuity with the present: whatever seeds the sample, the newest
     thought keeps a reserved slot (for n >= 2)."""
     vecs = {f"a{i}": _THEME_A for i in range(5)}
     vecs["b"] = _THEME_B
-    s = _diverse_store(vecs)
+    s = _diverse_store(thought_harness, vecs)
     await s.add("b")
     for i in range(5):
         await s.add(f"a{i}")

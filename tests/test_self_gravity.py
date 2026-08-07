@@ -31,113 +31,107 @@ async def _embed_async(text):
     return _embed_sync(text)
 
 
-class FakeMeta:
-    def __init__(self):
-        self.data = {}
-
-    async def get_metadata(self, key):
-        return self.data.get(key)
-
-    async def set_metadata(self, key, value):
-        self.data[key] = value
-
-
-def _store(meta=None, *, gravity_enabled=True, **kw):
-    return SelfThoughtStore(meta or FakeMeta(), embed_fn=_embed_async,
+def _store(harness, *, gravity_enabled=True, **kw):
+    return SelfThoughtStore(harness.sqlite, embed_fn=_embed_async,
                             gravity_enabled=gravity_enabled, **kw)
 
 
-def _raw(meta):
-    return json.loads(meta.data[SelfThoughtStore.KEY])
+async def _raw(harness):
+    """Active thoughts, oldest first — the table equivalent of the old JSON."""
+    return await harness.rows()
+
+
+async def _seed(harness, items):
+    return await harness.seed(items)
 
 
 # --- weight mechanics ------------------------------------------------------
 
 class TestWeightMechanics:
-    async def test_recurrence_reinforces_and_folds(self):
+    async def test_recurrence_reinforces_and_folds(self, thought_harness):
         """An echo boosts the prior AND is absorbed into it — the thought
         evolves in place instead of piling up near-duplicate copies."""
-        meta = FakeMeta()
+        meta = thought_harness
         s = _store(meta, recur_boost=0.5, recur_threshold=0.85)
         await s.add("a thought")
         await s.add("echo of a thought")   # identical vector -> echoes the prior
-        items = _raw(meta)
+        items = (await _raw(meta))
         assert len(items) == 1                          # folded, not appended
         assert items[0]["text"] == "echo of a thought"  # evolved phrasing wins
         w = await s.effective_weights(["echo of a thought"])
         assert w["echo of a thought"] == pytest.approx(1.5, abs=0.02)
 
-    async def test_fold_keeps_original_created_at(self):
+    async def test_fold_keeps_original_created_at(self, thought_harness):
         """Decay clocks from the thought's origin — folding must not reset it,
         or a recurring thought would never have to keep earning its weight."""
-        meta = FakeMeta()
+        meta = thought_harness
         s = _store(meta)
         await s.add("a thought")
-        original_created = _raw(meta)[0]["created_at"]
+        original_created = (await _raw(meta))[0]["created_at"]
         await s.add("echo of a thought")
-        assert _raw(meta)[0]["created_at"] == original_created
+        assert (await _raw(meta))[0]["created_at"] == original_created
 
-    async def test_fold_makes_evolved_thought_pending_again(self):
-        s = _store()
+    async def test_fold_makes_evolved_thought_pending_again(self, thought_harness):
+        s = _store(thought_harness)
         await s.add("a thought")
         assert await s.take_pending() == "a thought"
         assert not await s.has_pending()
         await s.add("echo of a thought")   # folds into the surfaced prior
         assert await s.peek_pending() == "echo of a thought"
 
-    async def test_recurrence_is_noop_when_disabled(self):
-        meta = FakeMeta()
+    async def test_recurrence_is_noop_when_disabled(self, thought_harness):
+        meta = thought_harness
         s = _store(meta, gravity_enabled=False, recur_boost=0.5)
         await s.add("a thought")
         await s.add("echo of a thought")
         # no fold, raw weight untouched, effective_weights empty when disabled
-        assert len(_raw(meta)) == 2
-        assert _raw(meta)[0]["weight"] == 1.0
+        assert len((await _raw(meta))) == 2
+        assert (await _raw(meta))[0]["weight"] == 1.0
         assert await s.effective_weights(["a thought"]) == {}
 
-    async def test_add_backfills_missing_created_at(self):
+    async def test_add_backfills_missing_created_at(self, thought_harness):
         """Thoughts written before the gravity layer are undated and thus
         exempt from decay — add() stamps them so their clock starts."""
-        meta = FakeMeta()
-        meta.data[SelfThoughtStore.KEY] = json.dumps([
+        meta = thought_harness
+        await _seed(meta, [
             {"text": "ancient thought", "surfaced": True,
              "embedding": [0.0, 0.0, 1.0], "weight": 1.0},
         ])
         s = _store(meta)
         await s.add("another thought")
-        items = _raw(meta)
+        items = (await _raw(meta))
         assert all(it.get("created_at") for it in items)
 
-    async def test_fatigue_lowers_weight(self):
-        s = _store(fatigue=0.6)
+    async def test_fatigue_lowers_weight(self, thought_harness):
+        s = _store(thought_harness, fatigue=0.6)
         await s.add("a thought")
         await s.apply_fatigue(["a thought"])
         w = await s.effective_weights(["a thought"])
         assert w["a thought"] == pytest.approx(0.6, abs=0.02)
 
-    async def test_fatigue_floored_at_min_weight(self):
-        s = _store(fatigue=0.6, min_weight=0.1)
+    async def test_fatigue_floored_at_min_weight(self, thought_harness):
+        s = _store(thought_harness, fatigue=0.6, min_weight=0.1)
         await s.add("a thought")
         for _ in range(8):
             await s.apply_fatigue(["a thought"])
         w = await s.effective_weights(["a thought"])
         assert w["a thought"] == pytest.approx(0.1, abs=1e-6)
 
-    async def test_age_decay(self):
-        meta = FakeMeta()
+    async def test_age_decay(self, thought_harness):
+        meta = thought_harness
         s = _store(meta, half_life_days=30.0)
         await s.add("a thought")
         # Backdate it 30 days -> one half-life -> weight halves.
-        items = _raw(meta)
+        items = (await _raw(meta))
         items[0]["created_at"] = (
             datetime.now(timezone.utc) - timedelta(days=30)
         ).isoformat()
-        meta.data[SelfThoughtStore.KEY] = json.dumps(items)
+        await _seed(meta, items)
         w = await s.effective_weights(["a thought"])
         assert w["a thought"] == pytest.approx(0.5, abs=0.03)
 
-    async def test_effective_weights_empty_when_disabled(self):
-        s = _store(gravity_enabled=False)
+    async def test_effective_weights_empty_when_disabled(self, thought_harness):
+        s = _store(thought_harness, gravity_enabled=False)
         await s.add("a thought")
         assert await s.effective_weights(["a thought"]) == {}
 
@@ -171,39 +165,35 @@ def _dup_row(text, *, weight=1.0, surfaced=True, vec=(1.0, 0.0, 0.0),
     return row
 
 
-def _seed(meta, rows):
-    meta.data[SelfThoughtStore.KEY] = json.dumps(rows)
-
-
 class TestEmbedRetry:
-    async def test_transient_failure_is_retried_and_thought_still_folds(self):
+    async def test_transient_failure_is_retried_and_thought_still_folds(self, thought_harness):
         """The bug: one failed embed made the thought unfoldable forever, so
         an echo landed as a permanent duplicate row."""
-        meta = FakeMeta()
+        meta = thought_harness
         flaky = _FlakyEmbedder(fail_times=1)
-        s = SelfThoughtStore(meta, embed_fn=flaky, gravity_enabled=True,
+        s = SelfThoughtStore(meta.sqlite, embed_fn=flaky, gravity_enabled=True,
                              embed_retry_delay=0.0)
         await s.add("a thought")
         assert flaky.calls == 2          # failed once, retried, succeeded
-        assert _raw(meta)[0]["embedding"] == [1.0, 0.0, 0.0]
+        assert (await _raw(meta))[0]["embedding"] == [1.0, 0.0, 0.0]
 
         await s.add("echo of a thought")
-        assert len(_raw(meta)) == 1      # folded, not duplicated
+        assert len((await _raw(meta))) == 1      # folded, not duplicated
 
-    async def test_exhausted_retries_still_store_the_thought(self):
+    async def test_exhausted_retries_still_store_the_thought(self, thought_harness):
         """Embedding is best-effort — a total backend outage must never lose
         the thought, only leave it unembedded for later backfill."""
-        meta = FakeMeta()
+        meta = thought_harness
         flaky = _FlakyEmbedder(fail_times=99)
-        s = SelfThoughtStore(meta, embed_fn=flaky, gravity_enabled=True,
+        s = SelfThoughtStore(meta.sqlite, embed_fn=flaky, gravity_enabled=True,
                              embed_attempts=3, embed_retry_delay=0.0)
         await s.add("a thought")
         assert flaky.calls == 3
-        rows = _raw(meta)
+        rows = (await _raw(meta))
         assert len(rows) == 1
         assert rows[0]["embedding"] is None
 
-    async def test_structurally_unavailable_embedder_is_not_retried(self):
+    async def test_structurally_unavailable_embedder_is_not_retried(self, thought_harness):
         """A returned None means there's no vector store at all — retrying
         that is pure latency for a guaranteed-identical answer."""
         calls = []
@@ -212,7 +202,7 @@ class TestEmbedRetry:
             calls.append(text)
             return None
 
-        s = SelfThoughtStore(FakeMeta(), embed_fn=none_embedder,
+        s = SelfThoughtStore(thought_harness.sqlite, embed_fn=none_embedder,
                              gravity_enabled=True, embed_attempts=3,
                              embed_retry_delay=0.0)
         await s.add("a thought")
@@ -220,129 +210,129 @@ class TestEmbedRetry:
 
 
 class TestDuplicateRepair:
-    async def test_add_collapses_duplicates_left_by_earlier_failures(self):
+    async def test_add_collapses_duplicates_left_by_earlier_failures(self, thought_harness):
         """Three identical rows (the live 2026-07-30 state) become one, with
         the weight the thought would have had if folding had never failed."""
-        meta = FakeMeta()
-        _seed(meta, [_dup_row("cubes v1"), _dup_row("cubes v2"), _dup_row("cubes v3")])
+        meta = thought_harness
+        await _seed(meta, [_dup_row("cubes v1"), _dup_row("cubes v2"), _dup_row("cubes v3")])
         s = _store(meta, recur_boost=0.5)
 
         await s.add("another thought")   # distinct vector -> triggers repair
 
-        rows = _raw(meta)
+        rows = (await _raw(meta))
         assert len(rows) == 2
         assert rows[0]["text"] == "cubes v3"          # newest phrasing wins
         # 3 emissions == base 1.0 + two boosts
         assert rows[0]["weight"] == pytest.approx(2.0)
         assert rows[1]["text"] == "another thought"
 
-    async def test_repair_carries_boosts_the_duplicate_had_accumulated(self):
+    async def test_repair_carries_boosts_the_duplicate_had_accumulated(self, thought_harness):
         """Two rows that each folded one echo represent four emissions, so the
         merged weight must be 1.0 + 3 boosts — not a flat single boost."""
-        meta = FakeMeta()
-        _seed(meta, [_dup_row("mirror a", weight=1.5),
+        meta = thought_harness
+        await _seed(meta, [_dup_row("mirror a", weight=1.5),
                      _dup_row("mirror b", weight=1.5)])
         s = _store(meta, recur_boost=0.5)
 
         await s.add("another thought")
 
-        assert _raw(meta)[0]["weight"] == pytest.approx(2.5)
+        assert (await _raw(meta))[0]["weight"] == pytest.approx(2.5)
 
-    async def test_repair_never_invents_weight_from_a_fatigued_duplicate(self):
+    async def test_repair_never_invents_weight_from_a_fatigued_duplicate(self, thought_harness):
         """Fatigue can push a duplicate below its base weight; the carried
         term floors at zero so repair can't manufacture gravity."""
-        meta = FakeMeta()
-        _seed(meta, [_dup_row("x", weight=1.0), _dup_row("y", weight=0.36)])
+        meta = thought_harness
+        await _seed(meta, [_dup_row("x", weight=1.0), _dup_row("y", weight=0.36)])
         s = _store(meta, recur_boost=0.5)
 
         await s.add("another thought")
 
-        assert _raw(meta)[0]["weight"] == pytest.approx(1.5)
+        assert (await _raw(meta))[0]["weight"] == pytest.approx(1.5)
 
-    async def test_repair_keeps_the_earliest_created_at(self):
+    async def test_repair_keeps_the_earliest_created_at(self, thought_harness):
         old = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
         new = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
-        meta = FakeMeta()
-        _seed(meta, [_dup_row("first", created_at=old),
+        meta = thought_harness
+        await _seed(meta, [_dup_row("first", created_at=old),
                      _dup_row("second", created_at=new)])
         s = _store(meta)
 
         await s.add("another thought")
 
-        assert _raw(meta)[0]["created_at"] == old
+        assert (await _raw(meta))[0]["created_at"] == old
 
-    async def test_repair_does_not_resurrect_surfaced_thoughts(self):
+    async def test_repair_does_not_resurrect_surfaced_thoughts(self, thought_harness):
         """add() makes an evolved thought pending again — but that's for a
         thought just formed. Repairing a backlog must not fire off a queue of
         old thoughts as unprompted greetings."""
-        meta = FakeMeta()
-        _seed(meta, [_dup_row("a", surfaced=True), _dup_row("b", surfaced=True)])
+        meta = thought_harness
+        await _seed(meta, [_dup_row("a", surfaced=True), _dup_row("b", surfaced=True)])
         s = _store(meta)
 
         await s.add("another thought")
 
-        merged = _raw(meta)[0]
+        merged = (await _raw(meta))[0]
         assert merged["surfaced"] is True
 
-    async def test_repair_keeps_pending_when_a_duplicate_was_unsurfaced(self):
-        meta = FakeMeta()
-        _seed(meta, [_dup_row("a", surfaced=True), _dup_row("b", surfaced=False)])
+    async def test_repair_keeps_pending_when_a_duplicate_was_unsurfaced(self, thought_harness):
+        meta = thought_harness
+        await _seed(meta, [_dup_row("a", surfaced=True), _dup_row("b", surfaced=False)])
         s = _store(meta)
 
         await s.add("another thought")
 
-        assert _raw(meta)[0]["surfaced"] is False
+        assert (await _raw(meta))[0]["surfaced"] is False
 
-    async def test_repair_is_a_noop_when_gravity_disabled(self):
+    async def test_repair_is_a_noop_when_gravity_disabled(self, thought_harness):
         """The firewall: with the feature off the store must behave exactly as
         it did before, duplicates and all."""
-        meta = FakeMeta()
-        _seed(meta, [_dup_row("a"), _dup_row("b"), _dup_row("c")])
+        meta = thought_harness
+        await _seed(meta, [_dup_row("a"), _dup_row("b"), _dup_row("c")])
         s = _store(meta, gravity_enabled=False)
 
         await s.add("another thought")
 
-        assert len(_raw(meta)) == 4
+        assert len((await _raw(meta))) == 4
 
-    async def test_unembedded_prior_is_backfilled_so_an_echo_can_fold(self):
+    async def test_unembedded_prior_is_backfilled_so_an_echo_can_fold(self, thought_harness):
         """The second half of the bug: even with a good incoming vector, a
         prior missing its own vector scored 0.0 and so could never be echoed.
         """
-        meta = FakeMeta()
-        _seed(meta, [{"text": "a thought", "surfaced": True,
+        meta = thought_harness
+        await _seed(meta, [{"text": "a thought", "surfaced": True,
                       "weight": 1.0, "embedding": None}])
         s = _store(meta)
 
         await s.add("echo of a thought")   # same vector as "a thought"
 
-        rows = _raw(meta)
+        rows = (await _raw(meta))
         assert len(rows) == 1
         assert rows[0]["weight"] == pytest.approx(1.5)
 
 
 class TestRelevancePathRepair:
-    async def test_backfill_on_relevance_check_also_folds_the_duplicate(self):
-        meta = FakeMeta()
-        _seed(meta, [_dup_row("a thought"),
+    async def test_backfill_on_relevance_check_also_folds_the_duplicate(self, thought_harness):
+        meta = thought_harness
+        await _seed(meta, [_dup_row("a thought"),
                      {"text": "echo of a thought", "surfaced": True,
                       "weight": 1.0, "embedding": None}])
         s = _store(meta)
 
         out = await s.relevant_candidates([1.0, 0.0, 0.0], floor=0.4, k=5)
 
-        assert len(_raw(meta)) == 1
+        assert len((await _raw(meta))) == 1
         assert [t for t, _ in out] == ["echo of a thought"]
 
-    async def test_relevance_check_does_not_fold_when_nothing_was_backfilled(self):
+    async def test_relevance_check_does_not_fold_when_nothing_was_backfilled(self, thought_harness):
         """The per-turn path stays cheap: fully-embedded stores skip the
         O(n^2) sweep entirely and leave repair to the idle write path."""
-        meta = FakeMeta()
-        _seed(meta, [_dup_row("a"), _dup_row("b")])
+        meta = thought_harness
+        await _seed(meta, [_dup_row("a"), _dup_row("b")])
         s = _store(meta)
 
         await s.relevant_candidates([1.0, 0.0, 0.0], floor=0.4, k=5)
 
-        assert len(_raw(meta)) == 2
+        assert len((await _raw(meta))) == 2
 
 
 # --- the gate picks the heaviest relevant thought --------------------------
@@ -360,17 +350,17 @@ def _stub_judge(search, verdicts):
 
 
 class TestGateUsesGravity:
-    async def _two_passing_thoughts(self):
+    async def _two_passing_thoughts(self, thought_harness):
         """Both thoughts clear the prefilter and the judge; 'a thought' is
         fatigued so it weighs less than 'another thought'."""
-        s = _store(fatigue=0.6)
+        s = _store(thought_harness, fatigue=0.6)
         await s.add("a thought")
         await s.add("another thought")
         await s.apply_fatigue(["a thought"])   # -> weight 0.6 vs 1.0
         return s
 
-    async def test_gravity_on_heaviest_wins(self):
-        s = await self._two_passing_thoughts()
+    async def test_gravity_on_heaviest_wins(self, thought_harness):
+        s = await self._two_passing_thoughts(thought_harness)
         search = _make_search()
         _stub_judge(search, {"a thought": 1.0, "another thought": 1.0})
         out = await search.search_self_thoughts(
@@ -380,8 +370,8 @@ class TestGateUsesGravity:
         # equal cosine, but 'another thought' is heavier -> it takes the slot
         assert [t for t, _ in out] == ["another thought"]
 
-    async def test_gravity_off_falls_back_to_cosine_order(self):
-        s = await self._two_passing_thoughts()
+    async def test_gravity_off_falls_back_to_cosine_order(self, thought_harness):
+        s = await self._two_passing_thoughts(thought_harness)
         search = _make_search()
         _stub_judge(search, {"a thought": 1.0, "another thought": 1.0})
         out = await search.search_self_thoughts(
@@ -395,8 +385,8 @@ class TestGateUsesGravity:
 # --- snapshot (observability for /thoughts) --------------------------------
 
 class TestSnapshot:
-    async def test_snapshot_rows(self):
-        s = _store()
+    async def test_snapshot_rows(self, thought_harness):
+        s = _store(thought_harness)
         await s.add("a thought")
         await s.add("echo of a thought")   # folds into the prior -> weight 1.5
         await s.add("another thought")     # distinct -> second row
@@ -415,45 +405,45 @@ class TestSnapshot:
         assert second["surfaced"] is False
         assert second["weight"] == pytest.approx(1.0)
 
-    async def test_snapshot_effective_weight_none_when_disabled(self):
-        s = _store(gravity_enabled=False)
+    async def test_snapshot_effective_weight_none_when_disabled(self, thought_harness):
+        s = _store(thought_harness, gravity_enabled=False)
         await s.add("a thought")
         rows = await s.snapshot()
         assert rows[0]["effective_weight"] is None
         assert rows[0]["weight"] == pytest.approx(1.0)  # inert metadata
 
-    async def test_snapshot_applies_age_decay(self):
-        meta = FakeMeta()
+    async def test_snapshot_applies_age_decay(self, thought_harness):
+        meta = thought_harness
         s = _store(meta, half_life_days=30.0)
         await s.add("a thought")
         # Backdate the thought one half-life
-        items = _raw(meta)
+        items = (await _raw(meta))
         items[0]["created_at"] = (
             datetime.now(timezone.utc) - timedelta(days=30)
         ).isoformat()
-        meta.data[SelfThoughtStore.KEY] = json.dumps(items)
+        await _seed(meta, items)
 
         rows = await s.snapshot()
         assert rows[0]["weight"] == pytest.approx(1.0)          # stored untouched
         assert rows[0]["effective_weight"] == pytest.approx(0.5, abs=0.02)
 
-    async def test_snapshot_flags_missing_embedding(self):
-        meta = FakeMeta()
-        s = SelfThoughtStore(meta, embed_fn=None, gravity_enabled=True)
+    async def test_snapshot_flags_missing_embedding(self, thought_harness):
+        meta = thought_harness
+        s = SelfThoughtStore(meta.sqlite, embed_fn=None, gravity_enabled=True)
         await s.add("a thought")   # embed_fn None -> no embedding stored
         rows = await s.snapshot()
         assert rows[0]["has_embedding"] is False
 
-    async def test_snapshot_does_not_mutate(self):
-        meta = FakeMeta()
+    async def test_snapshot_does_not_mutate(self, thought_harness):
+        meta = thought_harness
         s = _store(meta)
         await s.add("a thought")
-        before = meta.data[SelfThoughtStore.KEY]
+        before = await _raw(meta)
         await s.snapshot()
-        assert meta.data[SelfThoughtStore.KEY] == before
+        assert await _raw(meta) == before
 
-    async def test_snapshot_empty_store(self):
-        s = _store()
+    async def test_snapshot_empty_store(self, thought_harness):
+        s = _store(thought_harness)
         assert await s.snapshot() == []
 
 
@@ -471,12 +461,11 @@ async def _embed_ortho(text):
     return _ORTHO.get(text)
 
 
-def _set_fields(meta, text, **fields):
-    items = _raw(meta)
-    for it in items:
+async def _set_fields(harness, text, **fields):
+    """Mutate a seeded thought in place, by id."""
+    for it in await _raw(harness):
         if it["text"] == text:
-            it.update(fields)
-    meta.data[SelfThoughtStore.KEY] = json.dumps(items)
+            await harness.sqlite.update_self_thought(it["id"], **fields)
 
 
 class TestWeightEviction:
@@ -486,51 +475,51 @@ class TestWeightEviction:
     thought is usually the oldest item — recency truncation deleted exactly
     the thought gravity had decided mattered most (deep-dive 2026-08-04)."""
 
-    async def test_eviction_drops_lightest_not_oldest(self):
-        meta = FakeMeta()
-        s = SelfThoughtStore(meta, embed_fn=_embed_ortho,
+    async def test_eviction_drops_lightest_not_oldest(self, thought_harness):
+        meta = thought_harness
+        s = SelfThoughtStore(meta.sqlite, embed_fn=_embed_ortho,
                              gravity_enabled=True, max_keep=3)
         for t in ("t0", "t1", "t2"):
             await s.add(t)
         # t0 is oldest AND heaviest (a recurring thought); t1 has faded.
-        _set_fields(meta, "t0", weight=5.0, surfaced=True)
-        _set_fields(meta, "t1", weight=0.2, surfaced=True)
+        await _set_fields(meta, "t0", weight=5.0, surfaced=True)
+        await _set_fields(meta, "t1", weight=0.2, surfaced=True)
 
         await s.add("t3")   # over cap -> one eviction
 
-        texts = [it["text"] for it in _raw(meta)]
+        texts = [it["text"] for it in (await _raw(meta))]
         assert texts == ["t0", "t2", "t3"]   # t1 (lightest) gone, t0 survives
 
-    async def test_newest_thought_survives_heavy_backlog(self):
+    async def test_newest_thought_survives_heavy_backlog(self, thought_harness):
         """A just-formed thought (weight 1.0) must not be the eviction victim
         just because every stored thought is heavier — it would die unseen."""
-        meta = FakeMeta()
-        s = SelfThoughtStore(meta, embed_fn=_embed_ortho,
+        meta = thought_harness
+        s = SelfThoughtStore(meta.sqlite, embed_fn=_embed_ortho,
                              gravity_enabled=True, max_keep=3)
         for t in ("t0", "t1", "t2"):
             await s.add(t)
         for t in ("t0", "t1", "t2"):
-            _set_fields(meta, t, weight=5.0, surfaced=True)
+            await _set_fields(meta, t, weight=5.0, surfaced=True)
 
         await s.add("t3")
 
-        texts = [it["text"] for it in _raw(meta)]
+        texts = [it["text"] for it in (await _raw(meta))]
         assert "t3" in texts                 # newest always lands
         assert len(texts) == 3
 
-    async def test_disabled_gravity_keeps_recency_eviction(self):
+    async def test_disabled_gravity_keeps_recency_eviction(self, thought_harness):
         """Firewall: with gravity off the store must behave exactly as before
         — plain last-N truncation, weights ignored."""
-        meta = FakeMeta()
-        s = SelfThoughtStore(meta, embed_fn=_embed_ortho,
+        meta = thought_harness
+        s = SelfThoughtStore(meta.sqlite, embed_fn=_embed_ortho,
                              gravity_enabled=False, max_keep=3)
         for t in ("t0", "t1", "t2"):
             await s.add(t)
-        _set_fields(meta, "t0", weight=5.0)   # heavy but gravity is off
+        await _set_fields(meta, "t0", weight=5.0)   # heavy but gravity is off
 
         await s.add("t3")
 
-        texts = [it["text"] for it in _raw(meta)]
+        texts = [it["text"] for it in (await _raw(meta))]
         assert texts == ["t1", "t2", "t3"]   # oldest dropped, weight ignored
 
 
@@ -541,45 +530,45 @@ class TestEchoAndSurfaceCounters:
     fold time then discarded — leaving /thoughts unable to answer the question
     that gates step 2 (deep-dive 2026-08-04)."""
 
-    async def test_echo_increments_on_recurrence(self):
-        meta = FakeMeta()
+    async def test_echo_increments_on_recurrence(self, thought_harness):
+        meta = thought_harness
         s = _store(meta)
         await s.add("a thought")
-        assert _raw(meta)[0].get("echo_count", 0) == 0
+        assert (await _raw(meta))[0].get("echo_count", 0) == 0
         await s.add("echo of a thought")          # identical vector -> echo
-        assert _raw(meta)[0]["echo_count"] == 1
+        assert (await _raw(meta))[0]["echo_count"] == 1
 
-    async def test_echo_count_survives_folding(self):
+    async def test_echo_count_survives_folding(self, thought_harness):
         """A duplicate that escaped write-time folding carries its echoes
         across the repair rather than losing them."""
-        meta = FakeMeta()
+        meta = thought_harness
         s = _store(meta)
         await s.add("a thought")
         # Two rows with the same vector, each already carrying an echo
-        items = _raw(meta)
+        items = (await _raw(meta))
         dup = dict(items[0])
         dup["echo_count"] = 2
         items[0]["echo_count"] = 1
         items.append(dup)
-        meta.data[SelfThoughtStore.KEY] = json.dumps(items)
+        await _seed(meta, items)
 
         await s.add("another thought")   # triggers _fold_duplicates
 
-        folded = [i for i in _raw(meta) if i["text"] == "a thought"]
+        folded = [i for i in (await _raw(meta)) if i["text"] == "a thought"]
         assert len(folded) == 1
         # 1 + 2 carried + 1 for the fold itself
         assert folded[0]["echo_count"] == 4
 
-    async def test_surface_count_increments_on_fatigue(self):
-        meta = FakeMeta()
+    async def test_surface_count_increments_on_fatigue(self, thought_harness):
+        meta = thought_harness
         s = _store(meta)
         await s.add("a thought")
         await s.apply_fatigue(["a thought"])
         await s.apply_fatigue(["a thought"])
-        assert _raw(meta)[0]["surface_count"] == 2
+        assert (await _raw(meta))[0]["surface_count"] == 2
 
-    async def test_snapshot_exposes_both_counters(self):
-        meta = FakeMeta()
+    async def test_snapshot_exposes_both_counters(self, thought_harness):
+        meta = thought_harness
         s = _store(meta)
         await s.add("a thought")
         await s.add("echo of a thought")
@@ -588,11 +577,10 @@ class TestEchoAndSurfaceCounters:
         assert row["echo_count"] == 1
         assert row["surface_count"] == 1
 
-    async def test_counters_default_to_zero_for_legacy_rows(self):
+    async def test_counters_default_to_zero_for_legacy_rows(self, thought_harness):
         """Thoughts written before these counters existed must not KeyError."""
-        meta = FakeMeta()
-        meta.data[SelfThoughtStore.KEY] = json.dumps(
-            [{"text": "old thought", "surfaced": True, "weight": 1.0}]
+        meta = thought_harness
+        await _seed(meta, [{"text": "old thought", "surfaced": True, "weight": 1.0}]
         )
         s = _store(meta)
         row = (await s.snapshot())[0]

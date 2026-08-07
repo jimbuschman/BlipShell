@@ -188,3 +188,10 @@ async def entity_extractor(sqlite_store, canned_router):
         router=canned_router,
         batch_size=10,
     )
+
+
+@pytest.fixture
+async def thought_harness(sqlite_store):
+    """Real-store harness for the self-thought table (see fakes.ThoughtHarness)."""
+    from tests.fakes import ThoughtHarness
+    return ThoughtHarness(sqlite_store)

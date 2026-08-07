@@ -14,17 +14,6 @@ from blipshell.core.self_reflection import SelfThoughtStore
 from blipshell.memory.search import MemorySearch
 
 
-class FakeMeta:
-    def __init__(self):
-        self.data = {}
-
-    async def get_metadata(self, key):
-        return self.data.get(key)
-
-    async def set_metadata(self, key, value):
-        self.data[key] = value
-
-
 # Toy embedder shared by the store (thoughts) and the search (query) so cosine
 # is exact and controllable.
 _VECS = {
@@ -59,14 +48,14 @@ def _stub_judge(search, verdicts):
     return calls
 
 
-async def _store_with(*thoughts):
-    store = SelfThoughtStore(FakeMeta(), embed_fn=_embed_async)
+async def _store_with(harness, *thoughts):
+    store = SelfThoughtStore(harness.sqlite, embed_fn=_embed_async)
     for t in thoughts:
         await store.add(t)
     return store
 
 
-async def test_fail_closed_when_judge_errors():
+async def test_fail_closed_when_judge_errors(thought_harness):
     """If the judge raises, nothing surfaces — better silent than sloppy."""
     search = _make_search()
 
@@ -74,7 +63,7 @@ async def test_fail_closed_when_judge_errors():
         raise RuntimeError("model down")
 
     search._judge_relevance = boom
-    store = await _store_with("robotics cube")
+    store = await _store_with(thought_harness, "robotics cube")
 
     out = await search.search_self_thoughts(
         "robotics cube", store,
@@ -83,12 +72,12 @@ async def test_fail_closed_when_judge_errors():
     assert out == []
 
 
-async def test_judge_no_rejects():
+async def test_judge_no_rejects(thought_harness):
     """A thought that clears the cosine prefilter but the judge says 'no' (0.0)
     does NOT surface — the cap can't save us, so the gate must hold."""
     search = _make_search()
     _stub_judge(search, {"robotics cube": 0.0})
-    store = await _store_with("robotics cube")
+    store = await _store_with(thought_harness, "robotics cube")
 
     out = await search.search_self_thoughts(
         "robotics cube", store,
@@ -97,10 +86,10 @@ async def test_judge_no_rejects():
     assert out == []
 
 
-async def test_judge_yes_accepts():
+async def test_judge_yes_accepts(thought_harness):
     search = _make_search()
     _stub_judge(search, {"robotics cube": 1.0})
-    store = await _store_with("robotics cube")
+    store = await _store_with(thought_harness, "robotics cube")
 
     out = await search.search_self_thoughts(
         "robotics cube", store,
@@ -110,11 +99,11 @@ async def test_judge_yes_accepts():
     assert out[0][1] == pytest.approx(1.0)   # cosine of identical vectors
 
 
-async def test_cosine_prefilter_excludes_unrelated_before_judge():
+async def test_cosine_prefilter_excludes_unrelated_before_judge(thought_harness):
     """An unrelated thought never reaches the judge (cosine floor drops it)."""
     search = _make_search()
     calls = _stub_judge(search, {"continuity of self": 1.0})
-    store = await _store_with("continuity of self")
+    store = await _store_with(thought_harness, "continuity of self")
 
     # Query orthogonal to the only thought -> cosine 0 -> prefiltered out.
     out = await search.search_self_thoughts(
@@ -125,10 +114,10 @@ async def test_cosine_prefilter_excludes_unrelated_before_judge():
     assert calls == []   # nothing survived the prefilter, judge never ran
 
 
-async def test_max_inject_caps_and_orders_by_cosine():
+async def test_max_inject_caps_and_orders_by_cosine(thought_harness):
     search = _make_search()
     _stub_judge(search, {"robotics cube": 1.0, "continuity of self": 1.0})
-    store = await _store_with("robotics cube", "continuity of self")
+    store = await _store_with(thought_harness, "robotics cube", "continuity of self")
 
     # Query closer to robotics (0.8) than continuity (0.6) — both clear cosine,
     # both judged yes, but max_inject=1 keeps the higher-cosine one.

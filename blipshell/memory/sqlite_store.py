@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import struct
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +26,10 @@ from blipshell.models.task import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Distinguishes "caller did not pass embedding" from "caller passed None to
+# CLEAR the embedding" — None is a meaningful value on that column.
+_UNSET = object()
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -349,6 +354,34 @@ CREATE TABLE IF NOT EXISTS friction_log (
 
 CREATE INDEX IF NOT EXISTS idx_friction_log_session ON friction_log(session_id);
 CREATE INDEX IF NOT EXISTS idx_friction_log_reviewed ON friction_log(is_reviewed);
+
+-- Self-layer thoughts. Previously ONE app_metadata row holding a JSON list
+-- with each 1024-float embedding inline, so the per-turn relevance path
+-- parsed roughly a megabyte of JSON to read a handful of scalars, and
+-- weights were keyed by thought TEXT -- which echo-folding rewrites, so a
+-- fold could orphan the weight it was meant to carry.
+--
+-- id ascending IS chronological order (rows are only ever appended), which
+-- recent()/diverse_recent() depend on. The embedding is a BLOB on the row
+-- rather than a vec0 table: only the VectorStore's connection loads
+-- sqlite-vec, and at max_keep=50 an in-process cosine sweep costs nothing
+-- that would justify a cross-connection write on the per-turn path.
+CREATE TABLE IF NOT EXISTS self_thoughts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    created_at DATETIME NOT NULL,
+    weight REAL NOT NULL DEFAULT 1.0,
+    surfaced BOOLEAN NOT NULL DEFAULT 0,
+    echo_count INTEGER NOT NULL DEFAULT 0,
+    surface_count INTEGER NOT NULL DEFAULT 0,
+    embedding BLOB,
+    is_archived BOOLEAN NOT NULL DEFAULT 0,
+    folded_into INTEGER,
+    archived_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_self_thoughts_active
+    ON self_thoughts(is_archived, id);
 """
 
 
@@ -562,6 +595,8 @@ class SQLiteStore:
                 FOREIGN KEY (session_id) REFERENCES sessions(id)
             )
         """)
+        await self._migrate_self_thoughts_to_table()
+
         # Backfill valid_from from created_at for existing relationships
         await self._db.execute(
             "UPDATE entity_relationships SET valid_from = created_at "
@@ -1333,6 +1368,215 @@ class SQLiteStore:
         )
         rows = await cursor.fetchall()
         return [r["id"] for r in rows]
+
+    _SELF_THOUGHTS_JSON_KEY = "self_thoughts"
+    _SELF_THOUGHTS_BACKUP_KEY = "self_thoughts_pre_migration"
+
+    async def _migrate_self_thoughts_to_table(self) -> None:
+        """Move the app_metadata JSON list into the self_thoughts table.
+
+        One-way and against the live store, so it is deliberately cautious:
+
+        * Runs only when the JSON key exists AND the table is empty. Either
+          condition failing means it already ran (or there was nothing to
+          move), so a restart can't duplicate the corpus.
+        * The old blob is RENAMED, not deleted — rollback is one rename back
+          to `self_thoughts`. A migration whose only copy of the data is the
+          thing it just rewrote has no way back.
+        * Insert order preserves list order, because `id` ascending is what
+          recent()/diverse_recent() read as chronological.
+        * Malformed rows are skipped individually rather than aborting the
+          whole migration; a thought with no text was never usable anyway.
+        """
+        raw = await self.get_metadata(self._SELF_THOUGHTS_JSON_KEY)
+        if not raw:
+            return
+
+        cursor = await self._db.execute("SELECT COUNT(*) AS n FROM self_thoughts")
+        row = await cursor.fetchone()
+        if row and row["n"]:
+            logger.warning(
+                "self_thoughts table already populated but the JSON key still "
+                "exists — leaving both alone. Inspect before removing '%s'.",
+                self._SELF_THOUGHTS_JSON_KEY,
+            )
+            return
+
+        try:
+            items = json.loads(raw)
+            if not isinstance(items, list):
+                raise ValueError(f"expected a list, got {type(items).__name__}")
+        except (ValueError, TypeError) as e:
+            logger.error(
+                "Self-thought migration ABORTED — could not parse the stored "
+                "JSON (%s). The blob is untouched at '%s'.",
+                e, self._SELF_THOUGHTS_JSON_KEY,
+            )
+            return
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        migrated = 0
+        skipped = 0
+        try:
+            for it in items:
+                if not isinstance(it, dict) or not it.get("text"):
+                    skipped += 1
+                    continue
+                await self._db.execute(
+                    """INSERT INTO self_thoughts
+                       (text, created_at, weight, surfaced, echo_count,
+                        surface_count, embedding)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        it["text"],
+                        it.get("created_at") or now_iso,
+                        float(it.get("weight", 1.0) or 1.0),
+                        int(bool(it.get("surfaced"))),
+                        int(it.get("echo_count", 0) or 0),
+                        int(it.get("surface_count", 0) or 0),
+                        self._pack_embedding(it.get("embedding")),
+                    ),
+                )
+                migrated += 1
+            # Rename only after every row landed. If this throws, the rollback
+            # below restores an empty table and the JSON key stays put.
+            await self._db.execute(
+                "UPDATE app_metadata SET key = ? WHERE key = ?",
+                (self._SELF_THOUGHTS_BACKUP_KEY, self._SELF_THOUGHTS_JSON_KEY),
+            )
+            await self._db.commit()
+        except Exception as e:
+            await self._db.rollback()
+            logger.error(
+                "Self-thought migration FAILED (%s). JSON blob left intact at "
+                "'%s'; will retry next start.", e, self._SELF_THOUGHTS_JSON_KEY,
+            )
+            return
+
+        logger.info(
+            "Migrated %d self-thought(s) to the self_thoughts table "
+            "(%d malformed skipped). Previous JSON kept at '%s'.",
+            migrated, skipped, self._SELF_THOUGHTS_BACKUP_KEY,
+        )
+
+    # --- Self-layer thoughts -------------------------------------------
+    #
+    # Embeddings are stored as raw float32 BLOBs, the same encoding the
+    # vector store uses, and are only SELECTed when a caller actually needs
+    # them — the whole point of moving off the JSON blob is that the
+    # per-turn metadata reads stop paying for 50 × 1024 floats.
+
+    @staticmethod
+    def _pack_embedding(vec: Optional[list[float]]) -> Optional[bytes]:
+        if not vec:
+            return None
+        return struct.pack(f"{len(vec)}f", *vec)
+
+    @staticmethod
+    def _unpack_embedding(blob) -> Optional[list[float]]:
+        if not blob:
+            return None
+        try:
+            return list(struct.unpack(f"{len(blob) // 4}f", blob))
+        except struct.error:
+            return None
+
+    async def get_self_thoughts(
+        self, *, with_embeddings: bool = False, include_archived: bool = False,
+    ) -> list[dict]:
+        """Active thoughts, oldest first. `id` order IS chronological order."""
+        cols = "id, text, created_at, weight, surfaced, echo_count, surface_count"
+        if with_embeddings:
+            cols += ", embedding"
+        where = "" if include_archived else " WHERE is_archived = 0"
+        cursor = await self._db.execute(
+            f"SELECT {cols} FROM self_thoughts{where} ORDER BY id"
+        )
+        rows = await cursor.fetchall()
+        out = []
+        for r in rows:
+            item = {
+                "id": r["id"],
+                "text": r["text"],
+                "created_at": r["created_at"],
+                "weight": r["weight"],
+                "surfaced": bool(r["surfaced"]),
+                "echo_count": r["echo_count"],
+                "surface_count": r["surface_count"],
+            }
+            if with_embeddings:
+                item["embedding"] = self._unpack_embedding(r["embedding"])
+            out.append(item)
+        return out
+
+    async def count_self_thoughts_with_embeddings(self) -> int:
+        """How many ACTIVE thoughts carry a vector (observability)."""
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) AS n FROM self_thoughts "
+            "WHERE is_archived = 0 AND embedding IS NOT NULL"
+        )
+        row = await cursor.fetchone()
+        return row["n"] if row else 0
+
+    async def add_self_thought(
+        self, text: str, created_at: str, *,
+        embedding: Optional[list[float]] = None, weight: float = 1.0,
+        surfaced: bool = False, echo_count: int = 0, surface_count: int = 0,
+    ) -> int:
+        cursor = await self._db.execute(
+            """INSERT INTO self_thoughts
+               (text, created_at, weight, surfaced, echo_count, surface_count, embedding)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (text, created_at, weight, int(surfaced), echo_count, surface_count,
+             self._pack_embedding(embedding)),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def update_self_thought(self, thought_id: int, **fields) -> None:
+        """Update a thought BY ID. Weights used to be keyed by text, which
+        echo-folding rewrites — so a fold could orphan the weight it carried."""
+        # created_at is settable: age decay reads it, so backdating is how
+        # decay gets exercised, and the migration needs to preserve originals.
+        allowed = {"text", "weight", "surfaced", "echo_count", "surface_count",
+                   "created_at"}
+        embedding = fields.pop("embedding", _UNSET)
+        sets, values = [], []
+        for k, v in fields.items():
+            if k not in allowed:
+                continue
+            sets.append(f"{k} = ?")
+            values.append(int(v) if k == "surfaced" else v)
+        if embedding is not _UNSET:
+            sets.append("embedding = ?")
+            values.append(self._pack_embedding(embedding))
+        if not sets:
+            return
+        values.append(thought_id)
+        await self._db.execute(
+            f"UPDATE self_thoughts SET {', '.join(sets)} WHERE id = ?", values,
+        )
+        await self._db.commit()
+
+    async def archive_self_thoughts(
+        self, thought_ids: list[int], *, folded_into: Optional[int] = None,
+    ) -> int:
+        """Soft-archive thoughts. ARCHIVE, never DELETE — same mandate as
+        memories and entities. `folded_into` records which thought absorbed
+        this one, so a fold is traceable instead of a disappearance."""
+        ids = [i for i in thought_ids if i is not None]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" * len(ids))
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = await self._db.execute(
+            f"""UPDATE self_thoughts
+                SET is_archived = 1, archived_at = ?, folded_into = ?
+                WHERE id IN ({placeholders}) AND is_archived = 0""",
+            [now, folded_into, *ids],
+        )
+        await self._db.commit()
+        return cursor.rowcount
 
     async def get_integrity_counts(self) -> dict[str, int]:
         """Row counts that destructive maintenance must never reduce.
