@@ -1102,6 +1102,12 @@ class NightlyRunner:
         if orphan_rels or orphan_mentions or orphan_aliases:
             await db.commit()
 
+        # This job writes entity rows through the raw connection rather than
+        # the store's methods, so nothing invalidated the cached name list —
+        # searches would keep matching deleted and pre-rename names for the
+        # life of the process.
+        self.sqlite._invalidate_entity_name_cache()
+
         return {
             "deleted": deleted,
             "type_fixed": type_fixed,

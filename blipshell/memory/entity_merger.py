@@ -20,23 +20,21 @@ merged-away husk (reversible). Dry-run reports the plan without touching data.
 from __future__ import annotations
 
 import logging
-import re
 import time
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from blipshell.llm.prompts import resolve_entity_merge_with_edges
 from blipshell.llm.router import LLMRouter, TaskType
+from blipshell.memory.entity_names import (
+    normalize_name, numeric_tokens, version_distinguished,
+)
 from blipshell.memory.sqlite_store import SQLiteStore
 
 if TYPE_CHECKING:
     from blipshell.memory.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
-
-# Split a name into tokens on whitespace and common separators so version
-# markers fall out as their own tokens (projectecho_v1 -> {projectecho, v1}).
-_TOKEN_SPLIT = re.compile(r"[\s_\-:/.,]+")
 
 
 class EntityMerger:
@@ -70,35 +68,12 @@ class EntityMerger:
             return a, b
         return b, a
 
-    @staticmethod
-    def _numeric_tokens(name: str) -> set[str]:
-        """Tokens in `name` that contain a digit (version/number markers)."""
-        return {
-            t for t in _TOKEN_SPLIT.split(name.lower())
-            if any(c.isdigit() for c in t)
-        }
-
-    @staticmethod
-    def _normalize_name(name: str) -> str:
-        """Collapse only spacing/joining punctuation (space _ - .) so pure
-        lexical variants map together (chat gpt == chatgpt, phi-3 == phi3) while
-        meaningful symbols are kept (c# != c++) and different numbers stay
-        distinct (projectecho_v1 != _v2)."""
-        return re.sub(r"[\s_\-.]+", "", name.lower())
-
-    @classmethod
-    def _version_distinguished(cls, a_name: str, b_name: str) -> bool:
-        """True if two names differ in their numeric/version tokens.
-
-        Embeddings rate names that differ only by a version/instance number as
-        ~identical (projectecho_v1 vs _v2 = 0.996, corememorybackup1 vs 2,
-        llama 3.2b vs 3.2, ws2812 vs ws2812b), which would clear the auto-merge
-        threshold and collapse DISTINCT things with no LLM veto. Such pairs are
-        almost always separate versions, not formatting variants, so they must
-        never merge. Pairs whose numeric tokens match (langchain-x vs
-        langchain_x, deepseek-r1-7b vs deepseek-r1:7b) are unaffected.
-        """
-        return cls._numeric_tokens(a_name) != cls._numeric_tokens(b_name)
+    # Name-comparison rules live in entity_names so the CREATION-time resolver
+    # uses the identical logic; they were methods here, on the conservative
+    # path that ships disabled, while the enabled path had no guard at all.
+    _numeric_tokens = staticmethod(numeric_tokens)
+    _normalize_name = staticmethod(normalize_name)
+    _version_distinguished = staticmethod(version_distinguished)
 
     async def _llm_confirms_merge(self, a: dict, b: dict) -> bool:
         """Edge-aware LLM arbitration for the ambiguous similarity band."""

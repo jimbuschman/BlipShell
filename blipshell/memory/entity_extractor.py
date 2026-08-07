@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from blipshell.llm.prompts import extract_entities, resolve_entity_duplicate
 from blipshell.llm.router import LLMRouter, TaskType
+from blipshell.memory.entity_names import version_distinguished
 from blipshell.memory.sqlite_store import SQLiteStore
 
 if TYPE_CHECKING:
@@ -95,7 +96,7 @@ class EntityExtractor:
             concurrency: Number of LLM calls to run in parallel.
                          Use 1 for local models, higher for cloud.
         """
-        stats = {"extracted": 0, "triples": 0, "errors": 0}
+        stats = {"extracted": 0, "triples": 0, "errors": 0, "retryable": 0}
 
         memory_ids = await self.sqlite.get_unextracted_memory_ids(
             limit=self.batch_size,
@@ -112,6 +113,7 @@ class EntityExtractor:
                 stats["extracted"] += result["extracted"]
                 stats["triples"] += result["triples"]
                 stats["errors"] += result["errors"]
+                stats["retryable"] += result.get("retryable", 0)
         else:
             semaphore = asyncio.Semaphore(concurrency)
 
@@ -130,12 +132,13 @@ class EntityExtractor:
                     stats["extracted"] += r["extracted"]
                     stats["triples"] += r["triples"]
                     stats["errors"] += r["errors"]
+                    stats["retryable"] += r.get("retryable", 0)
 
         return stats
 
     async def _extract_one(self, memory_id: int) -> dict:
         """Extract entities from a single memory. Returns per-memory stats."""
-        result = {"extracted": 0, "triples": 0, "errors": 0}
+        result = {"extracted": 0, "triples": 0, "errors": 0, "retryable": 0}
         try:
             memory = await self.sqlite.get_memory(memory_id)
             if not memory or not memory.summary:
@@ -226,10 +229,17 @@ class EntityExtractor:
             logger.warning(
                 "Entity extraction failed for memory %d: %s", memory_id, e,
             )
-            try:
-                await self.sqlite.mark_entities_extracted([memory_id])
-            except Exception as mark_err:
-                logger.warning("Failed to mark memory %d as extracted: %s", memory_id, mark_err)
+            # Deliberately NOT marked extracted. Marking on failure meant a
+            # memory whose extraction died — LLM timeout, parse error, DB
+            # hiccup — was recorded as done and never retried, with no error
+            # column to find it by. Its triples were simply lost from the
+            # graph, silently and permanently. Leaving it unmarked means the
+            # next batch picks it up.
+            #
+            # A permanently-failing memory will be retried each run. That is
+            # the lesser evil: it is visible in the error count, whereas
+            # silent omission is not. The retry cost is bounded by batch_size.
+            result["retryable"] = 1
 
         return result
 
@@ -258,8 +268,10 @@ class EntityExtractor:
             self._resolution_cache[name] = alias_id
             return alias_id
 
-        # Stage 1: Exact match (always runs)
-        existing_id = await self.sqlite.get_entity_id_by_name(name)
+        # Stage 1: Exact match (always runs). Typed, because the table's
+        # uniqueness is (name, entity_type) — an untyped lookup could bind this
+        # triple to a same-named entity of a different type.
+        existing_id = await self.sqlite.get_entity_id_by_name(name, entity_type)
         if existing_id is not None:
             self._resolution_cache[name] = existing_id
             return existing_id
@@ -296,6 +308,27 @@ class EntityExtractor:
                     self.vectors.delete_entity(candidate["id"])
                 except Exception:
                     pass
+                continue
+
+            # Never merge names that differ only by a version or instance
+            # number. Embeddings score projectecho_v1 vs _v2 at 0.996, so they
+            # sail past any threshold and collapse two distinct entities with
+            # no LLM veto. EntityMerger has always guarded against this; this
+            # path — the one actually enabled in config — did not, so the
+            # protection was on the disabled path only (deep-dive 2026-08-04).
+            #
+            # Skip the candidate, don't abandon the list: candidates arrive
+            # sorted by similarity, so a version variant frequently outranks a
+            # genuine formatting variant further down ('projectecho_v1' at
+            # 0.996 above 'projectecho v2' at 0.99). Falling through also keeps
+            # the single creation path below, which upserts the embedding —
+            # returning early here would leave the new entity unembedded and
+            # invisible to every later resolution.
+            if version_distinguished(name, candidate["name"]):
+                logger.info(
+                    "Entity NOT merged (version/number differs): '%s' vs '%s' "
+                    "(sim=%.3f)", name, candidate["name"], candidate["similarity"],
+                )
                 continue
 
             if candidate["similarity"] >= self._auto_merge_threshold:

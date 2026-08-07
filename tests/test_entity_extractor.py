@@ -138,4 +138,6 @@ class TestExtractBatch:
     async def test_empty_batch(self, entity_extractor):
         """No unextracted memories should return zero stats."""
         stats = await entity_extractor.extract_batch()
-        assert stats == {"extracted": 0, "triples": 0, "errors": 0}
+        assert stats == {
+            "extracted": 0, "triples": 0, "errors": 0, "retryable": 0,
+        }

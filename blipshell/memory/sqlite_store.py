@@ -372,6 +372,9 @@ class SQLiteStore:
     def __init__(self, db_path: str):
         self.db_path = db_path
         self._db: Optional[aiosqlite.Connection] = None
+        # Entity names, cached for the search path (see get_all_entity_names).
+        # None = not loaded / invalidated.
+        self._entity_names_cache: Optional[list[str]] = None
 
     @asynccontextmanager
     async def transaction(self):
@@ -2422,11 +2425,15 @@ class SQLiteStore:
         )
         row = await cursor.fetchone()
         if row:
+            # The common case by far, and a pure read — leave the name cache
+            # alone. Invalidating here would drop it on every resolved triple
+            # during extraction and make the cache worthless.
             return row["id"]
         cursor = await self._db.execute(
             "INSERT INTO entities (name, entity_type) VALUES (?, ?)",
             (name, entity_type),
         )
+        self._invalidate_entity_name_cache()
         if not skip_commit:
             await self._db.commit()
         return cursor.lastrowid
@@ -2486,6 +2493,11 @@ class SQLiteStore:
                   AND name NOT IN (SELECT alias_name FROM entity_aliases)""",
             ids,
         )
+        # create_entity_relationship calls this for both endpoints of every
+        # triple, and the overwhelming majority are already active — only drop
+        # the name cache when a row actually flipped.
+        if cursor.rowcount:
+            self._invalidate_entity_name_cache()
         if not skip_commit:
             await self._db.commit()
         return cursor.rowcount
@@ -2561,17 +2573,31 @@ class SQLiteStore:
         rows = await cursor.fetchall()
         return [r["memory_id"] for r in rows]
 
+    def _invalidate_entity_name_cache(self) -> None:
+        """Called by every method that adds, archives or revives an entity."""
+        self._entity_names_cache = None
+
     async def get_all_entity_names(self) -> list[str]:
         """Get all entity names (for fast in-memory matching at search time).
 
         Excludes soft-archived entities so pruned-but-not-deleted entities stop
         expanding searches.
+
+        CACHED. Search calls this on every single query and then scans the
+        result — on a graph with tens of thousands of entities that was a full
+        table read plus serialization per keystroke-to-answer, on the
+        interactive path. The cache is invalidated by the store itself
+        whenever an entity is created, archived, revived or merged, so it
+        can't go stale behind a write it didn't see.
         """
+        if self._entity_names_cache is not None:
+            return self._entity_names_cache
         cursor = await self._db.execute(
             "SELECT DISTINCT name FROM entities WHERE is_archived = 0"
         )
         rows = await cursor.fetchall()
-        return [r["name"] for r in rows]
+        self._entity_names_cache = [r["name"] for r in rows]
+        return self._entity_names_cache
 
     async def get_prunable_entities(
         self,
@@ -2675,6 +2701,7 @@ class SQLiteStore:
         Reversible: the rows, their relationships and mentions are left intact —
         only the flag flips. Returns the number of rows newly archived.
         """
+        self._invalidate_entity_name_cache()
         if not entity_ids:
             return 0
         placeholders = ",".join("?" * len(entity_ids))
@@ -2806,10 +2833,31 @@ class SQLiteStore:
         )
         return await cursor.fetchone() is not None
 
-    async def get_entity_id_by_name(self, name: str) -> int | None:
-        """Get entity ID by exact name match (case-insensitive)."""
+    async def get_entity_id_by_name(
+        self, name: str, entity_type: str | None = None,
+    ) -> int | None:
+        """Get entity ID by exact name match (case-insensitive).
+
+        The table's uniqueness is (name, entity_type), and get_or_create_entity
+        writes both — so a name alone can match several rows and fetchone()
+        picked whichever came first. That let a `technology`-typed triple bind
+        to a `concept`-typed entity of the same name, nondeterministically.
+        Pass entity_type to match the row that was actually created. Callers
+        that genuinely have no type get the lowest-id match — still arbitrary
+        among same-named rows, but at least stable across calls.
+        """
+        if entity_type:
+            cursor = await self._db.execute(
+                "SELECT id FROM entities WHERE name = ? AND entity_type = ?",
+                (name.strip().lower(), entity_type),
+            )
+            row = await cursor.fetchone()
+            if row:
+                return row["id"]
+            return None
         cursor = await self._db.execute(
-            "SELECT id FROM entities WHERE name = ?", (name.strip().lower(),),
+            "SELECT id FROM entities WHERE name = ? ORDER BY id LIMIT 1",
+            (name.strip().lower(),),
         )
         row = await cursor.fetchone()
         return row["id"] if row else None
@@ -2871,6 +2919,7 @@ class SQLiteStore:
 
         Does NOT delete the old entity (it becomes an alias).
         """
+        self._invalidate_entity_name_cache()
         # Reassign entity mentions
         await self._db.execute(
             """UPDATE OR IGNORE entity_mentions
