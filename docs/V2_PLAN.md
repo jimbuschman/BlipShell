@@ -300,11 +300,23 @@ enter the file cache; simulate leaves the production DB untouched.
    `scripts/audit_reflection_quality.py` into it. (This makes `JOB_OWNERS`'
    session_review claim honest — chunk+merge is the highest-variance prompt in the
    system and has never been scored.)
-3. **Entity pipeline hardening**: cache `get_all_entity_names()` (a full ~31K-row
-   read + Python substring loop on *every* search); `get_entity_id_by_name` must
-   match on `(name, entity_type)`; extraction failures get a retry/error column
-   instead of being marked done; version-guard (`_v1`/`_v2`) the creation-time
-   resolver like the merger already does — the *unguarded* path is the one running.
+3. ~~**Entity pipeline hardening**~~ — **DONE 2026-08-07** (`871d800`). All four:
+   `get_all_entity_names()` cached (invalidated on create/archive/revive/merge,
+   and explicitly by `_job_entity_cleanup`, which writes through the raw
+   connection); `get_entity_id_by_name` matches `(name, entity_type)` with a
+   stable lowest-id fallback; failed extractions stay unmarked and report
+   `retryable` rather than being recorded as done; the version rules moved to
+   `memory/entity_names.py` so the creation-time resolver uses the same guard
+   as the merger.
+
+   Two notes for whoever reads this next. The guard `continue`s past a blocked
+   candidate instead of returning — candidates are similarity-sorted, so a
+   version variant routinely outranks the real match, and the fall-through is
+   also the only path that upserts the new entity's embedding. And the cache
+   deliberately does *not* invalidate on `get_or_create_entity`'s read path or
+   on a no-op `revive_entities`; both fire per-triple during extraction, so
+   invalidating there would make the cache pointless. 23 regression tests,
+   each mutation-verified.
 4. **Local fallback model refresh** (SYSTEM_REVIEW D): benchmark newer local
    candidates on the Ollama PC, test-first as always.
 

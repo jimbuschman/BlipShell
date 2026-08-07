@@ -104,10 +104,22 @@ blipshell/
   lessons 5%, active_session 30%, recent_history 20%, recall 40% — with rollover.
 - **Entity graph** (memory/entity_extractor.py): LLM triple extraction; 4-stage
   resolution — alias routing (merged names → canonical, follows chains) → exact
-  match → embedding (≥0.85 auto-merge, 0.70–0.85 LLM arbitration) → create.
+  match, typed on `(name, entity_type)` → embedding (≥0.85 auto-merge,
+  0.70–0.85 LLM arbitration) → create.
   Bi-temporal edges; `CONTRADICTING_PREDICATES` expires stale facts.
   **USER MANDATE: ARCHIVE, never DELETE** — merge/prune soft-archive only.
   Revive-on-re-mention un-archives pruned entities (merged husks excluded).
+  Name-comparison rules live in `memory/entity_names.py` and are used by BOTH
+  merge paths — `version_distinguished` blocks any merge of names differing in
+  a version/instance number (`projectecho_v1` vs `_v2` embeds at 0.996, clear
+  of every threshold). They were methods on `EntityMerger` alone until
+  2026-08-07, i.e. on the path that ships disabled, while creation-time
+  resolution — the enabled one — had no guard. If you add a third merge site,
+  it uses this module.
+  `get_all_entity_names()` is cached; anything writing entity rows outside the
+  store's own methods must call `_invalidate_entity_name_cache()`.
+  Failed extractions are left unmarked and counted as `retryable` — never mark
+  a failure done, the triples are lost with nothing to find them by.
 - Also: consolidation (near-dup merging), centroid + batch taggers, lessons with
   project scoping, project digests (stored in project metadata, auto-updated on
   session close).
@@ -270,10 +282,14 @@ is in progress. Remaining:
   only second-event-loop-in-a-thread in the codebase.
 - Local fallback models are a generation behind — benchmark newer candidates on
   the Ollama PC before swapping (test-first, always).
-- Consolidation throughput: ~20/night vs 17K corpus — effectively decorative.
-  Root cause is `consolidation_batch_size: 20` plus a needless re-embed per
-  check; it also hard-deletes, which violates the archive mandate at the edge
-  level.
+- ~~Consolidation throughput~~ — REWRITTEN 2026-08-06/07. Neighbours come from
+  stored vectors (`VectorStore.find_neighbors`, zero embedding calls), the
+  batch is time-budgeted rather than fixed at 20, the scan gets only
+  `SCAN_BUDGET_SHARE` of that budget so it can't starve the merge phase,
+  losers are ARCHIVED, and `--loop` advances a persisted cursor in dry-run.
+  Each pass self-verifies against `get_integrity_counts()` and prints
+  `integrity_ok`. Five separate bugs surfaced only in live runs — treat this
+  module as the one where the dev-box suite is least predictive.
 - Benchmark realism: `run_session_review` never exercises chunk+merge, and the
   cases are far below the chunking threshold.
 - Memory reranker as L2 — NOTE: enabling it as-written would *degrade* ranking
