@@ -294,6 +294,34 @@ enter the file cache; simulate leaves the production DB untouched.
    a miscalibrated threshold does far more damage than it could at 20, and
    merges are one-way. Back up first.
 
+   **SWEEP COMPLETE 2026-08-07.** All 31,977 active memories checked; 59
+   archived as near-duplicates (0.18%); `integrity_ok`, and an independent
+   check found no edge or mention orphaned across 68K edges and 113K mentions,
+   so archive-never-delete held.
+
+   **DO NOT lower the 0.92 threshold on the strength of that low yield** — the
+   question was settled with data, see `scripts/consolidation_calibrate.py`
+   (2000-memory sample):
+
+   | band | share |
+   |---|---|
+   | 0.96+ | 0.00% |
+   | 0.92 – 0.96 | 0.30% |
+   | 0.88 – 0.92 | 9.40% |
+   | 0.85 – 0.88 | 9.90% |
+
+   Nothing above 0.96 survives anywhere in the corpus, because the write-time
+   LLM dedup (`processor.py`, threshold 0.7) already removes it. Consolidation
+   is a narrow mechanical net behind a wider LLM-arbitrated one, so a near-zero
+   yield is the *expected* result, not a symptom.
+
+   Reading the 0.88–0.92 band by hand, ~4 pairs in 10 are genuine duplicates.
+   The rest are same-topic-different-fact — an Ollama payload using
+   `llama3.2:latest` vs one using `gemma3:latest` scores 0.9198, the same
+   failure mode as `_v1`/`_v2` entity names: the embedding scores the shape and
+   misses the distinguishing token. Dropping to 0.88 would merge ~188 pairs per
+   2000 and get well over half of them wrong, one-way.
+
 2. **Benchmark closes its known gap**: add 2-3 `SESSION_REVIEW_CASES` above the
    ~28.6K chunk threshold, route `run_session_review` through
    `MemoryProcessor.process_reflection`, score `chunk_merge` as its own job. Retire

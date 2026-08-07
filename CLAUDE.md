@@ -290,6 +290,15 @@ is in progress. Remaining:
   Each pass self-verifies against `get_integrity_counts()` and prints
   `integrity_ok`. Five separate bugs surfaced only in live runs — treat this
   module as the one where the dev-box suite is least predictive.
+  **Full sweep done 2026-08-07**: all 31,977 active memories checked, 59
+  archived (0.18%), no orphaned edges/mentions. That yield is expected, not
+  broken — write-time dedup (`processor.py`, LLM-arbitrated at 0.7) already
+  removes the real duplicates, so consolidation is a narrow net behind a wider
+  one. **Do not lower `consolidation_similarity_threshold` from 0.92**:
+  `scripts/consolidation_calibrate.py` measured 0% of the corpus above 0.96,
+  and the 0.88–0.92 band is ~60% same-topic-different-fact (a `llama3.2`
+  payload vs the identical `gemma3` one scores 0.9198). Re-run that script
+  before ever revisiting the number; don't argue it from a merge count.
 - Benchmark realism: `run_session_review` never exercises chunk+merge, and the
   cases are far below the chunking threshold.
 - Memory reranker as L2 — NOTE: enabling it as-written would *degrade* ranking
