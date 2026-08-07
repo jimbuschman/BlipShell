@@ -392,6 +392,67 @@ unattended, so tier 2's thresholds can be set from real data instead of guessed.
 
 ---
 
+## Design notes for remaining phases (2026-08-07)
+
+Written at the model switch: design decisions resolved up front so the
+implementation session inherits them instead of making them ad hoc. The
+escalation rule stands — one-way migrations, security-relevant code, and new
+design decisions come back for review BEFORE running against the live DB.
+
+### Phase 4.1 — thought store migration (one-way; review before live run)
+
+Current state (verified 2026-08-07): all thoughts live in ONE app_metadata
+row (`self_thoughts`) as a JSON list; each item carries its 1024-float
+embedding INLINE, so every load parses ~50 × 1024 floats; weights are keyed
+by thought TEXT, and echo-folding rewrites text ("the evolved phrasing
+wins"), so a fold can orphan its own weight and duplicate texts collide.
+
+Decisions:
+- Table `self_thoughts`: id PK, text, created_at, weight, surface_count,
+  echo_count, pending (the one-shot greeting flag), is_archived. Embeddings
+  go to `vec_self_thoughts` (vec0, dim 1024, rowid = thought id) like the
+  other four vec tables — never inline.
+- Everything keys by id from then on. Folding updates the loser row
+  (is_archived=1, fold provenance in a metadata column) — ARCHIVE, never
+  delete, same mandate as everywhere else.
+- Migration: startup, guarded by an app_metadata marker. Do NOT delete the
+  JSON blob — rename its key to `self_thoughts_pre_migration` so rollback is
+  one rename. Thoughts without embeddings migrate as rows and stay
+  backfillable (the existing `_backfill_embeddings` semantics).
+- ThoughtStore's public API stays identical; only storage changes. The
+  two-channel weight firewall is untouched — table weights are the
+  self-layer channel only, retrieval never reads them.
+
+### D1 — local-mode routing (decision still with the user)
+
+Recommendation: an explicit per-session `/local` toggle (+ config default
+`privacy.local_mode_default: false`), implemented as a ROUTER-level endpoint
+filter — local mode excludes every endpoint that has `pii_sanitize: true`
+(i.e., everything that leaves the machine), rather than touching call sites.
+Show state in the status line. Auto-detection of "personal" content was
+considered and rejected: it costs an LLM call per turn and fails exactly on
+the borderline content it exists to protect. Known edges to fold in when
+built (from the 2026-08-07 review): multimodal content parts and tool-call
+arguments are not secret-scrubbed — acceptable now, in scope for D1.
+
+### MemoryWorker tests (the riskiest untested code)
+
+Design: real thread + real event loop + real tmp-DB SQLite — no mocked
+sleeps (house rule). The enabler is making the timing constants
+(`_IDLE_EXTRACT_INTERVAL` etc.) constructor-injectable; the 2026-08-06
+mutation-testing round proved a wall-clock-bound test here is vacuous.
+Must cover: crash-safety (rows persisted `is_processed=0` are reprocessed by
+the startup sweep), queue draining on shutdown (no lost messages), the idle
+entity-extraction trigger, and double-start/double-stop idempotency.
+
+### Phase 5.1 — user model (shape only; rest is written where listed)
+
+One document, LLM-REVISED (never appended) by a nightly job, hard size cap
+~1.5K tokens, lives in the core pool. Reasoned conclusions with a
+confidence marker per line — not facts (the entity graph owns facts).
+Revision prompt must be able to RETRACT: a conclusion the recent sessions
+contradict gets weakened or dropped, not argued with.
+
 ## Phase 4 — Alive layer: step 2, properly gated
 
 _Gate: re-take the `/thoughts` readout only after Phase 0.6/0.7 and Phase 1.8 have
