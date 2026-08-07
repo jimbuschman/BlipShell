@@ -574,14 +574,19 @@ class VectorStore:
                 vec = vectors.get(mid)
                 if not vec:
                     continue
+                # Over-request by one. The query vector IS a stored row, so
+                # its own rowid always comes back first at distance 0 and is
+                # then filtered out below — asking vec0 for exactly k would
+                # return k-1 real neighbours, and k=1 would return NONE at all.
+                # Consolidation asked for 5 and had been quietly getting 4.
                 rows = self._conn.execute(
                     "SELECT rowid, distance FROM vec_memories "
                     "WHERE embedding MATCH ? AND k = ? ORDER BY distance",
-                    [_serialize_f32(vec), k],
+                    [_serialize_f32(vec), k + 1],
                 ).fetchall()
                 out[mid] = [
                     (r[0], 1.0 - r[1]) for r in rows if r[0] != mid
-                ]
+                ][:k]
         return out
 
     def search_core_memories(self, query: str, n_results: int = 10) -> list[dict]:

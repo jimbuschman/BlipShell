@@ -32,6 +32,8 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
+from scripts.consolidation_status import _scalar
+
 console = Console()
 
 # Buckets chosen around the two thresholds that have actually been run: 0.85
@@ -69,9 +71,16 @@ def main() -> int:
 
     conn = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
+
+    # Sample at random, NOT `ORDER BY id LIMIT n`: ordering by id takes the
+    # oldest memories, and a threshold read off the oldest slice of the corpus
+    # is not a threshold for the corpus.
+    #
+    # (This is a separate matter from the empty first run, which was a k=1 bug
+    # in find_neighbors returning only the query row — see its docstring.)
     rows = conn.execute(
         "SELECT id FROM memories WHERE is_archived = 0 "
-        "ORDER BY id LIMIT ?", (args.sample,),
+        "ORDER BY RANDOM() LIMIT ?", (args.sample,),
     ).fetchall()
     memory_ids = [r["id"] for r in rows]
 
@@ -98,10 +107,31 @@ def main() -> int:
             tops.append((mid, nid, sim))
 
     if not tops:
+        # Distinguish "this sample had no vectors" from "the store is empty".
+        # Recommending a rebuild on the strength of one unlucky sample would
+        # send the user into a multi-hour Ollama run for nothing.
+        total_vectors = _scalar(conn, "SELECT COUNT(*) FROM vec_memories")
+        total_active = _scalar(
+            conn, "SELECT COUNT(*) FROM memories WHERE is_archived = 0")
         console.print(
-            "[yellow]No neighbours returned. Are vectors built? "
-            "Try scripts/rebuild_vectors.py[/yellow]"
+            f"[yellow]No neighbours for any of the {len(memory_ids):,} sampled "
+            f"memories.[/yellow]"
         )
+        console.print(
+            f"Vector store holds {total_vectors:,} memory vectors against "
+            f"{total_active:,} active memories."
+        )
+        if total_vectors == 0:
+            console.print(
+                "[red]The vector store is empty — run scripts/rebuild_vectors.py"
+                "[/red]"
+            )
+        else:
+            console.print(
+                "Vectors exist, so this sample simply missed them. Re-run "
+                "(the sample is random), or raise --sample."
+            )
+        conn.close()
         return 0
 
     examined = len(tops)

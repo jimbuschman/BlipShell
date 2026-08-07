@@ -507,6 +507,43 @@ class TestScanRespectsTheDeadline:
         assert stats["checked"] == 0
         assert len(await sqlite.get_unconsolidated_memory_ids(limit=100)) == 4
 
+    def test_k_means_k_neighbours_excluding_self(self, store):
+        """vec0's `k` counts the query row itself, which always comes back
+        first at distance 0 and is then filtered out. Passing k straight
+        through returned k-1 neighbours -- and k=1 returned NONE, since the
+        only row was self. Consolidation asked for 5 and quietly got 4.
+        """
+        sqlite, vectors = store
+        with vectors._lock:
+            for i in range(6):
+                vectors._conn.execute(
+                    "INSERT INTO vec_memories(rowid, embedding) VALUES (?, ?)",
+                    [200 + i, struct.pack(f"{DIM}f", *_orthogonal(i))],
+                )
+            vectors._conn.commit()
+
+        assert len(vectors.find_neighbors([200], k=1)[200]) == 1, (
+            "k=1 returned nothing -- self was the only row and got filtered"
+        )
+        assert len(vectors.find_neighbors([200], k=3)[200]) == 3
+        for k in (1, 3, 5):
+            assert 200 not in [n for n, _ in vectors.find_neighbors([200], k=k)[200]], (
+                "the query memory came back as its own neighbour"
+            )
+
+    def test_k_is_capped_by_the_corpus(self, store):
+        """Asking for more neighbours than exist must not error or pad."""
+        sqlite, vectors = store
+        with vectors._lock:
+            for i in range(3):
+                vectors._conn.execute(
+                    "INSERT INTO vec_memories(rowid, embedding) VALUES (?, ?)",
+                    [300 + i, struct.pack(f"{DIM}f", *_orthogonal(i))],
+                )
+            vectors._conn.commit()
+
+        assert len(vectors.find_neighbors([300], k=50)[300]) == 2
+
     def test_find_neighbors_stops_at_the_deadline(self, store):
         import time as _t
         sqlite, vectors = store

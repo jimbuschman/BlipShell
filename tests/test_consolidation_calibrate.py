@@ -7,6 +7,7 @@ around the threshold is worse than no tool, because it looks authoritative.
 """
 
 import math
+import re
 import sqlite3
 
 import pytest
@@ -83,6 +84,56 @@ class TestSampling:
             ["consolidation_calibrate.py", "--db", str(tmp_path / "nope.db")],
         )
         assert consolidation_calibrate.main() == 1
+
+    async def test_reports_a_real_duplicate_pair(self, tmp_path, monkeypatch, capsys):
+        """End-to-end against real vectors. The first version of this script
+        asked find_neighbors for k=1, which returned only the query row itself
+        and so reported 'no neighbours' for a perfectly healthy store."""
+        import struct
+
+        from scripts import consolidation_calibrate
+        from blipshell.memory.vector_store import VectorStore
+
+        path = tmp_path / "real.db"
+        store = SQLiteStore(str(path))
+        await store.initialize()
+        session_id = await store.create_session("s")
+        ids = [
+            await store.create_memory(Memory(
+                session_id=session_id, role="user",
+                content=f"content {i}", summary=f"summary {i}",
+            ))
+            for i in range(3)
+        ]
+        await store.close()
+
+        vectors = VectorStore(str(path))
+        vectors.initialize()
+        dim = vectors.embedding_dim
+        # Two near-identical vectors and one orthogonal to both.
+        near_a = [1.0] + [0.0] * (dim - 1)
+        near_b = [0.999, 0.0447] + [0.0] * (dim - 2)
+        other = [0.0, 0.0, 1.0] + [0.0] * (dim - 3)
+        with vectors._lock:
+            for mid, vec in zip(ids, (near_a, near_b, other)):
+                vectors._conn.execute(
+                    "INSERT INTO vec_memories(rowid, embedding) VALUES (?, ?)",
+                    [mid, struct.pack(f"{dim}f", *vec)],
+                )
+            vectors._conn.commit()
+        vectors.close()
+
+        monkeypatch.setattr(
+            "sys.argv", ["consolidation_calibrate.py", "--db", str(path)],
+        )
+        assert consolidation_calibrate.main() == 0
+
+        # Rich wraps to the console width and emits ANSI, so compare against a
+        # flattened copy rather than weakening the assertion to a fragment.
+        raw = capsys.readouterr().out
+        flat = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", raw).split())
+        assert "No neighbours" not in flat, flat
+        assert "Would merge at 0.92" in flat, flat
 
     async def test_empty_corpus_exits_zero(self, tmp_path, monkeypatch):
         from scripts import consolidation_calibrate
