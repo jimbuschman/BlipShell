@@ -38,6 +38,10 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=5.0",
     "ruff>=0.7.0",
+    # Powers the undefined-name check in tests/test_build_messages.py, which
+    # skips itself when absent. A NameError on a code path no test calls is
+    # invisible to the suite — that is how a total chat outage shipped green.
+    "pyflakes>=3.2",
 ]
 # Optional: DeepEval for the judging-methodology spike (G-Eval). The spike script
 # guards its import, so this is only needed to include the G-Eval column.

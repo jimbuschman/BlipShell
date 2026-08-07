@@ -1259,6 +1259,12 @@ class ChatMixin:
             {"role": "system", "content": system_prompt},
         ]
 
+        # Defined here, next to its only use. b785754 extracted the continuity
+        # assembly into _build_continuity_block() and took this line with it,
+        # leaving the reference below orphaned — so every turn that had any
+        # prior message in history died with "name 'now' is not defined".
+        now = datetime.now(timezone.utc)
+
         # Add conversation history from ActiveSession (last messages). Prefix
         # user/assistant turns with a relative-time label so the model can sense
         # how much time passed between messages (and since the last contact).
