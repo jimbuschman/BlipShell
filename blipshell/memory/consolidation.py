@@ -19,8 +19,10 @@ graph structure that had nothing to do with the duplication.
 """
 
 import asyncio
+import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 from blipshell.memory.vector_store import VectorStore
@@ -321,7 +323,27 @@ class MemoryConsolidator:
             updates["summary"] = loser.summary
         await self.sqlite.update_memory(winner_id, **updates)
 
-        await self.sqlite.update_memory(loser_id, is_archived=True)
+        # Stamp WHY this row is archived. Several things archive memories —
+        # this merge, the nightly age/rank prune, write-time dedup — and the
+        # row itself used to record no distinction, so "how many were archived
+        # as duplicates" could only be inferred from consolidated_at, which
+        # broke the moment the prune archived an already-checked memory.
+        # merged_into also answers "where did that memory go" directly.
+        meta: dict = {}
+        if loser.metadata_json:
+            try:
+                parsed = json.loads(loser.metadata_json)
+                if isinstance(parsed, dict):
+                    meta = parsed
+                else:
+                    meta = {"original_metadata": parsed}
+            except (ValueError, TypeError):
+                meta = {"original_metadata": loser.metadata_json}
+        meta["merged_into"] = winner_id
+        meta["merged_at"] = datetime.now(timezone.utc).isoformat()
+        await self.sqlite.update_memory(
+            loser_id, is_archived=True, metadata_json=json.dumps(meta),
+        )
 
         # Drop the loser's vector now rather than waiting for the nightly
         # orphan sweep. Two reasons: it can't be offered as a neighbour again

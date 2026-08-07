@@ -35,11 +35,29 @@ def _scalar(conn: sqlite3.Connection, sql: str, default: int = 0) -> int:
         return default
 
 
+def _connect_readonly(db_path: Path) -> sqlite3.Connection:
+    """Read-only connection that is actually safe against a live writer.
+
+    mode=ro takes real read locks, so a concurrent writer (the agent) can't
+    hand us a torn page. immutable=1 — the first version of this script —
+    skips locking entirely on the promise that the file never changes; against
+    a live WAL database that promise is false and SQLite documents the result
+    as possible SQLITE_CORRUPT or silently wrong answers. immutable stays only
+    as a fallback for the odd case where mode=ro can't open (stale -wal with
+    no -shm), and says so out loud.
+    """
+    try:
+        return sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+    except sqlite3.OperationalError:
+        console.print(
+            "[yellow]mode=ro open failed; falling back to immutable=1. "
+            "Do not trust these numbers if BlipShell is writing right now.[/yellow]"
+        )
+        return sqlite3.connect(f"file:{db_path.as_posix()}?immutable=1", uri=True)
+
+
 def collect(db_path: Path) -> dict:
-    # immutable=1 gives a guaranteed read-only handle and avoids taking any
-    # lock on a DB the agent may still have open.
-    uri = f"file:{db_path.as_posix()}?immutable=1"
-    conn = sqlite3.connect(uri, uri=True)
+    conn = _connect_readonly(db_path)
     try:
         stats = {
             "db": str(db_path),
@@ -51,6 +69,14 @@ def collect(db_path: Path) -> dict:
             "checked": _scalar(
                 conn,
                 "SELECT COUNT(*) FROM memories WHERE consolidated_at IS NOT NULL"),
+            # Progress is measured DIRECTLY (active rows that carry the mark),
+            # never derived by subtraction from other counts — the subtraction
+            # version broke the first time the nightly age/rank prune archived
+            # an already-checked memory.
+            "checked_active": _scalar(
+                conn,
+                "SELECT COUNT(*) FROM memories "
+                "WHERE consolidated_at IS NOT NULL AND is_archived = 0"),
             "unchecked": _scalar(
                 conn,
                 "SELECT COUNT(*) FROM memories "
@@ -60,12 +86,20 @@ def collect(db_path: Path) -> dict:
             "entity_mentions": _scalar(conn, "SELECT COUNT(*) FROM entity_mentions"),
         }
 
-        # Memories archived BY consolidation specifically, as opposed to by any
-        # other archiving path.
+        # Memories archived BY the merge specifically. Counted by the
+        # merged_into provenance stamp _merge_memories writes, NOT by
+        # `is_archived AND consolidated_at` — several jobs archive memories
+        # (the nightly age/rank prune, write-time dedup), and once the sweep
+        # has touched the whole corpus every one of their victims carries
+        # consolidated_at too, so that heuristic inflates forever after the
+        # first prune. LIKE rather than json_extract because a single
+        # malformed metadata_json row would abort json_extract for the whole
+        # query. Merges from before 2026-08-07 predate the stamp and are
+        # undercounted (≤59 rows on the live corpus).
         stats["archived_by_consolidation"] = _scalar(
             conn,
             "SELECT COUNT(*) FROM memories "
-            "WHERE is_archived = 1 AND consolidated_at IS NOT NULL",
+            "WHERE is_archived = 1 AND metadata_json LIKE '%\"merged_into\"%'",
         )
 
         row = conn.execute(
@@ -112,7 +146,7 @@ def main() -> int:
     # consolidation candidates, so dividing by the total made a finished sweep
     # read as "75.7% done" while the summary below it said complete.
     eligible = s["memories_active"] or 1
-    checked_active = s["checked"] - s["archived_by_consolidation"]
+    checked_active = s["checked_active"]
     pct = 100.0 * checked_active / eligible
 
     t = Table(title="Consolidation status", show_header=False)

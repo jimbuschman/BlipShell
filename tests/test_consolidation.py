@@ -167,6 +167,71 @@ class TestMerging:
         assert "considerably longer" in kept.summary
 
 
+class TestMergeProvenance:
+    """The archived loser must say WHY it is archived. Several jobs archive
+    memories (this merge, the nightly age/rank prune, write-time dedup) and an
+    unmarked row makes them indistinguishable — consolidation_status counted
+    prune victims as merge archives because of exactly that."""
+
+    async def test_loser_is_stamped_with_merged_into(self, store):
+        import json as _json
+
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        keep = await _add(sqlite, vectors, sid, content="a", summary="a",
+                          vec=_vec(1.0), importance=0.9)
+        drop = await _add(sqlite, vectors, sid, content="b", summary="b",
+                          vec=_vec(1.0), importance=0.1)
+
+        await _consolidator(sqlite, vectors).consolidate_batch()
+
+        loser = await sqlite.get_memory(drop)
+        assert loser.is_archived
+        meta = _json.loads(loser.metadata_json)
+        assert meta["merged_into"] == keep
+        assert meta["merged_at"]
+
+    async def test_existing_metadata_is_preserved(self, store):
+        """The stamp merges into whatever metadata the loser already carried —
+        replacing it wholesale would destroy unrelated keys."""
+        import json as _json
+
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        await _add(sqlite, vectors, sid, content="a", summary="a",
+                   vec=_vec(1.0), importance=0.9)
+        drop = await _add(sqlite, vectors, sid, content="b", summary="b",
+                          vec=_vec(1.0), importance=0.1)
+        await sqlite.update_memory(
+            drop, metadata_json=_json.dumps({"source": "import"}),
+        )
+
+        await _consolidator(sqlite, vectors).consolidate_batch()
+
+        meta = _json.loads((await sqlite.get_memory(drop)).metadata_json)
+        assert meta["source"] == "import"
+        assert "merged_into" in meta
+
+    async def test_malformed_metadata_does_not_break_the_merge(self, store):
+        import json as _json
+
+        sqlite, vectors = store
+        sid = await sqlite.create_session("s")
+        await _add(sqlite, vectors, sid, content="a", summary="a",
+                   vec=_vec(1.0), importance=0.9)
+        drop = await _add(sqlite, vectors, sid, content="b", summary="b",
+                          vec=_vec(1.0), importance=0.1)
+        await sqlite.update_memory(drop, metadata_json="{not json")
+
+        stats = await _consolidator(sqlite, vectors).consolidate_batch()
+
+        assert stats["merged"] == 1
+        assert stats["errors"] == 0
+        meta = _json.loads((await sqlite.get_memory(drop)).metadata_json)
+        assert meta["original_metadata"] == "{not json"
+        assert "merged_into" in meta
+
+
 class TestArchiveNeverDelete:
     """The mandate, at the edge level."""
 

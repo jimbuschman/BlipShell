@@ -2589,6 +2589,10 @@ class SQLiteStore:
         interactive path. The cache is invalidated by the store itself
         whenever an entity is created, archived, revived or merged, so it
         can't go stale behind a write it didn't see.
+
+        The returned list IS the cache — do not mutate it. A caller that
+        sorts or appends corrupts every subsequent search silently. Copy
+        first if you need to reorder.
         """
         if self._entity_names_cache is not None:
             return self._entity_names_cache

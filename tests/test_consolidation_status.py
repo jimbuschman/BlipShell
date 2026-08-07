@@ -47,21 +47,37 @@ class TestCollect:
         assert s["unchecked"] == 2
 
     async def test_separates_consolidation_archives(self, db):
-        """A memory archived by something other than consolidation must not be
-        counted as a near-duplicate merge."""
+        """Only the merged_into provenance stamp counts as a merge archive.
+
+        The first version counted `is_archived AND consolidated_at` — which is
+        every victim of the nightly age/rank prune too, once the sweep has
+        touched the whole corpus. ids[3] here IS that case: checked by
+        consolidation, then archived by something else."""
         path, ids = db
         conn = sqlite3.connect(path)
-        conn.execute("UPDATE memories SET is_archived = 1 WHERE id = ?", (ids[4],))
+        # Archived by the prune, after having been consolidation-checked.
         conn.execute(
             "UPDATE memories SET is_archived = 1, consolidated_at = '2026-01-01' "
             "WHERE id = ?", (ids[3],),
+        )
+        # Archived by the merge: carries the provenance stamp — AND
+        # consolidated_at, like a real loser checked on an earlier pass. Both
+        # rows must satisfy the old heuristic (which would count 2) so that
+        # only the stamp separates them; without that this test passed
+        # against the very heuristic it exists to reject.
+        conn.execute(
+            "UPDATE memories SET is_archived = 1, consolidated_at = '2026-01-01', "
+            "metadata_json = '{\"merged_into\": 1, \"merged_at\": \"2026-01-01\"}' "
+            "WHERE id = ?", (ids[4],),
         )
         conn.commit()
         conn.close()
 
         s = collect(path)
         assert s["memories_archived"] == 2
-        assert s["archived_by_consolidation"] == 1
+        assert s["archived_by_consolidation"] == 1, (
+            "a prune-archived memory was counted as a near-duplicate merge"
+        )
 
     async def test_reads_the_dry_run_cursor(self, db):
         path, _ = db
@@ -149,15 +165,18 @@ class TestExitCode:
     async def test_finished_sweep_reads_as_100_percent(self, db, monkeypatch, capsys):
         """Memories archived by other paths are not consolidation candidates.
         Counting them as unchecked made a finished sweep report 75.7% while the
-        summary line said complete."""
+        summary line said complete.
+
+        ids[4] is archived AFTER being checked — the nightly prune's normal
+        case. The subtraction version of the percentage double-counted it and
+        reported a finished sweep as unfinished."""
         from scripts import consolidation_status
 
         path, ids = db
         store = SQLiteStore(str(path))
         await store.initialize()
-        # One archived by something else, the rest active and all checked.
-        conn_ids = [i for i in ids if i != ids[4]]
-        await store.mark_memories_consolidated(conn_ids)
+        # Everything checked; one row later archived by the prune.
+        await store.mark_memories_consolidated(ids)
         await store.close()
 
         conn = sqlite3.connect(path)

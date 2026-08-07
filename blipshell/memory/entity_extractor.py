@@ -324,7 +324,13 @@ class EntityExtractor:
             # the single creation path below, which upserts the embedding —
             # returning early here would leave the new entity unembedded and
             # invisible to every later resolution.
-            if version_distinguished(name, candidate["name"]):
+            # Gated on the arbitration floor: below _llm_threshold nothing
+            # merges anyway, so logging a block there would announce having
+            # prevented a merge that was never going to happen.
+            if (
+                candidate["similarity"] >= self._llm_threshold
+                and version_distinguished(name, candidate["name"])
+            ):
                 logger.info(
                     "Entity NOT merged (version/number differs): '%s' vs '%s' "
                     "(sim=%.3f)", name, candidate["name"], candidate["similarity"],
