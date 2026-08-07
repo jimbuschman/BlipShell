@@ -457,7 +457,15 @@ the borderline content it exists to protect. Known edges to fold in when
 built (from the 2026-08-07 review): multimodal content parts and tool-call
 arguments are not secret-scrubbed — acceptable now, in scope for D1.
 
-### MemoryWorker tests (the riskiest untested code)
+### ~~MemoryWorker tests~~ — ALREADY EXISTED (`eb6a2e4`), + integration layer 2026-08-07
+
+**This note was written without checking `tests/` — 17 tests had landed two
+days earlier** (`eb6a2e4`: threading/dispatch/shutdown, processor faked).
+The design below got built anyway before the collision was noticed, and
+survives as `test_memory_worker_pipeline.py`: the REAL MemoryProcessor
+behind the real thread (canned router), pinning what a message becomes —
+processed row, noise skip, reprocessable mid-crash — rather than that a
+method was called. Original design text:
 
 Design: real thread + real event loop + real tmp-DB SQLite — no mocked
 sleeps (house rule). The enabler is making the timing constants

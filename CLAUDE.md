@@ -278,8 +278,13 @@ is in progress. Remaining:
   regression would only surface interactively.
 - Shared context assembly: `!plan` silently drops scratchpad, session notes,
   follow-ups and the 5-pool budgeting that `_chat_simple` gets.
-- Tests for the riskiest untested code: `MemoryWorker` has ZERO tests and is the
-  only second-event-loop-in-a-thread in the codebase.
+- ~~MemoryWorker tests~~ — DONE, twice, by accident. 17 dispatch/threading
+  tests with a faked processor landed 2026-08-05 (`eb6a2e4`) while this line
+  still said "ZERO tests"; a second session trusted the line and rebuilt them
+  on 2026-08-07 before checking `tests/` (recovered from git, merged as
+  `test_memory_worker_pipeline.py` — real pipeline, canned router). The two
+  files are deliberate layers now. The meta-lesson is this bullet itself:
+  **stale docs cause duplicate work — grep `tests/` before building tests.**
 - Local fallback models are a generation behind — benchmark newer candidates on
   the Ollama PC before swapping (test-first, always).
 - ~~Consolidation throughput~~ — REWRITTEN 2026-08-06/07. Neighbours come from

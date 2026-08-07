@@ -16,7 +16,7 @@ import logging
 import queue
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Optional
 
@@ -64,9 +64,29 @@ class MemoryWorker:
     competes with the main chat event loop for I/O time.
     """
 
-    def __init__(self, config: BlipShellConfig, vectors: VectorStore):
+    def __init__(self, config: BlipShellConfig, vectors: VectorStore, *,
+                 router_factory=None,
+                 start_timeout: Optional[float] = None,
+                 idle_extract_interval: Optional[float] = None,
+                 poll_interval: float = 1.0):
+        """Timings are constructor-injectable, NOT patch-the-module-constant:
+        the worker's whole behavior is timing-driven (queue poll tick → idle
+        branch → extraction), and a test that can't compress those waits
+        either takes minutes or silently never reaches the branch it claims
+        to cover — two such vacuous tests were caught by mutation testing on
+        2026-08-06. `router_factory` lets tests supply a canned router; the
+        worker otherwise builds its own EndpointManager + LLMRouter so its
+        HTTP clients never touch the main loop's.
+        """
         self._config = config
         self._vectors = vectors
+        self._router_factory = router_factory
+        self._start_timeout = start_timeout if start_timeout is not None else _START_TIMEOUT
+        self._idle_extract_interval = (
+            idle_extract_interval if idle_extract_interval is not None
+            else _IDLE_EXTRACT_INTERVAL
+        )
+        self._poll_interval = poll_interval
         self._queue: queue.Queue[WorkItem] = queue.Queue()
         self._thread: Optional[threading.Thread] = None
         self._started = threading.Event()
@@ -80,7 +100,7 @@ class MemoryWorker:
             daemon=True,
         )
         self._thread.start()
-        self._started.wait(timeout=_START_TIMEOUT)
+        self._started.wait(timeout=self._start_timeout)
         if self._started.is_set():
             logger.info("Memory worker started (dedicated thread + event loop)")
         else:
@@ -89,7 +109,7 @@ class MemoryWorker:
             # queues until the worker recovers or the process exits.
             logger.error(
                 "Memory worker failed to start within %.0fs — continuing without it",
-                _START_TIMEOUT,
+                self._start_timeout,
             )
 
     def _thread_main(self):
@@ -114,11 +134,15 @@ class MemoryWorker:
         sqlite = SQLiteStore(self._config.database.path)
         await sqlite.initialize()
 
-        # Own EndpointManager + Router — separate HTTP clients
-        endpoint_mgr = EndpointManager(
-            self._config.endpoints, self._config.llm,
-        )
-        router = LLMRouter(self._config.models, endpoint_mgr, pii_enabled=self._config.pii.enabled)
+        # Own EndpointManager + Router — separate HTTP clients. Tests inject
+        # a canned router instead; the pipeline is then fully deterministic.
+        if self._router_factory is not None:
+            router = self._router_factory()
+        else:
+            endpoint_mgr = EndpointManager(
+                self._config.endpoints, self._config.llm,
+            )
+            router = LLMRouter(self._config.models, endpoint_mgr, pii_enabled=self._config.pii.enabled)
 
         # Own MemoryProcessor — uses worker's sqlite + router, shared chroma
         processor = MemoryProcessor(
@@ -149,7 +173,7 @@ class MemoryWorker:
                     # slow and uses the shared VectorStore which gets closed
                     # shortly after shutdown.
                     if (not self._shutting_down.is_set()
-                            and time.monotonic() - last_idle_extract > _IDLE_EXTRACT_INTERVAL):
+                            and time.monotonic() - last_idle_extract > self._idle_extract_interval):
                         await self._idle_extract_entities(sqlite, router, _IDLE_EXTRACT_BATCH)
                         last_idle_extract = time.monotonic()
                     continue
@@ -170,9 +194,10 @@ class MemoryWorker:
                 logger.error("Memory worker loop error: %s", e)
 
     def _queue_get(self) -> Optional[WorkItem]:
-        """Blocking get with 1s timeout so the loop can check for shutdown."""
+        """Blocking get with a short timeout so the loop can check for
+        shutdown and reach the idle branch."""
         try:
-            return self._queue.get(timeout=1.0)
+            return self._queue.get(timeout=self._poll_interval)
         except queue.Empty:
             return None
 
