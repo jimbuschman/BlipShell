@@ -108,8 +108,12 @@ def main() -> int:
         print(json.dumps(s, indent=2))
         return 0
 
-    total = s["memories_total"] or 1
-    pct = 100.0 * s["checked"] / total
+    # Against the ACTIVE corpus, not the total. Archived memories are never
+    # consolidation candidates, so dividing by the total made a finished sweep
+    # read as "75.7% done" while the summary below it said complete.
+    eligible = s["memories_active"] or 1
+    checked_active = s["checked"] - s["archived_by_consolidation"]
+    pct = 100.0 * checked_active / eligible
 
     t = Table(title="Consolidation status", show_header=False)
     t.add_column("", style="cyan")
@@ -118,7 +122,9 @@ def main() -> int:
     t.add_row("Memories (total)", f"{s['memories_total']:,}")
     t.add_row("  active", f"{s['memories_active']:,}")
     t.add_row("  archived", f"{s['memories_archived']:,}")
-    t.add_row("Checked by consolidation", f"{s['checked']:,}  ({pct:.1f}%)")
+    t.add_row(
+        "Checked (of active)", f"{checked_active:,} / {eligible:,}  ({pct:.1f}%)",
+    )
     t.add_row("Still unchecked", f"{s['unchecked']:,}")
     t.add_row("Archived as near-duplicates", f"{s['archived_by_consolidation']:,}")
     t.add_row("Dry-run cursor", f"{s['dry_run_cursor']:,}")

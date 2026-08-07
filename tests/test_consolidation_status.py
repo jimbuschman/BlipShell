@@ -146,6 +146,34 @@ class TestExitCode:
         )
         assert consolidation_status.main() == 0
 
+    async def test_finished_sweep_reads_as_100_percent(self, db, monkeypatch, capsys):
+        """Memories archived by other paths are not consolidation candidates.
+        Counting them as unchecked made a finished sweep report 75.7% while the
+        summary line said complete."""
+        from scripts import consolidation_status
+
+        path, ids = db
+        store = SQLiteStore(str(path))
+        await store.initialize()
+        # One archived by something else, the rest active and all checked.
+        conn_ids = [i for i in ids if i != ids[4]]
+        await store.mark_memories_consolidated(conn_ids)
+        await store.close()
+
+        conn = sqlite3.connect(path)
+        conn.execute("UPDATE memories SET is_archived = 1 WHERE id = ?", (ids[4],))
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setattr(
+            "sys.argv", ["consolidation_status.py", "--db", str(path)],
+        )
+        assert consolidation_status.main() == 0
+
+        out = capsys.readouterr().out
+        assert "100.0%" in out, out
+        assert "Full corpus has been checked" in out
+
     async def test_missing_db_exits_one(self, tmp_path, monkeypatch):
         from scripts import consolidation_status
 
