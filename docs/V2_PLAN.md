@@ -399,7 +399,7 @@ implementation session inherits them instead of making them ad hoc. The
 escalation rule stands — one-way migrations, security-relevant code, and new
 design decisions come back for review BEFORE running against the live DB.
 
-### Phase 4.1 — thought store migration (one-way; review before live run)
+### Phase 4.1 — thought store migration — DONE 2026-08-07 (`dbc4fb5`)
 
 Current state (verified 2026-08-07): all thoughts live in ONE app_metadata
 row (`self_thoughts`) as a JSON list; each item carries its 1024-float
@@ -422,6 +422,15 @@ Decisions:
 - ThoughtStore's public API stays identical; only storage changes. The
   two-channel weight firewall is untouched — table weights are the
   self-layer channel only, retrieval never reads them.
+
+**Shipped.** One deviation from the spec below: embeddings are a float32
+BLOB on the row, NOT `vec_self_thoughts`. Only the VectorStore connection
+loads sqlite-vec, so vec0 would put a cross-connection write on the per-turn
+path — the same aiosqlite-vs-sync contention that already bit the nightly
+orphan sweep — and at max_keep=50 the KNN advantage is nil. Eviction and
+folding ARCHIVE (with `folded_into` provenance). The old JSON blob is kept
+at `self_thoughts_pre_migration`; **rollback is renaming that key back to
+`self_thoughts` and clearing the table**.
 
 ### D1 — local-mode routing (decision still with the user)
 
