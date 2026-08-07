@@ -201,6 +201,17 @@ class VectorStore:
             if stranded:
                 moved = 0
                 for rowid, blob in stranded:
+                    # rowid > 100000 is assumed to be a stranded reflection,
+                    # but this runs at EVERY startup — the day a genuine
+                    # lesson's id crosses 100000, its vector would be deleted
+                    # here (or moved onto reflection id-100000, overwriting a
+                    # real reflection's embedding). Skip anything that is a
+                    # real lesson.
+                    is_lesson = self._conn.execute(
+                        "SELECT 1 FROM lessons WHERE id = ?", [rowid],
+                    ).fetchone()
+                    if is_lesson:
+                        continue
                     reflection_id = rowid - 100000
                     exists = self._conn.execute(
                         "SELECT 1 FROM session_reflections WHERE id = ?",

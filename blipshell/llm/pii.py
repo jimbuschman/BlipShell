@@ -125,9 +125,20 @@ def _sanitize_with_presidio(text: str) -> str:
             same_type = sum(1 for k in pseudonyms if k[0] == r.entity_type)
             pseudonyms[key] = f"[{base}_{same_type + 1}]"
 
-    # Apply Presidio results in reverse order (so offsets stay valid)
+    # Apply Presidio results in reverse order (so offsets stay valid).
+    # Spans can OVERLAP (a URL span across an EMAIL span, etc.); applying
+    # both at their raw offsets would slice the second at positions the first
+    # already shifted — mangled text, and potentially the actual PII left in
+    # place. Track how far left the applied replacements reach and TRUNCATE
+    # any span that crosses it to the still-unreplaced region: skipping it
+    # outright would leave the non-overlapping remainder of the PII behind
+    # ("john@" from an EMAIL span half-covered by a URL span).
+    applied_start = len(result) + 1
     for r in sorted(results, key=lambda x: x.start, reverse=True):
-        original = result[r.start:r.end]
+        end = min(r.end, applied_start)
+        if end <= r.start:
+            continue    # fully covered by an already-applied span
+        original = result[r.start:end]
 
         # Skip local/LAN IPs
         if r.entity_type == "IP_ADDRESS" and _LOCAL_IP_PATTERN.match(original):
@@ -141,7 +152,8 @@ def _sanitize_with_presidio(text: str) -> str:
         placeholder = pseudonyms.get(
             key, _PRESIDIO_PLACEHOLDERS.get(r.entity_type, "[PII]")
         )
-        result = result[:r.start] + placeholder + result[r.end:]
+        result = result[:r.start] + placeholder + result[end:]
+        applied_start = r.start
 
     return result
 
@@ -180,11 +192,15 @@ _API_KEY_PATTERNS = [
     PIIPattern("jwt", re.compile(
         r'\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b'
     ), "[JWT]"),
-    # sk-/pk-/api- style. The separator is optional so bare "sk-proj-..." and
-    # "skABC..." style keys both match (the old pattern required _ or - right
-    # after the prefix, so several real formats slipped through).
+    # sk-/pk-/api- style. Two guards against eating ordinary identifiers,
+    # because this pattern runs on EVERY interactive turn via
+    # sanitize_secrets: the separator is REQUIRED (every real issuer format
+    # has one — sk-proj-, sk-ant-, sk_live_, pk_test_ — but camelCase words
+    # don't: skeletonAnimationControl is `sk` + 22 valid chars and was being
+    # replaced with [API_KEY] mid-conversation), and the tail must contain a
+    # digit (real keys are high-entropy; api_configuration_manager is not).
     PIIPattern("generic_api_key", re.compile(
-        r'\b(?:sk|pk|api)[_-]?[a-zA-Z0-9_-]{20,}\b'
+        r'\b(?:sk|pk|api)[_-](?=[a-zA-Z_-]*\d)[a-zA-Z0-9_-]{16,}\b'
     ), "[API_KEY]"),
 ]
 

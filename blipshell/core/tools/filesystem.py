@@ -6,7 +6,7 @@ import logging
 import os
 from pathlib import Path
 
-from blipshell.core.tools.base import Tool
+from blipshell.core.tools.base import Tool, result_reports_failure
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
 
 logger = logging.getLogger(__name__)
@@ -182,6 +182,13 @@ class ReadFileTool(Tool):
 
         # For small files that fit in one page, return plain content (no pagination noise)
         if total <= limit and start == 0:
+            # ...unless the file itself begins with "Error:", which
+            # execute_tool_call would classify as the TOOL failing. Reading an
+            # error log is a success; the [Lines] header (already the format
+            # for windowed reads) disambiguates relayed content from a
+            # self-reported failure.
+            if result_reports_failure(content):
+                return f"[Lines 1-{total} of {total}]\n{content}"
             return content
 
         # Add line numbers for easier navigation

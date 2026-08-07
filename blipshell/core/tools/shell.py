@@ -7,7 +7,7 @@ import re
 import shlex
 import sys
 
-from blipshell.core.tools.base import Tool
+from blipshell.core.tools.base import Tool, result_reports_failure
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
 
 logger = logging.getLogger(__name__)
@@ -180,6 +180,14 @@ class ShellTool(Tool):
                 result_parts.append(f"Exit code: {process.returncode}")
 
             result = "\n".join(result_parts) if result_parts else "(no output)"
+
+            # A command that SUCCEEDED can still print output beginning with
+            # "Error:" — `grep Error: app.log` finding matches is the everyday
+            # case. execute_tool_call classifies failure by that prefix, so
+            # relayed content must be disambiguated here, where the exit code
+            # is known. Only the collision case pays the extra line.
+            if process.returncode == 0 and result_reports_failure(result):
+                result = "[exit 0]\n" + result
 
             # Cap output to prevent context blowup from large stack traces etc.
             max_chars = 8000

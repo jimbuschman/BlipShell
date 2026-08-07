@@ -398,3 +398,65 @@ class TestMessageSanitizationIsNonDestructive:
         messages = [{"role": "tool", "content": f"env: AWS_KEY={secret}"}]
         cleaned = pii_mod.sanitize_messages_secrets(messages)
         assert secret not in cleaned[0]["content"]
+
+
+class TestGenericKeyPatternPrecision:
+    """generic_api_key runs on EVERY interactive turn via sanitize_secrets.
+    With an optional separator it ate ordinary camelCase identifiers —
+    skeletonAnimationControl is `sk` + 22 valid chars — replacing them with
+    [API_KEY] mid-conversation before the model saw them."""
+
+    @pytest.mark.parametrize("identifier", [
+        "skeletonAnimationControl",
+        "apiConfigurationManagerClass",
+        "pkgResolverInitialization",
+        "api_configuration_manager",   # separator present, but no digit
+    ])
+    def test_ordinary_identifiers_survive(self, identifier):
+        text = f"the {identifier} loads first"
+        assert pii_mod.sanitize_secrets(text) == text
+
+    # Shaped like real issuer formats (OpenAI sk-proj-, Stripe sk_live_ /
+    # pk_test_, Anthropic sk-ant-) but with fabricated tails, assembled at
+    # runtime — GitHub push protection rejects anything matching the genuine
+    # token patterns anywhere in pushed history, verbatim doc-example keys
+    # included.
+    @pytest.mark.parametrize("key", [
+        "sk-proj-" + "fake0" * 5,
+        "sk_" + "live_" + "FAKE1FAKE2FAKE3FAKE4",
+        "sk-ant-" + "api03-" + "FAKE5FAKE6FAKE7FAKE8",
+        "pk_" + "test_" + "FAKE9FAKE0FAKE1FAKE2",
+    ])
+    def test_real_key_formats_are_still_caught(self, key):
+        assert key not in pii_mod.sanitize_secrets(f"token {key} leaked")
+
+
+class TestOverlappingPresidioSpans:
+    def test_partial_overlap_does_not_mangle_text(self, stub_presidio):
+        """Reverse-order replacement assumes disjoint spans. Presidio can
+        return partial overlaps; slicing the second span at offsets the first
+        already shifted mangled the text and could leave the PII in place."""
+        # The left span must reach DEEPER into the right span than the
+        # replacement placeholder is wide — a shallower overlap coincidentally
+        # slices off exactly the placeholder and produces clean-looking output
+        # (which is how the first version of this test failed to catch the
+        # bug). Here EMAIL [5..21) reaches 11 chars into URL [10..28); at raw
+        # offsets the stale slice eats "TAILM" from the tail.
+        stub = stub_presidio({
+            "john@x.com/veryl": "EMAIL_ADDRESS",
+            "x.com/verylongpath": "URL",
+        })
+        text = "mail john@x.com/verylongpath TAILMARK"
+
+        result = pii_mod.sanitize_text(text)
+
+        assert "john" not in result, "the PII survived the overlap"
+        assert "TAILMARK" in result, f"text after the spans was mangled: {result!r}"
+        assert result.startswith("mail ")
+
+    def test_disjoint_spans_are_all_applied(self, stub_presidio):
+        """The overlap guard must not skip spans that merely sit close."""
+        stub = stub_presidio({"Kortney": "PERSON", "Dallas": "LOCATION"})
+        result = pii_mod.sanitize_text("Kortney flew to Dallas")
+        assert "Kortney" not in result
+        assert "Dallas" not in result

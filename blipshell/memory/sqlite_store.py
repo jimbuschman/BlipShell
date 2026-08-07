@@ -455,6 +455,15 @@ class SQLiteStore:
         if row and "UNIQUE(subject_id, predicate, object_id)" in (row["sql"] or ""):
             logger.info("Rebuilding entity_relationships: moving uniqueness to active rows only...")
             try:
+                # The CREATE below autocommits (legacy sqlite3 transaction
+                # mode only opens the implicit transaction at the INSERT), so
+                # a failed copy leaves _new behind and every retry would die
+                # on "table already exists" — the rebuild wedged while its
+                # error message promised the opposite. Clear any debris first
+                # so the retry the message promises can actually happen.
+                await self._db.execute(
+                    "DROP TABLE IF EXISTS entity_relationships_new"
+                )
                 await self._db.execute("""
                     CREATE TABLE entity_relationships_new (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
