@@ -460,3 +460,48 @@ class TestOverlappingPresidioSpans:
         result = pii_mod.sanitize_text("Kortney flew to Dallas")
         assert "Kortney" not in result
         assert "Dallas" not in result
+
+
+class TestConnectionStringPasswords:
+    """Credential shapes the key patterns missed: passwords embedded in
+    connection strings. Scrubbed on EVERY cloud path, chat included — and the
+    parts a debugging session actually needs (scheme, user, host, database)
+    are kept."""
+
+    @pytest.mark.parametrize("conn,kept", [
+        ("postgres://admin:s3cret@db.internal:5432/prod", "db.internal:5432/prod"),
+        ("mongodb+srv://app:Tr0ub4dor@cluster0.mongodb.net/store", "cluster0"),
+        ("redis://default:hunter2@cache:6379/0", "cache:6379"),
+        ("https://jim:basicauthpw@internal.example/api", "internal.example"),
+    ])
+    def test_uri_password_is_scrubbed_host_kept(self, conn, kept):
+        out = pii_mod.sanitize_secrets(f"failing with {conn} here")
+        assert "[PASSWORD]@" in out
+        assert kept in out, "the host/db the debugging needs was lost"
+        for secret in ("s3cret", "Tr0ub4dor", "hunter2", "basicauthpw"):
+            assert secret not in out
+
+    @pytest.mark.parametrize("text,secret", [
+        ("Server=db;User Id=sa;Password=Sup3rS3cret;TrustCert=true", "Sup3rS3cret"),
+        ("DB_PASSWORD=hunter2", "hunter2"),
+        ("set PGPASSWORD=abc123xyz before running", "abc123xyz"),
+        ("conn opts: pwd=letmein;timeout=30", "letmein"),
+    ])
+    def test_keyval_password_is_scrubbed(self, text, secret):
+        out = pii_mod.sanitize_secrets(text)
+        assert secret not in out
+        assert "[PASSWORD]" in out
+
+    def test_plain_urls_without_userinfo_are_untouched(self):
+        text = "Ollama runs at http://localhost:11434 and the UI at https://example.com/app"
+        assert pii_mod.sanitize_secrets(text) == text
+
+    def test_spaced_assignment_in_code_is_untouched(self):
+        """`password = get_password()` is code being DISCUSSED, not a secret —
+        the unspaced-= requirement is what keeps code conversations legible."""
+        text = "in main.py: password = os.environ.get('DB_PASS')"
+        assert pii_mod.sanitize_secrets(text) == text
+
+    def test_ado_string_keeps_the_rest_of_the_settings(self):
+        out = pii_mod.sanitize_secrets("Server=db;Password=s3cret;Timeout=30")
+        assert out == "Server=db;Password=[PASSWORD];Timeout=30"

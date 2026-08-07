@@ -189,6 +189,24 @@ _API_KEY_PATTERNS = [
     PIIPattern("bearer_header", re.compile(
         r'\b[Bb]earer\s+[A-Za-z0-9._~+/-]{20,}=*'
     ), "Bearer [API_KEY]"),
+    # Connection-string passwords. Two shapes cover the real cases:
+    #
+    # URI userinfo — postgres://admin:s3cret@host/db, mongodb+srv://...,
+    # http://user:pass@host (basic auth). Only the password is replaced;
+    # scheme, user, host and database are exactly what a debugging session
+    # needs and are kept. URLs WITHOUT userinfo (http://localhost:11434)
+    # have no ":password@" and never match.
+    PIIPattern("uri_password", re.compile(
+        r'([a-zA-Z][a-zA-Z0-9+.\-]*://[^\s:/@]+:)[^\s@]+(?=@)'
+    ), r"\1[PASSWORD]"),
+    # key=value — ADO/ODBC strings (Password=s3cret;) and .env lines
+    # (DB_PASSWORD=hunter2). The = must be UNSPACED: `password = value` is
+    # how code reads (PEP 8), and scrubbing code discussions is the
+    # skeletonAnimationControl lesson again; `password=value` is how
+    # connection strings and env files read.
+    PIIPattern("keyval_password", re.compile(
+        r'(?i)\b([a-z0-9_]*(?:password|passwd|pwd))=([^;\s"\x27]+)'
+    ), r"\1=[PASSWORD]"),
     PIIPattern("jwt", re.compile(
         r'\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b'
     ), "[JWT]"),
