@@ -512,7 +512,19 @@ is distorted by the eviction and fatigue bugs._
 
 ---
 
-## Phase 5 — New capabilities (pick by appetite; ordered by leverage)
+## Phase 5 — New capabilities — ITEMS 1–4 BUILT 2026-08-08 (one commit)
+
+Shipped: user model (`memory/user_model.py`, nightly `update_user_model`,
+local-model-only by design, `/usermodel`), morning briefing
+(`core/morning_briefing.py`, once per local calendar day, failures front and
+center), digest export (`memory/digest_export.py` → `.blipshell/DIGEST.md`
+on session close + nightly, writes but never commits), and `/why`
+(retrieval trace captured per turn, persisted in `search_complete` events).
+Remaining: 5.5 Telegram (parked with the web UI), 5.6 idle anticipation.
+Model-quality validation of the user-model revision prompt needs the
+Ollama PC — watch the first few nightly revisions via /usermodel.
+
+Original list:
 
 1. **User model (Honcho-inspired)**: one LLM-maintained document of reasoned
    conclusions about the user (preferences, values, working style) — not facts, the

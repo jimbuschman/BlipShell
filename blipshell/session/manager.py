@@ -355,6 +355,12 @@ class SessionManager:
         await digest_mgr.update_digest(
             self.project, session.summary, session.title or "", self.session_id,
         )
+        # Mirror the fresh digest + lessons into the repo itself
+        # (.blipshell/DIGEST.md) so other tools inherit them. Best-effort by
+        # design — export_digest returns None rather than raising, and a
+        # session close must never fail on a missing repo directory.
+        from blipshell.memory.digest_export import export_digest
+        await export_digest(self.sqlite, self.project)
 
     async def _extract_lessons(self) -> str | None:
         """Extract lessons from the session conversation.

@@ -552,6 +552,24 @@ class ChatMixin:
             else:
                 messages.insert(0, {"role": "system", "content": mood_text})
 
+        # Morning briefing: first turn of the day carries the overnight
+        # digest (nightly results INCLUDING failures, user-model revision).
+        # Ahead of the quiet-thought block so a greeting reads
+        # status-then-thought, not the reverse. The lingering thought itself
+        # is deliberately NOT in the briefing — the block below owns
+        # surfacing it, and two mechanisms offering the same thought in one
+        # turn is the double-surfacing problem that block already guards.
+        try:
+            from blipshell.core.morning_briefing import build_briefing
+            briefing = await build_briefing(self.sqlite)
+            if briefing:
+                if messages and messages[0].get("role") == "system":
+                    messages[0]["content"] += "\n\n" + briefing
+                else:
+                    messages.insert(0, {"role": "system", "content": briefing})
+        except Exception as e:
+            logger.warning("Morning briefing failed (skipping): %s", e)
+
         # Unprompted return: a lingering thought formed during a quiet gap is
         # offered to BlipShell to raise — or let go. Surfaced once; its choice.
         # Skip if this thought already resurfaced via relevance this turn — no
@@ -861,6 +879,11 @@ class ChatMixin:
         # the actual information. Raw content carries the real facts.
         MAX_MEMORY_CHARS = 1200  # ~300 tokens per memory
         memory_count = 0
+        # Provenance for /why: every item injected this turn, with its score
+        # and source. Anti-confabulation phase 2 (V2_PLAN 5.4) — "why did you
+        # bring that up?" gets answered with the actual retrieval trace
+        # instead of the model's guess about its own attention.
+        trace_items: list[dict] = []
         try:
             results = mem_task.result() if not mem_task.cancelled() else []
             if isinstance(results, Exception):
@@ -876,6 +899,11 @@ class ChatMixin:
                     session_role="system",
                     priority_score=r.boosted_score,
                 ))
+                trace_items.append({
+                    "source": "memory", "id": r.id,
+                    "score": round(r.boosted_score, 3),
+                    "preview": text[:120],
+                })
         except Exception as e:
             logger.error("Memory search failed: %s", e)
 
@@ -913,6 +941,10 @@ class ChatMixin:
                     session_role="system",
                     priority_score=similarity + 0.2,
                 ))
+                trace_items.append({
+                    "source": "core", "score": round(similarity, 3),
+                    "preview": (cr.get("document") or "")[:120],
+                })
         except Exception as e:
             logger.error("Core memory search failed: %s", e)
 
@@ -932,12 +964,24 @@ class ChatMixin:
                     session_role="system",
                     priority_score=similarity + 0.1,
                 ))
+                trace_items.append({
+                    "source": "lesson", "score": round(similarity, 3),
+                    "preview": (lr.get("document") or "")[:120],
+                })
         except Exception as e:
             logger.error("Lesson search failed: %s", e)
 
         # Event: search_complete
         search_stats = self.search.last_search_stats or {}
+        # Held on the agent for /why (instant), and persisted in the
+        # search_complete event below (survives the session).
+        self._last_retrieval_trace = {
+            "query": query[:200],
+            "stats": search_stats,
+            "injected": trace_items,
+        }
         await self._log_event("search_complete", {
+            "injected": trace_items,
             "memory_results": memory_count,
             "core_results": core_count,
             "lesson_results": lesson_count,

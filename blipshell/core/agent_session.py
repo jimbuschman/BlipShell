@@ -92,6 +92,24 @@ class SessionMixin:
             ))
         logger.info("Loaded %d core memories", len(core_memories))
 
+        # The user model rides in the Core pool: reasoned conclusions about
+        # the user (preferences, working style — the layer above the facts
+        # core memories hold). Revised nightly, size-capped at write time, so
+        # loading it whole is safe. Priority above individual core memories:
+        # if the budget squeezes, one distilled document beats one more fact.
+        try:
+            from blipshell.memory.user_model import UserModel
+            doc = await UserModel(self.sqlite, self.router).get()
+            if doc:
+                self.memory_manager.add_memory("Core", PoolItem(
+                    text="[Your working model of the user]\n" + doc,
+                    session_role="system",
+                    priority_score=3.0,
+                ))
+                logger.info("Loaded user model (%d lines)", len(doc.splitlines()))
+        except Exception as e:
+            logger.warning("User model load failed (continuing without): %s", e)
+
     async def _load_lessons(self):
         """Load top lessons into the Lessons pool.
 

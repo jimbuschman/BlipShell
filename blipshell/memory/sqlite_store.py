@@ -1591,6 +1591,36 @@ class SQLiteStore:
         await self._db.commit()
         return cursor.rowcount
 
+    async def get_reflection_texts_since(
+        self, since_iso: Optional[str], limit: int = 12,
+    ) -> list[tuple[str, str]]:
+        """(reflection_text, created_at) newer than the watermark, oldest
+        first.
+
+        Feeds the user-model revision: oldest-first so a multi-night backlog
+        is digested in the order it happened, and created_at rides along so
+        the caller can advance its watermark to the last row actually READ —
+        stamping "now" instead would silently skip everything beyond the
+        limit whenever a backlog exceeds one batch.
+        """
+        if since_iso:
+            cursor = await self._db.execute(
+                """SELECT reflection_text, created_at FROM session_reflections
+                   WHERE created_at > ? ORDER BY created_at ASC LIMIT ?""",
+                (since_iso, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                """SELECT reflection_text, created_at FROM session_reflections
+                   ORDER BY created_at ASC LIMIT ?""",
+                (limit,),
+            )
+        rows = await cursor.fetchall()
+        return [
+            (r["reflection_text"], r["created_at"])
+            for r in rows if r["reflection_text"]
+        ]
+
     async def get_integrity_counts(self) -> dict[str, int]:
         """Row counts that destructive maintenance must never reduce.
 

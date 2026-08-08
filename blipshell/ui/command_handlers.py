@@ -172,6 +172,66 @@ def _guardrails(ctx: CommandContext):
         ctx.console.print(f"[dim]  Active: {', '.join(features)}[/dim]")
 
 
+@cmd("why", help="Why did it bring that up? The last turn's retrieval trace",
+     section="Memory")
+async def _why(ctx: CommandContext):
+    """Anti-confabulation: the ACTUAL trace of what memory search injected
+    last turn — not the model's guess about its own attention."""
+    trace = getattr(ctx.agent, "_last_retrieval_trace", None)
+    if not trace:
+        ctx.console.print("[dim]No retrieval trace yet — ask something first.[/dim]")
+        return
+
+    ctx.console.print(f"[bold]Retrieval trace[/bold] [dim]for:[/dim] {trace['query']}")
+    injected = trace.get("injected") or []
+    if not injected:
+        ctx.console.print(
+            "[dim]Nothing was injected — the model answered from "
+            "conversation context alone (or confabulated; now you know).[/dim]"
+        )
+    for item in injected:
+        label = {"memory": "mem", "core": "CORE", "lesson": "lesson"}.get(
+            item["source"], item["source"])
+        ctx.console.print(
+            f"  [cyan]{item['score']:<6}[/cyan] [dim]{label:<7}[/dim] "
+            f"{item['preview']}"
+        )
+
+    stats = trace.get("stats") or {}
+    parts = []
+    if stats.get("entity_names"):
+        parts.append(f"entities matched: {', '.join(stats['entity_names'])}")
+    for key, label in (("chroma_hits", "vector"), ("fts_hits", "keyword"),
+                       ("floor_dropped", "dropped at floor"),
+                       ("dedup_dropped", "deduped")):
+        if stats.get(key):
+            parts.append(f"{label} {stats[key]}")
+    if parts:
+        ctx.console.print(f"[dim]  {' | '.join(parts)}[/dim]")
+
+
+@cmd("usermodel", help="Show BlipShell's working model of you", section="Memory")
+async def _usermodel(ctx: CommandContext):
+    from blipshell.memory.user_model import UserModel
+
+    um = UserModel(ctx.agent.sqlite, ctx.agent.router)
+    doc = await um.get()
+    if not doc:
+        ctx.console.print(
+            "[dim]No user model yet — the nightly `update_user_model` job "
+            "builds it from session reflections.[/dim]"
+        )
+        return
+    updated = await um.updated_at()
+    ctx.console.print("[bold]Working model of you[/bold]"
+                      + (f" [dim](evidence through {updated[:10]})[/dim]" if updated else ""))
+    ctx.console.print(doc)
+    ctx.console.print(
+        "[dim]Revised nightly from session reflections, local model only. "
+        "Conclusions, not facts — tell me where it's wrong.[/dim]"
+    )
+
+
 @cmd("local", "cloud", usage="[on|off]", section="Toggles",
      help="Local mode: no call leaves this machine (/cloud = /local off)")
 def _local(ctx: CommandContext):

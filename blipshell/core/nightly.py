@@ -47,6 +47,7 @@ JOB_ORDER = [
     "clean_neutral_tags",
     "tag_discovery",
     "rebuild_digests",
+    "update_user_model",
     "health_check",
 ]
 
@@ -66,6 +67,7 @@ _OLLAMA_JOBS = {
     "rebuild_digests",
     "tag_discovery",
     "consolidate",
+    "update_user_model",
 }
 
 # Max time per job (seconds). Prevents a single hung job from burning hours.
@@ -291,6 +293,7 @@ class NightlyRunner:
         """Run a single job by name. Returns job-specific stats dict."""
         handlers = {
             "backup": self._job_backup,
+            "update_user_model": self._job_update_user_model,
             "backfill_vectors": self._job_backfill_vectors,
             "clean_empty_sessions": self._job_clean_empty_sessions,
             "cleanup": self._job_cleanup,
@@ -1117,6 +1120,18 @@ class NightlyRunner:
             "orphan_aliases": orphan_aliases,
         }
 
+    async def _job_update_user_model(self, on_status) -> dict:
+        """Revise the user-model document from reflections since last run.
+
+        Runs AFTER session_reflections in JOB_ORDER, so tonight's reflections
+        are available as evidence tonight rather than tomorrow. Routed to the
+        LOCAL model inside UserModel — this document is the distilled
+        personal layer and deliberately never leaves the machine.
+        """
+        from blipshell.memory.user_model import UserModel
+
+        return await UserModel(self.sqlite, self.router).revise_from_reflections()
+
     async def _job_health_check(self, on_status) -> dict:
         """Run audit_db checks and return structured findings."""
         from scripts.audit_db import run_audit
@@ -1249,7 +1264,19 @@ class NightlyRunner:
             except Exception as e:
                 logger.error("Digest rebuild failed for '%s': %s", name, e)
                 skipped += 1
-        return {"rebuilt": rebuilt, "skipped": skipped, "total": len(projects)}
+
+        # Mirror every project's digest + lessons into its repo
+        # (.blipshell/DIGEST.md). Runs for ALL projects, not just rebuilt
+        # ones: lessons change without the digest changing, and the export
+        # itself skips identical rewrites. Best-effort per project.
+        from blipshell.memory.digest_export import export_digest
+        exported = 0
+        for project in projects:
+            if project.get("name"):
+                if await export_digest(self.sqlite, project["name"]):
+                    exported += 1
+        return {"rebuilt": rebuilt, "skipped": skipped,
+                "exported": exported, "total": len(projects)}
 
     async def close(self):
         """Clean up resources."""
