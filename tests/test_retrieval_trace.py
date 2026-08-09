@@ -7,17 +7,22 @@ up in the trace with its score and source, because a trace that silently
 drops items answers "why did you bring that up" wrong.
 """
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from blipshell.core.agent_chat import ChatMixin
+from blipshell.memory.search import SearchResult
 
 
 def _result(id, text, score):
-    return SimpleNamespace(
-        id=id, text=text, summary=None, timestamp=None, boosted_score=score,
+    # The REAL dataclass, not a SimpleNamespace. The first version faked the
+    # shape with an `id` attribute SearchResult doesn't have (it's memory_id)
+    # — the test passed and the live chat path lost its entire recall pool
+    # to AttributeError on every turn (seen live 2026-08-09).
+    return SearchResult(
+        memory_id=id, text=text, summary="", similarity=score,
+        boosted_score=score, rank=3, importance=0.5,
     )
 
 
@@ -57,7 +62,7 @@ class TestTrace:
         sources = sorted(i["source"] for i in trace["injected"])
         assert sources == ["core", "lesson", "memory"]
         by_source = {i["source"]: i for i in trace["injected"]}
-        assert by_source["memory"]["id"] == 11
+        assert by_source["memory"]["id"] == 11   # SearchResult.memory_id
         assert by_source["memory"]["score"] == 0.91
         assert "entity graph" in by_source["memory"]["preview"]
 

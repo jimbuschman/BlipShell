@@ -900,7 +900,7 @@ class ChatMixin:
                     priority_score=r.boosted_score,
                 ))
                 trace_items.append({
-                    "source": "memory", "id": r.id,
+                    "source": "memory", "id": r.memory_id,
                     "score": round(r.boosted_score, 3),
                     "preview": text[:120],
                 })
