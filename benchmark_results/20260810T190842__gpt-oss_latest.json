@@ -1,0 +1,293 @@
+{
+  "schema": 1,
+  "model": "gpt-oss:latest",
+  "run_group": "gpt-oss_latest@2026-08-10T19:08:42.564862+00:00",
+  "run_ts": "2026-08-10T19:08:42.564862+00:00",
+  "tier": "deep",
+  "judge_model": "anthropic/claude-opus-4.8",
+  "jobs": [
+    "coding",
+    "pipeline",
+    "reasoning",
+    "session_review"
+  ],
+  "git_sha": "6367eb2",
+  "host": "XTEK-COMPUTER5",
+  "rows": [
+    {
+      "suite": "pipeline",
+      "task_type": "ranking",
+      "metric": "accuracy",
+      "value": 0.8963,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.8963,
+        0.8963
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "importance",
+      "metric": "accuracy",
+      "value": 0.9044,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.9044,
+        0.9044
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "rank_importance",
+      "metric": "accuracy",
+      "value": 0.949,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.949,
+        0.949
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "contradiction",
+      "metric": "accuracy",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "entity",
+      "metric": "accuracy",
+      "value": 0.8643,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.8643,
+        0.8643
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "length_words",
+      "value": 10.5,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        10.5,
+        10.5
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "length_words",
+      "value": 35.9,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        35.9,
+        35.9
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "pipeline",
+      "metric": "latency_s",
+      "value": 4.623,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        9.246,
+        0.0
+      ],
+      "spread": 9.246
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "scored": 0,
+        "cases": 12
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "length_words",
+      "value": 208.1,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        208.1,
+        208.1
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "scored": 0,
+        "cases": 9
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "length_words",
+      "value": 149.0,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        149.0,
+        149.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "tool_calling",
+      "metric": "tool_pass_rate",
+      "value": 0.7667,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.7333,
+        0.8
+      ],
+      "spread": 0.0667
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning_suite",
+      "metric": "latency_s",
+      "value": 8.5675,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        15.62,
+        1.515
+      ],
+      "spread": 14.105
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "quality",
+      "value": 0.875,
+      "unit": "ratio",
+      "raw": {
+        "completeness": 0.875,
+        "judged": false
+      },
+      "values": [
+        0.875,
+        0.875
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "length_words",
+      "value": 159.4,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        159.4,
+        159.4
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "latency_s",
+      "value": 12.479,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        24.958,
+        0.0
+      ],
+      "spread": 24.958
+    },
+    {
+      "suite": "coding",
+      "task_type": "coding_agentic",
+      "metric": "accuracy",
+      "value": 0.1899,
+      "unit": "ratio",
+      "raw": {
+        "checks_passed": 30,
+        "checks_total": 158,
+        "tasks_completed": 15,
+        "tasks_total": 15
+      },
+      "values": [
+        0.189873417721519,
+        0.189873417721519
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "coding",
+      "task_type": "coding",
+      "metric": "latency_s",
+      "value": 4.655,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        4.59,
+        4.72
+      ],
+      "spread": 0.13
+    }
+  ]
+}

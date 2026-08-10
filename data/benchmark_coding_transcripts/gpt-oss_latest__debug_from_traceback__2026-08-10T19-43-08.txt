@@ -1,0 +1,24 @@
+======================================================================
+BENCHMARK TRANSCRIPT
+Model: gpt-oss:latest
+Task: debug_from_traceback
+Timestamp: 2026-08-10 19:43:03 UTC
+======================================================================
+
+--- PLAN ---
+[Dynamic execution — single continuous conversation]
+
+--- EXECUTION ---
+
+======================================================================
+VERIFICATION: 2/7 checks passed
+======================================================================
+  FAIL diff_contains(('blipshell/memory/search.py', '\\+.*(json\\.loads|isinstance|str)')): pattern not in diff (0 chars)
+  PASS syntax_check(blipshell/memory/search.py): compiles OK
+  FAIL file_exists(tests/test_search_boost_fix.py): not found
+  FAIL syntax_check(tests/test_search_boost_fix.py): file not found
+  FAIL pytest_in_sandbox(tests/test_search_boost_fix.py): test file not found
+  FAIL max_diff_lines(('blipshell/memory/search.py', 20)): 
+  PASS no_unwanted_files: clean
+
+TIMING: plan=0.0s, total=4.8s
