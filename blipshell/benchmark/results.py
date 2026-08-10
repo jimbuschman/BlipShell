@@ -49,7 +49,8 @@ RESULTS_DIRNAME = "benchmark_results"
 
 # Fields copied from a harness row into the stored file. run_group/model/run_ts/
 # tier live once in the file header, so they are not repeated per row.
-_ROW_FIELDS = ("suite", "task_type", "metric", "value", "unit", "raw")
+_ROW_FIELDS = ("suite", "task_type", "metric", "value", "unit", "raw",
+               "values", "spread")
 
 
 def slugify_model(model: str) -> str:
@@ -120,6 +121,27 @@ class ResultsStore:
         path = self.root / f"{_compact_ts(run_ts)}__{slugify_model(model)}.json"
         path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         logger.info("Wrote %d benchmark rows to %s", len(rows), path)
+        return path
+
+    def write_transcripts(
+        self, *, model: str, run_ts: str, calls: list[dict],
+    ) -> Path:
+        """Persist every candidate call of a run, next to its result file.
+
+        Separate file so the metric rows stay small and diffable; committed
+        for the same reason the results are — analysis happens on whichever
+        machine reads them, not necessarily the one that ran the model.
+        """
+        self.root.mkdir(parents=True, exist_ok=True)
+        path = self.root / (
+            f"{_compact_ts(run_ts)}__{slugify_model(model)}__transcripts.json"
+        )
+        path.write_text(
+            json.dumps({"model": model, "run_ts": run_ts, "calls": calls},
+                       indent=2, default=str),
+            encoding="utf-8",
+        )
+        logger.info("Wrote %d transcript calls to %s", len(calls), path)
         return path
 
     # ------------------------------------------------------------------- read

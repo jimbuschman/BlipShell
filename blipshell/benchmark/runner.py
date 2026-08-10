@@ -137,6 +137,42 @@ async def _regenerate_report(store, config, config_path: Optional[str]) -> tuple
     return paths, len(model_rows), advice_md
 
 
+def merge_repeat_rows(row_sets: list[list[dict]]) -> list[dict]:
+    """Merge N repeats of the same run into one row set.
+
+    Numeric metrics become their mean, with `values` (per-repeat) and
+    `spread` (max-min) attached — single runs were being read as precise
+    points while within-model variance measured ~40% of between-model signal
+    (qwen3 lessons: 0.420 then 0.345, nothing said which to believe).
+    Non-numeric or missing values keep the first occurrence. Row identity is
+    (suite, task_type, metric); rows appearing in only some repeats (e.g. a
+    judge that failed once) merge over the repeats they have.
+    """
+    if len(row_sets) == 1:
+        return row_sets[0]
+    order: list[tuple] = []
+    grouped: dict[tuple, list[dict]] = {}
+    for rows in row_sets:
+        for r in rows:
+            key = (r.get("suite"), r.get("task_type"), r.get("metric"))
+            if key not in grouped:
+                grouped[key] = []
+                order.append(key)
+            grouped[key].append(r)
+    merged: list[dict] = []
+    for key in order:
+        group = grouped[key]
+        base = dict(group[0])
+        vals = [r.get("value") for r in group
+                if isinstance(r.get("value"), (int, float))]
+        if len(vals) > 1:
+            base["value"] = round(sum(vals) / len(vals), 4)
+            base["values"] = vals
+            base["spread"] = round(max(vals) - min(vals), 4)
+        merged.append(base)
+    return merged
+
+
 async def run_benchmark(
     model: str,
     *,
@@ -149,6 +185,7 @@ async def run_benchmark(
     jobs: Optional[set] = None,
     timeout_override: Optional[float] = None,
     context_tokens: Optional[int] = None,
+    repeats: int = 1,
 ) -> None:
     """Run a deep test of a model across the requested jobs, store metrics, and
     regenerate the shareable report. `jobs=None` = every job at full depth."""
@@ -208,10 +245,11 @@ async def run_benchmark(
             f"so Ollama's default window applies and long prompts may be "
             f"truncated.[/yellow] [dim]timeout={llm_cfg.timeout:.0f}s[/dim]"
         )
-    router = build_candidate_router(
+    from blipshell.benchmark.recording import RecordingRouter
+    router = RecordingRouter(build_candidate_router(
         model, provider=provider, url=url, api_key=api_key,
         context_tokens=cand_ctx, llm_config=llm_cfg,
-    )
+    ))
     # Embedding benchmark always uses a local Ollama endpoint (embedders are local).
     ollama_url = url if provider == "ollama" else get_ollama_url(config.endpoints)
 
@@ -230,21 +268,33 @@ async def run_benchmark(
         )
         if jobs:
             console.print(f"[dim]Scoped to jobs: {', '.join(sorted(jobs))}[/dim]")
-        rows = await harness.run(
-            db_path=config.database.path,
-            ollama_url=ollama_url,
-            full_sample=bench.full_sample,
-            coding_timeout=coding_timeout,
-            jobs=jobs,
-            on_status=lambda m: console.print(f"  [dim]{m}[/dim]"),
-        )
+        row_sets: list[list[dict]] = []
+        for rep in range(max(1, repeats)):
+            if repeats > 1:
+                console.print(f"[dim]Repeat {rep + 1}/{repeats}[/dim]")
+            router.repeat = rep
+            row_sets.append(await harness.run(
+                db_path=config.database.path,
+                ollama_url=ollama_url,
+                full_sample=bench.full_sample,
+                coding_timeout=coding_timeout,
+                jobs=jobs,
+                on_status=lambda m: console.print(f"  [dim]{m}[/dim]"),
+            ))
+        rows = merge_repeat_rows(row_sets)
         # Results go to a committed file, not the gitignored DB — so the other
         # machine inherits this run on `git pull` and the comparison corpus
         # actually accumulates.
-        res_path = ResultsStore(results_dir(config_path)).write_run(
+        rstore = ResultsStore(results_dir(config_path))
+        res_path = rstore.write_run(
             model=model, run_group=group, run_ts=run_ts, rows=rows,
             tier="deep", judge_model=bench.judge_model or None, jobs=jobs,
         )
+        # Transcripts are the primary artifact now — scores index them.
+        tr_path = rstore.write_transcripts(
+            model=model, run_ts=run_ts, calls=router.calls,
+        )
+        console.print(f"[dim]Transcripts ({len(router.calls)} calls) -> {tr_path}[/dim]")
         console.print(
             f"[green]Recorded {len(rows)} metrics for {model}[/green] "
             f"-> [cyan]{res_path}[/cyan]\n"

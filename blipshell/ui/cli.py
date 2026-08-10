@@ -1329,10 +1329,11 @@ def benchmark_grp():
 @click.option("--coding-timeout", default=300.0, type=float, help="Per-task timeout for the agentic coding executor (seconds)")
 @click.option("--jobs", default=None, help="Comma-separated subset to run: pipeline,reasoning,session_review,realdata,embedding,coding (default: all). Scope local-background comparisons by dropping the slow cloud-routed 'coding' suite.")
 @click.option("--timeout", "timeout_override", default=None, type=float, help="Per-LLM-call timeout in seconds (default: config llm.timeout). Raise it for a slow local model — a timed-out case is DROPPED from the judged score, which biases the result upward.")
+@click.option("--repeats", default=1, type=int, help="Run every suite N times and report mean + spread per metric. Single runs read as precise points; they aren't.")
 @click.option("--context-tokens", default=None, type=int, help="num_ctx for the candidate (default: the configured endpoint's window). Lower it if generation is slow: a large KV cache can spill to CPU and make every call many times slower.")
 @click.pass_context
 def benchmark_run_cmd(ctx, model, judge, provider, url, api_key_env, coding_timeout, jobs,
-                      timeout_override, context_tokens):
+                      timeout_override, context_tokens, repeats):
     """Run the deep test of MODEL (e.g. qwen3:14b, minimax/minimax-m3).
 
     Tests every job (ranking, importance, contradiction, entity, summarization,
@@ -1348,7 +1349,7 @@ def benchmark_run_cmd(ctx, model, judge, provider, url, api_key_env, coding_time
         judge_enabled=judge, provider=provider, url=url,
         api_key_env=api_key_env, coding_timeout=coding_timeout,
         jobs=job_set, timeout_override=timeout_override,
-        context_tokens=context_tokens,
+        context_tokens=context_tokens, repeats=repeats,
     ))
 
 

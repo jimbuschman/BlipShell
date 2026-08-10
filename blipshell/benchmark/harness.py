@@ -803,15 +803,27 @@ class BenchmarkHarness:
                     f"Valid: {sorted(BENCHMARK_JOBS)}"
                 )
 
+        def _label(suite: str):
+            # RecordingRouter tags each call with the current suite; a plain
+            # router (or a stubbed test harness with no router at all) is
+            # simply left alone.
+            r = getattr(self, "router", None)
+            if r is not None and hasattr(r, "suite"):
+                r.suite = suite
+
         rows: list[dict] = []
         if "pipeline" in jobs:
+            _label("pipeline")
             rows += await self.run_pipeline(on_status=on_status)
         if "reasoning" in jobs:
+            _label("reasoning")
             rows += await self.run_reasoning(on_status=on_status)
         if "session_review" in jobs:
+            _label("session_review")
             rows += await self.run_session_review(on_status=on_status)
         if "realdata" in jobs:
             if db_path:
+                _label("realdata")
                 rows += await self.run_realdata(db_path, full_sample, on_status=on_status)
             else:
                 logger.info("realdata skipped (no db_path)")
@@ -821,6 +833,7 @@ class BenchmarkHarness:
             else:
                 logger.info("embedding skipped (no db_path)")
         if "coding" in jobs:
+            _label("coding")
             rows += await self.run_coding("all", coding_timeout, on_status=on_status)
         return rows
 
