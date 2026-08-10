@@ -24,11 +24,21 @@ coding-agent parity.
 
 ## Two-PC setup
 
-- **Dev box** (this machine): Python 3.14, no Ollama. Validates *logic and wiring* —
-  unit tests, loop-integration tests, simulation. Full pytest suite runs here.
-- **Ollama PC**: runs models. Validates *model quality and behavior* — benchmarks,
-  stress tests, live testing. Code synced via git (github.com/jimbuschman/BlipShell).
-- Never conflate the two: a green suite here says nothing about model behavior.
+- **Dev box** (this machine): Python 3.14, no local Ollama (GT 710 — no usable
+  GPU). Validates *logic and wiring* — unit tests, loop-integration tests,
+  simulation. Full pytest suite runs here.
+- **Ollama PC** (HPBENDERTWO): runs models. Validates *model quality and
+  behavior* — benchmarks, stress tests, live testing. Code synced via git
+  (github.com/jimbuschman/BlipShell).
+- **Since 2026-08-10 the dev box reaches the Ollama PC's models over Tailscale**
+  (`http://[tailscale-ip]:11434`, when that PC is on): model-touching work —
+  `benchmark run --url`, simulate (`openai` installed here), live prompt
+  validation — can now be DRIVEN from here, executing on the real GPU. The
+  split still holds as a statement about *judgment* (a green suite here says
+  nothing about model behavior; measure on real hardware), no longer as a
+  statement about *access*. That GPU is shared with live BlipShell — ask
+  before tying it up for a long run. Don't add the Tailscale endpoint to
+  config.yaml (it's the Ollama PC's live production config).
 
 ## Package map
 
