@@ -867,11 +867,25 @@ class SQLiteStore:
             metadata_json=row["metadata_json"],
         )
 
-    async def get_latest_session(self) -> Optional[Session]:
-        """Get the most recent session."""
-        cursor = await self._db.execute(
-            "SELECT * FROM sessions ORDER BY last_active DESC LIMIT 1"
-        )
+    async def get_latest_session(
+        self, exclude_id: Optional[int] = None,
+    ) -> Optional[Session]:
+        """Get the most recent session.
+
+        `exclude_id` lets startup code ask for the PREVIOUS session while the
+        current one already exists — "how long was I gone" is a question
+        about the session before this one.
+        """
+        if exclude_id is not None:
+            cursor = await self._db.execute(
+                "SELECT * FROM sessions WHERE id != ? "
+                "ORDER BY last_active DESC LIMIT 1",
+                (exclude_id,),
+            )
+        else:
+            cursor = await self._db.execute(
+                "SELECT * FROM sessions ORDER BY last_active DESC LIMIT 1"
+            )
         row = await cursor.fetchone()
         if not row:
             return None

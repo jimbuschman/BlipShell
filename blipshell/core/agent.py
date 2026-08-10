@@ -324,6 +324,17 @@ class Agent(
         )
         if self.config.reflection.enabled:
             self._reflection_task = asyncio.create_task(self._reflection_loop())
+            # On-return reflection: the idle loop only sees quiet gaps while
+            # the process is RUNNING; on open-chat-close usage those almost
+            # never occur (~1 thought/month observed). The gap since the last
+            # session's activity is the same quiet time — the process just
+            # wasn't awake for it. Runs as a task so a cold local model never
+            # delays startup; if it lands after the first turn, the thought
+            # is simply pending for the next one.
+            if self.config.reflection.on_return_enabled:
+                self._return_reflection_task = asyncio.create_task(
+                    self._reflect_on_return()
+                )
 
         # Cube transport server — listens for cube connections (standalone
         # window or remote hardware). Cubes auto-register on connect.
@@ -668,6 +679,40 @@ class Agent(
             task = asyncio.create_task(core.registry.invoke(meta.cube_id, action, args))
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
+
+    _RETURN_REFLECTION_MARKER = "return_reflection_marker"
+
+    async def _reflect_on_return(self):
+        """Form one lingering thought when startup follows a long quiet gap.
+
+        One thought per gap, same as the idle loop: the marker records which
+        gap already produced its thought, so restarting three times across
+        one absence is one return, not three.
+        """
+        try:
+            # Exclude the current session: this task races start_session, and
+            # a just-created session's last_active is "now" — the gap question
+            # is about the session BEFORE this one.
+            current_id = (
+                self.session_manager.session_id if self.session_manager else None
+            )
+            last = await self.sqlite.get_latest_session(exclude_id=current_id)
+            marker = await self.sqlite.get_metadata(self._RETURN_REFLECTION_MARKER)
+            from blipshell.core.self_reflection import should_reflect_on_return
+            stamp = should_reflect_on_return(
+                last.last_active if last else None, marker,
+                self.config.reflection.idle_seconds,
+            )
+            if not stamp:
+                return
+            # Stamp BEFORE generating: a slow/failed generation must not
+            # retry on every restart of the same gap — the idle loop has the
+            # same one-shot-then-re-arm character.
+            await self.sqlite.set_metadata(self._RETURN_REFLECTION_MARKER, stamp)
+            logger.info("Return after a long gap — forming a lingering thought")
+            await self._generate_lingering_thought()
+        except Exception as e:
+            logger.debug("On-return reflection failed: %s", e)
 
     async def _reflection_loop(self):
         """Once per long idle gap, form a self-originated lingering thought.

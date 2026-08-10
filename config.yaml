@@ -329,6 +329,7 @@ robotics:
 reflection:
   enabled: true
   idle_seconds: 10800.0              # ~3 hours quiet before it reflects
+  on_return_enabled: true            # also reflect at startup after a 3h+ absence (the gap happened while the app was off)
   max_keep: 50                       # past thoughts retained
   # Standing injection — a relevant past thought resurfaces as context, not just
   # the one-shot return greeting. Two-stage: loose cosine prefilter, then a local

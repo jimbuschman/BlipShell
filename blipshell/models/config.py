@@ -338,6 +338,13 @@ class ReflectionConfig(BaseModel):
     enabled: bool = True
     idle_seconds: float = 10800.0   # ~3 hours of quiet before it reflects
     max_keep: int = 50              # how many past thoughts to retain
+    # Reflect at startup when the gap since the last session's activity
+    # exceeds idle_seconds: the quiet time genuinely happened, the process
+    # just wasn't awake to notice. Without this, thoughts only form when the
+    # app sits OPEN and idle 3+ hours — on open-chat-close usage that's
+    # ~1 thought/month, which made the self-gravity step-2 gate ("10 new
+    # thoughts") roughly a year away (2026-08-09 analysis).
+    on_return_enabled: bool = True
 
     # Standing injection: a relevant past thought resurfaces as context (not just
     # the one-shot greeting). Two-stage filter — cosine prefilter then an LLM

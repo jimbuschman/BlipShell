@@ -17,7 +17,6 @@ Stored in app_metadata (lightweight, easy to drop if it's not worth keeping).
 """
 
 import asyncio
-import json
 import logging
 import math
 from datetime import datetime, timezone
@@ -68,6 +67,40 @@ def lingering_thought_prompt(prior_thoughts: list[str]) -> tuple[str, str]:
         user = ("You're just beginning to keep these private notes. What's "
                 "something you find yourself curious about or turning over?")
     return system, user
+
+
+def should_reflect_on_return(
+    last_active, marker: Optional[str], idle_seconds: float,
+    now: Optional[datetime] = None,
+) -> Optional[str]:
+    """Decide whether startup counts as returning from a long quiet gap.
+
+    Returns the marker to stamp (the last activity's ISO form) when a
+    reflection is due, else None. Pure — the agent wrapper does the IO.
+
+    `marker` is the last activity value a previous startup already reflected
+    against: restarting three times across one gap is ONE return, not three.
+    The one-thought-per-gap rule is the feature's character; this preserves
+    it across process boundaries the in-session idle loop can't see.
+    """
+    if not last_active:
+        return None     # fresh install: no gap has ever ended
+    if isinstance(last_active, str):
+        try:
+            last_dt = datetime.fromisoformat(last_active)
+        except ValueError:
+            return None
+    else:
+        last_dt = last_active
+    if last_dt.tzinfo is None:
+        last_dt = last_dt.replace(tzinfo=timezone.utc)
+    stamp = last_dt.isoformat()
+    if marker == stamp:
+        return None     # this gap already produced its thought
+    now = now or datetime.now(timezone.utc)
+    if (now - last_dt).total_seconds() < idle_seconds:
+        return None
+    return stamp
 
 
 class SelfThoughtStore:

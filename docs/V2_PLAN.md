@@ -489,6 +489,15 @@ _Gate: re-take the `/thoughts` readout only after Phase 0.6/0.7 and Phase 1.8 ha
 been live long enough to produce ≥10 NEW thoughts (not N days). The current readout
 is distorted by the eviction and fatigue bugs._
 
+_Gate unblocked 2026-08-10: the idle loop only formed thoughts while the app
+sat OPEN and quiet 3+ hours — on open-chat-close usage that was ~1
+thought/month, making this gate ~a year away. **On-return reflection** now
+fires at startup when the gap since the last session's activity exceeds the
+same threshold (the quiet happened while the process was off). One thought
+per gap is preserved across restarts by a marker recording which gap already
+produced its thought. Config: `reflection.on_return_enabled`. Expect the
+gate to open in ~2 weeks of normal use; then re-read `/thoughts`._
+
 1. **Thought store → real table + `vec_self_thoughts`** (matching the other four vec
    tables). Prereq for step 2; also removes per-turn JSON-blob parsing and gives
    thoughts stable ids (weights are currently keyed by text).
