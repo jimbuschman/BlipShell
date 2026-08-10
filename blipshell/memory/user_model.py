@@ -13,9 +13,10 @@ Three rules, all enforced or prompted here:
 * RETRACTABLE. The prompt explicitly instructs weakening or dropping any
   conclusion the new evidence contradicts — a user model that argues with
   its own evidence is worse than none.
-* SIZE-CAPPED (~1.5K tokens, hard-enforced after generation). It lives in
-  the core pool on every turn; an unbounded document would eat the budget
-  that core memories share.
+* SIZE-CAPPED (700 tokens, hard-enforced after generation). It lives in
+  the core pool on every turn, and that pool is ~1600 tokens on the local
+  path — the cap is sized so this document can never crowd out the curated
+  facts it shares the pool with.
 
 Privacy: revision routes through TaskType.REASONING — the LOCAL model —
 deliberately. This document is the distilled personal layer, the exact
@@ -76,7 +77,8 @@ def revision_prompt(current_doc: str, evidence: list[str]) -> tuple[str, str]:
     else:
         parts.append("CURRENT MODEL: (none yet — this is the first revision)")
     parts.append(
-        "NEW EVIDENCE (recent session reflections):\n"
+        "NEW EVIDENCE (session reflections, plus lines marked (git) drawn "
+        "from the user's actual commit history):\n"
         + "\n".join(f"- {e}" for e in evidence)
     )
     parts.append("Revised model:")
@@ -127,10 +129,24 @@ class UserModel:
         rows = await self._sqlite.get_reflection_texts_since(
             since, limit=MAX_EVIDENCE,
         )
-        if not rows:
-            return {"revised": False, "reason": "no new reflections"}
-        evidence = [text for text, _ in rows]
-        watermark = rows[-1][1]
+
+        # The input half of the loop: reflections are the system's own output
+        # about its own conversations; commit history is external ground
+        # truth about what the user actually did. Best-effort — git problems
+        # never block the revision.
+        try:
+            from blipshell.memory.commit_ingest import collect_commit_evidence
+            commit_lines = await collect_commit_evidence(self._sqlite)
+        except Exception as e:
+            logger.warning("Commit evidence collection failed: %s", e)
+            commit_lines = []
+
+        if not rows and not commit_lines:
+            return {"revised": False, "reason": "no new evidence"}
+        evidence = [text for text, _ in rows] + commit_lines
+        # Reflection watermark only moves past reflections actually read; a
+        # commits-only night leaves it where it was.
+        watermark = rows[-1][1] if rows else since
 
         current = await self.get() or ""
         system, prompt = revision_prompt(current, evidence)
@@ -142,7 +158,10 @@ class UserModel:
         if not response or response.upper() == EMPTY:
             # An honest "nothing to conclude" still advances the watermark,
             # or the same evidence would be re-judged every night forever.
-            await self._sqlite.set_metadata(UPDATED_KEY, watermark)
+            # (None = commits-only run with no reflections ever read: there
+            # is no reflection position to record, so leave the key unset.)
+            if watermark:
+                await self._sqlite.set_metadata(UPDATED_KEY, watermark)
             return {"revised": False, "reason": "model concluded nothing",
                     "evidence": len(evidence)}
 
@@ -151,7 +170,8 @@ class UserModel:
             return {"revised": False, "reason": "empty after cap"}
 
         await self._sqlite.set_metadata(DOC_KEY, doc)
-        await self._sqlite.set_metadata(UPDATED_KEY, watermark)
+        if watermark:
+            await self._sqlite.set_metadata(UPDATED_KEY, watermark)
         logger.info(
             "User model revised: %d lines from %d reflections",
             len(doc.splitlines()), len(evidence),

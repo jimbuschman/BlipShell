@@ -306,13 +306,23 @@ class TestFileRestoration:
 class TestSessionNotesPersistence:
     """Test session notes persistence in sqlite_store."""
 
-    @pytest.mark.asyncio
-    async def test_save_and_load_notes(self):
-        """Test basic save/load cycle via sqlite methods."""
+    @pytest.fixture
+    async def notes_store(self):
+        """Closed at teardown. These tests used to build bare stores and
+        leak them — three aiosqlite worker threads warned "Event loop is
+        closed" at every suite teardown, and a standing tolerated warning
+        is how a real one goes unnoticed later (review, 2026-08-10)."""
         from blipshell.memory.sqlite_store import SQLiteStore
 
         store = SQLiteStore(":memory:")
         await store.initialize()
+        yield store
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_save_and_load_notes(self, notes_store):
+        """Test basic save/load cycle via sqlite methods."""
+        store = notes_store
         session_id = await store.create_session(title="test")
 
         # Save notes
@@ -324,12 +334,9 @@ class TestSessionNotesPersistence:
         assert loaded == notes
 
     @pytest.mark.asyncio
-    async def test_notes_merge_with_metadata(self):
+    async def test_notes_merge_with_metadata(self, notes_store):
         """Notes should not clobber other metadata."""
-        from blipshell.memory.sqlite_store import SQLiteStore
-
-        store = SQLiteStore(":memory:")
-        await store.initialize()
+        store = notes_store
         session_id = await store.create_session(title="test")
 
         # Set some other metadata first
@@ -351,11 +358,8 @@ class TestSessionNotesPersistence:
         assert metadata["notes"] == {"task": "test"}
 
     @pytest.mark.asyncio
-    async def test_clear_notes(self):
-        from blipshell.memory.sqlite_store import SQLiteStore
-
-        store = SQLiteStore(":memory:")
-        await store.initialize()
+    async def test_clear_notes(self, notes_store):
+        store = notes_store
         session_id = await store.create_session(title="test")
 
         await store.save_session_notes(session_id, {"task": "test"})
@@ -365,11 +369,8 @@ class TestSessionNotesPersistence:
         assert loaded == {}
 
     @pytest.mark.asyncio
-    async def test_empty_session_returns_empty(self):
-        from blipshell.memory.sqlite_store import SQLiteStore
-
-        store = SQLiteStore(":memory:")
-        await store.initialize()
+    async def test_empty_session_returns_empty(self, notes_store):
+        store = notes_store
         session_id = await store.create_session(title="test")
 
         loaded = await store.get_session_notes(session_id)

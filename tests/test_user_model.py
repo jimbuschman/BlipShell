@@ -102,7 +102,7 @@ class TestRevision:
 
         stats = await um.revise_from_reflections()
 
-        assert stats == {"revised": False, "reason": "no new reflections"}
+        assert stats == {"revised": False, "reason": "no new evidence"}
         assert router.generate.await_count == 1
 
     async def test_backlog_beyond_limit_is_not_lost(self, sqlite_store):
@@ -136,7 +136,7 @@ class TestRevision:
         assert stats["revised"] is False
         assert await um.get() is None
         # Watermark advanced — the same evidence is not re-judged nightly.
-        assert (await um.revise_from_reflections())["reason"] == "no new reflections"
+        assert (await um.revise_from_reflections())["reason"] == "no new evidence"
 
     async def test_oversized_response_is_capped_before_storage(self, seeded):
         router = self._router(
