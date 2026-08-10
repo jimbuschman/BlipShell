@@ -94,9 +94,12 @@ class SessionMixin:
 
         # The user model rides in the Core pool: reasoned conclusions about
         # the user (preferences, working style — the layer above the facts
-        # core memories hold). Revised nightly, size-capped at write time, so
-        # loading it whole is safe. Priority above individual core memories:
-        # if the budget squeezes, one distilled document beats one more fact.
+        # core memories hold). Revised nightly, size-capped at write time.
+        # Priority BELOW every core memory (they score importance+1.0, so
+        # ≥1.0): when the pool squeezes — 5% of a 32K local context is ~1600
+        # tokens — curated identity facts win over derived conclusions. The
+        # first version put this at 3.0 and the document evicted ALL core
+        # memories on the /local path (review, 2026-08-10).
         try:
             from blipshell.memory.user_model import UserModel
             doc = await UserModel(self.sqlite, self.router).get()
@@ -104,7 +107,7 @@ class SessionMixin:
                 self.memory_manager.add_memory("Core", PoolItem(
                     text="[Your working model of the user]\n" + doc,
                     session_role="system",
-                    priority_score=3.0,
+                    priority_score=0.9,
                 ))
                 logger.info("Loaded user model (%d lines)", len(doc.splitlines()))
         except Exception as e:

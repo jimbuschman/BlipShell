@@ -34,7 +34,13 @@ logger = logging.getLogger(__name__)
 DOC_KEY = "user_model"
 UPDATED_KEY = "user_model_updated_at"
 
-MAX_TOKENS = 1500
+# Sized for the SMALLEST pool it must coexist in, not the largest. Core is
+# 5% of context; on the local path (32K) that is ~1600 tokens, and the
+# first version's 1500-token cap let this document evict every curated
+# core memory there — the /local privacy path lost the user's identity
+# facts to derived conclusions about them (review, 2026-08-10). 25 lines
+# of conclusions is ~500 tokens anyway; 1500 was cloud-sized generosity.
+MAX_TOKENS = 700
 MAX_LINES = 25
 # How many recent reflections one revision may digest. More than this and
 # the prompt drowns the current model in evidence; the rest waits for the

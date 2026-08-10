@@ -29,7 +29,18 @@ class TestCap:
         for line in capped.splitlines():
             assert line == long_line, "a conclusion was cut mid-sentence"
         from blipshell.memory.manager import estimate_tokens
-        assert estimate_tokens(capped) <= 1500
+        assert estimate_tokens(capped) <= 700
+
+    def test_cap_fits_the_local_core_pool(self):
+        """The collision this cap prevents: Core is 5% of context, which on
+        the 32K local path is ~1600 tokens. The document must leave room for
+        the curated facts it shares that pool with — at 1500 tokens it
+        evicted all of them on /local (review 2026-08-10)."""
+        from blipshell.memory.user_model import MAX_TOKENS
+        local_core_pool = int(32768 * 0.05)
+        assert MAX_TOKENS <= local_core_pool * 0.5, (
+            "the user model can consume more than half the local Core pool"
+        )
 
     def test_short_doc_passes_through(self):
         doc = "- (high) prefers thorough tests\n- (medium) dislikes rework"
