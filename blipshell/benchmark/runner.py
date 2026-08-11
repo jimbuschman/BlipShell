@@ -245,11 +245,15 @@ async def run_benchmark(
             f"so Ollama's default window applies and long prompts may be "
             f"truncated.[/yellow] [dim]timeout={llm_cfg.timeout:.0f}s[/dim]"
         )
-    from blipshell.benchmark.recording import RecordingRouter
+    from blipshell.benchmark.recording import RecordingRouter, wrap_router_clients
     router = RecordingRouter(build_candidate_router(
         model, provider=provider, url=url, api_key=api_key,
         context_tokens=cand_ctx, llm_config=llm_cfg,
     ))
+    # Record at the client layer too: agentic coding and tool-calling chat
+    # bypass router.generate() (pilot 2026-08-10 — the 0.19 suite produced
+    # zero transcripts).
+    wrap_router_clients(router)
     # Embedding benchmark always uses a local Ollama endpoint (embedders are local).
     ollama_url = url if provider == "ollama" else get_ollama_url(config.endpoints)
 

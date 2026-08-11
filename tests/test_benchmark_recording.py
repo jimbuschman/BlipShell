@@ -137,3 +137,41 @@ class TestTranscriptFile:
         row = json.loads(path.read_text(encoding="utf-8"))["rows"][0]
         assert row["values"] == [0.4, 0.6]
         assert row["spread"] == 0.2
+
+
+class TestRecordingClient:
+    async def test_chat_calls_are_recorded_with_tool_names(self):
+        """The pilot's gap: the 0.19 coding suite produced zero transcripts
+        because client.chat bypasses router.generate()."""
+        from blipshell.benchmark.recording import RecordingClient, RecordingRouter
+
+        recorder = RecordingRouter(MagicMock())
+        recorder.suite = "coding"
+        inner = MagicMock()
+        inner.chat = AsyncMock(return_value={"message": {
+            "content": "on it", "tool_calls": [
+                {"function": {"name": "read_file", "arguments": "{}"}}],
+        }})
+        client = RecordingClient(inner, recorder)
+
+        out = await client.chat(messages=[{"role": "user", "content": "fix the bug"}],
+                                model="m", tools=[])
+
+        assert out["message"]["content"] == "on it"
+        call = recorder.calls[0]
+        assert call["suite"] == "coding"
+        assert call["task_type"] == "chat"
+        assert call["prompt"] == "fix the bug"
+        assert call["tool_calls"] == ["read_file"]
+
+    async def test_wrap_router_clients_wraps_endpoints(self):
+        from blipshell.benchmark.harness import build_candidate_router
+        from blipshell.benchmark.recording import (
+            RecordingClient, RecordingRouter, wrap_router_clients,
+        )
+
+        router = RecordingRouter(build_candidate_router("m"))
+        wrap_router_clients(router)
+
+        eps = router._endpoint_manager._endpoints
+        assert eps and all(isinstance(ep.client, RecordingClient) for ep in eps)
