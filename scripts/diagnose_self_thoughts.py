@@ -356,12 +356,23 @@ def report_fold_candidates(db, threshold):
         anomalies.append("%d unfolded pair(s) >= %.2f" % (len(over), threshold))
     else:
         band = [p for p in pairs if threshold - 0.10 <= p[0] < threshold]
-        print("no pair reaches %.2f, so nothing SHOULD have folded --" % threshold)
-        print("folding is not broken; there was simply nothing to fold.")
+        print("no pair reaches %.2f, so folding is NOT broken." % threshold)
+        print("")
+        print("Read this result narrowly. These rows are post-fold BY")
+        print("CONSTRUCTION: add() folds an echo into its prior and returns")
+        print("WITHOUT inserting, so anything that ever crossed the threshold")
+        print("was absorbed and never became a row. Survivors sitting below")
+        print("it is the EXPECTED shape, not evidence about calibration --")
+        print("and weights above 1.0 elsewhere in this report are the proof")
+        print("that echoes did cross it historically.")
         if band:
-            print("%d pair(s) sit in the %.2f-%.2f band. If those read as the"
+            print("")
+            print("%d pair(s) sit in the %.2f-%.2f band. That is a question of"
                   % (len(band), threshold - 0.10, threshold))
-            print("same thought to you, the threshold is too high for this corpus.")
+            print("taste, not a defect: read them and decide whether they are")
+            print("one thought or two. Consequence if they are one -- nothing")
+            print("new will ever echo, echo_count stays 0, and the recurring")
+            print("marker never renders, so gravity only ever decays.")
     return anomalies
 
 
