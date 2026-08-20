@@ -92,6 +92,10 @@ async def _print_thoughts(agent: Agent):
 
     no_embedding = 0
     total_echoes = 0
+    # Thoughts carrying weight above the 1.0 baseline. `echo_count` only exists
+    # from 2026-07-30, so a thought boosted before that has the reinforcement
+    # in its WEIGHT and nothing in its counter — see the footer below.
+    legacy_boosted = 0
     for i, r in enumerate(rows, 1):
         age = _fmt_age(r["created_at"])
         status = "[dim]surfaced[/dim]" if r["surfaced"] else "[yellow]pending[/yellow]"
@@ -102,6 +106,8 @@ async def _print_thoughts(agent: Agent):
             weight = f"{r['weight']:.2f} → {eff:.2f}"
         echoes = r.get("echo_count", 0)
         total_echoes += echoes
+        if not echoes and r["weight"] > 1.0:
+            legacy_boosted += 1
         echo_cell = f"[magenta]{echoes}[/magenta]" if echoes else "[dim]0[/dim]"
         surfs = r.get("surface_count", 0)
         surf_cell = str(surfs) if surfs else "[dim]0[/dim]"
@@ -124,7 +130,22 @@ async def _print_thoughts(agent: Agent):
             f"Surf = times it reached the prompt (fatigue). "
             f"{total_echoes} echo(es) across {len(rows)} thought(s).[/dim]"
         )
-        if not total_echoes:
+        if not total_echoes and legacy_boosted:
+            # Do NOT say "nothing has recurred" here. On 2026-08-20 that
+            # sentence was read as evidence the layer had never worked, while
+            # weights up to 3.50 (= 1.0 + 5 boosts) proved recurrence had
+            # fired repeatedly — before `echo_count` existed to count it.
+            # The counter being empty and the history being empty are
+            # different claims, and only one of them is checkable here.
+            console.print(
+                f"[dim yellow]Counter reads 0, but {legacy_boosted} thought(s) "
+                "carry weight above the 1.0 baseline — recurrence DID fire, "
+                "before `echo_count` was added (2026-07-30) to record it. So "
+                "this is 'nothing counted yet', NOT 'nothing ever recurred'. "
+                "Only echoes on thoughts newer than that date are "
+                "measurable.[/dim yellow]"
+            )
+        elif not total_echoes:
             console.print(
                 "[dim yellow]No echoes recorded yet — nothing has recurred, so "
                 "gravity is only decaying. Re-read this after ≥10 NEW thoughts "

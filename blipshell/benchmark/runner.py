@@ -6,7 +6,6 @@ delegates here (lazy import + asyncio.run), matching nightly/test commands.
 import logging
 import re
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
 from rich.console import Console
@@ -22,11 +21,7 @@ from blipshell.benchmark.judge import JudgeUnavailable, build_judge
 from blipshell.benchmark.report import build_report, write_report
 from blipshell.benchmark.results import ResultsStore, results_dir
 from blipshell.benchmark.store import BenchmarkStore
-from blipshell.core.config import (
-    DEFAULT_CONFIG_PATH,
-    ConfigManager,
-    resolve_config_relative,
-)
+from blipshell.core.config import ConfigManager, resolve_config_relative
 from blipshell.llm.endpoints import EndpointManager
 from blipshell.models.config import get_ollama_url, resolve_env_vars
 
@@ -98,8 +93,7 @@ def _candidate_context_tokens(config, url: str) -> Optional[int]:
 
 def _report_dir(config_path: Optional[str]) -> str:
     """data/benchmark/ next to the config file (repo root by default), cwd-independent."""
-    base = Path(config_path).resolve().parent if config_path else DEFAULT_CONFIG_PATH.parent
-    return str(base / "data" / "benchmark")
+    return resolve_config_relative("data/benchmark", config_path)
 
 
 async def _regenerate_report(store, config, config_path: Optional[str]) -> tuple[dict, int]:

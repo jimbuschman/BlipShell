@@ -273,10 +273,9 @@ def results_dir(config_path: Optional[str]) -> Path:
     from anywhere, and a cwd-relative path silently splits results across
     directories depending on where you invoked it.
     """
-    from blipshell.core.config import DEFAULT_CONFIG_PATH
+    from blipshell.core.config import resolve_config_relative
 
-    base = Path(config_path).resolve().parent if config_path else DEFAULT_CONFIG_PATH.parent
-    return base / RESULTS_DIRNAME
+    return Path(resolve_config_relative(RESULTS_DIRNAME, config_path))
 
 
 def rows_from_legacy_db(db_path: str | Path) -> list[dict]:

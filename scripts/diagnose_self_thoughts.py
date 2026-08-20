@@ -30,7 +30,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sqlite3
+import struct
 import sys
 from datetime import datetime, timezone
 
@@ -286,6 +288,83 @@ def report_active_roster(db, now):
     return anomalies
 
 
+def _cosine(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if not na or not nb:
+        return 0.0
+    return dot / (na * nb)
+
+
+def report_fold_candidates(db, threshold):
+    """Pairwise cosine over ACTIVE embedded thoughts.
+
+    Answers the question the fold ledger cannot: when near-identical rows sit
+    unfolded, is folding BROKEN or is the threshold simply wrong for this
+    corpus? Those need opposite responses, and the counts alone cannot tell
+    them apart.
+
+    A pair at or above `threshold` should have folded at write time
+    (`add()` -> `_best_echo`) and did not -- that is a live defect. A cluster
+    just below it means folding works and 0.85 is mistuned for a corpus this
+    thematically narrow, where distinct-but-adjacent thoughts sit high.
+
+    O(n^2) in embedded thoughts, which is fine at `max_keep = 50`.
+    """
+    section("FOLD CANDIDATES (pairwise cosine, active only)")
+    rows = db.execute(
+        """SELECT id, embedding, text FROM self_thoughts
+           WHERE is_archived = 0 AND embedding IS NOT NULL ORDER BY id"""
+    ).fetchall()
+    if len(rows) < 2:
+        print("fewer than 2 embedded active thoughts -- nothing to compare.")
+        return []
+
+    vecs = []
+    for r in rows:
+        blob = r["embedding"]
+        try:
+            vecs.append((r["id"], list(struct.unpack("%df" % (len(blob) // 4), blob)),
+                         " ".join(str(r["text"]).split())))
+        except struct.error:
+            print("id %d: embedding blob is unreadable (wrong length?)" % r["id"])
+
+    pairs = []
+    for i in range(len(vecs)):
+        for j in range(i + 1, len(vecs)):
+            pairs.append((_cosine(vecs[i][1], vecs[j][1]), vecs[i][0], vecs[j][0]))
+    pairs.sort(reverse=True)
+
+    over = [p for p in pairs if p[0] >= threshold]
+    print("compared %d thought(s), %d pair(s); threshold %.2f"
+          % (len(vecs), len(pairs), threshold))
+    print("")
+    print("top 10 most-similar pairs:")
+    texts = {v[0]: v[2] for v in vecs}
+    for sim, a, b in pairs[:10]:
+        flag = "  <-- SHOULD HAVE FOLDED" if sim >= threshold else ""
+        print("  %.4f  id %-3d / id %-3d%s" % (sim, a, b, flag))
+        print("          %s" % texts[a][:64])
+        print("          %s" % texts[b][:64])
+
+    anomalies = []
+    print("")
+    if over:
+        print("%d pair(s) at or above %.2f are sitting UNFOLDED." % (len(over), threshold))
+        print("Folding is failing on the write path -- not a threshold question.")
+        anomalies.append("%d unfolded pair(s) >= %.2f" % (len(over), threshold))
+    else:
+        band = [p for p in pairs if threshold - 0.10 <= p[0] < threshold]
+        print("no pair reaches %.2f, so nothing SHOULD have folded --" % threshold)
+        print("folding is not broken; there was simply nothing to fold.")
+        if band:
+            print("%d pair(s) sit in the %.2f-%.2f band. If those read as the"
+                  % (len(band), threshold - 0.10, threshold))
+            print("same thought to you, the threshold is too high for this corpus.")
+    return anomalies
+
+
 def report_migration_backup(db):
     """Did the JSON-blob -> table migration lose anything?"""
     section("PRE-MIGRATION BACKUP")
@@ -319,6 +398,9 @@ def report_migration_backup(db):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--db", default=DEFAULT_DB, help="path (default %s)" % DEFAULT_DB)
+    ap.add_argument("--threshold", type=float, default=0.85,
+                    help="fold/recur cosine threshold; matches "
+                         "reflection.gravity_recur_threshold (default 0.85)")
     args = ap.parse_args(argv)
 
     try:
@@ -344,6 +426,7 @@ def main(argv=None):
         anomalies.append("%d thought(s) archived without a fold" % evicted)
     anomalies += report_fold_ledger(db)
     anomalies += report_active_roster(db, now)
+    anomalies += report_fold_candidates(db, args.threshold)
     anomalies += report_migration_backup(db)
 
     section("VERDICT")
