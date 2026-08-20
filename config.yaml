@@ -55,7 +55,7 @@ endpoints:
     enabled: true
     models:
       summarization: "openai/gpt-oss-120b"
-      ranking_importance: "llama-3.3-70b-versatile"
+      ranking_importance: "openai/gpt-oss-120b"
   - name: "gemini"
     url: "https://generativelanguage.googleapis.com/v1beta/openai/"
     provider: "openai"
