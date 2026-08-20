@@ -22,7 +22,11 @@ from blipshell.benchmark.judge import JudgeUnavailable, build_judge
 from blipshell.benchmark.report import build_report, write_report
 from blipshell.benchmark.results import ResultsStore, results_dir
 from blipshell.benchmark.store import BenchmarkStore
-from blipshell.core.config import DEFAULT_CONFIG_PATH, ConfigManager
+from blipshell.core.config import (
+    DEFAULT_CONFIG_PATH,
+    ConfigManager,
+    resolve_config_relative,
+)
 from blipshell.llm.endpoints import EndpointManager
 from blipshell.models.config import get_ollama_url, resolve_env_vars
 
@@ -46,12 +50,12 @@ def _resolve_db_path(db_path: str, config_path: Optional[str]) -> str:
     `blipshell` is an installed CLI run from any folder; with a cwd-relative
     path, `benchmark run` from the repo and `benchmark report` from another
     folder would open different files — the second silently showing an empty DB.
+
+    Delegates to `resolve_config_relative`, which is this same fix living at
+    the config chokepoint. Keeping a second implementation here is what let
+    the main `database.path` go unanchored for months while this one was safe.
     """
-    p = Path(db_path)
-    if p.is_absolute():
-        return str(p)
-    base = Path(config_path).resolve().parent if config_path else DEFAULT_CONFIG_PATH.parent
-    return str((base / p).resolve())
+    return resolve_config_relative(db_path, config_path)
 
 
 def _print_advice(advice_md: str) -> None:
