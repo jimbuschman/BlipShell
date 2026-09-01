@@ -35,6 +35,7 @@ JOB_ORDER = [
     "score_lessons",
     "clean_junk_lessons",
     "session_reflections",
+    "self_reflection",
     "friction_analysis",
     "entity_extraction",
     "entity_cleanup",
@@ -61,7 +62,7 @@ JOB_ORDER = [
 _OLLAMA_JOBS = {
     "backfill_vectors", "backfill_summaries", "resummarize",
     "backfill_lessons", "score_lessons", "clean_junk_lessons",
-    "session_reflections", "friction_analysis",
+    "session_reflections", "self_reflection", "friction_analysis",
     "entity_extraction", "batch_tag",
     "merge_entities",
     "rebuild_digests",
@@ -303,6 +304,7 @@ class NightlyRunner:
             "score_lessons": self._job_score_lessons,
             "clean_junk_lessons": self._job_clean_junk_lessons,
             "session_reflections": self._job_session_reflections,
+            "self_reflection": self._job_self_reflection,
             "friction_analysis": self._job_friction_analysis,
             "entity_extraction": self._job_entity_extraction,
             "entity_cleanup": self._job_entity_cleanup,
@@ -887,6 +889,108 @@ class NightlyRunner:
             "cloud_routed": cloud_routed,
             "total": len(sessions),
             "stopped_early": stopped_early,
+        }
+
+    async def _job_self_reflection(self, on_status) -> dict:
+        """Form one self-originated lingering thought, app open or not.
+
+        The idle loop and on-return reflection only fire around a 3h+ gap the
+        PROCESS witnesses; on open-chat-close usage that measured out to ~1
+        thought/month (scripts/diagnose_self_thoughts.py), which left the
+        self-gravity step-2 gate ("10 NEW thoughts") roughly a year away. The
+        nightly run happens regardless of how the app is used, so this is
+        where a steady cadence lives: one thought per night, generated exactly
+        the way the agent's own loop generates one — diversity-sampled priors,
+        same prompt, TaskType.REFLECTION routing, NOTHING respected.
+
+        Also reports theme-diversity stats over the active thought corpus
+        (blipshell/memory/themes.py) every run, generated or skipped — the
+        step-2 gate question "is resurfacing caring or indexing?" finally gets
+        a number next to the feeling, and a nightly series shows drift.
+        """
+        from datetime import datetime, timezone
+
+        from blipshell.core.self_reflection import (
+            NOTHING, SelfThoughtStore, lingering_thought_prompt,
+        )
+        from blipshell.llm.router import TaskType
+        from blipshell.memory.themes import theme_diversity
+
+        refl = self.config.reflection
+        if not refl.enabled:
+            return {"skipped": "reflection.enabled=false"}
+        if not getattr(refl, "nightly_enabled", False):
+            return {"skipped": "reflection.nightly_enabled=false"}
+
+        async def _embed(text: str):
+            if self.vectors is None:
+                return None
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, self.vectors.embed_text, text)
+
+        store = SelfThoughtStore(
+            self.sqlite,
+            max_keep=refl.max_keep,
+            embed_fn=_embed,
+            gravity_enabled=refl.gravity_enabled,
+            recur_threshold=refl.gravity_recur_threshold,
+            recur_boost=refl.gravity_recur_boost,
+            fatigue=refl.gravity_fatigue,
+            half_life_days=refl.gravity_half_life_days,
+            min_weight=refl.gravity_min_weight,
+        )
+
+        def _themes_now(items: list[dict]) -> dict:
+            return theme_diversity([it["text"] for it in items])
+
+        items = await self.sqlite.get_self_thoughts(with_embeddings=False)
+
+        # Don't pile a second thought onto a day that already produced one
+        # (idle loop or on-return reflection) — cadence, not volume, is the
+        # point, and near-simultaneous thoughts are the raw material of the
+        # duplicate-fold pathologies the store already had to repair once.
+        min_gap = getattr(refl, "nightly_min_gap_hours", 12.0)
+        newest_iso = items[-1].get("created_at") if items else None
+        if newest_iso and min_gap > 0:
+            try:
+                newest = datetime.fromisoformat(newest_iso)
+                if newest.tzinfo is None:
+                    newest = newest.replace(tzinfo=timezone.utc)
+                age_hours = (
+                    datetime.now(timezone.utc) - newest
+                ).total_seconds() / 3600.0
+                if age_hours < min_gap:
+                    return {
+                        "generated": 0,
+                        "skipped": (
+                            f"newest thought is {age_hours:.1f}h old "
+                            f"(< nightly_min_gap_hours={min_gap})"
+                        ),
+                        "themes": _themes_now(items),
+                    }
+            except (ValueError, TypeError):
+                pass  # unparseable stamp: don't let it block the cadence
+
+        prior = await store.diverse_recent(5)
+        system, user = lingering_thought_prompt(prior)
+        text = (
+            await self.router.generate(TaskType.REFLECTION, user, system=system)
+        ).strip()
+        if not text or text.upper().startswith(NOTHING):
+            on_status("  self_reflection: nothing pressing")
+            return {
+                "generated": 0,
+                "nothing_pressing": True,
+                "themes": _themes_now(items),
+            }
+
+        await store.add(text)
+        on_status(f"  self_reflection: {text[:100]}")
+        items = await self.sqlite.get_self_thoughts(with_embeddings=False)
+        return {
+            "generated": 1,
+            "thought": text[:200],
+            "themes": _themes_now(items),
         }
 
     async def _job_friction_analysis(self, on_status) -> dict:

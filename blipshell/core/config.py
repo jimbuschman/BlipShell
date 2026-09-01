@@ -67,7 +67,40 @@ class ConfigManager:
             self.config = BlipShellConfig()
             logger.info("Using default config (no file at %s)", self.config_path)
         self._anchor_paths()
+        self._guard_missing_database()
         return self.config
+
+    def _guard_missing_database(self) -> None:
+        """Fail LOUDLY when an expected database file is absent.
+
+        SQLite treats an absent file as a creation, not a failure, so a wrong
+        path costs history silently (nine days of it, 2026-08-11..08-20 —
+        see resolve_config_relative). Anchoring fixed the known cause; this
+        guard catches the CLASS: with `database.require_existing: true`, any
+        launch that resolves to a nonexistent file stops here with the paths
+        spelled out, instead of quietly starting a parallel corpus.
+
+        Enforced at the same chokepoint that anchors the path, so every
+        consumer inherits it. Overrides applied AFTER load() (`simulate --db`,
+        benchmark temp DBs) are untouched — they are deliberate choices of a
+        different file, which is exactly not the failure mode.
+        """
+        db = getattr(self.config, "database", None)
+        if not db or not getattr(db, "require_existing", False):
+            return
+        target = Path(db.path)
+        if target.exists():
+            return
+        raise FileNotFoundError(
+            f"database.require_existing is true and no database exists at the "
+            f"resolved path:\n    {target}\n"
+            f"(config: {self.config_path.resolve()}, cwd: {Path.cwd()})\n"
+            f"If this instance genuinely has no corpus yet (fresh install), "
+            f"set database.require_existing: false, or create the file "
+            f"deliberately. If it HAS a corpus, this launch was about to "
+            f"start a new empty database somewhere else — find the real one "
+            f"before running anything."
+        )
 
     def _anchor_paths(self) -> None:
         """Make `database.path` independent of the working directory.

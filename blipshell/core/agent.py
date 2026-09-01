@@ -748,7 +748,7 @@ class Agent(
             # all that theme, and the reflection spirals into its own groove.
             prior = await self._self_thoughts.diverse_recent(5)
             system, user = lingering_thought_prompt(prior)
-            text = (await self.router.generate(TaskType.REASONING, user, system=system)).strip()
+            text = (await self.router.generate(TaskType.REFLECTION, user, system=system)).strip()
             if not text or text.upper().startswith(NOTHING):
                 logger.info("Idle reflection: nothing pressing")
                 return

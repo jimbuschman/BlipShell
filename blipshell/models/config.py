@@ -23,6 +23,7 @@ class ModelsConfig(BaseModel):
     importance: str = "qwen3:14b"
     ranking_importance: Optional[str] = None  # combined scoring; falls back to ranking model
     session_review: Optional[str] = None  # whole-session analysis; falls back to reasoning model
+    reflection: Optional[str] = None  # idle self-reflection (lingering thoughts); falls back to reasoning model
     embedding: str = "qwen3-embedding:0.6b"
     # Fallback models used when cloud endpoints are unavailable
     reasoning_fallback: str = "gpt-oss:latest"
@@ -33,6 +34,7 @@ class ModelsConfig(BaseModel):
     importance_fallback: Optional[str] = None
     ranking_importance_fallback: Optional[str] = None
     session_review_fallback: Optional[str] = None
+    reflection_fallback: Optional[str] = None
     # Disable thinking for fallback models (faster conversational responses)
     fallback_think: bool = False
 
@@ -266,6 +268,15 @@ class DatabaseConfig(BaseModel):
     """Database paths configuration."""
     path: str = "data/blipshell.db"
     embedding_dimensions: int = 1024  # qwen3-embedding:0.6b output size
+    # Refuse to run when the database file does not exist. An absent SQLite
+    # file is a CREATION, not a failure — which is how 2026-08-11..08-20 put
+    # nine days of live sessions into a phantom 16MB database while the real
+    # 491MB corpus sat untouched, with no symptom but an assistant that had
+    # quietly lost its history. On an instance whose corpus already exists,
+    # a missing file at the resolved path is ALWAYS a wrong-path launch, so
+    # production config sets this true. Default false so fresh installs and
+    # temp-DB test configs keep working.
+    require_existing: bool = False
 
 
 class LLMConfig(BaseModel):
@@ -345,6 +356,17 @@ class ReflectionConfig(BaseModel):
     # ~1 thought/month, which made the self-gravity step-2 gate ("10 new
     # thoughts") roughly a year away (2026-08-09 analysis).
     on_return_enabled: bool = True
+
+    # Nightly reflection: form one lingering thought during the nightly run.
+    # The idle loop and on-return reflection both require the process to be
+    # (or have been) around a 3h+ gap; measured throughput on open-chat-close
+    # usage was ~1 thought/month, and the self-gravity step-2 gate needs 10
+    # NEW thoughts — a year away at that rate (scripts/diagnose_self_thoughts).
+    # The nightly run happens regardless of app usage, so it is the one place
+    # a steady cadence can live. Guarded by nightly_min_gap_hours so a night
+    # following a same-day idle/return thought doesn't pile on a second one.
+    nightly_enabled: bool = True
+    nightly_min_gap_hours: float = 12.0
 
     # Standing injection: a relevant past thought resurfaces as context (not just
     # the one-shot greeting). Two-stage filter — cosine prefilter then an LLM

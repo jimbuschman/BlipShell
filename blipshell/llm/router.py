@@ -31,6 +31,13 @@ class TaskType:
     RANKING_IMPORTANCE = "ranking_importance"
     EMBEDDING = "embedding"
     SESSION_REVIEW = "session_review"
+    # Idle self-reflection (lingering thoughts). A dedicated key because the
+    # reflection task is unusually model-sensitive: Wisp measured (2026-08-31,
+    # same corpus, same prompt, only the model varied) phi4:14b producing 3
+    # distinct themes across 20 reflections where gemma4:31b-cloud produced 14.
+    # Routing it through REASONING would tie thought diversity to whatever
+    # model entity extraction happens to need.
+    REFLECTION = "reflection"
 
 
 class LLMRouter:
@@ -59,6 +66,7 @@ class LLMRouter:
             TaskType.RANKING_IMPORTANCE: self._models.ranking_importance or self._models.ranking,
             TaskType.EMBEDDING: self._models.embedding,
             TaskType.SESSION_REVIEW: self._models.session_review or self._models.reasoning,
+            TaskType.REFLECTION: self._models.reflection or self._models.reasoning,
         }
         return model_map.get(task_type, self._models.reasoning)
 
@@ -73,6 +81,7 @@ class LLMRouter:
             TaskType.IMPORTANCE: self._models.importance_fallback,
             TaskType.RANKING_IMPORTANCE: self._models.ranking_importance_fallback,
             TaskType.SESSION_REVIEW: self._models.session_review_fallback,
+            TaskType.REFLECTION: self._models.reflection_fallback,
         }
         return fallback_map.get(task_type)
 

@@ -13,6 +13,11 @@ models:
   ranking_importance: "qwen3:14b"        # combined rank+importance (was qwen2.5:14b — consolidate on reasoning model)
   # --- Session Review (local primary, cloud for big sessions) ---
   session_review: "qwen3:14b"             # whole-session analysis (lessons, reflections)
+  # --- Idle self-reflection (lingering thoughts) ---
+  # Local name, used when routing lands on the "local" endpoint (cloud down,
+  # /local mode). The local-cloud endpoint overrides this with gemma4:31b-cloud
+  # — see the endpoint's models block for the measured reason.
+  reflection: "qwen3:14b"
   # --- Embedding (local) ---
   embedding: "qwen3-embedding:0.6b"      # vector search — 10% better similarity than nomic, understands domain terms
   # --- Fallbacks (local, used when cloud is down) ---
@@ -24,6 +29,7 @@ models:
   importance_fallback: "qwen3:14b"
   ranking_importance_fallback: "qwen3.5:9b"   # was qwen2.5:7b; qwen3.5:9b scores 98/98% vs 92/90%
   session_review_fallback: "qwen3:14b"        # was gpt-oss:latest — that forced a large COLD load at 2am and llama-server died on CUDA init (2026-07-31); qwen3:14b is the session_review primary and already resident
+  reflection_fallback: "qwen3:14b"            # same cold-load logic: reflection fires after hours idle / at 2am nightly, so fall back to a model that's already resident
   fallback_think: false                  # disable thinking for fallback models (faster chat)
 
 endpoints:
@@ -70,7 +76,7 @@ endpoints:
       summarization: "gemini-2.5-flash"
   - name: "local-cloud"
     url: "http://localhost:11434"
-    roles: ["tool_calling", "session_review"]             # primary for chat; coding goes to OpenRouter
+    roles: ["tool_calling", "session_review", "reflection"]   # primary for chat; coding goes to OpenRouter
     priority: 2                                           # tried first for both roles (higher = first)
     max_concurrent: 5
     context_tokens: 131072  # 128K — gpt-oss:120b-cloud context window
@@ -97,9 +103,24 @@ endpoints:
       #     is classified as a model error, so it falls back to local qwen3:14b
       #     without penalising this endpoint (which also serves interactive chat).
       session_review: "minimax-m3:cloud"
+      # reflection -> gemma4:31b-cloud, on Wisp's brain-swap measurement
+      # (2026-08-31): same corpus, same lingering-thought-style prompt, only
+      # the model varied — phi4:14b produced 3 distinct themes across 20
+      # reflections (domination 0.750); gemma4:31b-cloud produced 14
+      # (domination 0.150), three times faster. BlipShell's own 23-of-24-
+      # thoughts-on-one-subject incident (2026-07-09) is the same pathology,
+      # and diverse_recent() alone reproduced it in Wisp at ~97%. That
+      # measurement is Wisp's corpus, not ours: the nightly self_reflection
+      # job now reports theme_diversity every run, so this choice gets
+      # checked against BlipShell's own thoughts. If distinct_themes doesn't
+      # move within ~2 weeks of nightly cadence, revisit.
+      # Privacy cost is the session_review one: prior thoughts leave the
+      # machine (pii-sanitized). /local mode hides this endpoint, and the
+      # reflection key falls back to local qwen3:14b.
+      reflection: "gemma4:31b-cloud"
   - name: "local"
     url: "http://localhost:11434"
-    roles: ["reasoning", "embedding", "summarization", "ranking", "importance", "ranking_importance", "session_review"]
+    roles: ["reasoning", "embedding", "summarization", "ranking", "importance", "ranking_importance", "session_review", "reflection"]
     priority: 1
     max_concurrent: 5
     context_tokens: 32768   # 32K — local models (qwen3:14b, glm4, qwen2.5:14b) don't need more
@@ -267,6 +288,11 @@ auth:
 database:
   path: "data/blipshell.db"
   embedding_dimensions: 1024  # qwen3-embedding:0.6b output size
+  # This instance HAS a corpus, so a missing file at the resolved path is
+  # always a wrong-path launch — refuse instead of letting SQLite silently
+  # create a phantom database (nine days of history went into one,
+  # 2026-08-11..08-20). Fresh installs set this false.
+  require_existing: true
 
 telegram:
   bot_token: "${BLIPSHELL_TELEGRAM_TOKEN}"  # from @BotFather
@@ -330,6 +356,8 @@ reflection:
   enabled: true
   idle_seconds: 10800.0              # ~3 hours quiet before it reflects
   on_return_enabled: true            # also reflect at startup after a 3h+ absence (the gap happened while the app was off)
+  nightly_enabled: true              # form one thought per nightly run — idle + on-return measured ~1 thought/month, and the self-gravity step-2 gate needs 10
+  nightly_min_gap_hours: 12.0        # skip the nightly thought when one already formed today (idle/return)
   max_keep: 50                       # past thoughts retained
   # Standing injection — a relevant past thought resurfaces as context, not just
   # the one-shot return greeting. Two-stage: loose cosine prefilter, then a local
