@@ -635,21 +635,15 @@ def extract_response(response) -> tuple[str, list | None]:
     return "", None
 
 
-def extract_tool_call_info(tc) -> tuple[str, dict]:
-    """Extract name and arguments from a tool call object or dict."""
-    # Object access (ollama 0.4+)
-    fn = getattr(tc, "function", None)
-    if fn is not None:
-        name = getattr(fn, "name", "") or ""
-        args = getattr(fn, "arguments", {}) or {}
-        return name, args
-
-    # Dict access
-    if isinstance(tc, dict):
-        fn = tc.get("function", {})
-        return fn.get("name", ""), fn.get("arguments", {})
-
-    return "", {}
+# Tool-call parsing is PRODUCTION'S — never a local copy. This suite used to
+# carry its own two-tuple extractor that didn't parse OpenAI-style
+# arguments-as-JSON-string, so every openai-provider candidate scored exactly
+# 0.000 on tool_calling (deepseek-v4-flash and minimax-m3:free, 2026-09-02)
+# while tool-calling fine through the same endpoint in production: the args
+# stayed a string, and _tool_call_matches requires a dict. A benchmark that
+# parses responses differently from ChatLoop measures the parser, not the
+# model. (tests/benchmark_agent_buggy.py still has a copy; nothing loads it.)
+from blipshell.core.chat_loop import extract_tool_call_info  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -743,8 +737,8 @@ async def benchmark_tool_calling(router: LLMRouter, extra_options: dict | None =
 
                 turn_calls = []
                 for tc in (tool_calls or []):
-                    name, args = extract_tool_call_info(tc)
-                    turn_calls.append({"name": name, "args": args})
+                    name, args, tc_id = extract_tool_call_info(tc)
+                    turn_calls.append({"name": name, "args": args, "id": tc_id})
                 called_tools.extend(turn_calls)
 
                 if any(_tool_call_matches(t, test["expected_tool"], test.get("expected_args"))
@@ -759,16 +753,11 @@ async def benchmark_tool_calling(router: LLMRouter, extra_options: dict | None =
                 # Feed results back and let it continue, exactly as ChatLoop does.
                 messages.append({"role": "assistant", "content": content or "",
                                  "tool_calls": tool_calls})
-                for tc, t in zip(tool_calls, turn_calls):
-                    tc_id = ""
-                    if isinstance(tc, dict):
-                        tc_id = tc.get("id") or ""
-                    else:
-                        tc_id = getattr(tc, "id", "") or ""
+                for t in turn_calls:
                     msg = {"role": "tool", "name": t["name"],
                            "content": _fake_tool_result(t["name"], t["args"])}
-                    if tc_id:  # OpenAI-compat endpoints require it; Ollama ignores it
-                        msg["tool_call_id"] = tc_id
+                    if t["id"]:  # OpenAI-compat endpoints require it; Ollama ignores it
+                        msg["tool_call_id"] = t["id"]
                     messages.append(msg)
 
             result = {

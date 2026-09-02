@@ -152,3 +152,90 @@ def test_suite_sends_the_production_system_prompt():
     from blipshell.models.config import AgentConfig
     assert br.TOOL_CALLING_SYSTEM == AgentConfig().system_prompt
     assert br.TOOL_CALLING_MAX_TURNS > 1
+
+
+# ---------------------------------------------------------------------------
+# Cross-stack response parsing (2026-09-02 regression)
+#
+# The suite used to carry its own tool-call extractor that did not parse
+# OpenAI-style arguments-as-JSON-string. Every openai-provider candidate
+# scored exactly 0.000 on tool_calling (deepseek-v4-flash, minimax-m3:free)
+# while tool-calling fine through the same endpoint in production. The suite
+# must parse responses with PRODUCTION's extractor, or it measures the
+# parser, not the model.
+# ---------------------------------------------------------------------------
+
+def test_extractor_is_productions():
+    from blipshell.core.chat_loop import extract_tool_call_info
+    assert br.extract_tool_call_info is extract_tool_call_info
+
+
+def test_openai_json_string_args_parse_to_dict():
+    tc = {"id": "call_1", "type": "function",
+          "function": {"name": "read_file", "arguments": '{"path": "worker.py"}'}}
+    name, args, tc_id = br.extract_tool_call_info(tc)
+    assert (name, args, tc_id) == ("read_file", {"path": "worker.py"}, "call_1")
+
+
+class _ScriptedChatClient:
+    """Returns openai_client._normalize_response-shaped dicts, one per turn."""
+
+    def __init__(self, turns):
+        self._turns = list(turns)
+        self.seen_messages = []
+
+    async def chat(self, messages, model, tools=None, **kwargs):
+        self.seen_messages.append([dict(m) for m in messages])
+        return self._turns.pop(0)
+
+
+class _FakeRouter:
+    def __init__(self, client):
+        self._client = client
+
+    async def get_model_and_client(self, task_type):
+        return "fake-model", self._client
+
+
+def _openai_turn(name, arguments_json, tc_id):
+    return {"message": {"content": "", "role": "assistant", "tool_calls": [
+        {"id": tc_id, "type": "function",
+         "function": {"name": name, "arguments": arguments_json}}]}}
+
+
+_CASE = {
+    "name": "read_worker",
+    "message": "Read the contents of worker.py",
+    "expected_tool": "read_file",
+    "expected_args": {"path": "worker.py"},
+}
+
+
+async def test_openai_shaped_candidate_scores(monkeypatch):
+    """The 0.000 bug, end to end: orient on turn 1, correct call on turn 2,
+    args as JSON strings throughout — must score correct, and the fed-back
+    tool message must carry tool_call_id (OpenAI-compat endpoints require it)."""
+    monkeypatch.setattr(br, "TOOL_CALLING_TESTS", [_CASE])
+    client = _ScriptedChatClient([
+        _openai_turn("list_directory", '{"path": "."}', "call_a"),
+        _openai_turn("read_file", '{"path": "worker.py"}', "call_b"),
+    ])
+    results = await br.benchmark_tool_calling(_FakeRouter(client))
+    assert results[0]["correct"] is True
+    assert results[0]["turns"] == 2
+    # Turn 2's history must include the turn-1 tool result with its id.
+    turn2_messages = client.seen_messages[1]
+    tool_msgs = [m for m in turn2_messages if m.get("role") == "tool"]
+    assert tool_msgs and tool_msgs[0]["tool_call_id"] == "call_a"
+
+
+async def test_ollama_shaped_candidate_still_scores(monkeypatch):
+    """No regression on the Ollama path: dict args, no tool_call ids."""
+    monkeypatch.setattr(br, "TOOL_CALLING_TESTS", [_CASE])
+    client = _ScriptedChatClient([
+        {"message": {"content": "", "tool_calls": [
+            {"function": {"name": "read_file", "arguments": {"path": "worker.py"}}}]}},
+    ])
+    results = await br.benchmark_tool_calling(_FakeRouter(client))
+    assert results[0]["correct"] is True
+    assert results[0]["turns"] == 1
