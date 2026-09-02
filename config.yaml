@@ -1,45 +1,39 @@
-# BlipShell Configuration
-# This file is self-modifiable by the agent
+# BlipShell configuration.
+#
+# This file holds the MODEL/ENDPOINT ROUTING plus only the values that DIFFER
+# from the code defaults. Every other knob, with its documentation, lives in
+# blipshell/models/config.py — an unset key here means "the default", on
+# purpose. Pruned from 420 lines on 2026-09-02; the old fully-expanded file is
+# in git history.
+#
+# WHY each model/endpoint choice: docs/MODEL_DECISIONS.md (dated decision log).
+# Keep durable rationale THERE, not here — programmatic saves (web
+# /api/config, personality import) rewrite this file and drop comments.
 
 models:
   # --- Interactive ---
-  # tool_calling -> gemma4:31b-cloud, decided 2026-09-02 when minimax-m3 left
-  # the Ollama free tier. Evidence: the 2026-08-19 agent eval (24 models, 720
-  # episodes, docs/AGENT_EVAL_2026_08.md) — 27/30, the ONLY available free
-  # candidate with a clean reliability record (0 silent episodes, 0 turn-limit
-  # burns, 0 API errors), 10.5s/ep. Every nemotron goes silent or doom-loops
-  # at 24-40s/ep; gpt-oss:120b returns nothing when stuck; gpt-oss:20b 18/30.
-  # KNOWN FLAW, consistent not random: domain misreading on config questions
-  # (multi_fact 0/3 — answers "is dedup enabled" with Linux KSM/esxcli
-  # instincts). Watch for sysadmin-flavored answers to BlipShell questions.
-  tool_calling: "gemma4:31b-cloud"
-  coding: "minimax/minimax-m3"          # project mode coding via OpenRouter (matched m2.5 quality on bench, newer + larger context)
+  tool_calling: "gemma4:31b-cloud"   # main model, decided 2026-09-02 (agent eval) — see MODEL_DECISIONS.md
+  coding: "minimax/minimax-m3"       # OpenRouter (paid), unaffected by Ollama free-tier churn
   # --- Background processing (local) ---
-  reasoning: "qwen3:14b"                 # entity extraction, tag discovery, lessons, contradiction
-  summarization: "glm4:latest"           # memory/session summaries (Groq/Gemini tried first via endpoint priority)
-  ranking: "qwen3:14b"                   # memory ranking 1-5 (was qwen2.5:14b — qwen3:14b matches reasoning, avoids model swap)
-  importance: "qwen3:14b"               # memory importance 0.0-1.0
-  ranking_importance: "qwen3:14b"        # combined rank+importance (was qwen2.5:14b — consolidate on reasoning model)
-  # --- Session Review (local primary, cloud for big sessions) ---
-  session_review: "qwen3:14b"             # whole-session analysis (lessons, reflections)
-  # --- Idle self-reflection (lingering thoughts) ---
-  # Local name, used when routing lands on the "local" endpoint (cloud down,
-  # /local mode). The local-cloud endpoint overrides this with gemma4:31b-cloud
-  # — see the endpoint's models block for the measured reason.
-  reflection: "qwen3:14b"
-  # --- Embedding (local) ---
-  embedding: "qwen3-embedding:0.6b"      # vector search — 10% better similarity than nomic, understands domain terms
+  reasoning: "qwen3:14b"
+  summarization: "glm4:latest"       # Groq tried first via endpoint priority
+  ranking: "qwen3:14b"
+  importance: "qwen3:14b"
+  ranking_importance: "qwen3:14b"
+  session_review: "qwen3:14b"        # local name; local-cloud endpoint overrides — see endpoints
+  reflection: "qwen3:14b"            # local name; local-cloud endpoint overrides — see endpoints
+  embedding: "qwen3-embedding:0.6b"  # local, always
   # --- Fallbacks (local, used when cloud is down) ---
   tool_calling_fallback: "gpt-oss:latest"
   coding_fallback: "gpt-oss:latest"
   reasoning_fallback: "gpt-oss:latest"
-  summarization_fallback: "qwen3:14b"    # was glm4; qwen3:14b scores 100/95% vs 92/100%, already loaded
+  summarization_fallback: "qwen3:14b"
   ranking_fallback: "qwen3:14b"
   importance_fallback: "qwen3:14b"
-  ranking_importance_fallback: "qwen3.5:9b"   # was qwen2.5:7b; qwen3.5:9b scores 98/98% vs 92/90%
-  session_review_fallback: "qwen3:14b"        # was gpt-oss:latest — that forced a large COLD load at 2am and llama-server died on CUDA init (2026-07-31); qwen3:14b is the session_review primary and already resident
-  reflection_fallback: "qwen3:14b"            # same cold-load logic: reflection fires after hours idle / at 2am nightly, so fall back to a model that's already resident
-  fallback_think: false                  # disable thinking for fallback models (faster chat)
+  ranking_importance_fallback: "qwen3.5:9b"
+  session_review_fallback: "qwen3:14b"   # idle/nightly fallbacks stay on resident models (2026-07-31 cold-load incident)
+  reflection_fallback: "qwen3:14b"
+  fallback_think: false
 
 endpoints:
   - name: "openrouter"
@@ -47,12 +41,10 @@ endpoints:
     provider: "openai"
     api_key: "${OPENROUTER_API_KEY}"
     roles: ["coding", "tool_calling"]
-    priority: 1                          # fallback for chat when Ollama cloud is down; primary for coding
+    priority: 1                # chat fallback when Ollama cloud is down; coding primary
     max_concurrent: 5
-    context_tokens: 204800               # MiniMax M3's OpenRouter provider serves 512K; capped at 204.8K to match the Ollama-cloud chat endpoint and bound request cost
-    pii_sanitize: true                   # data leaves machine via OpenRouter.
-                                         # Interactive chat = credentials only;
-                                         # background calls = full. See `pii:` below.
+    context_tokens: 204800
+    pii_sanitize: true         # data leaves the machine (chat = credentials only; background = full — see llm/pii.py)
     enabled: true
     models:
       coding: "minimax/minimax-m3"
@@ -62,343 +54,78 @@ endpoints:
     provider: "openai"
     api_key: "${GROQ_API_KEY}"
     roles: ["summarization", "ranking_importance"]
-    priority: 2                          # ranking primary (30 RPM), summarization fallback when Gemini rate-limits
+    priority: 2
     max_concurrent: 3
     rate_limit_rpm: 30
     rate_limit_rpd: 1000
-    rate_limit_tpm: 6000                 # free tier TPM limit — large requests skip to local
+    rate_limit_tpm: 6000       # free tier — large requests skip to local
     enabled: true
     models:
       summarization: "openai/gpt-oss-120b"
       ranking_importance: "openai/gpt-oss-120b"
-  - name: "gemini"
-    url: "https://generativelanguage.googleapis.com/v1beta/openai/"
-    provider: "openai"
-    api_key: "${GEMINI_API_KEY}"
-    roles: ["summarization"]
-    priority: 3                          # tried first for summarization (5 RPM, Groq fallback)
-    max_concurrent: 2
-    rate_limit_rpm: 10                    # free tier: 10 RPM (Google docs say 10, was 5)
-    rate_limit_rpd: 250                  # free tier: 250 RPD (error showed 20 — may be per-interval burst limit)
-    enabled: false                       # disabled: 20-request burst limit makes free tier unreliable
-    models:
-      summarization: "gemini-2.5-flash"
-  - name: "local-cloud"
+  - name: "local-cloud"        # Ollama daemon relaying to Ollama's cloud (free tier)
     url: "http://localhost:11434"
-    roles: ["tool_calling", "session_review", "reflection"]   # primary for chat; coding goes to OpenRouter
-    priority: 2                                           # tried first for both roles (higher = first)
+    roles: ["tool_calling", "session_review", "reflection"]
+    priority: 2                # tried before "local" for these roles
     max_concurrent: 5
-    context_tokens: 131072  # 128K — gpt-oss:120b-cloud context window
-    pii_sanitize: true       # cloud models relay to remote server — data leaves machine.
-                             # Interactive chat = credentials only; background
-                             # calls (session_review) = full. See `pii:` below.
+    context_tokens: 131072
+    pii_sanitize: true         # relays offsite despite the localhost URL; /local mode hides it
     enabled: true
-    models:
-      tool_calling: "gemma4:31b-cloud"  # free tier; see models.tool_calling comment for the 2026-09-02 decision
-      # session_review -> gemma4:31b-cloud, PROVISIONAL 2026-09-02: minimax-m3
-      # (the measured 2026-08-04 choice: 0.944 review / 0.585 lessons vs local
-      # qwen3:14b's 0.844/0.345) left the Ollama free tier. gemma4:31b-cloud is
-      # UNMEASURED on these jobs — the 2026-08-18 benchmark run aborted before
-      # the judge scored anything. It keeps the 128K single-pass window; local
-      # qwen3:14b remains the fallback. Resolve with, on the Ollama PC:
-      #   blipshell benchmark run gemma4:31b-cloud --repeats 5
-      # and check the lessons number — lessons decided this slot last time.
-      # (Free-tier churn history: kimi-k2.5 retired mid-nightly 2026-07-31,
-      # minimax-m3 delisted 2026-09; a 410/404 falls back to local unpenalised.)
-      session_review: "gemma4:31b-cloud"
-      # reflection -> gemma4:31b-cloud, on Wisp's brain-swap measurement
-      # (2026-08-31): same corpus, same lingering-thought-style prompt, only
-      # the model varied — phi4:14b produced 3 distinct themes across 20
-      # reflections (domination 0.750); gemma4:31b-cloud produced 14
-      # (domination 0.150), three times faster. BlipShell's own 23-of-24-
-      # thoughts-on-one-subject incident (2026-07-09) is the same pathology,
-      # and diverse_recent() alone reproduced it in Wisp at ~97%. That
-      # measurement is Wisp's corpus, not ours: the nightly self_reflection
-      # job now reports theme_diversity every run, so this choice gets
-      # checked against BlipShell's own thoughts. If distinct_themes doesn't
-      # move within ~2 weeks of nightly cadence, revisit.
-      # Privacy cost is the session_review one: prior thoughts leave the
-      # machine (pii-sanitized). /local mode hides this endpoint, and the
-      # reflection key falls back to local qwen3:14b.
+    models:                    # all three decided/provisional 2026-09-02 — see MODEL_DECISIONS.md
+      tool_calling: "gemma4:31b-cloud"
+      session_review: "gemma4:31b-cloud"   # PROVISIONAL: unbenchmarked on lessons; resolve per MODEL_DECISIONS.md
       reflection: "gemma4:31b-cloud"
   - name: "local"
     url: "http://localhost:11434"
     roles: ["reasoning", "embedding", "summarization", "ranking", "importance", "ranking_importance", "session_review", "reflection"]
     priority: 1
     max_concurrent: 5
-    context_tokens: 32768   # 32K — local models (qwen3:14b, glm4, qwen2.5:14b) don't need more
+    context_tokens: 32768
     enabled: true
-  - name: "old-pc"
-    url: "http://192.168.0.225:11434"
-    roles: ["ranking"]
-    priority: 2
-    max_concurrent: 2
-    context_tokens: 131072
-    enabled: false  # not used for import
 
 memory:
-  pools:
-    core:           # Stable personal facts (core_memories). Always present.
-      percentage: 0.05
-      priority: 5
-    lessons:        # Top extracted insights. Always present.
-      percentage: 0.05
-      priority: 4
-    active_session: # Current conversation messages.
-      percentage: 0.30
-      priority: 3
-    recent_history: # Previous session memories + summaries.
-      percentage: 0.20
-      priority: 2
-    recall:         # Search results — most relevant content per query. Largest pool.
-      percentage: 0.40
-      priority: 1
-
-  # total_context_tokens is now derived from the endpoint's context_tokens automatically.
-  # Only set this if you need to override the endpoint value for memory pool sizing.
-  system_prompt_reserve: 2048
-  overflow_batch_size: 4
-  recall_search_limit: 20
-  min_importance: 0.25
-  importance_recency_bonus: 0.1
-  importance_tag_bonus: 0.05
-  similarity_threshold: 0.35
-  importance_boost_weight: 0.2
-  tag_overlap_boost: 0.1
-  search_overfetch_multiplier: 2
-  time_aware_search: true    # "yesterday"/"last week" queries prefer in-range memories (deterministic parse, no LLM; docs/FIELD_SURVEY_2026_09.md 3.1)
-  dedup:
-    enabled: true
-    similarity_threshold: 0.7  # min cosine similarity to consider as duplicate candidate
-
-  # Near-duplicate merging (nightly "consolidate" job). Rewritten 2026-08-06 to
-  # query with each memory's STORED vector instead of re-embedding it, which is
-  # what held throughput at ~20/night against a 17K corpus. It's now bounded by
-  # the job's time budget rather than a count, and losers are ARCHIVED (they
-  # used to be deleted, which cascaded their entity edges away).
-  #
-  # RUN IT DRY FIRST. A miscalibrated threshold merges far more at this
-  # throughput than it ever could at 20/night, and merges are one-way.
-  # 0.92, raised from 0.85 after the first dry run over the real corpus
-  # (2026-08-06). At 0.85 it proposed 323 merges from 1967 checks, and the
-  # 0.85-0.88 band was merging unrelated content: an ngrok how-to folded
-  # into "AI cannot make HTTP requests" (opposite facts), and a Gemini
-  # message-format spec folded into "User values real-time exchange".
-  # Vague summaries act as semantic attractors. At >=0.92 the pairs are
-  # near-verbatim: the same 404 logged twice, "Did you make the call?" vs
-  # "did you make the call?".
-  consolidation_similarity: 0.92   # min cosine similarity to merge
-  # 500 fits the job's time budget on a 17K corpus (measured ~7.3/sec
-  # 2026-08-06). At 2000 the neighbour scan consumed the entire budget and
-  # the pass merged nothing. Bigger is not faster here.
-  consolidation_batch_size: 500    # candidates per run (0 disables the job)
-  consolidation_dry_run: false     # true = log what would merge, change nothing
-
-  entity_resolution:
-    enabled: true                # backfill runs automatically on first startup
-    embedding_auto_merge_threshold: 0.85  # auto-merge above this
-    llm_arbitration_threshold: 0.70       # ask LLM between this and auto_merge
-    max_candidates: 5
-
-  dedup_jaccard_threshold: 0.65 # Jaccard similarity to consider summaries duplicate
-  project_session_limit: 50     # max recent project sessions for two-pass search
-
+  # DIFFERS from the code default 0 — and the default's own comment says 90
+  # once archived 1083 imported memories. Kept as-authored through the
+  # 2026-09-02 prune; VERIFY INTENT (see MODEL_DECISIONS.md, standing facts).
   auto_prune_days: 90
-  prune_max_importance: 0.3
-  prune_max_rank: 2
-
-  # Entity graph pruning — soft-archive low-value entities (nightly "prune_entities" job).
-  # Reversible: flips is_archived, never deletes. Dry-run logs candidates without touching data.
-  entity_prune_enabled: false      # opt-in
-  entity_prune_dry_run: true       # log-only until you explicitly set this false
-  entity_prune_min_age_days: 30    # never prune entities younger than this
-  entity_prune_max_mentions: 1     # prune only if mention count <= this
-  entity_prune_max_degree: 1       # prune only if relationship degree <= this
-
-  # Retroactive entity merge — consolidate duplicate entities already in the graph
-  # (nightly "merge_entities" job). Conservative: a bad merge destroys edge
-  # differentiation. Thresholds are higher than creation-time resolution.
-  entity_merge_enabled: false      # opt-in
-  entity_merge_dry_run: true       # log-only until you explicitly set this false
-  entity_merge_auto_threshold: 0.90  # auto-merge above this similarity
-  entity_merge_llm_threshold: 0.80   # LLM arbitration (edge-aware) band: this..auto
-  entity_merge_max_candidates: 5     # similar entities checked per entity
-  entity_merge_edge_sample: 5        # edges shown to the arbitration LLM
-
-session:
-  max_messages_before_summary: 50
-  summary_chunk_size: 20
-  auto_save_interval: 300  # seconds
-
-agent:
-  max_tool_iterations: 50  # CC has no limit; 50 is a generous safety net
-  # system_prompt is now defined in config.py defaults (trimmed to 5 rules)
-  stream: true
 
 tools:
-  shell:
-    timeout: 30
-    # allowed_commands: empty = allow all commands (CC approach)
-    # Safety comes from tool descriptions steering toward dedicated tools
-  filesystem:
-    max_file_size: 1048576  # 1MB
-    blocked_paths:
-      - "/etc/shadow"
-      - "/etc/passwd"
   web:
-    max_fetch_size: 524288  # 512KB
-    timeout: 15
-    tavily_api_key: "${TAVILY_API_KEY}"  # Sign up at tavily.com (1000 free searches/month)
-
-# PII handling on cloud paths. Two DIFFERENT strengths, by path, because the
-# two categories have opposite cost profiles (see llm/pii.py):
-#
-#  - Background/bulk calls via router.generate() (summarization, session
-#    review, lessons, ranking) get FULL sanitization: credentials AND identity
-#    (names -> [PERSON_1], dates -> [DATE], locations, URLs). The text is
-#    processed once and only the output is stored, so the comprehension cost is
-#    bounded. NOTE: this is why benchmark lesson scores are an upper bound —
-#    the benchmark feeds unsanitized text.
-#
-#  - Interactive chat gets CREDENTIALS ONLY (api keys, tokens, JWTs, private
-#    keys). Redacting those costs the model nothing; redacting identity would
-#    cost a great deal and protect little — spaCy NER tags product names as
-#    entities (Groq, Ollama, Presidio, Devstral become [PERSON]/[LOCATION]),
-#    while a username still leaks through every file path. Full NER over the
-#    whole assembled context on every turn is also too slow for this path.
-#
-# For genuinely private conversations the answer is ROUTING, not redaction:
-# keep the conversation on a local model. See docs/V2_PLAN.md (D1) — that
-# switch is not built yet.
-pii:
-  enabled: true        # master switch for both strengths above
-
-noise:
-  min_word_count: 3
-  max_filler_ratio: 0.6
-
-tagging:
-  max_tags: 7
+    tavily_api_key: "${TAVILY_API_KEY}"
 
 llm:
-  max_retries: 2
-  retry_base_delay: 1.0
-  timeout: 300  # per-call timeout in seconds (5min for slower local models)
-
-auth:
-  enabled: false
-  api_key: ""
+  timeout: 300        # slower local models need more than the 120s default
 
 database:
   path: "data/blipshell.db"
-  embedding_dimensions: 1024  # qwen3-embedding:0.6b output size
-  # This instance HAS a corpus, so a missing file at the resolved path is
-  # always a wrong-path launch — refuse instead of letting SQLite silently
-  # create a phantom database (nine days of history went into one,
-  # 2026-08-11..08-20). Fresh installs set this false.
+  # This instance HAS a corpus: a missing file at the resolved path is always
+  # a wrong-path launch — refuse, don't let SQLite create a phantom database
+  # (nine days of history went into one, 2026-08-11..08-20). Fresh installs
+  # set this false.
   require_existing: true
 
 telegram:
-  bot_token: "${BLIPSHELL_TELEGRAM_TOKEN}"  # from @BotFather
-  allowed_user_ids: []                       # your Telegram user ID (send /start, check logs)
-  enabled: false
-
-web_ui:
-  host: "0.0.0.0"
-  port: 8000
+  bot_token: "${BLIPSHELL_TELEGRAM_TOKEN}"   # integration stays disabled (default)
 
 planner:
-  enabled: false           # Auto-detection off — use !plan to trigger manually
-  auto_approve: true      # Plans execute immediately (no review step)
-  max_steps: 5            # Maximum steps per plan
-  max_retries_per_step: 2 # Retries before marking step as failed
-  complexity_threshold_words: 20  # Word count threshold for planning
+  enabled: false      # auto-detection off — use !plan to trigger manually
+  max_steps: 5
 
-worker:
-  enabled: false                     # Enable remote worker routing
-  default_remote_endpoint: ""        # Name of default remote endpoint
-  task_types_for_remote:             # Task types auto-routed to remote
-    - "summarization"
-    - "research"
-    - "analysis"
-  poll_interval: 10                  # Seconds between worker polls
-
-# Unified model-benchmark harness — `blipshell benchmark run/scoreboard/discover`.
-# `blipshell benchmark run <model>` runs ONE deep test across every job (ability
-# + speed), grades open-ended jobs with a neutral judge, and writes a shareable
-# report to data/benchmark/report.md. No tiers, no switch-verdict — the report is
-# numbers only, for you (or a stronger LLM) to weigh given BlipShell's local/cloud
-# routing. `benchmark report` regenerates the file from stored runs.
 benchmark:
-  db_path: "data/benchmark.db"       # dedicated store (NOT blipshell.db)
-  # Judge: a strong model that is NOT a candidate, to avoid self-grading bias.
-  # judge_endpoint must name an endpoint in `endpoints:` above. Leave judge_model
-  # empty to disable judging (then open-ended jobs are simply not scored).
-  # Verify the exact OpenRouter slug you have credits for before a real run.
-  judge_model: "anthropic/claude-opus-4.8"   # frontier neutral grader
+  judge_model: "anthropic/claude-opus-4.8"   # neutral frontier grader, never a candidate
   judge_endpoint: "openrouter"
-  judge_timeout: 60.0
-  task_weights: {}                   # composite weighting; empty = equal, e.g. {coding: 2.0, ranking: 0.5}
-  full_sample: 50                    # real-DB sample size for the real-data drift checks
-  discover_min_context: 0            # shortlist floor (0 = none)
-  discover_max_price: 0.0            # shortlist ceiling $/1M prompt tokens (0 = none)
 
-# Modular cube robotics — software-first. When enabled, BlipShell listens for
-# cube connections; cubes auto-register, their actions become tools, and the
-# LLM authors behaviors. Launch a cube: python -m scripts.cube_window
-robotics:
-  enabled: false                     # set true to open the cube server
-  host: "127.0.0.1"
-  port: 8765
-  invoke_timeout: 10.0               # seconds to await a remote cube's result
-  idle_seconds: 30.0                 # quiet time before a truthful system_idle event fires
-
-# Idle self-reflection — after a long quiet gap BlipShell forms one self-originated
-# "lingering thought" (from its own prior thoughts, not the conversation) and may
-# raise it unprompted when you return. Experimental; fires once per gap.
 reflection:
-  enabled: true
-  idle_seconds: 10800.0              # ~3 hours quiet before it reflects
-  on_return_enabled: true            # also reflect at startup after a 3h+ absence (the gap happened while the app was off)
-  nightly_enabled: true              # form one thought per nightly run — idle + on-return measured ~1 thought/month, and the self-gravity step-2 gate needs 10
-  nightly_min_gap_hours: 12.0        # skip the nightly thought when one already formed today (idle/return)
-  max_keep: 50                       # past thoughts retained
-  # Standing injection — a relevant past thought resurfaces as context, not just
-  # the one-shot return greeting. Two-stage: loose cosine prefilter, then a local
-  # LLM relevance judge (yes/no) decides. Does NOT use the reranker; gated by
-  # inject_enabled only. Fail-closed (judge error → nothing injects), max=1 backstop.
-  inject_enabled: true
-  inject_cosine_floor: 0.4           # loose recall prefilter — NOT the gate
-  inject_rerank_floor: 0.8           # the real gate: judge verdict (1.0/0.0) must clear this
-  inject_max: 1                      # thoughts injected per turn
-  inject_prefilter_k: 3              # candidates sent to the judge
-  # Self-gravity (step 1): each lingering thought carries a weight — recurrence
-  # reinforces it, surfacing fatigue + age decay erode it. Heaviest-relevant
-  # thought surfaces; heavy ones render "[Thought · recurring]". Self-layer only;
-  # never touches retrieval ranking. The relevance gate is unchanged and still
-  # required, so gravity only re-orders/marks what was already going to surface.
-  gravity_enabled: true              # the switch — turn the feature on
-  gravity_recur_threshold: 0.85      # cosine above which a new thought "echoes" a prior
-  gravity_recur_boost: 0.5           # weight added to an echoed prior
-  gravity_fatigue: 0.6               # weight x this each time a thought surfaces (anti-spiral)
-  gravity_half_life_days: 30.0       # effective weight halves over this span
-  gravity_min_weight: 0.1            # floor so decay/fatigue never zero a thought
-  gravity_marker_weight: 1.5         # render "recurring" marker at/above this weight
+  gravity_enabled: true    # step-1 opt-in taken (default false)
 
-# Per-model behavioral settings (Aider-inspired)
-# Configures how the agent interacts with each model.
-# Model name matching is flexible: exact, base name, or prefix.
+# Per-model behavioral settings (Aider-inspired). Name matching is flexible:
+# exact, base name, or prefix — the base-name match splits on ':' OR '/', so
+# "minimax-m3:cloud" matches "minimax-m3" but "minimax/minimax-m3" only "minimax".
 model_settings:
-  # Vision-capable models (accept image input). Both name forms are declared
-  # because the registry base-name match splits on ':' OR '/': "minimax-m3:cloud"
-  # matches "minimax-m3", but "minimax/minimax-m3" matches only "minimax".
   minimax-m3:
     vision_capable: true
   minimax/minimax-m3:
     vision_capable: true
-  # kimi-k2.5 removed 2026-07-31 — Ollama retired the model. Nothing routes
-  # to it, so a vision_capable claim for it is self-description that can only
-  # drift out of sync with what's actually callable.
   qwen3-coder:
     max_tool_calls: 20
     use_repo_map: true

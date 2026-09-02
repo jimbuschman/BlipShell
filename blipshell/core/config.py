@@ -52,9 +52,6 @@ class ConfigManager:
         self.config_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
         self._raw: dict = {}
         self.config: BlipShellConfig = BlipShellConfig()
-        # The database path exactly as authored in YAML, kept only when
-        # anchoring rewrote it. save() puts it back — see _anchor_paths.
-        self._authored_db_path: str | None = None
 
     def load(self) -> BlipShellConfig:
         """Load config from YAML file."""
@@ -114,19 +111,30 @@ class ConfigManager:
         resolved = resolve_config_relative(authored, self.config_path)
         if resolved == authored:
             return
-        self._authored_db_path = authored
         self.config.database.path = resolved
         logger.info("Database path anchored: %r -> %s", authored, resolved)
 
     def save(self):
-        """Save current config to YAML file."""
-        self._raw = self.config.model_dump()
-        # Write back the relative path the file was authored with. The resolved
-        # absolute path is machine-specific, and config.yaml is tracked and
-        # synced between the dev box and the Ollama PC — persisting an absolute
-        # path here would point one machine at the other's directory layout.
-        if self._authored_db_path is not None:
-            self._raw.setdefault("database", {})["path"] = self._authored_db_path
+        """Persist the AUTHORED config: the keys the file declares, plus any
+        `set()` changes — never the fully-expanded model dump.
+
+        The old save() wrote `model_dump()`, which (a) expanded every default
+        into the file, so one programmatic save turned a curated config into
+        ~500 machine lines, and (b) needed a special hack to un-anchor
+        `database.path` (anchoring mutates `self.config`, and the dump would
+        have persisted the machine-specific absolute path into a file that is
+        tracked and synced between two machines). Dumping `_raw` fixes both:
+        `_raw` never contains the anchored path, and unset keys stay unset so
+        the code defaults keep ruling them.
+
+        Contract: `set()` is the persistence API. Direct mutations of
+        `self.config` are runtime-only (that is what keeps `simulate --db`
+        overrides out of the file) and are NOT written by save().
+
+        Comments in the YAML are still lost on save (plain yaml round-trip) —
+        which is why durable rationale lives in docs/MODEL_DECISIONS.md, not
+        in this file's comments.
+        """
         with open(self.config_path, "w") as f:
             yaml.dump(self._raw, f, default_flow_style=False, sort_keys=False)
         logger.info("Config saved to %s", self.config_path)
