@@ -30,13 +30,24 @@ can't resolve something; gpt-oss:20b scored 18/30 with 9 silent episodes.
 0/3 — asked whether memory dedup is enabled, it reaches for Linux KSM/esxcli).
 Watch for sysadmin-flavored answers to BlipShell questions.
 
-**session_review → `gemma4:31b-cloud`, PROVISIONAL.** Unmeasured on the jobs
-this key controls — the 2026-08-18 benchmark run for it aborted before the
-judge scored anything. Chosen over dropping to local qwen3:14b (a measured
-0.844 review / 0.345 lessons) to keep the 128K single-pass window; the local
-fallback is intact. Resolve on the Ollama PC with
-`blipshell benchmark run gemma4:31b-cloud --repeats 5` and judge on the
-LESSONS number — lessons decided this slot last time.
+**session_review → `gemma4:31b-cloud` — RESOLVED 2026-09-03, measured.**
+The scoped benchmark run (`--jobs session_review,pipeline`, after the first
+attempt exhausted the free tier): session_review **0.887**, lessons **0.386**.
+Verdict: KEEP. On lessons — the deciding number for this slot — it is well
+below minimax's old 0.585, but it beats local qwen3:14b on BOTH jobs the key
+controls (0.887 vs 0.844; 0.386 vs 0.345) and keeps the 128K single-pass
+window. Best available at the current tier; the standing pii upper-bound
+caveat applies. If the paid tier ever returns: glm-5.2 measured 0.658 lessons.
+
+**Open flag from the same run: gemma4:31b-cloud scored 0.333 on the
+`tool_calling` benchmark suite** (qwen3:14b: 0.933) — in tension with its
+27/30 agent eval, which is the stronger instrument for the main-model choice
+(720 hand-verified episodes vs 3-case invocation matching) and which this
+decision continues to rest on. Per the eval doc's own rule, a low score is a
+claim about the harness until the transcript is read: check this run's
+tool_calling transcripts on the Ollama PC before treating 0.333 as real. If
+live chat shows missed/garbled tool calls, this number is the likely why and
+the chat decision should be revisited.
 
 **OpenRouter's minimax routes are untouched** (coding, chat fallback):
 separate billing, unaffected by the Ollama delisting.

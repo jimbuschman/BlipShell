@@ -71,9 +71,9 @@ endpoints:
     context_tokens: 131072
     pii_sanitize: true         # relays offsite despite the localhost URL; /local mode hides it
     enabled: true
-    models:                    # all three decided/provisional 2026-09-02 — see MODEL_DECISIONS.md
+    models:                    # all three decided 2026-09-02/03 — see MODEL_DECISIONS.md
       tool_calling: "gemma4:31b-cloud"
-      session_review: "gemma4:31b-cloud"   # PROVISIONAL: unbenchmarked on lessons; resolve per MODEL_DECISIONS.md
+      session_review: "gemma4:31b-cloud"   # measured 2026-09-03: beats local on both jobs; best available since minimax delisted
       reflection: "gemma4:31b-cloud"
   - name: "local"
     url: "http://localhost:11434"
