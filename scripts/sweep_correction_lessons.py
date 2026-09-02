@@ -53,8 +53,52 @@ def judge(content: str) -> tuple[str, str] | None:
     return None  # unrecognized format — leave it alone
 
 
+async def _delete_with_receipts(sqlite, config, db_path: str,
+                                ids: list[int]) -> None:
+    """Receipts to JSON next to the DB, then delete rows + tags + vectors."""
+    import json
+    from datetime import datetime, timezone
+
+    rows = await sqlite._db.execute_fetchall(
+        f"SELECT id, content, summary, timestamp, source_session_id, project "
+        f"FROM lessons WHERE id IN ({','.join('?' for _ in ids)})", ids,
+    )
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    receipt = Path(db_path).parent / f"lessons_swept_{stamp}.json"
+    receipt.write_text(json.dumps(
+        [dict(zip(("id", "content", "summary", "timestamp",
+                   "source_session_id", "project"), r)) for r in rows],
+        indent=1), encoding="utf-8")
+    print(f"Receipts written: {receipt}")
+
+    db = sqlite._db
+    for lid in ids:
+        await db.execute("DELETE FROM lesson_tags WHERE lesson_id = ?", (lid,))
+        await db.execute("DELETE FROM lessons WHERE id = ?", (lid,))
+    await db.commit()
+    try:
+        from blipshell.memory.vector_store import VectorStore
+        from blipshell.models.config import get_ollama_url
+        vectors = VectorStore(
+            db_path=db_path,
+            embedding_model=config.models.embedding,
+            ollama_url=get_ollama_url(config.endpoints),
+            embedding_dim=config.database.embedding_dimensions,
+        )
+        vectors.initialize()
+        for lid in ids:
+            try:
+                vectors.delete_lesson(lid)
+            except Exception:
+                pass  # orphan vectors are swept by nightly maintenance
+    except Exception as e:
+        print(f"(vector sweep skipped: {e} - nightly will catch orphans)")
+    print(f"Deleted {len(rows)} lessons.")
+
+
 async def run(apply: bool, db_override: str | None,
-              show_kept: bool = False) -> int:
+              show_kept: bool = False,
+              delete_ids: list[int] | None = None) -> int:
     from blipshell.core.config import ConfigManager
     from blipshell.memory.sqlite_store import SQLiteStore
 
@@ -67,6 +111,12 @@ async def run(apply: bool, db_override: str | None,
     sqlite = SQLiteStore(db_path)
     await sqlite.initialize()
     try:
+        if delete_ids:
+            # Explicit human-chosen removals (e.g. quoted-dialogue false
+            # positives the machine judge keeps). Same receipts, same delete.
+            await _delete_with_receipts(sqlite, config, db_path, delete_ids)
+            return 0
+
         rows = await sqlite._db.execute_fetchall(
             "SELECT id, content FROM lessons "
             "WHERE content LIKE 'ANTI-PATTERN: User corrected%'"
@@ -105,52 +155,9 @@ async def run(apply: bool, db_override: str | None,
             print("\nDry run - nothing changed. Re-run with --apply to delete.")
             return 0
 
-        # Receipts before deletion: the full doomed rows land in a JSON file
-        # next to the database, so the delete is reversible by hand even
-        # though the lessons schema has no archive flag. (The SOURCE
-        # conversations these lessons were minted from are untouched in the
-        # memory store either way — only the derived claim is removed.)
-        import json
-        from datetime import datetime, timezone
-        doomed_ids = [lid for lid, _, _ in doomed]
-        full_rows = await sqlite._db.execute_fetchall(
-            f"SELECT id, content, summary, timestamp, source_session_id, project "
-            f"FROM lessons WHERE id IN ({','.join('?' for _ in doomed_ids)})",
-            doomed_ids,
+        await _delete_with_receipts(
+            sqlite, config, db_path, [lid for lid, _, _ in doomed],
         )
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-        receipt = Path(db_path).parent / f"lessons_swept_{stamp}.json"
-        receipt.write_text(json.dumps(
-            [dict(zip(("id", "content", "summary", "timestamp",
-                       "source_session_id", "project"), r)) for r in full_rows],
-            indent=1), encoding="utf-8")
-        print(f"Receipts written: {receipt}")
-
-        db = sqlite._db
-        for lid, _, _ in doomed:
-            await db.execute("DELETE FROM lesson_tags WHERE lesson_id = ?", (lid,))
-            await db.execute("DELETE FROM lessons WHERE id = ?", (lid,))
-        await db.commit()
-        # Vectors swept after the SQL commit (same lock-contention care as
-        # nightly's clean_junk_lessons).
-        try:
-            from blipshell.memory.vector_store import VectorStore
-            from blipshell.models.config import get_ollama_url
-            vectors = VectorStore(
-                db_path=db_path,
-                embedding_model=config.models.embedding,
-                ollama_url=get_ollama_url(config.endpoints),
-                embedding_dim=config.database.embedding_dimensions,
-            )
-            vectors.initialize()
-            for lid, _, _ in doomed:
-                try:
-                    vectors.delete_lesson(lid)
-                except Exception:
-                    pass  # orphan vectors are swept by nightly maintenance
-        except Exception as e:
-            print(f"(vector sweep skipped: {e} - nightly will catch orphans)")
-        print(f"Deleted {len(doomed)} false-positive lessons.")
         return 0
     finally:
         await sqlite.close()
@@ -164,8 +171,15 @@ def main() -> int:
     parser.add_argument("--show-kept", action="store_true",
                         help="also print the lessons the sweep is keeping, "
                              "for a human read (quoted-dialogue check)")
+    parser.add_argument("--delete-ids",
+                        help="comma-separated lesson ids to delete outright "
+                             "(with receipts) — for human-identified false "
+                             "positives the machine judge keeps")
     args = parser.parse_args()
-    return asyncio.run(run(args.apply, args.db, show_kept=args.show_kept))
+    ids = ([int(x) for x in re.split(r"[,\s]+", args.delete_ids.strip()) if x]
+           if args.delete_ids else None)
+    return asyncio.run(run(args.apply, args.db, show_kept=args.show_kept,
+                           delete_ids=ids))
 
 
 if __name__ == "__main__":

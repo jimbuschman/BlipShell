@@ -194,16 +194,17 @@ class ChatMixin:
         """Detect if a user message is correcting the assistant and persist as anti-pattern lesson.
 
         Runs on every user message when guardrails.correction_detector is enabled.
-        Uses cheap regex matching — no LLM call.
+        Two stages: cheap regex candidate detection on every message, then a
+        LOCAL LLM yes/no judge on the rare hits — reading the live store showed
+        regex alone minting anti-pattern lessons from recounted dialogue, jokes
+        and the user's own habits (2026-09-02; 10 of 22 were false, and most of
+        the 12 survivors were too). Fail-closed: no verdict, no lesson.
         """
-        from blipshell.core.guardrails import detect_correction
+        from blipshell.core.guardrails import confirm_correction, detect_correction
 
         correction_signal = detect_correction(user_message)
         if not correction_signal:
             return
-
-        # A correction nudges the affective interior (chastened) — display-only.
-        await self._update_mood("user_corrected")
 
         # Get the last assistant message for context on what went wrong
         prev_assistant = ""
@@ -212,6 +213,18 @@ class ChatMixin:
             if msg.role == MessageRole.ASSISTANT:
                 prev_assistant = msg.content[:200]
                 break
+
+        # Stage 2: the judge renders the verdict (local model; candidates are
+        # often the user's most personal messages and must not leave the LAN).
+        if getattr(self.config.guardrails, "correction_judge", True):
+            if not await confirm_correction(self.router, user_message, prev_assistant):
+                logger.debug("Correction candidate rejected by judge: %r",
+                             correction_signal[:60])
+                return
+
+        # A correction nudges the affective interior (chastened) — display-only.
+        # AFTER the judge, so a story about someone else never chastens.
+        await self._update_mood("user_corrected")
 
         # Build anti-pattern lesson content
         anti_pattern = (

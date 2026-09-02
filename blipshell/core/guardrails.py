@@ -92,12 +92,64 @@ def is_introspective_question(user_message: str) -> bool:
     return any(p.search(user_message) for p in INTROSPECTION_FRAMES)
 
 
+# The regex tiers above are a PREFILTER, not the verdict. Reading the live
+# store (2026-09-02) showed their ceiling: strong patterns fire inside
+# recounted dialogue ('i asked "are you ok?" she said "i\'m not great"'),
+# on jokes ("well you didn't crash, thats a plus lol"), and on the user's
+# own habits ("should i stop doing the 0 incline walk?"). No pattern set
+# separates those from real corrections — so a candidate goes to a LOCAL
+# LLM yes/no judge before anything is minted, the same two-stage idiom as
+# self-thought resurfacing (cosine prefilter -> relevance judge).
+CORRECTION_JUDGE_SYSTEM = (
+    "You screen one chat message for one thing: is the user CORRECTING the "
+    "assistant — pointing out a mistake the assistant made, or telling the "
+    "assistant to change its behavior?\n"
+    "NOT corrections: recounting a conversation with another person, quoting "
+    "what someone else said, joking or praising ('you didn't crash, that's a "
+    "plus'), or asking about the user's own habits or plans.\n"
+    "Reply with exactly one word: YES or NO."
+)
+
+
+def correction_judge_prompt(user_message: str, prev_assistant: str = "") -> str:
+    parts = []
+    if prev_assistant:
+        parts.append(f"Assistant's previous message (excerpt):\n{prev_assistant}")
+    parts.append(f"User's message:\n{user_message}")
+    parts.append("Is the user correcting the assistant? YES or NO:")
+    return "\n\n".join(parts)
+
+
+async def confirm_correction(router, user_message: str,
+                             prev_assistant: str = "") -> bool:
+    """Stage-2 judge for a regex correction candidate.
+
+    Routed through TaskType.REASONING — the LOCAL model, deliberately: the
+    candidates are often the user's most personal messages. FAIL-CLOSED: any
+    error means no lesson — a missed real correction costs one lesson, a
+    false one is a permanent claim that the user rebuked the assistant.
+    """
+    from blipshell.llm.router import TaskType
+
+    try:
+        reply = await router.generate(
+            TaskType.REASONING,
+            correction_judge_prompt(user_message, prev_assistant),
+            system=CORRECTION_JUDGE_SYSTEM,
+        )
+        return reply.strip().upper().startswith("YES")
+    except Exception as e:
+        logger.debug("Correction judge failed (fail-closed, no lesson): %s", e)
+        return False
+
+
 def detect_correction(user_message: str) -> str | None:
-    """Check if a user message is correcting the assistant.
+    """Check if a user message MIGHT be correcting the assistant.
 
     Returns a short description of the correction signal, or None.
     Cheap regex check — safe to run on every message. Weak signals are
-    suppressed inside introspective questions (see the pattern tiers above).
+    suppressed inside introspective questions (see the pattern tiers above),
+    and a hit is a CANDIDATE: confirm_correction() renders the verdict.
     """
     patterns = (
         STRONG_CORRECTION_PATTERNS

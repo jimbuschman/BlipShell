@@ -442,6 +442,7 @@ class GuardrailsConfig(BaseModel):
     enabled: bool = True
     completion_audit: bool = True       # re-check original request before accepting task_complete
     correction_detector: bool = True    # detect user corrections → anti-pattern lessons
+    correction_judge: bool = True       # confirm regex candidates with the local LLM before minting (fail-closed)
     trajectory_monitor: bool = True     # periodic state injection with original task reminder
     context_pinning: bool = True        # pin original task in compaction
     requirement_checklist: bool = True  # confirm_plan tool before execution
