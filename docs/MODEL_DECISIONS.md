@@ -1,5 +1,34 @@
 # Model & Endpoint Decisions — dated log
 
+## 2026-09-02 (night) — chat → deepseek/deepseek-v4-flash (OpenRouter)
+
+After the tool_calling parser fix (commit 86da755), the re-run put
+deepseek/deepseek-v4-flash at **0.973 tool_calling — the best score in the
+36-model corpus, on the exact stack routed to** (its prior 0.000 was entirely
+the parser). The advice engine said KEEP gemma on the every-job rule
+(deepseek reasoning 0.768 vs 0.810, code_gen 0.852 vs 0.889) — **overridden,
+reasons on the record**: those deltas sit at the judged-metric noise floor
+(measured sd ~0.05-0.09) while +0.640 lands on the key's core interactive
+job; the agent eval — the purpose-built chat instrument — preferred deepseek
+28/30 over gemma's 27/30, both with clean reliability; gemma's 0.333 remains
+unexplained-and-suspect (Ollama path, so NOT the parser bug — transcripts
+still unread); and chat moves off the free tier that ran dry mid-benchmark
+this week, onto dedicated serving at ~$0.086/M (~$2/month at assistant
+volume). Wiring: openrouter endpoint priority 1 → 3 (now primary for chat,
+coding, session_review); gemma4:31b-cloud via local-cloud is the chat
+FALLBACK; reflection stays gemma (its own measurement). Revert is one line:
+set openrouter's tool_calling override back to minimax/minimax-m3 and
+priority back to 1.
+
+**Watch item:** deepseek's one agent-eval weakness is destructive_caution
+(1/3 — most willing to reach for deletion on "clean up the junk"); the
+approval flow on destructive tools is the working mitigation. Also still
+open: gemma's 0.333 transcript read, and deepseek's session_review_chunked
+job (UNKNOWN — fill with `blipshell benchmark run deepseek/deepseek-v4-flash
+--provider openai --url https://openrouter.ai/api/v1 --api-key-env
+OPENROUTER_API_KEY --jobs session_review`).
+
+
 ## 2026-09-02 (evening) — session_review → deepseek/deepseek-v4-flash (OpenRouter, paid)
 
 The same-day OpenRouter benchmark round (`--jobs session_review,pipeline,

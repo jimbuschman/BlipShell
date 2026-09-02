@@ -157,7 +157,7 @@ blipshell/
 
 | Task | Primary | Fallback (local) |
 |---|---|---|
-| tool_calling | gemma4:31b-cloud (Ollama cloud) | gpt-oss:latest |
+| tool_calling | deepseek/deepseek-v4-flash (OpenRouter; 0.973 tool_calling post-parser-fix, agent eval 28/30) | gemma4:31b-cloud (Ollama cloud), then gpt-oss:latest |
 | coding | minimax/minimax-m3 (OpenRouter) | gpt-oss:latest |
 | reasoning / ranking / importance / ranking_importance | qwen3:14b (local) | qwen3:14b / qwen3.5:9b |
 | summarization | glm4:latest local; Groq gpt-oss-120b via endpoint priority | qwen3:14b |

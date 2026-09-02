@@ -12,7 +12,10 @@
 
 models:
   # --- Interactive ---
-  tool_calling: "gemma4:31b-cloud"   # main model, decided 2026-09-02 (agent eval) — see MODEL_DECISIONS.md
+  # Chat primary is deepseek/deepseek-v4-flash via the openrouter endpoint
+  # override (2026-09-02, post-parser-fix numbers); this global names the
+  # FALLBACK chain's model, served by local-cloud when OpenRouter is down.
+  tool_calling: "gemma4:31b-cloud"
   coding: "minimax/minimax-m3"       # OpenRouter (paid), unaffected by Ollama free-tier churn
   # --- Background processing (local) ---
   reasoning: "qwen3:14b"
@@ -41,14 +44,14 @@ endpoints:
     provider: "openai"
     api_key: "${OPENROUTER_API_KEY}"
     roles: ["coding", "tool_calling", "session_review"]
-    priority: 1                # chat fallback when Ollama cloud is down; coding + session_review primary
+    priority: 3                # primary for chat, coding and session_review (was 1; raised 2026-09-02 when chat moved here — local-cloud/gemma is now the chat fallback)
     max_concurrent: 5
     context_tokens: 204800
     pii_sanitize: true         # data leaves the machine (chat = credentials only; background = full — see llm/pii.py)
     enabled: true
     models:
       coding: "minimax/minimax-m3"
-      tool_calling: "minimax/minimax-m3"
+      tool_calling: "deepseek/deepseek-v4-flash"     # measured 2026-09-02 post-parser-fix: 0.973 tool_calling (best in corpus) + agent eval 28/30 — see MODEL_DECISIONS.md
       session_review: "deepseek/deepseek-v4-flash"   # measured 2026-09-02: 0.887/0.537 lessons vs gemma's 0.887/0.386 — see MODEL_DECISIONS.md
   - name: "groq"
     url: "https://api.groq.com/openai/v1"
