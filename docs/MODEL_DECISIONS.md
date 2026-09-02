@@ -115,12 +115,18 @@ that's already resident.
 
 ## Standing config facts worth knowing (not decisions)
 
-- `memory.auto_prune_days: 90` DIFFERS from the code default 0, and the
-  default's own comment says 90 once archived 1083 imported memories (the
-  prune keyed on import-era timestamps). Kept as-authored through the
-  2026-09-02 config prune — changing behavior wasn't the prune's job — but
-  **verify this is intentional**; the nightly `prune` job is actively
-  archiving on it. (Archive, not delete, so reversible.)
+- `memory.auto_prune_days` — RESOLVED 2026-09-02: removed from config.yaml so
+  the code default 0 (disabled) rules. History: commit 570cba7 (2026-02-20)
+  disabled the default after 90-day pruning archived 1083 imported memories —
+  but only changed config.py; config.yaml kept `90` and silently overrode the
+  fix for six months of nightlies. The user did not recall choosing 90; the
+  recorded decision was 0. Rows the prune archived since February remain
+  archived (reversible in principle, but 570cba7's blanket
+  `UPDATE memories SET is_archived = 0` restore is NO LONGER SAFE — the
+  consolidate/curation jobs also archive rows now, so a restore would need to
+  target the prune's profile: old + importance <= 0.3 + rank <= 2. They were
+  low-value by construction and invisible to search either way; leaving them
+  archived is the default position.)
 - `llm.timeout: 300` (default 120): slower local models need it; pinned by
   `tests/test_benchmark_timeout.py`.
 - `planner.enabled: false`: auto-detection off, `!plan` triggers manually.

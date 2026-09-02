@@ -83,12 +83,6 @@ endpoints:
     context_tokens: 32768
     enabled: true
 
-memory:
-  # DIFFERS from the code default 0 — and the default's own comment says 90
-  # once archived 1083 imported memories. Kept as-authored through the
-  # 2026-09-02 prune; VERIFY INTENT (see MODEL_DECISIONS.md, standing facts).
-  auto_prune_days: 90
-
 tools:
   web:
     tavily_api_key: "${TAVILY_API_KEY}"
