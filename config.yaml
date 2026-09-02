@@ -3,7 +3,16 @@
 
 models:
   # --- Interactive ---
-  tool_calling: "minimax-m3:cloud"  # general chat — 100% tool pass (2026-06-01 bench, ties m2.5, beats m2.7 which skipped web searches)
+  # tool_calling -> gemma4:31b-cloud, decided 2026-09-02 when minimax-m3 left
+  # the Ollama free tier. Evidence: the 2026-08-19 agent eval (24 models, 720
+  # episodes, docs/AGENT_EVAL_2026_08.md) — 27/30, the ONLY available free
+  # candidate with a clean reliability record (0 silent episodes, 0 turn-limit
+  # burns, 0 API errors), 10.5s/ep. Every nemotron goes silent or doom-loops
+  # at 24-40s/ep; gpt-oss:120b returns nothing when stuck; gpt-oss:20b 18/30.
+  # KNOWN FLAW, consistent not random: domain misreading on config questions
+  # (multi_fact 0/3 — answers "is dedup enabled" with Linux KSM/esxcli
+  # instincts). Watch for sysadmin-flavored answers to BlipShell questions.
+  tool_calling: "gemma4:31b-cloud"
   coding: "minimax/minimax-m3"          # project mode coding via OpenRouter (matched m2.5 quality on bench, newer + larger context)
   # --- Background processing (local) ---
   reasoning: "qwen3:14b"                 # entity extraction, tag discovery, lessons, contradiction
@@ -85,24 +94,18 @@ endpoints:
                              # calls (session_review) = full. See `pii:` below.
     enabled: true
     models:
-      tool_calling: "minimax-m3:cloud"  # Ollama cloud free tier
-      # session_review -> minimax-m3:cloud, chosen on measured evidence 2026-08-04.
-      # It beats local qwen3:14b on BOTH jobs this key controls: session review
-      # 0.944 vs 0.844, and lesson extraction 0.585 vs 0.345. Lessons was the
-      # deciding number — qwen3 scored 0.420 then 0.345 on a re-run, so it's a
-      # real weakness, and lessons feed a permanent context pool plus the
-      # anti-pattern store. (History: this slot held kimi-k2.5:cloud until Ollama
-      # retired it mid-nightly on 2026-07-31; kimi-k2.7-code was rejected at
-      # 0.395 lessons, the worst of every model measured.)
-      #
-      # Two known costs of routing here rather than local:
-      #  1. pii_sanitize scrubs names/dates from the full transcript before the
-      #     model sees it. The benchmark feeds UNSANITIZED synthetic sessions, so
-      #     0.585 is an UPPER BOUND on real lesson quality. Watch actual lessons.
-      #  2. Same free tier that retired kimi with no notice. Now bounded: a 410
-      #     is classified as a model error, so it falls back to local qwen3:14b
-      #     without penalising this endpoint (which also serves interactive chat).
-      session_review: "minimax-m3:cloud"
+      tool_calling: "gemma4:31b-cloud"  # free tier; see models.tool_calling comment for the 2026-09-02 decision
+      # session_review -> gemma4:31b-cloud, PROVISIONAL 2026-09-02: minimax-m3
+      # (the measured 2026-08-04 choice: 0.944 review / 0.585 lessons vs local
+      # qwen3:14b's 0.844/0.345) left the Ollama free tier. gemma4:31b-cloud is
+      # UNMEASURED on these jobs — the 2026-08-18 benchmark run aborted before
+      # the judge scored anything. It keeps the 128K single-pass window; local
+      # qwen3:14b remains the fallback. Resolve with, on the Ollama PC:
+      #   blipshell benchmark run gemma4:31b-cloud --repeats 5
+      # and check the lessons number — lessons decided this slot last time.
+      # (Free-tier churn history: kimi-k2.5 retired mid-nightly 2026-07-31,
+      # minimax-m3 delisted 2026-09; a 410/404 falls back to local unpenalised.)
+      session_review: "gemma4:31b-cloud"
       # reflection -> gemma4:31b-cloud, on Wisp's brain-swap measurement
       # (2026-08-31): same corpus, same lingering-thought-style prompt, only
       # the model varied — phi4:14b produced 3 distinct themes across 20
