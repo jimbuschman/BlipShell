@@ -92,6 +92,27 @@ async def run(apply: bool, db_override: str | None) -> int:
             print("\nDry run - nothing changed. Re-run with --apply to delete.")
             return 0
 
+        # Receipts before deletion: the full doomed rows land in a JSON file
+        # next to the database, so the delete is reversible by hand even
+        # though the lessons schema has no archive flag. (The SOURCE
+        # conversations these lessons were minted from are untouched in the
+        # memory store either way — only the derived claim is removed.)
+        import json
+        from datetime import datetime, timezone
+        doomed_ids = [lid for lid, _, _ in doomed]
+        full_rows = await sqlite._db.execute_fetchall(
+            f"SELECT id, content, summary, timestamp, source_session_id, project "
+            f"FROM lessons WHERE id IN ({','.join('?' for _ in doomed_ids)})",
+            doomed_ids,
+        )
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        receipt = Path(db_path).parent / f"lessons_swept_{stamp}.json"
+        receipt.write_text(json.dumps(
+            [dict(zip(("id", "content", "summary", "timestamp",
+                       "source_session_id", "project"), r)) for r in full_rows],
+            indent=1), encoding="utf-8")
+        print(f"Receipts written: {receipt}")
+
         db = sqlite._db
         for lid, _, _ in doomed:
             await db.execute("DELETE FROM lesson_tags WHERE lesson_id = ?", (lid,))
