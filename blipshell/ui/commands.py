@@ -104,6 +104,10 @@ class CommandRegistry:
             self._by_name[n] = cmd
         self._ordered.append(cmd)
 
+    def visible_commands(self) -> list["Command"]:
+        """Registration-ordered, hidden excluded — for /help and completion."""
+        return [c for c in self._ordered if not c.hidden]
+
     def command(self, *names: str, help: str, usage: str = "",
                 section: str = "General", hidden: bool = False):
         def deco(fn):

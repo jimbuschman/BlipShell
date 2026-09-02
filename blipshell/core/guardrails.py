@@ -36,33 +36,75 @@ logger = logging.getLogger(__name__)
 
 # ── Correction Detection ────────────────────────────────────────────────────
 
-# Patterns that indicate a user is correcting the assistant.
-# Ordered roughly by specificity. Compiled once at import time.
-CORRECTION_PATTERNS: list[re.Pattern] = [
+# Patterns that indicate a user is correcting the assistant, in two tiers.
+#
+# STRONG patterns are explicit correction language and always fire. WEAK
+# patterns reference assistant behavior in words that also appear inside
+# innocent introspective questions — "so, why do you think you didn't see the
+# mechanism?" matched `you didn't` and minted a permanent ANTI-PATTERN lesson
+# claiming the user corrected the assistant (seen live 2026-09-02), plus a
+# "chastened" mood nudge. A Socratic question scored as a rebuke teaches
+# future sessions to be defensive whenever the user asks "why".
+STRONG_CORRECTION_PATTERNS: list[re.Pattern] = [
     re.compile(p, re.IGNORECASE) for p in [
         r"\bi (already|just) told you\b",
         r"\bthat'?s not (what|right|correct)\b",
         r"\bno,?\s+(i said|i meant|i want|you should)\b",
-        r"\byou (missed|forgot|ignored|skipped|didn'?t)\b",
-        r"\bstop (doing|adding|changing|removing)\b",
         r"\bi didn'?t ask (for|you to)\b",
         r"\bthat'?s wrong\b",
-        r"\bplease (actually|just)\b",
-        r"\byou keep\b",
-        r"\bhow many times\b",
         r"\bread (what i|my) (said|wrote|asked)\b",
         r"\bi (said|asked|wanted|meant)\b.{5,50}\bnot\b",
     ]
 ]
+WEAK_CORRECTION_PATTERNS: list[re.Pattern] = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r"\byou (missed|forgot|ignored|skipped|didn'?t)\b",
+        r"\bstop (doing|adding|changing|removing)\b",
+        r"\bplease (actually|just)\b",
+        r"\byou keep\b",
+        r"\bhow many times\b",
+    ]
+]
+# Kept for compatibility (tests and any external reader import this name).
+CORRECTION_PATTERNS: list[re.Pattern] = (
+    STRONG_CORRECTION_PATTERNS + WEAK_CORRECTION_PATTERNS
+)
+
+# Framings that ask the assistant to INTROSPECT rather than telling it it was
+# wrong. When one of these is present, only STRONG patterns count: "why do you
+# think you forgot?" is a question about its self-model, not a correction —
+# while "no, that's not what I meant, why do you think you did that?" still
+# fires on the strong marker.
+INTROSPECTION_FRAMES: list[re.Pattern] = [
+    re.compile(p, re.IGNORECASE) for p in [
+        r"\b(?:why|what|how|when|where)\b[^.?!]{0,80}?\b(?:do|did|would|could|might)\s+you\s+(?:think|feel|believe|suppose|reckon|guess|say)\b",
+        r"\bdo you (?:think|feel|believe|suppose|reckon)\b",
+        r"\bwhat(?:'s| is| was) your (?:take|theory|sense|view|guess|read)\b",
+        r"\bin your (?:view|opinion|estimation)\b",
+        r"\bout of curiosity\b",
+        r"\b(?:i'?m|i am|just) curious\b",
+    ]
+]
+
+
+def is_introspective_question(user_message: str) -> bool:
+    """Does the message frame itself as asking the assistant to reflect?"""
+    return any(p.search(user_message) for p in INTROSPECTION_FRAMES)
 
 
 def detect_correction(user_message: str) -> str | None:
     """Check if a user message is correcting the assistant.
 
     Returns a short description of the correction signal, or None.
-    Cheap regex check — safe to run on every message.
+    Cheap regex check — safe to run on every message. Weak signals are
+    suppressed inside introspective questions (see the pattern tiers above).
     """
-    for pattern in CORRECTION_PATTERNS:
+    patterns = (
+        STRONG_CORRECTION_PATTERNS
+        if is_introspective_question(user_message)
+        else CORRECTION_PATTERNS
+    )
+    for pattern in patterns:
         match = pattern.search(user_message)
         if match:
             # Return the matched portion + surrounding context for the lesson

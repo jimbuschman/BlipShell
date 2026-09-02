@@ -70,7 +70,8 @@ async def verify_auth(
 
 def create_app(config_path: str | None = None) -> FastAPI:
     """Create the FastAPI application."""
-    app = FastAPI(title="BlipShell", version="0.1.0")
+    from blipshell import __version__
+    app = FastAPI(title="BlipShell", version=__version__)
 
     # Mount static files
     if STATIC_DIR.exists():

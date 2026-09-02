@@ -16,10 +16,47 @@ from pathlib import Path
 from typing import Optional
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.history import FileHistory, InMemoryHistory
 
 logger = logging.getLogger(__name__)
+
+
+class SlashCommandCompleter(Completer):
+    """Dropdown of slash commands while the FIRST word starts with '/'.
+
+    Live menu (complete_while_typing): typing '/' lists every visible command
+    with its help text as the annotation; further characters narrow the list;
+    Tab/arrows select. Inert everywhere else — once a space is typed, or for
+    ordinary chat text, no completions are offered, so the model conversation
+    itself never grows a dropdown.
+    """
+
+    def __init__(self, registry):
+        self._registry = registry
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if not text.startswith("/") or " " in text:
+            return
+        prefix = text[1:].lower()
+        for cmd in sorted(self._registry.visible_commands(),
+                          key=lambda c: c.name):
+            # Match the primary name first; fall back to any alias so a typed
+            # alias prefix still completes — but offer each command once.
+            matching = next(
+                (n for n in cmd.names if n.startswith(prefix)), None,
+            )
+            if matching is None:
+                continue
+            yield Completion(
+                text=f"/{matching}",
+                start_position=-len(text),
+                display=f"/{matching}" if matching != cmd.name
+                        else cmd.render_label(),
+                display_meta=cmd.help,
+            )
 
 
 class SafeFileHistory(FileHistory):
@@ -43,11 +80,12 @@ _DATA_DIR = Path(__file__).parent.parent.parent / "data"
 _HISTORY_FILE = _DATA_DIR / ".blipshell_history"
 
 
-def create_chat_session(bottom_toolbar=None) -> Optional[PromptSession]:
+def create_chat_session(bottom_toolbar=None, completer=None) -> Optional[PromptSession]:
     """Create the main chat PromptSession with persistent history.
 
     Args:
         bottom_toolbar: Optional callable returning toolbar text (ANSI string or plain).
+        completer: Optional prompt_toolkit Completer (the '/' command dropdown).
 
     Returns None if prompt_toolkit can't initialize (non-console environment).
     """
@@ -59,6 +97,10 @@ def create_chat_session(bottom_toolbar=None) -> Optional[PromptSession]:
             mouse_support=False,
             multiline=False,
             bottom_toolbar=bottom_toolbar,
+            completer=completer,
+            # Live dropdown as '/' is typed; the completer itself is inert for
+            # non-command text, so ordinary chat input never shows a menu.
+            complete_while_typing=completer is not None,
         )
     except Exception as e:
         logger.warning("prompt_toolkit unavailable, falling back to basic input: %s", e)

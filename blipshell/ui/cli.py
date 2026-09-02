@@ -33,7 +33,7 @@ from blipshell.models.session import MessageRole
 from prompt_toolkit.formatted_text import ANSI
 
 from blipshell.ui.input import (
-    APPROVAL_PROMPT, SIMPLE_PROMPT,
+    APPROVAL_PROMPT, SIMPLE_PROMPT, SlashCommandCompleter,
     async_prompt, create_chat_session, create_simple_session, format_chat_prompt,
 )
 
@@ -612,7 +612,10 @@ async def chat_loop(
             parts.append("Think: ON")
         return ANSI(f"\x1b[2m {' | '.join(parts)} \x1b[0m") if parts else ""
 
-    chat_session = create_chat_session(bottom_toolbar=_build_toolbar)
+    chat_session = create_chat_session(
+        bottom_toolbar=_build_toolbar,
+        completer=SlashCommandCompleter(command_registry),
+    )
     _simple_session = create_simple_session()
 
     sid = await agent.start_session(project=project, resume_session_id=resume_id)
@@ -632,8 +635,9 @@ async def chat_loop(
 
     # Header
     proj_display = agent.active_project["name"] if agent.active_project else None
+    from blipshell import __version__
     console.print(Panel.fit(
-        f"[bold cyan]BlipShell[/bold cyan] v0.1.0\n"
+        f"[bold cyan]BlipShell[/bold cyan] v{__version__}\n"
         f"Session #{sid}"
         + (f" | Project: [bold]{proj_display}[/bold]" if proj_display else "")
         + f"\nType [bold]/help[/bold] for commands, [bold]/quit[/bold] to exit, [bold]Esc[/bold] to cancel"
