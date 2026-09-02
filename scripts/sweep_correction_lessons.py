@@ -53,7 +53,8 @@ def judge(content: str) -> tuple[str, str] | None:
     return None  # unrecognized format — leave it alone
 
 
-async def run(apply: bool, db_override: str | None) -> int:
+async def run(apply: bool, db_override: str | None,
+              show_kept: bool = False) -> int:
     from blipshell.core.config import ConfigManager
     from blipshell.memory.sqlite_store import SQLiteStore
 
@@ -72,10 +73,22 @@ async def run(apply: bool, db_override: str | None) -> int:
         )
         print(f"{len(rows)} correction lessons in the store")
         doomed: list[tuple[int, str, str]] = []
+        kept: list[tuple[int, str]] = []
         for lid, content in rows:
             verdict = judge(content)
             if verdict:
                 doomed.append((lid, verdict[0], verdict[1]))
+            else:
+                m = USER_SAID.search(content) or SIGNAL.search(content)
+                kept.append((lid, m.group(1) if m else content))
+
+        if show_kept and kept:
+            print(f"\n{len(kept)} kept (still corrections under the new "
+                  f"detector) — read for quoted-dialogue false positives:")
+            for lid, text in kept:
+                safe = text[:120].encode("ascii", "replace").decode("ascii")
+                print(f"  lesson {lid}: {safe}")
+            print()
 
         if not doomed:
             print("No false positives under the corrected detector.")
@@ -148,8 +161,11 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true",
                         help="delete the false positives (default: list only)")
     parser.add_argument("--db", help="database path (default: config.yaml's)")
+    parser.add_argument("--show-kept", action="store_true",
+                        help="also print the lessons the sweep is keeping, "
+                             "for a human read (quoted-dialogue check)")
     args = parser.parse_args()
-    return asyncio.run(run(args.apply, args.db))
+    return asyncio.run(run(args.apply, args.db, show_kept=args.show_kept))
 
 
 if __name__ == "__main__":
