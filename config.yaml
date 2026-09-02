@@ -11,11 +11,13 @@
 # /api/config, personality import) rewrite this file and drop comments.
 
 models:
+  # NOTE: these globals are the FALLBACK layer. The models that actually serve
+  # each role are the per-endpoint override maps under `endpoints:` below —
+  # chat + session_review = deepseek/deepseek-v4-flash (openrouter), coding =
+  # minimax/minimax-m3 (openrouter), reflection = gemma4:31b-cloud
+  # (local-cloud). Read the endpoint maps, not this block, for "what runs".
   # --- Interactive ---
-  # Chat primary is deepseek/deepseek-v4-flash via the openrouter endpoint
-  # override (2026-09-02, post-parser-fix numbers); this global names the
-  # FALLBACK chain's model, served by local-cloud when OpenRouter is down.
-  tool_calling: "gemma4:31b-cloud"
+  tool_calling: "gemma4:31b-cloud"   # FALLBACK (served by local-cloud when OpenRouter is down)
   coding: "minimax/minimax-m3"       # OpenRouter (paid), unaffected by Ollama free-tier churn
   # --- Background processing (local) ---
   reasoning: "qwen3:14b"
@@ -23,8 +25,8 @@ models:
   ranking: "qwen3:14b"
   importance: "qwen3:14b"
   ranking_importance: "qwen3:14b"
-  session_review: "qwen3:14b"        # local name; local-cloud endpoint overrides — see endpoints
-  reflection: "qwen3:14b"            # local name; local-cloud endpoint overrides — see endpoints
+  session_review: "qwen3:14b"        # FALLBACK; primary is deepseek/deepseek-v4-flash via the openrouter endpoint override
+  reflection: "qwen3:14b"            # FALLBACK; primary is gemma4:31b-cloud via the local-cloud endpoint override
   embedding: "qwen3-embedding:0.6b"  # local, always
   # --- Fallbacks (local, used when cloud is down) ---
   tool_calling_fallback: "gpt-oss:latest"
@@ -81,7 +83,7 @@ endpoints:
   - name: "local"
     url: "http://localhost:11434"
     roles: ["reasoning", "embedding", "summarization", "ranking", "importance", "ranking_importance", "session_review", "reflection"]
-    priority: 0    # was 1; lowered 2026-09-02 so openrouter (1) wins the session_review tie — local is the sole provider of its other roles, so nothing else shifts
+    priority: 0    # lowest: cloud endpoints win every shared role; local is the sole provider of its other roles, so nothing shifts
     max_concurrent: 5
     context_tokens: 32768
     enabled: true
