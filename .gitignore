@@ -11,6 +11,9 @@ data/blipshell.db
 data/blipshell.db-shm
 data/blipshell.db-wal
 # benchmark.db is now ONLY the refetchable discovery catalog; data/benchmark/
+# The human-readable memory mirror is regenerated nightly from the DB and
+# contains the distilled personal layer -- it must never reach the remote.
+data/mirror/
 # holds the generated report. Both are derivable, so both stay ignored.
 data/benchmark.db
 data/benchmark.db-shm

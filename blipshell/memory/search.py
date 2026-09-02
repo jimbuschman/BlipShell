@@ -18,6 +18,7 @@ from blipshell.memory.noise import contains_signal_words, should_skip_memory
 from blipshell.memory.reranker import Reranker
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.memory.tagger import tag_message
+from blipshell.memory.timeparse import in_time_range, parse_time_range
 from blipshell.models.config import MemoryConfig
 from blipshell.models.memory import MemorySearchResult
 
@@ -93,6 +94,7 @@ class MemorySearch:
             self.reranker_top_n = getattr(config, "reranker_top_n", 15)
             self.reranker_weight = getattr(config, "reranker_weight", 0.4)
             self.reranker_instruction = getattr(config, "reranker_instruction", "")
+            self.time_aware_search = getattr(config, "time_aware_search", True)
         else:
             self.search_limit = search_limit
             self.similarity_threshold = 0.5
@@ -117,6 +119,7 @@ class MemorySearch:
             self.reranker_top_n = 15
             self.reranker_weight = 0.4
             self.reranker_instruction = ""
+            self.time_aware_search = True
         self.last_search_stats: dict | None = None
         self._ollama_url = ollama_url
         self._reranker: Reranker | None = None
@@ -163,7 +166,20 @@ class MemorySearch:
             else:
                 project_session_ids = all_project_sids
 
+        # Time-aware search: when the query names a time range ("yesterday",
+        # "last week", "in July"), memories inside that range are preferred at
+        # ranking time. Deterministic regex, not an LLM call — this is the
+        # per-turn path (see memory/timeparse.py for the evidence and the
+        # trade). Fail-soft by construction: an unrecognized phrasing, or a
+        # range containing no candidates, degrades to exactly the old ranking.
+        time_range = parse_time_range(query) if self.time_aware_search else None
+
         overfetch = n_results * self.search_overfetch_multiplier
+        if time_range:
+            # The vector/FTS legs don't know about time, so the candidate pool
+            # must be deep enough to contain in-range rows for the partition
+            # to act on. Same overfetch-then-rank logic as the importance boost.
+            overfetch *= 2
         _t_start = time.monotonic()
 
         # Step 2: ChromaDB semantic search — two-pass when project is active
@@ -413,8 +429,26 @@ class MemorySearch:
                 logger.warning("Reranking failed, using original scores: %s", e)
         _t_rerank_ms = (time.monotonic() - _t_rerank_start) * 1000
 
-        # Step 7: Sort by boosted score
-        results.sort(key=lambda r: r.boosted_score, reverse=True)
+        # Step 7: Sort by boosted score. When the query named a time range,
+        # partition-prefer: in-range results rank ahead of out-of-range ones,
+        # each partition ordered by boosted score. A partition (rather than a
+        # hard filter, which measured best on LongMemEval) is deliberate: if
+        # the parsed range is wrong or empty, the ranking degrades to the
+        # normal order instead of returning nothing.
+        in_range_hits = 0
+        if time_range:
+            in_range_hits = sum(
+                1 for r in results if in_time_range(r.timestamp, time_range)
+            )
+        if time_range and in_range_hits:
+            results.sort(
+                key=lambda r: (
+                    0 if in_time_range(r.timestamp, time_range) else 1,
+                    -r.boosted_score,
+                )
+            )
+        else:
+            results.sort(key=lambda r: r.boosted_score, reverse=True)
 
         # Score floor removed — similarity threshold + importance filter provide
         # sufficient quality filtering. Score floor caused compounding loss at scale.
@@ -464,6 +498,13 @@ class MemorySearch:
             "connected_entities": connected_entity_count,
             "project_hits": project_hits,
             "reranker_hits": reranker_hits,
+            "time_range": (
+                {"phrase": time_range.phrase,
+                 "start": time_range.start.isoformat(),
+                 "end": time_range.end.isoformat()}
+                if time_range else None
+            ),
+            "in_range_hits": in_range_hits,
             "filtered_by_similarity": filtered_by_similarity,
             "filtered_by_importance": filtered_by_importance,
             "filtered_by_session": filtered_by_session,

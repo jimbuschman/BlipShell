@@ -49,6 +49,7 @@ JOB_ORDER = [
     "tag_discovery",
     "rebuild_digests",
     "update_user_model",
+    "export_mirror",
     "health_check",
 ]
 
@@ -317,6 +318,7 @@ class NightlyRunner:
             "clean_neutral_tags": self._job_clean_neutral_tags,
             "tag_discovery": self._job_tag_discovery,
             "rebuild_digests": self._job_rebuild_digests,
+            "export_mirror": self._job_export_mirror,
             "health_check": self._job_health_check,
         }
         handler = handlers.get(job_name)
@@ -1235,6 +1237,19 @@ class NightlyRunner:
         from blipshell.memory.user_model import UserModel
 
         return await UserModel(self.sqlite, self.router).revise_from_reflections()
+
+    async def _job_export_mirror(self, on_status) -> dict:
+        """Write the human-readable memory mirror (memory/mirror.py).
+
+        Runs AFTER update_user_model in JOB_ORDER so tonight's revision is
+        what gets mirrored. Read-only against the store, no LLM — never
+        skipped for Ollama being down.
+        """
+        from blipshell.memory.mirror import export_mirror
+
+        stats = await export_mirror(self.sqlite, self.config.database.path)
+        on_status(f"  memory mirror -> {stats['dir']}")
+        return stats
 
     async def _job_health_check(self, on_status) -> dict:
         """Run audit_db checks and return structured findings."""

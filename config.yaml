@@ -163,6 +163,7 @@ memory:
   importance_boost_weight: 0.2
   tag_overlap_boost: 0.1
   search_overfetch_multiplier: 2
+  time_aware_search: true    # "yesterday"/"last week" queries prefer in-range memories (deterministic parse, no LLM; docs/FIELD_SURVEY_2026_09.md 3.1)
   dedup:
     enabled: true
     similarity_threshold: 0.7  # min cosine similarity to consider as duplicate candidate

@@ -24,9 +24,15 @@ If the retrieved assistant-share sits far above the corpus baseline, BlipShell
 has the exhaust problem and the measured fix from Wisp (echo down-weighting
 PLUS overfetch-then-rank — neither works alone) becomes worth porting.
 
-Needs live models (query rephrasing + embedding), so run it on the Ollama PC:
+Needs a live embedding model. Run it on the Ollama PC against the live corpus:
     python -m scripts.retrieval_provenance
     python -m scripts.retrieval_provenance --probes 50 --top-k 10
+or drive it from the dev box over Tailscale (same pattern as `benchmark run
+--url`; the DB probed is still the LOCAL one, so this only diagnoses the live
+corpus if you point --db at a copy of it):
+    python -m scripts.retrieval_provenance --url http://<ollama-pc>:11434
+--url also disables every non-Ollama endpoint for the run, so no cloud
+endpoint is touched by a diagnostic.
 """
 
 from __future__ import annotations
@@ -71,7 +77,8 @@ def summarize(probe_rows: list[dict], baseline_assistant_share: float) -> dict:
     }
 
 
-async def run(probes: int, top_k: int, db_override: str | None) -> int:
+async def run(probes: int, top_k: int, db_override: str | None,
+              url_override: str | None = None) -> int:
     from blipshell.core.config import ConfigManager
     from blipshell.llm.endpoints import EndpointManager
     from blipshell.llm.router import LLMRouter
@@ -81,6 +88,15 @@ async def run(probes: int, top_k: int, db_override: str | None) -> int:
     from blipshell.models.config import get_ollama_url
 
     config = ConfigManager().load()
+    if url_override:
+        # Point every Ollama endpoint at the given host and hide the cloud
+        # ones — a read-only diagnostic must not spend cloud quota or ship
+        # probe text offsite as a side effect.
+        for ep in config.endpoints:
+            if ep.provider == "ollama":
+                ep.url = url_override
+            else:
+                ep.enabled = False
     db_path = db_override or config.database.path
     if not Path(db_path).exists():
         print(f"No database at {db_path}")
@@ -193,8 +209,10 @@ def main() -> int:
     parser.add_argument("--top-k", type=int, default=10,
                         help="results scored per probe (default 10)")
     parser.add_argument("--db", help="database path (default: config.yaml's)")
+    parser.add_argument("--url", help="Ollama URL override (e.g. over Tailscale); "
+                                      "also disables all cloud endpoints")
     args = parser.parse_args()
-    return asyncio.run(run(args.probes, args.top_k, args.db))
+    return asyncio.run(run(args.probes, args.top_k, args.db, args.url))
 
 
 if __name__ == "__main__":

@@ -122,6 +122,10 @@ class MemoryConfig(BaseModel):
     importance_boost_weight: float = 0.2
     tag_overlap_boost: float = 0.1
     search_overfetch_multiplier: int = 2
+    # Time-aware search: parse time expressions in queries ("yesterday", "last
+    # week") and rank in-range memories first. Deterministic regex on the
+    # per-turn path — see memory/timeparse.py for the evidence and the trade.
+    time_aware_search: bool = True
     decay_rate: float = 0.001  # temporal decay rate (~50% after 29 days) — global fallback
 
     fts_weight: float = 0.3  # weight for FTS5 RRF boost in hybrid search
