@@ -53,13 +53,17 @@ _SOURCE_TABLES = {
         "text_col": "content",
         "text_col_fallback": "summary",
         "meta_cols": ["session_id", "role"],
-        "active_filter": "is_archived = 0 AND (content IS NOT NULL OR summary IS NOT NULL)",
+        # Filters are written against the source-table alias `s.` because the
+        # backfill query joins the vec table; a bare column name only works by
+        # luck, and a parenthesized filter with an implicit `s.` prefix is a
+        # syntax error (how reflections backfill crashed, 2026-09-02).
+        "active_filter": "s.is_archived = 0 AND (s.content IS NOT NULL OR s.summary IS NOT NULL)",
     },
     CORE_MEMORIES_COLLECTION: {
         "table": "core_memories",
         "text_col": "content",
         "meta_cols": [],
-        "active_filter": "is_active = 1",
+        "active_filter": "s.is_active = 1",
     },
     LESSONS_COLLECTION: {
         "table": "lessons",
@@ -78,7 +82,7 @@ _SOURCE_TABLES = {
         "text_col": "reflection_text",
         "meta_cols": ["session_id"],
         # Skipped-session placeholders carry no insight — don't embed them.
-        "active_filter": "(effectiveness IS NULL OR effectiveness != 'skipped')",
+        "active_filter": "(s.effectiveness IS NULL OR s.effectiveness != 'skipped')",
     },
 }
 
@@ -931,7 +935,7 @@ class VectorStore:
                 f"SELECT s.id, {text_expr} FROM {source['table']} s "
                 f"LEFT JOIN {vec_table} v ON v.rowid = s.id "
                 f"WHERE v.rowid IS NULL "
-                + (f"AND s.{source['active_filter']} " if source["active_filter"] else "")
+                + (f"AND {source['active_filter']} " if source["active_filter"] else "")
                 + f"LIMIT ?",
                 [limit],
             ).fetchall()

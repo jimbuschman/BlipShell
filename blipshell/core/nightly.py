@@ -340,9 +340,15 @@ class NightlyRunner:
             return {"backup_path": None, "warning": str(e)}
 
     async def _job_backfill_vectors(self, on_status) -> dict:
-        """Backfill any missing vector embeddings."""
+        """Backfill any missing vector embeddings.
+
+        "reflections" was missing from this list until 2026-09-02, so only
+        reflections embedded at write time had vectors — the 2026-09 audit
+        found 1,720 of 1,808 invisible to search_lessons' reflections leg.
+        """
         total = {"succeeded": 0, "failed": 0}
-        for collection in ("memories", "core_memories", "lessons", "entities"):
+        for collection in ("memories", "core_memories", "lessons", "entities",
+                           "reflections"):
             stats = self.vectors.backfill_missing_vectors(collection, limit=500)
             total["succeeded"] += stats.get("succeeded", 0)
             total["failed"] += stats.get("failed", 0)
