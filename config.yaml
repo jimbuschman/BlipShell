@@ -40,8 +40,8 @@ endpoints:
     url: "https://openrouter.ai/api/v1"
     provider: "openai"
     api_key: "${OPENROUTER_API_KEY}"
-    roles: ["coding", "tool_calling"]
-    priority: 1                # chat fallback when Ollama cloud is down; coding primary
+    roles: ["coding", "tool_calling", "session_review"]
+    priority: 1                # chat fallback when Ollama cloud is down; coding + session_review primary
     max_concurrent: 5
     context_tokens: 204800
     pii_sanitize: true         # data leaves the machine (chat = credentials only; background = full — see llm/pii.py)
@@ -49,6 +49,7 @@ endpoints:
     models:
       coding: "minimax/minimax-m3"
       tool_calling: "minimax/minimax-m3"
+      session_review: "deepseek/deepseek-v4-flash"   # measured 2026-09-02: 0.887/0.537 lessons vs gemma's 0.887/0.386 — see MODEL_DECISIONS.md
   - name: "groq"
     url: "https://api.groq.com/openai/v1"
     provider: "openai"
@@ -65,20 +66,19 @@ endpoints:
       ranking_importance: "openai/gpt-oss-120b"
   - name: "local-cloud"        # Ollama daemon relaying to Ollama's cloud (free tier)
     url: "http://localhost:11434"
-    roles: ["tool_calling", "session_review", "reflection"]
+    roles: ["tool_calling", "reflection"]
     priority: 2                # tried before "local" for these roles
     max_concurrent: 5
     context_tokens: 131072
     pii_sanitize: true         # relays offsite despite the localhost URL; /local mode hides it
     enabled: true
-    models:                    # all three decided 2026-09-02/03 — see MODEL_DECISIONS.md
+    models:                    # decided 2026-09-02 — see MODEL_DECISIONS.md
       tool_calling: "gemma4:31b-cloud"
-      session_review: "gemma4:31b-cloud"   # measured 2026-09-03: beats local on both jobs; best available since minimax delisted
       reflection: "gemma4:31b-cloud"
   - name: "local"
     url: "http://localhost:11434"
     roles: ["reasoning", "embedding", "summarization", "ranking", "importance", "ranking_importance", "session_review", "reflection"]
-    priority: 1
+    priority: 0    # was 1; lowered 2026-09-02 so openrouter (1) wins the session_review tie — local is the sole provider of its other roles, so nothing else shifts
     max_concurrent: 5
     context_tokens: 32768
     enabled: true

@@ -1,5 +1,43 @@
 # Model & Endpoint Decisions — dated log
 
+## 2026-09-02 (evening) — session_review → deepseek/deepseek-v4-flash (OpenRouter, paid)
+
+The same-day OpenRouter benchmark round (`--jobs session_review,pipeline,
+reasoning --repeats 5`, judged) produced a clear winner for this slot:
+**deepseek/deepseek-v4-flash ties gemma4:31b-cloud on session review (0.887)
+and beats it on LESSONS 0.537 vs 0.386** (+0.151, ~2x the historical lessons
+run-to-run noise), approaching minimax's old 0.585 — at $0.086/M in, i.e.
+pennies/month at nightly volume. Routed via the openrouter endpoint (full pii
+sanitization on background calls, 204K window); `local` endpoint priority
+lowered 1 → 0 so openrouter wins the session_review tie (local is sole
+provider of its other roles, so nothing else shifts — verified per-role).
+Fallback unchanged: local qwen3:14b when OpenRouter is down or /local hides it.
+
+Three companion findings from the same round, all load-bearing:
+
+1. **Free OpenRouter variants are measurably not the same model.**
+   minimax/minimax-m3:free scored 0.307 on lessons vs 0.585 for the same
+   weights on Ollama cloud; z-ai/glm-5.2:free was unmeasurable outright
+   (upstream shared pool 429-saturated at benchmark pace, twice). The ":free"
+   route is closed for anything scheduled or quality-sensitive — this is the
+   cross-stack rule with numbers on it.
+2. **The benchmark's tool_calling suite cannot score openai-provider
+   candidates.** deepseek-v4-flash and minimax:free both scored exactly
+   0.000 while their reasoning/code_gen ran normally — and production pushes
+   tool calls through the identical OpenRouter endpoint daily (coding). The
+   table shows a stack gradient (local ~0.9, Ollama-cloud 0.3-0.7,
+   OpenRouter 0.0), not a capability gradient. OPEN ITEM: read the
+   transcripts / fix the suite's response parsing for the openai path before
+   using tool_calling numbers in any cross-stack comparison. gemma4's 0.333
+   is under the same suspicion.
+3. **Chat stays on gemma4:31b-cloud for now.** deepseek's 28/30 agent eval
+   (clean: 0 silent/0 turn-limit, 13.3s/ep; one flaw, destructive_caution
+   1/3) was measured on Ollama's stack, and finding 1 above is proof that
+   stack changes can move quality a lot. Revisit chat after the tool_calling
+   artifact is resolved or after a live trial; at $0.086/M the cost argument
+   for switching is already made if capability holds.
+
+
 Why each `config.yaml` routing choice is what it is. One dated entry per
 decision, newest first. This file exists because the rationale used to live in
 config.yaml comments, which (a) had drifted before (the `reasoning:` comment
