@@ -135,6 +135,18 @@ alone. The `role` column already exists; this is config + a scoring term.
 overrule the no-preemptive-tuning mandate, because it would no longer be
 preemptive.*
 
+**RESOLVED 2026-09-02 — NO PATHOLOGY, item CLOSED.** The diagnosis ran on the
+live corpus (25 probes, top-10 scored): corpus 59.8% assistant-authored,
+retrieval top-10 only 37.6% assistant — **0.63x, i.e. retrieval
+UNDER-represents exhaust**; median rank of the first user-authored result was
+1, and no probe lacked a user result. BlipShell's summarize-then-embed
+pipeline, importance scoring, and FTS leg apparently defend against the bias
+Wisp measured on raw-text storage. No echo-weighting, no overfetch change —
+the retrieval good-enough mandate stands. (Caveats for a future re-run: 25
+probes, recent-user-message probe set; re-run after any change that stores
+raw assistant text or after sleep-time rewriting ships, since that grows the
+self-authored corpus — §3.6's interaction warning still applies.)
+
 ### 3.4 Importance-triggered reflection (accumulator, not clock) — [MEASURED ablation]
 Generative Agents (arXiv:2304.03442): reflection fires when summed importance
 of recent events crosses a threshold (150, ~2-3x/day), not on a timer; the
@@ -274,6 +286,7 @@ from append-only into self-correcting. Fits the same nightly slot as §3.6.
 
 1. **Now / diagnosis-gated:** run `retrieval_provenance` on the live corpus
    (§3.3); if pathological, echo-weight + overfetch in one measured change.
+   — DONE 2026-09-02: no pathology (0.63x, under-represented); no tuning.
 2. **Small, high-certainty:** time-aware query filtering (§3.1); abstention
    cases in the benchmark (§2); memory mirror export (§3.8a).
 3. **The surface bet:** re-enable Telegram (§3.7), then judged notify-only
