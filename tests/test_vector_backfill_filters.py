@@ -52,3 +52,20 @@ async def test_reflections_backfill_embeds_and_skips_placeholders(
     # Second run: nothing left to do (the filter keeps excluding the placeholder).
     stats = vectors.backfill_missing_vectors("reflections", limit=50)
     assert stats == {"processed": 0, "succeeded": 0, "failed": 0}
+
+
+async def test_drain_runs_every_collection_to_empty(vectors, sqlite_store):
+    """scripts/backfill_all_vectors: loops until nothing is missing."""
+    from scripts.backfill_all_vectors import drain
+
+    sid = await sqlite_store.create_session(title="real")
+    await sqlite_store.create_session_reflection(
+        session_id=sid, effectiveness="effective",
+        reflection_text="Something worth embedding.")
+
+    totals = drain(vectors, on_status=lambda msg: None)
+    assert totals["reflections"]["embedded"] == 1
+    assert all(t["failed"] == 0 for t in totals.values())
+    # Idempotent: a second drain finds nothing.
+    totals = drain(vectors, on_status=lambda msg: None)
+    assert all(t["embedded"] == 0 for t in totals.values())
