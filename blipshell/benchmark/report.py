@@ -58,6 +58,12 @@ CATEGORIES = [
      "Exact tool name + required-argument match."),
     ("session_review", "Session review", "Produces a structured session reflection.",
      "Neutral judge 0-1 (or section-completeness if no judge)."),
+    ("session_review_chunked", "Session review (chunked, multi-call)",
+     "The path a session too big for the context window takes: chunk-scoped "
+     "reflection per part, then merge_chunk_reflections (processor.py:553-577). "
+     "Single-chunk cases never reach it.",
+     "1.0 when the merged reflection does NOT report work that a later chunk "
+     "resolved as 'never addressed' — the invented finding that flows to lessons."),
     ("embedding", "Embedding retrieval", "Embeds queries/memories for semantic search.",
      "Mean of Precision@5 / Recall@10 / MRR on a labeled retrieval set."),
 ]
@@ -82,6 +88,24 @@ def _scoring_map(rows: list[dict]) -> dict[str, float]:
     for r in rows:
         if r.get("metric") in SCORING_METRICS and r.get("value") is not None:
             out[r["task_type"]] = float(r["value"])
+    return out
+
+
+def _spread_map(rows: list[dict]) -> dict[str, float]:
+    """task_type -> spread (max-min across repeats) for scoring metrics.
+
+    merge_repeat_rows computes this and nothing consumed it, so a mean over 5
+    repeats rendered identically to a single run. Measured run-to-run spread on
+    tool_calling is 0.13-0.20, far above the 0.03 delta that used to count as a
+    "gain" — without this, advice recommends noise.
+    """
+    out: dict[str, float] = {}
+    for r in rows:
+        if r.get("metric") not in SCORING_METRICS:
+            continue
+        sp = r.get("spread")
+        if isinstance(sp, (int, float)):
+            out[r["task_type"]] = float(sp)
     return out
 
 
@@ -162,6 +186,7 @@ def build_report(
     latency = {m: _latency_map(rows) for m, rows in model_rows.items()}
     length = {m: _length_map(rows) for m, rows in model_rows.items()}
     partial = {m: _partial_map(rows) for m, rows in model_rows.items()}
+    spreads = {m: _spread_map(rows) for m, rows in model_rows.items()}
 
     categories = []
     for key, label, measures, method in CATEGORIES:
@@ -176,6 +201,10 @@ def build_report(
         categories.append({
             "key": key, "label": label, "measures": measures, "scoring": method,
             "scores": {m: round(v, 4) for m, v in scores.items()},
+            # Per-model spread for THIS job, so the verdict can require a gain
+            # to clear measured noise instead of a fixed 0.03 constant.
+            "spread": {m: spreads[m][key] for m in models
+                       if key in spreads.get(m, {})},
             "incomplete": incomplete,
             "best_model": (max(eligible, key=lambda m: eligible[m]) if eligible
                            else max(scores, key=lambda m: scores[m])),
@@ -274,15 +303,20 @@ def render_markdown(report: dict, advice: str = "") -> str:
         for m in models:
             v = c["scores"].get(m)
             inc = (c.get("incomplete") or {}).get(m)
+            # Show the repeat spread next to the mean. A bare 0.933 reads as
+            # precise; "0.933 +/-0.13" says a rerun could land at 0.80, which
+            # is the difference between a decision and a coin flip.
+            sp = (c.get("spread") or {}).get(m)
+            suffix = f" +/-{sp:.2f}" if isinstance(sp, (int, float)) and sp > 0 else ""
             if v is None:
                 row.append("—")
             elif inc:
                 any_incomplete = True
                 row.append(f"{v:.3f} ({inc[0]}/{inc[1]} cases)")
             elif m == c["best_model"]:
-                row.append(f"**{v:.3f}**")
+                row.append(f"**{v:.3f}**{suffix}")
             else:
-                row.append(f"{v:.3f}")
+                row.append(f"{v:.3f}{suffix}")
         qrows.append(row)
     comp = report["composite"]
     cov = report.get("coverage", {})

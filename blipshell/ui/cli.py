@@ -1329,7 +1329,7 @@ def benchmark_grp():
 @click.option("--coding-timeout", default=300.0, type=float, help="Per-task timeout for the agentic coding executor (seconds)")
 @click.option("--jobs", default=None, help="Comma-separated subset to run: pipeline,reasoning,session_review,realdata,embedding,coding (default: all). Scope local-background comparisons by dropping the slow cloud-routed 'coding' suite.")
 @click.option("--timeout", "timeout_override", default=None, type=float, help="Per-LLM-call timeout in seconds (default: config llm.timeout). Raise it for a slow local model — a timed-out case is DROPPED from the judged score, which biases the result upward.")
-@click.option("--repeats", default=1, type=int, help="Run every suite N times and report mean + spread per metric. Single runs read as precise points; they aren't.")
+@click.option("--repeats", default=5, type=int, help="Run every suite N times and report mean + spread per metric. Default 5: measured run-to-run sd on tool_calling is ~0.05-0.09, so a single run cannot separate two close models and WILL invert rankings. Lower it only for a quick smoke test, never for a routing decision.")
 @click.option("--context-tokens", default=None, type=int, help="num_ctx for the candidate (default: the configured endpoint's window). Lower it if generation is slow: a large KV cache can spill to CPU and make every call many times slower.")
 @click.pass_context
 def benchmark_run_cmd(ctx, model, judge, provider, url, api_key_env, coding_timeout, jobs,

@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "model": "ministral-3:14b",
+  "run_group": "ministral-3_14b@2026-08-13T05:13:11.966307+00:00",
+  "run_ts": "2026-08-13T05:13:11.966307+00:00",
+  "tier": "deep",
+  "judge_model": "anthropic/claude-opus-4.8",
+  "jobs": [
+    "reasoning"
+  ],
+  "git_sha": "39f4fa6",
+  "host": "XTEK-COMPUTER5",
+  "rows": [
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "scored": 0,
+        "cases": 12
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "length_words",
+      "value": 175.9,
+      "unit": "words",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "scored": 0,
+        "cases": 9
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "length_words",
+      "value": 84.3,
+      "unit": "words",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "tool_calling",
+      "metric": "tool_pass_rate",
+      "value": 0.6,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning_suite",
+      "metric": "latency_s",
+      "value": 5.853,
+      "unit": "seconds",
+      "raw": null,
+      "values": null,
+      "spread": null
+    }
+  ]
+}

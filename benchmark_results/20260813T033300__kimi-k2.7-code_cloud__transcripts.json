@@ -1,0 +1,447 @@
+{
+  "model": "kimi-k2.7-code:cloud",
+  "run_ts": "2026-08-13T03:33:00.861378+00:00",
+  "calls": [
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": null,
+      "prompt": "You are a task planner for an autonomous coding agent. Break this request into 1-5 focused steps. Use FEWER steps for simpler tasks.\n\nRules:\n- Each step must be a SINGLE action: read OR edit OR create OR test \u2014 NOT multiple\n- A 'read' step should ONLY read/explore \u2014 do NOT edit in the same step\n- An 'edit' step should do the implementation \u2014 it can read if needed first\n- Steps are sequential \u2014 later steps build on earlier ones\n- Simple tasks (add a function, edit one file) need only 1-2 steps\n- Do NOT include: 'review code', 'verify', 'create plan', 'write documentation'\n- Do NOT include verification/confirmation steps \u2014 the agent verifies as it goes\n- Do NOT include package installation as a step\n- Do NOT include greetings, explanations, or commentary\n- Respond with ONLY the numbered list\n\nFormat:\n1. First step description (tool_name)\n2. Second step description (tool_name)\n\nUser request: Add retry logic with exponential backoff to the HTTP client, write tests for it, and update the README",
+      "response": "1. Read the existing HTTP client implementation (read_file)\n2. Add retry logic with exponential backoff to the HTTP client (edit_file)\n3. Create tests for the retry and backoff behavior (create_file)\n4. Update the README to document the retry behavior (edit_file)",
+      "error": null,
+      "elapsed_s": 4.36,
+      "est_tok_s": 14.9
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "You are a helpful technical assistant. Be concise and specific.",
+      "prompt": "Why might an ESP32 with a MAX98357 I2S DAC produce noise or garbage audio? List the 3 most likely causes and how to debug each one.",
+      "response": "The three most likely causes of noisy/garbage audio from a MAX98357 on an ESP32 are:\n\n1. **Wrong I2S format or clock configuration**\n   - The MAX98357 expects standard Philips I2S (`I2S_COMM_FORMAT_STAND_I2S`), correct LRCLK/BCLK/DIN polarity, and a stable BCLK. If the sample rate, bits-per-sample, channel format, or APLL setting is off, you get clicks, hiss, or garbage.\n   - **Debug:** Verify the I2S config matches your source (e.g., 16-bit, 44.1 kHz, stereo). Use a logic analyzer or scope on BCLK/LRCLK/DIN to confirm the expected bit clock and frame sync. Enable the ESP32 APLL (`use_apll = true`) to reduce jitter. Test with a known-good sine-wave sample.\n\n2. **Power-supply noise / grounding / gain misconfiguration**\n   - The MAX98357 is a Class-D amp and is sensitive to supply ripple. A noisy 5 V rail, bad ground, or high gain setting makes hiss, hum, or distortion. Also, `SD_MODE` must be pulled high to enable the amp, and `GAIN` must be configured for the signal level.\n   - **Debug:** Add a large electrolytic + small ceramic decoupling cap close to the MAX98357 VCC/GND. Power the ESP32/MAX98357 from a clean supply and keep audio ground paths short. Check the `GAIN` pin resistor (e.g., 100 k\u03a9 to GND = 12 dB) so it isn\u2019t floating at max gain. Ensure `SD_MODE` is high or tied to 3.3 V.\n\n3. **Corrupted or mismatched audio data / buffer issues**\n   - Sending 8-bit data configured as 16-bit, feeding uninitialized buffers, endianness issues, or DMA underruns/overruns produces buzz or random garbage.\n   - **Debug:** Confirm the data width sent matches `bits_per_sample`. Inspect the first few samples with `printf` or store them in a known buffer and compare. Increase DMA buffer count/size if you hear periodic glitches. Run a CPU-load check and raise I2S task priority to prevent underruns.\n\nStart with #1 (I2S/clock settings) \u2014 it accounts for most \u201cgarbage audio\u201d cases.",
+      "error": null,
+      "elapsed_s": 8.99,
+      "est_tok_s": 52.7
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": null,
+      "prompt": "You are reviewing an AI assistant's response for quality.\n\nCheck for:\n- Factual errors or incorrect statements\n- Missing information that would meaningfully improve the answer\n- Unclear or confusing explanations\n- Whether the response actually answers what was asked\n\nIf you find issues, return an improved version of the response.\nIf the response is already good, return exactly: NO_CHANGES\n\nDo NOT add pleasantries, disclaimers, or meta-commentary.\nDo NOT mention that you are reviewing or improving anything.\nJust return the improved response or NO_CHANGES.\n\nUser question: How do I connect an SSD1306 OLED to an ESP32?\n\nResponse to review:\nConnect VCC to 3.3V, GND to GND, SDA to GPIO 21, and SCL to GPIO 22. Use the Adafruit_SSD1306 library. Call display.begin(SSD1306_SWITCHCAPVCC, 0x3D) to initialize.",
+      "response": "For a standard **I2C** SSD1306 module, wire it as follows:\n\n- **VCC** \u2192 3.3 V (or 5 V if your breakout board accepts it)  \n- **GND** \u2192 GND  \n- **SCL** \u2192 GPIO 22  \n- **SDA** \u2192 GPIO 21  \n\nIf the module does not have onboard pull-ups, add 4.7 k\u03a9 resistors from SDA and SCL up to 3.3 V.\n\nInstall the **Adafruit SSD1306** library and its dependency **Adafruit GFX**. Example for a 128\u00d764 I\u00b2C display:\n\n```cpp\n#include <Wire.h>\n#include <Adafruit_GFX.h>\n#include <Adafruit_SSD1306.h>\n\n#define SCREEN_WIDTH  128\n#define SCREEN_HEIGHT 64\n#define OLED_RESET    -1        // No reset pin on most I2C modules\n#define SCREEN_ADDRESS 0x3C     // Try 0x3D if the screen does not respond\n\nAdafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);\n\nvoid setup() {\n  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {\n    Serial.println(F(\"SSD1306 allocation failed\"));\n    for (;;);\n  }\n\n  display.clearDisplay();\n  display.setTextSize(1);\n  display.setTextColor(SSD1306_WHITE);\n  display.setCursor(0, 0);\n  display.println(F(\"Hello, ESP32!\"));\n  display.display();\n}\n\nvoid loop() {}\n```\n\nIf your display is **128\u00d732**, change `SCREEN_HEIGHT` to `32`. If you have an **SPI** version of the SSD1306, the wiring is different: connect SCK, MOSI, CS, DC, and RST to appropriate GPIOs and use the SPI constructor instead.",
+      "error": null,
+      "elapsed_s": 13.71,
+      "est_tok_s": 24.1
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "You are a pragmatic software architect. Be concise and specific.",
+      "prompt": "For a single-user local assistant with 30k memories, compare a dual-store setup (SQLite + a separate vector DB) vs a single store (sqlite-vec inside the SQLite file). What's the main risk of the dual-store approach and when is it nonetheless justified?",
+      "response": "**Single-store (SQLite + sqlite-vec) is the better default here.**\n\n- **Simplicity:** one file, one connection pool, one backup, one migration story.\n- **ACID consistency:** updating metadata and its embedding happens in the same transaction.\n- **30k memories is small:** sqlite-vec\u2019s exact or limited-ANN search is fine for a single-user local app.\n\n**Main risk of the dual-store approach (SQLite + separate vector DB):**\n\n**Consistency drift.** Metadata in SQLite and embeddings in the vector DB are not under a single transaction, so deletes/updates can leave orphaned vectors or missing embeddings. Backup, restore, and rollback become multi-step reconciliation tasks.\n\n**When dual-store is nonetheless justified:**\n\n- Scale exceeds sqlite-vec\u2019s sweet spot\u2014e.g., millions of embeddings, very high dimensionality, or heavy write throughput.\n- You need advanced vector indexing (HNSW/IVF), aggressive quantization, or sub-millisecond approximate search.\n- The architecture already requires a dedicated vector DB (multi-tenant, cross-process clients, remote/sync, or team-standard tooling).\n- You have engineering capacity to build a reliable outbox/saga/reconciliation layer between the two stores.\n\nFor a single-user local assistant at 30k memories, the dual store adds risk without meaningful payoff. Keep it in one SQLite file with sqlite-vec.",
+      "error": null,
+      "elapsed_s": 4.53,
+      "est_tok_s": 74.3
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "You are a debugging expert. Identify the most likely root cause and the fix.",
+      "prompt": "A python asyncio call to a thread-pool executor never times out even though it's wrapped in asyncio.wait_for. Why doesn't the timeout fire, and what's the correct fix?",
+      "response": "### Root cause\n\n`asyncio.wait_for()` only cancels the **asyncio-level awaitable** it is given. When the awaitable is backed by a thread-pool executor, the real work is running in an OS thread through a `concurrent.futures.Future`.\n\nOnce a `concurrent.futures.Future` has started running in a worker thread, `future.cancel()` returns `False` and has **no effect** on the thread. Python threads cannot be forcibly killed from the outside. So:\n\n- `wait_for()` *does* raise `asyncio.TimeoutError` after the timeout.\n- But the function in the thread pool keeps running to completion in the background.\n\nIf it looks like it \u201cnever times out,\u201d the usual reasons are:\n\n1. The `TimeoutError` is being swallowed or not awaited.\n2. The blocking function is not cancellation-aware, so the thread never stops even after the timeout fires.\n\n### Correct fix\n\nMake the blocking work **cooperatively cancellable**, or run it in a unit you can actually terminate.\n\n#### Option A: cancellation-aware work in a thread\n\nPass a `threading.Event` (or the `concurrent.futures.Future`) into the worker and check it periodically:\n\n```python\nimport asyncio\nimport concurrent.futures\nimport threading\n\ndef cancellable_work(stop_event: threading.Event):\n    for i in range(100):\n        if stop_event.is_set():\n            return \"cancelled\"\n        # one chunk of blocking work\n        ...\n    return \"done\"\n\nasync def run_with_timeout(executor, timeout=5.0):\n    stop_event = threading.Event()\n    cf_future = executor.submit(cancellable_work, stop_event)\n\n    try:\n        return await asyncio.wait_for(\n            asyncio.wrap_future(cf_future),\n            timeout=timeout,\n        )\n    except asyncio.TimeoutError:\n        stop_event.set()          # ask the worker to exit\n        cf_future.cancel()        # cancels only if still pending\n        raise\n```\n\n#### Option B: separate process (if you must forcibly stop)\n\nThreads cannot be killed, but processes can:\n\n```python\nasync def run_with_timeout(timeout=5.0):\n    proc = await asyncio.create_subprocess_exec(\n        \"python\", \"worker.py\",\n    )\n    try:\n        await asyncio.wait_for(proc.wait(), timeout=timeout)\n    except asyncio.TimeoutError:\n        proc.kill()\n        await proc.wait()\n        raise\n```\n\n#### Option C: if you don\u2019t need to stop the thread\n\nIf abandoning the result is acceptable, just handle the timeout and let the thread finish on its own:\n\n```python\ntry:\n    result = await asyncio.wait_for(\n        asyncio.get_running_loop().run_in_executor(executor, blocking_func),\n        timeout=5.0,\n    )\nexcept asyncio.TimeoutError:\n    result = None\n    # The thread is still running in the background.\n```\n\n### Key takeaway\n\n`asyncio.wait_for()` times out at the asyncio level, but it cannot interrupt a running thread-pool worker. To make a blocking call truly time out, either make it cooperative (check a `threading.Event`), run it in a separate process that you can kill, or design it in small chunks that can return early.",
+      "error": null,
+      "elapsed_s": 232.24,
+      "est_tok_s": 3.2
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "Be concise. Give a ranked list with one-line justifications.",
+      "prompt": "I have limited GPU. Rank these background jobs by how much they need a large local model vs a small one: memory ranking (1-5), summarization, entity extraction, importance scoring, contradiction detection. Justify each.",
+      "response": "Assuming **1 = needs the largest model / most GPU**, **5 = small/task-specific model is enough**:\n\n1. **Summarization** \u2014 long-context generation demands coherent abstraction and quickly degrades with small models.\n2. **Contradiction detection** \u2014 deep semantic/NLI reasoning over meaning is hard for small models to get right.\n3. **Memory ranking** \u2014 relevance scoring is mostly embedding/cross-encoder work; small models do okay.\n4. **Importance scoring** \u2014 mostly classification or heuristics over extracted features; small models suffice.\n5. **Entity extraction** \u2014 structured token labeling; small NER or even rule-based systems work.\n\nIf you have a fine-tuned small model for a specific task, that task can drop one or two ranks.",
+      "error": null,
+      "elapsed_s": 48.01,
+      "est_tok_s": 3.8
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "Be concise and specific.",
+      "prompt": "A user says 'the search is broken, fix it.' Before changing code, what are the 3 most important clarifying questions, and what would each answer change about your approach?",
+      "response": "1. **What exactly are you seeing vs. expecting?** (e.g., no results, wrong results, error message, slowness, blank page)  \n   - *Changes approach:* Determines whether to debug the query/parser, relevance/ranking, indexing, UI rendering, error handling, or performance.\n\n2. **Can you give me the exact query, environment, and steps to reproduce it?** (browser/app, user role, dataset/tenant, filters, URL)  \n   - *Changes approach:* Tells me if it\u2019s a permissions/filter bug, environment-specific issue, stale cache, data problem, or UI state issue.\n\n3. **When did this start, and what changed around that time?** (deployments, data imports, config changes, traffic spikes, upstream API)  \n   - *Changes approach:* Points to a regression to roll back, a data/index corruption to reprocess, or an infra/dependency failure to escalate.",
+      "error": null,
+      "elapsed_s": 4.88,
+      "est_tok_s": 42.7
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "Show the calculation briefly, then give the number.",
+      "prompt": "A free API tier allows 20 requests per minute. You must process 5,000 memories, each needing 1 summarization call. Ignoring failures, what's the minimum wall-clock time in minutes, and what's one way to cut it roughly in half?",
+      "response": "Calculation: 5,000 memories \u00d7 1 call/memory = 5,000 calls.  \nAt 20 calls/minute: 5,000 \u00f7 20 = 250 minutes.\n\n**Minimum wall-clock time: 250 minutes** (or 4 hours 10 minutes).\n\nOne way to cut it roughly in half: use a tier/key that allows ~40 requests per minute, or split the workload across two 20/min accounts running in parallel.",
+      "error": null,
+      "elapsed_s": 4.93,
+      "est_tok_s": 16.6
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "Follow the format EXACTLY.",
+      "prompt": "List exactly 4 reasons local models are attractive for a personal assistant. Output ONLY a numbered list 1-4, each reason 6 words or fewer, no preamble, no trailing commentary.",
+      "response": "1. Enhanced privacy\n2. Works offline\n3. Lower latency\n4. No subscription costs",
+      "error": null,
+      "elapsed_s": 2.17,
+      "est_tok_s": 8.8
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "Be concise and specific.",
+      "prompt": "If a memory pipeline switched its embedding model but did NOT re-embed the existing corpus, what specifically would degrade, and why would search appear to 'mostly work' while quietly getting worse?",
+      "response": "- **What degrades:** retrieval ranking quality, not indexing uptime. The new query vectors and old corpus vectors live in **different embedding spaces**, so cosine/dot similarity is measuring an uncalibrated, model-specific geometry instead of true semantic relatedness.\n\n- **Why it silently worsens:**\n  - Fine-grained semantic matches break first: paraphrases, abstract concepts, synonyms, and tail vocabulary that the new model emphasizes may map far from their old-model neighbors.\n  - Calibration collapses: similarity scores and any thresholds tuned on the old model become unreliable.\n  - Approximate nearest-neighbor indexes (HNSW/IVF) were built for the old manifold; their partitions/graph edges can misroute new query vectors.\n  - It\u2019s not all-or-nothing because different embedding models still share broad pretraining signals: common words and popular topics remain roughly co-located, so obvious keyword-heavy queries still return plausible results. The degradation is gradual and hardest to notice on edge cases.",
+      "error": null,
+      "elapsed_s": 8.18,
+      "est_tok_s": 31.3
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "Be concise.",
+      "prompt": "Explain Reciprocal Rank Fusion (RRF) for combining keyword and vector search results to a competent developer who has never used it. Include the formula and why the constant k matters, in under 120 words.",
+      "response": "RRF merges ranked lists from different retrievers\u2014e.g., BM25 keyword search and vector search\u2014without normalizing their raw scores. Each document gets:\n\n\\[\n\\text{RRF}(d)=\\sum_i \\frac{1}{k + r_i(d)}\n\\]\n\nwhere \\(r_i(d)\\) is the 1-based rank of document \\(d\\) in list \\(i\\). Missing from a list contributes nothing.\n\nThe constant \\(k\\) (commonly 60) dampens the influence of low-ranked items so long-tail results don\u2019t dominate the combined ranking, and it softens differences among top ranks. A larger \\(k\\) flattens scores; a smaller \\(k\\) makes rank position more decisive.",
+      "error": null,
+      "elapsed_s": 5.89,
+      "est_tok_s": 24.3
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": null,
+      "prompt": "You are reviewing an AI assistant's response for quality.\n\nCheck for:\n- Factual errors or incorrect statements\n- Missing information that would meaningfully improve the answer\n- Unclear or confusing explanations\n- Whether the response actually answers what was asked\n\nIf you find issues, return an improved version of the response.\nIf the response is already good, return exactly: NO_CHANGES\n\nDo NOT add pleasantries, disclaimers, or meta-commentary.\nDo NOT mention that you are reviewing or improving anything.\nJust return the improved response or NO_CHANGES.\n\nUser question: What's the default I2C address of most SSD1306 OLED displays?\n\nResponse to review:\nThe default I2C address for most SSD1306 OLED displays is 0x3C.",
+      "response": "NO_CHANGES",
+      "error": null,
+      "elapsed_s": 4.49,
+      "est_tok_s": 0.4
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "You are a code reviewer. Find bugs in the following code. List each bug concisely.",
+      "prompt": "Find the bugs in this Python function:\n\ndef retry_with_backoff(func, max_retries=3, base_delay=1.0):\n    for attempt in range(max_retries):\n        try:\n            return func()\n        except Exception as e:\n            if attempt == max_retries:\n                raise\n            delay = base_delay * (2 ** attempt)\n            time.sleep(delay)\n",
+      "response": "Bugs:\n\n- `time` is used but never imported (`NameError`).\n- `attempt == max_retries` is never true because `range(max_retries)` yields `0..max_retries-1`, so the final exception is never re-raised.\n- After the loop ends, the function silently returns `None` instead of raising the last exception.\n- If `max_retries` is 0, the function never calls `func` at all.\n\nFix: compare `if attempt == max_retries - 1: raise`, or loop `for attempt in range(max_retries + 1)` and raise on the last iteration.",
+      "error": null,
+      "elapsed_s": 6.94,
+      "est_tok_s": 17.9
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "Write only the function code. No explanation, no markdown fences.",
+      "prompt": "Write a Python function `parse_rank(text: str) -> int` that extracts a rank (1-5) from LLM output text. It should find the first digit 1-5 in the text and return it, defaulting to 3 if none found.",
+      "response": "def parse_rank(text: str) -> int:\n    for char in text:\n        if char in \"12345\":\n            return int(char)\n    return 3",
+      "error": null,
+      "elapsed_s": 1.76,
+      "est_tok_s": 17.6
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "You are a senior developer reviewing code. Give 3-5 actionable suggestions. Be concise.",
+      "prompt": "Review this code:\n\nasync def process_memory(text, router, db):\n    s, u = summarize_memory(text)\n    summary = await router.generate(\"summarization\", u, system=s, think=False)\n    s2, u2 = rank_memory(text)\n    r = await router.generate(\"ranking\", u2, system=s2, think=False)\n    rank = 3\n    for c in r:\n        if c.isdigit() and 1 <= int(c) <= 5:\n            rank = int(c)\n            break\n    s3, u3 = ask_importance(text)\n    imp = await router.generate(\"ranking\", u3, system=s3, think=False)\n    importance = 0.3\n    try:\n        importance = float(imp.strip())\n    except:\n        pass\n    await db.update(summary=summary, rank=rank, importance=importance)\n    return {\"summary\": summary, \"rank\": rank, \"importance\": importance}\n",
+      "response": "- **Run independent LLM calls concurrently.** `summary`, `rank`, and `importance` generations do not depend on each other, so use `asyncio.gather` instead of awaiting them sequentially.\n\n- **Make output parsing robust.** Extracting the first digit or blindly `float()`-ing the response is fragile. Use regex/structured prompts and validate that `rank` is in `1..5` and `importance` is within an expected range (e.g., `0..1`).\n\n- **Avoid bare `except`.** Catching all exceptions silently can mask bugs. Catch specific exceptions (`ValueError`, `AttributeError`) and log failures.\n\n- **Clarify the database update.** `db.update(...)` has no `id` or filter \u2014 ensure it targets the correct memory row, or pass an identifier explicitly.\n\n- **Add types/docstrings and stronger naming.** Rename `s`/`u`/`s2`/`u2` to `system_prompt`/`user_prompt`, etc., and annotate the signature for maintainability.",
+      "error": null,
+      "elapsed_s": 5.29,
+      "est_tok_s": 42.2
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "Return only the corrected function. No markdown fences, no explanation.",
+      "prompt": "This function should return the number of retries actually used, but it's wrong. Fix it:\n\ndef attempts_used(max_retries, succeeded_on):\n    # succeeded_on is the 1-based attempt that succeeded, or None if all failed\n    if succeeded_on:\n        return succeeded_on - 1\n    return max_retries\n# Bug: when it succeeds on attempt 1, 0 retries is right, but when succeeded_on is None\n# it returns max_retries when it should be max_retries (correct) \u2014 the real bug is the\n# off-by-one: a success on attempt N used N-1 retries, but the None branch and the truthiness\n# check on succeeded_on==0 are wrong. Fix the edge cases.",
+      "response": "def attempts_used(max_retries, succeeded_on):\n    if succeeded_on is None:\n        return max_retries\n    return max(0, min(succeeded_on - 1, max_retries))",
+      "error": null,
+      "elapsed_s": 25.38,
+      "est_tok_s": 1.5
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "Return Python code only: the function and one pytest-style test. No prose.",
+      "prompt": "Write `clamp_unit(x: float) -> float | None` that clamps to [0,1], normalizes a value >1 and <=10 by /10, >10 and <=100 by /100, returns None for >100 or NaN or <0 after normalization. Include one pytest test covering the normalization and the None cases.",
+      "response": "```python\nimport math\n\ndef clamp_unit(x: float) -> float | None:\n    if not isinstance(x, (int, float)) or math.isnan(float(x)):\n        return None\n    x = float(x)\n    if x < 0:\n        return None\n    if x <= 1:\n        return x\n    if x <= 10:\n        return x / 10\n    if x <= 100:\n        return x / 100\n    return None\n\n\ndef test_clamp_unit():\n    # already in [0, 1]\n    assert clamp_unit(0.0) == 0.0\n    assert clamp_unit(0.5) == 0.5\n    assert clamp_unit(1.0) == 1.0\n\n    # normalization ranges\n    assert clamp_unit(5.0) == 0.5\n    assert clamp_unit(10.0) == 1.0\n    assert clamp_unit(50.0) == 0.5\n    assert clamp_unit(100.0) == 1.0\n\n    # None cases\n    assert clamp_unit(-0.1) is None\n    assert clamp_unit(101.0) is None\n    assert clamp_unit(float(\"nan\")) is None\n```",
+      "error": null,
+      "elapsed_s": 13.04,
+      "est_tok_s": 15.0
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "Be concise and specific.",
+      "prompt": "What does this do, and what's the subtle correctness problem?\n\nseen = set()\ndef dedupe(items):\n    out = []\n    for it in items:\n        if it not in seen:\n            seen.add(it)\n            out.append(it)\n    return out\n",
+      "response": "It returns a list of the first occurrence of each unique item, preserving order.\n\nThe subtle bug is that `seen` is a **module-level mutable set shared across all calls**. Once an item has been seen in any call, it won\u2019t appear in the output of later calls, even if it\u2019s the first time in that new list. For example:\n\n```python\ndedupe([1, 2, 3])   # -> [1, 2, 3]\ndedupe([3, 4, 5])   # -> [4, 5]   # 3 is missing because seen already contains it\n```\n\nA secondary issue: it only works for **hashable** items; unhashable items like lists/dicts raise `TypeError`.\n\nCorrect version:\n\n```python\ndef dedupe(items):\n    seen = set()\n    out = []\n    for it in items:\n        if it not in seen:\n            seen.add(it)\n            out.append(it)\n    return out\n```\n\nMove `seen` inside the function so each call gets a fresh set.",
+      "error": null,
+      "elapsed_s": 4.07,
+      "est_tok_s": 50.1
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "Return only the code.",
+      "prompt": "Write a Python snippet that calls an httpx client with a hard 30-second total timeout that WILL actually fire even if the server hangs. Show the client construction and one GET call.",
+      "response": "```python\nimport httpx\n\n# A hard 30-second total timeout that will fire even if the server hangs.\ntimeout = httpx.Timeout(30.0, connect=10.0)\n\nwith httpx.Client(timeout=timeout) as client:\n    response = client.get(\"https://example.com/\")\n    print(response.status_code)\n```",
+      "error": null,
+      "elapsed_s": 2.51,
+      "est_tok_s": 27.1
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "Give the regex on its own line, then one sentence explaining it.",
+      "prompt": "Write a Python regex that extracts a float score from text like `{\"score\": 0.82, ...}` OR `score = .9` OR `Score: 1`. It must capture the number into group 1 and tolerate missing leading zero.",
+      "response": "r'(?i)(?:\\bscore[\"\\']?\\s*[:=]\\s*)(\\d+\\.?\\d*|\\.\\d+)'\n\nIt case-insensitively matches a `score` label followed by an optional quote and `:` or `=`, then captures an integer or decimal number (including forms like `.9`) in group 1.",
+      "error": null,
+      "elapsed_s": 11.1,
+      "est_tok_s": 5.0
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "Be concise; give the refactored shape.",
+      "prompt": "This function does keyword filtering to decide which tools to pass to a model. Successful coding agents don't gate tools this way. Briefly explain why, and what to do instead.",
+      "response": "Keyword gating is brittle: user intent varies, code uses synonyms/domain terms, and required tool chains are hard to predict from a single query. It blocks valid requests and needs endless upkeep.\n\nInstead, expose tools by description and let the LLM choose. If there are too many tools, retrieve a small relevant subset semantically; don\u2019t hard-code keyword maps.\n\nRefactored shape:\n\n```python\ndef pick_tools(query, available_tools, top_k=None):\n    if top_k:\n        # semantic retrieval over tool descriptions, not keyword matching\n        tools = vector_search(query, available_tools, k=top_k)\n    else:\n        tools = available_tools\n\n    return llm(\n        messages=[{\"role\": \"user\", \"content\": query}],\n        tools=tools,        # schemas + descriptions\n        tool_choice=\"auto\", # let the model decide\n    )\n```",
+      "error": null,
+      "elapsed_s": 7.22,
+      "est_tok_s": 28.5
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Search the web for an ESP32 MAX98357 I2S wiring diagram",
+      "response": "",
+      "tool_calls": [
+        "web_search"
+      ],
+      "error": null,
+      "elapsed_s": 0.99,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Read the contents of worker.py",
+      "response": "",
+      "tool_calls": [
+        "read_file"
+      ],
+      "error": null,
+      "elapsed_s": 1.47,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "What did we discuss last time about the desk robot connectors?",
+      "response": "",
+      "tool_calls": [
+        "search_memories"
+      ],
+      "error": null,
+      "elapsed_s": 1.02,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Look up the current price of a Raspberry Pi 5",
+      "response": "",
+      "tool_calls": [
+        "web_search"
+      ],
+      "error": null,
+      "elapsed_s": 1.62,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Run the test suite with pytest in this repo",
+      "response": "",
+      "tool_calls": [
+        "run_command"
+      ],
+      "error": null,
+      "elapsed_s": 2.03,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "In config.yaml, change the server port to 9000",
+      "response": "",
+      "tool_calls": [
+        "read_file"
+      ],
+      "error": null,
+      "elapsed_s": 1.07,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "List the files in the blipshell/memory folder",
+      "response": "",
+      "tool_calls": [
+        "list_directory"
+      ],
+      "error": null,
+      "elapsed_s": 1.28,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Create a new file notes.md containing a short todo list",
+      "response": "",
+      "tool_calls": [
+        "write_file"
+      ],
+      "error": null,
+      "elapsed_s": 1.84,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Show me what's in README.md",
+      "response": "",
+      "tool_calls": [
+        "read_file"
+      ],
+      "error": null,
+      "elapsed_s": 1.54,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Find the latest news on the qwen3 model release",
+      "response": "",
+      "tool_calls": [
+        "web_search"
+      ],
+      "error": null,
+      "elapsed_s": 1.1,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Remind me what my daughter's name is",
+      "response": "",
+      "tool_calls": [
+        "search_memories"
+      ],
+      "error": null,
+      "elapsed_s": 1.12,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Check the git status of the repository",
+      "response": "",
+      "tool_calls": [
+        "run_command"
+      ],
+      "error": null,
+      "elapsed_s": 0.88,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Open blipshell/ui/cli.py so I can see it",
+      "response": "",
+      "tool_calls": [
+        "read_file"
+      ],
+      "error": null,
+      "elapsed_s": 1.0,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Search online for how reciprocal rank fusion (RRF) works",
+      "response": "",
+      "tool_calls": [
+        "web_search"
+      ],
+      "error": null,
+      "elapsed_s": 1.24,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Fix the typo in docs/SYSTEM_REVIEW.md",
+      "response": "",
+      "tool_calls": [
+        "read_file"
+      ],
+      "error": null,
+      "elapsed_s": 1.03,
+      "est_tok_s": null
+    }
+  ]
+}

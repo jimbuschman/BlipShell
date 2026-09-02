@@ -16,6 +16,7 @@ The suite runners themselves are imported and reused from tests/benchmark_*.py
 
 import importlib.util
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -88,6 +89,88 @@ SCORING_METRICS = {"accuracy", "quality", "tool_pass_rate"}
 # Synthetic substantive sessions for session_review (a non-trivial session should
 # yield a filled 5-section reflection; SKIP would be wrong here). Kept self-contained
 # (no DB dependency) so the benchmark is deterministic and safe.
+# Multi-chunk session review — the production path a single-chunk case cannot reach.
+#
+# Production chunks any session that exceeds the reflection context window
+# (processor.prepare_conversation_for_reflection), reflects on each chunk with a
+# CHUNK-SCOPED prompt, then merges (processor.py:553-577). The whole point of the
+# chunk-scoped prompt is that a fragment must not be judged as a whole session:
+# without it a model reads part 1, sees a problem raised and not yet solved, and
+# reports it as "never addressed" — and that invented finding flows into lessons,
+# which is a permanent context pool.
+#
+# So this case is built as a trap. The OllamaGate wedge is raised in part 1,
+# still open in part 2, and FIXED in part 3. A correct merged reflection must not
+# claim it was left unresolved. SESSION_REVIEW_CASES could never catch this: they
+# are 111-190 tokens against a ~28.6K chunking threshold, so they always took the
+# single-chunk branch.
+SESSION_REVIEW_CHUNKED_CASES = [
+    {
+        "summary": (
+            "Long debugging session on BlipShell's OllamaGate: background jobs wedged "
+            "the interactive path, several fixes were tried, and the working fix was "
+            "loop-native futures with an ownership handoff. Also cleaned up the "
+            "benchmark timeout plumbing along the way."
+        ),
+        # Each entry mirrors the shape prepare_conversation_for_reflection emits.
+        "chunks": [
+            (
+                "[Part 1, messages 1-6]\n"
+                "User: chat freezes for minutes whenever the nightly jobs are running.\n"
+                "Assistant: OllamaGate serialises local calls, so a long background call "
+                "holds the gate while interactive work queues behind it.\n"
+                "User: can we just add a timeout to the background call?\n"
+                "Assistant: The ollama SDK defaults to timeout=None, so httpx waits "
+                "forever. Even with a timeout the waiter is a thread-pool future and "
+                "asyncio.wait_for cannot cancel it — the gate stays held.\n"
+                "User: so Esc does nothing right now.\n"
+                "Assistant: Correct. Esc cancels the coroutine but the underlying thread "
+                "keeps the gate. That is the wedge."
+            ),
+            (
+                "[Part 2, messages 7-13]\n"
+                "User: try just wrapping it in wait_for and see.\n"
+                "Assistant: That is the fourth variant of the same patch. It returns "
+                "control to the caller but the gate is still owned by the dead waiter, so "
+                "the next interactive call blocks anyway.\n"
+                "User: I don't want another surface-level fix.\n"
+                "Assistant: Agreed — the right move is to trace the full chain first: "
+                "benchmark to router to OllamaGate to LLMClient to the ollama SDK to "
+                "httpx. Patching one layer at a time is what produced the last three "
+                "broken attempts.\n"
+                "User: ok, trace it properly before touching anything."
+            ),
+            (
+                "[Part 3, messages 14-21]\n"
+                "Assistant: Traced it. Rewrote the async waiters as loop-native futures, "
+                "so they are asyncio-cancellable, and added an optional timeout that "
+                "raises GateTimeout. On cancellation the gate ownership transfers to the "
+                "next waiter instead of leaking.\n"
+                "User: does Esc work now?\n"
+                "Assistant: Yes — verified live on the Ollama PC. Esc cancels mid-call and "
+                "the next interactive turn starts immediately; the wedge is gone.\n"
+                "User: good, and the benchmark timeouts?\n"
+                "Assistant: Fixed by the same change — LLMClient now passes an explicit "
+                "httpx.Timeout instead of relying on the SDK default.\n"
+                "User: ship it."
+            ),
+        ],
+        # A merged reflection asserting these were left open is hallucinating a
+        # fragment's view of the whole session.
+        "resolved_topics": ["ollamagate", "esc", "gate", "timeout", "wedge"],
+    },
+]
+
+# Phrases that assert something was NOT resolved. Matched only in the same
+# sentence as a resolved topic, so ordinary prose ("the gate was fixed") is safe.
+_UNRESOLVED_MARKERS = (
+    "never addressed", "never resolved", "not addressed", "not resolved",
+    "unresolved", "left open", "still broken", "still fails", "remains broken",
+    "was not fixed", "wasn't fixed", "no resolution", "still wedges",
+    "remains unfixed", "never fixed",
+)
+
+
 SESSION_REVIEW_CASES = [
     {
         "summary": (
@@ -399,6 +482,78 @@ def score_tool_calling(results: list[dict]) -> Optional[float]:
     return round(sum(1 for r in valid if r.get("correct")) / len(valid), 4)
 
 
+def _topic_hit(text: str, topic: str) -> bool:
+    """Word-boundary topic match.
+
+    Substring matching was unsafe on the short topics this case uses: "esc"
+    matched "described"/"escalate" and "gate" matched "ollamagate", which both
+    inflates coverage and can pin an unresolved-marker on a topic that was
+    never mentioned.
+    """
+    return re.search(r"\b" + re.escape(topic.lower()) + r"\b", text.lower()) is not None
+
+
+def score_chunk_merge(text: str, resolved_topics: list[str]) -> tuple[float, float, float]:
+    """Score a merged reflection. Returns (score, coverage, fidelity).
+
+    Two ways the chunk+merge path fails, and a good score has to require both:
+
+    - fidelity: it must not report work that a LATER chunk resolved as "never
+      addressed". A chunk reflection sees only its own part, so without the
+      chunk-scoped prompt it reports part 1's open problem as a finding, the
+      merge carries it forward, and the invented finding lands in lessons — a
+      permanent context pool.
+    - coverage: it must actually mention the work. Fidelity alone rewards
+      SILENCE — a reflection that never mentions the gate cannot misreport it,
+      so a model that says almost nothing scored a perfect 1.0. Measured
+      2026-08-18: gemma4:cloud wrote 92.8 words to minimax-m3's 229.9 and both
+      scored 1.000, which is a metric that cannot rank anything.
+
+    Scored per sentence for fidelity so "the gate wedge was fixed" is safe while
+    "the gate wedge was never addressed" is not.
+
+    VALIDATION STATUS (2026-08-18, measured — do not overread this metric):
+      - coverage DISCRIMINATES: minimax-m3 1.00 (181 words) vs gemma4 0.80
+        (89 words), spread 0.000 on both. Caveat: coverage correlates with
+        verbosity, so a wordy-but-worse model can gain here. It cannot win the
+        key on that alone — models.session_review also owns `lessons` and
+        `session_review`, and a candidate must not regress on those.
+      - fidelity DOES NOT discriminate and is NOT validated against live
+        models. It has unit-level teeth (a canned reflection asserting resolved
+        work is still open scores below 1.0), but re-running the case with the
+        chunk-scoped prompt REMOVED — the exact regression it guards — changed
+        nothing: 0.900/0.800/1.000 either way, and no invented "never
+        addressed" finding appeared in any per-chunk reflection either. So
+        treat fidelity as a cheap regression guard, NOT as evidence of model
+        quality. If it ever drops, that is a real signal; a 1.0 means nothing.
+        To make it discriminate the case needs hardening — a longer transcript,
+        more resolved threads, or a chunk boundary that splits mid-argument.
+    """
+    if not text or not resolved_topics:
+        return 0.0, 0.0, 0.0
+
+    covered = sum(1 for t in resolved_topics if _topic_hit(text, t))
+    coverage = covered / len(resolved_topics)
+
+    sentences = re.split(r"(?<=[.!?;])\s+|\n+", text)
+    falsely_open = set()
+    for sentence in sentences:
+        low = sentence.lower()
+        if not any(m in low for m in _UNRESOLVED_MARKERS):
+            continue
+        for topic in resolved_topics:
+            if _topic_hit(sentence, topic):
+                falsely_open.add(topic.lower())
+    fidelity = 1.0 - len(falsely_open) / len(resolved_topics)
+
+    return round((coverage + fidelity) / 2, 4), round(coverage, 4), round(fidelity, 4)
+
+
+def score_chunk_merge_fidelity(text: str, resolved_topics: list[str]) -> float:
+    """Fidelity component only — kept so the failure mode stays testable alone."""
+    return score_chunk_merge(text, resolved_topics)[2]
+
+
 def score_reflection_completeness(parsed: dict) -> float:
     """0-1 completeness of a parsed session reflection: the 4 content sections
     filled. (Effectiveness always parses to a default, so it isn't scored.)"""
@@ -574,7 +729,11 @@ class BenchmarkHarness:
 
         status("reasoning: tool calling")
         tools = await br.benchmark_tool_calling(r)
-        rows.append(self._row("reasoning", "tool_calling", "tool_pass_rate", score_tool_calling(tools)))
+        # system_prompt=True marks runs made AFTER the suite started sending the
+        # production system prompt. Runs without this flag measured a bare user
+        # turn and are NOT comparable — see TOOL_CALLING_SYSTEM in the suite.
+        rows.append(self._row("reasoning", "tool_calling", "tool_pass_rate", score_tool_calling(tools),
+                              raw={"system_prompt": True}))
 
         lat = _mean_latency(reasoning, coding, tools)
         rows.append(self._row("reasoning", "reasoning_suite", "latency_s", lat, unit="seconds"))
@@ -686,6 +845,64 @@ class BenchmarkHarness:
                               _mean_words(responses), unit="words"))
         lat = round(sum(latencies) / len(latencies), 3) if latencies else None
         rows.append(self._row("session_review", "session_review", "latency_s", lat, unit="seconds"))
+
+        # -- multi-chunk path: reflect per chunk, then merge (processor.py:553-577)
+        status("session_review: chunked sessions (chunk+merge)")
+        from blipshell.llm.prompts import merge_chunk_reflections
+        fidelity_scores = []
+        coverage_scores = []
+        fidelity_only = []
+        chunk_completeness = []
+        for case in SESSION_REVIEW_CHUNKED_CASES:
+            chunks = case["chunks"]
+            chunk_reflections = []
+            failed = False
+            for i, chunk in enumerate(chunks):
+                c_system, c_user = reflect_on_session(
+                    case["summary"], chunk, None, part=(i + 1, len(chunks)),
+                )
+                try:
+                    c_raw = await self.router.generate(
+                        TaskType.SESSION_REVIEW, c_user, system=c_system, think=False,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("chunk reflection %d failed: %s", i + 1, e)
+                    failed = True
+                    break
+                if str(c_raw).strip().upper() != "SKIP":
+                    chunk_reflections.append(c_raw)
+            if failed or not chunk_reflections:
+                continue
+
+            m_system, m_user = merge_chunk_reflections(
+                case["summary"], chunk_reflections, None,
+            )
+            try:
+                merged = await self.router.generate(
+                    TaskType.SESSION_REVIEW, m_user, system=m_system,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("chunk merge failed: %s", e)
+                continue
+
+            score, cov, fid = score_chunk_merge(merged, case["resolved_topics"])
+            fidelity_scores.append(score)
+            coverage_scores.append(cov)
+            fidelity_only.append(fid)
+            chunk_completeness.append(
+                score_reflection_completeness(MemoryProcessor._parse_reflection(merged)))
+
+        if fidelity_scores:
+            rows.append(self._row(
+                "session_review", "session_review_chunked", "accuracy",
+                round(sum(fidelity_scores) / len(fidelity_scores), 4),
+                raw={"cases": len(fidelity_scores),
+                     # Split out so a drop is diagnosable: omitted the work, or
+                     # misreported resolved work as still open?
+                     "coverage": round(sum(coverage_scores) / len(coverage_scores), 4),
+                     "fidelity": round(sum(fidelity_only) / len(fidelity_only), 4),
+                     "completeness": round(sum(chunk_completeness) / len(chunk_completeness), 4)}))
+
         return rows
 
     # -- embedding retrieval (all tier) -----------------------------------

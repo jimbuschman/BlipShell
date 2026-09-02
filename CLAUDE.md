@@ -110,6 +110,13 @@ blipshell/
   effective age), tag overlap, active-project (+0.5), entity-graph expansion —
   optional reranker blend, Jaccard dedup of results. Retrieval declared
   good-enough for v2; do NOT tune preemptively.
+  **Time-aware (2026-09-02)**: queries naming a time range ("yesterday",
+  "last week", "in July") rank in-range memories first — deterministic regex
+  parse (memory/timeparse.py, no LLM on the per-turn path), partition-prefer
+  not hard-filter, so a wrong or empty range degrades to the old ranking.
+  `memory.time_aware_search` toggles it. Evidence: temporal is every memory
+  system's worst benchmark category and time-range filtering its best-attested
+  fix (FIELD_SURVEY_2026_09.md 3.1).
 - **Context assembly** (memory/manager.py): 5 token-budget pools — core 5%,
   lessons 5%, active_session 30%, recent_history 20%, recall 40% — with rollover.
 - **Entity graph** (memory/entity_extractor.py): LLM triple extraction; 4-stage
@@ -150,11 +157,12 @@ blipshell/
 
 | Task | Primary | Fallback (local) |
 |---|---|---|
-| tool_calling | minimax-m3:cloud (Ollama cloud) | gpt-oss:latest |
+| tool_calling | gemma4:31b-cloud (Ollama cloud) | gpt-oss:latest |
 | coding | minimax/minimax-m3 (OpenRouter) | gpt-oss:latest |
 | reasoning / ranking / importance / ranking_importance | qwen3:14b (local) | qwen3:14b / qwen3.5:9b |
 | summarization | glm4:latest local; Groq gpt-oss-120b via endpoint priority | qwen3:14b |
-| session_review | minimax-m3:cloud (128K) | qwen3:14b (local, 32K) |
+| session_review | deepseek/deepseek-v4-flash (OpenRouter, 204K; measured 0.887 review / 0.537 lessons) | qwen3:14b (local, 32K) |
+| reflection | gemma4:31b-cloud (Ollama cloud) | qwen3:14b |
 | embedding | qwen3-embedding:0.6b | — |
 
 - Gemini endpoint exists but is disabled (free-tier burst limits). Groq serves
@@ -186,6 +194,26 @@ blipshell/
   after ~3h quiet, forms one "lingering thought" from its own prior thoughts.
   Surfaces two ways: one-shot pending injection on return, and per-turn semantic
   resurfacing (cosine prefilter → local LLM relevance judge, fail-closed, max 1).
+  Routed through `TaskType.REFLECTION` (own config key, 2026-09-01): the task is
+  unusually model-sensitive — Wisp measured, varying ONLY the model on one corpus
+  and prompt, 3 distinct themes (phi4:14b) vs 14 (gemma4:31b-cloud) across 20
+  reflections. A **nightly `self_reflection` job** (core/nightly.py) forms one
+  thought per night regardless of app usage — idle + on-return alone measured
+  ~1 thought/month, which left the step-2 gate ("10 NEW thoughts") a year away —
+  skipping when a thought already formed that day (`reflection.nightly_min_gap_hours`).
+- **Theme-diversity metric** (memory/themes.py, ported from Wisp, hand-validated
+  there): deterministic content-word-Jaccard clustering over the thought corpus.
+  Quote `distinct_themes` and `domination` (largest NO-CHAIN family share — the
+  single-link figure inflates ~7x on a paraphrase chain and is reported only for
+  comparison). The nightly job emits it every run; `python -m scripts.theme_readout`
+  prints it on demand. This is the number that replaces "does resurfacing feel
+  like caring vs indexing?" as the step-2 readout.
+- **Retrieval provenance** (`python -m scripts.retrieval_provenance`, Ollama PC):
+  measures whether the real search pipeline over-selects assistant-authored
+  memories ("exhaust") beyond their corpus share — Wisp's most portable finding
+  (its percept holding an answer ranked 47th behind 27 of its own replies).
+  This is the MEASUREMENT that must precede any retrieval tuning; the retrieval
+  good-enough mandate stands until it shows a pathology.
 - **Self-gravity step 1** (SHIPPED, enabled in config): per-thought weight —
   recurrence reinforces (+0.5 at ≥0.85 cosine echo), surfacing fatigues (×0.6),
   30-day half-life decay, floor 0.1; heavy thoughts render `[Thought · recurring]`.
@@ -201,7 +229,7 @@ blipshell/
 
 - **The validation split**: logic/wiring → HERE (pytest, seconds); model
   quality/behavior → Ollama PC only.
-- `tests/` (~65 files, 1259 passing + 5 skipped): `tests/fakes.py`
+- `tests/` (~69 files, 1620 passing + 3 skipped): `tests/fakes.py`
   `ScriptedLLMClient` drives the REAL ChatLoop with canned turns —
   completion detection, guardrails gating, dedup validated deterministically
   (`tests/test_loop_integration.py`). `conftest.py` gives real in-memory SQLite +
@@ -244,19 +272,63 @@ blipshell/
   code-gen with agentic pass rate under one `task_type`; it renders as
   "Coding (legacy - ambiguous)" and is excluded from the composite. New runs
   report `code_gen` and `coding_agentic` separately.
-- Known benchmark gap (do NOT read past it): suites call prompts directly, so
-  production paths are bypassed — `run_session_review` never exercises
-  chunk+merge, and `SESSION_REVIEW_CASES` are 111-190 tokens vs a ~28.6K
-  chunking threshold. `scripts/audit_reflection_quality.py` covers that for now.
+- ~~Known benchmark gap: `run_session_review` never exercises chunk+merge~~ —
+  CLOSED 2026-08-18. `SESSION_REVIEW_CHUNKED_CASES` runs the real production
+  sequence (chunk-scoped `reflect_on_session(part=(i,n))` per chunk ->
+  `merge_chunk_reflections`) and scores the specific failure that path exists
+  to prevent: a problem raised in part 1 and FIXED in part 3 must not be
+  reported as "never addressed", because that invented finding flows into
+  lessons, a permanent context pool. New job `session_review_chunked`; owned by
+  `models.session_review` in JOB_OWNERS. The single-chunk cases stay: they are
+  111-190 tokens and always took the single-chunk branch, which is why this
+  went unmeasured for months.
+  Scored as mean(coverage, fidelity), both in `raw`. **Measured 2026-08-18 —
+  do not overread it**: coverage discriminates (minimax-m3 1.00 at 181 words
+  vs gemma4 0.80 at 89), but it correlates with verbosity; fidelity does NOT
+  discriminate and is unvalidated live — re-running with the chunk-scoped
+  prompt REMOVED changed nothing (0.900/0.800/1.000 either way, no invented
+  "never addressed" finding in any per-chunk reflection). Fidelity is a cheap
+  regression guard with unit-level teeth only: a drop is a real signal, a 1.0
+  means nothing. Hardening it needs a longer transcript or a chunk boundary
+  that splits mid-argument.
+- Benchmark faithfulness (audited 2026-08-18, suite -> production call site).
+  **Faithful**: `rank_importance` (processor.py:188), `contradiction`
+  (processor.py:362), `entity` (entity_extractor.py:148), `summarization`
+  (processor.py:101), `lessons` (processor.py:279). **Import-path-only and
+  labelled**: `ranking` (import_common.py:598), `importance` (:648).
+  `JOB_OWNERS` re-derived from `TaskType.*` and confirmed correct.
+  Two defects found and FIXED:
+  - `tool_calling` sent a bare user turn with NO system prompt, while
+    production always sends one. It also scored a single turn, so an agentic
+    opener (`find . -name worker.py`, `list_directory .`, read-before-edit)
+    counted as a miss. **That mis-scoring WAS the metric's noise**: repeats
+    gave sd ~0.09 / spread 0.13-0.20, so minimax-m3's recorded 0.667 vs
+    qwen3:14b's 0.933 was substantially a coin flip. Now a real multi-turn
+    loop (`TOOL_CALLING_MAX_TURNS`) against a fake workspace with the
+    production system prompt: measured 0.9333 with spread 0.000 over 3
+    repeats. Command args match on INVOCATION, not substring — `find . -name
+    "pytest.ini"` used to count as "ran pytest".
+  - The `reasoning` suite graded `generate_plan`, which has ZERO production
+    callers (only the benchmark imported it; DESIGN.md:588 still documents it
+    as live). Replaced with a `structured_compaction_prompt` case — live at
+    chat_loop.py:520 through TaskType.REASONING.
+  Advice is now noise-aware: `MEANINGFUL_DELTA` (0.03) is only the fallback for
+  unreplicated runs; with repeats, a gain must clear the MEASURED spread
+  (`advice._noise_floor`). `--repeats` defaults to 5 — a single run cannot
+  separate two close models and will invert rankings.
 - `python scripts/run_executor.py --canned|--stress` — headless executor harness
   (Ollama PC).
 
 ## Nightly maintenance
 
-`NightlyRunner` (core/nightly.py): 23 ordered jobs (backup → cleanup →
-backfills → entity extraction/merge/prune → taggers → consolidate → digests →
-health check), each isolated, 300s/job timeout, Ollama-dependent jobs skipped
-when it's down. `/nightly` command or `blipshell nightly --quiet`.
+`NightlyRunner` (core/nightly.py): 25 ordered jobs (backup → cleanup →
+backfills → session/self reflection → entity extraction/merge/prune → taggers →
+consolidate → digests → user model → memory mirror → health check), each
+isolated, 300s/job timeout, Ollama-dependent jobs skipped when it's down.
+`export_mirror` writes the believed-state layers (user model, core memories,
+lessons, self-thoughts) to `data/mirror/*.md` — EXPORT-ONLY transparency
+(hand-edits are not read back; regenerated wholesale), gitignored because it
+is the distilled personal layer. `/nightly` command or `blipshell nightly --quiet`.
 Entity merge/prune are config-gated with dry-run defaults (see the ARCHIVE
 mandate above); `cleanup_entities.py --apply` and the old `entity_cleanup` job
 hard-delete — do not use them.
@@ -276,6 +348,35 @@ hard-delete — do not use them.
 - qwen3 models degrade with think=False (hybrid-thinking architecture).
 - `context_tokens` is set at endpoint level and passed as num_ctx.
 - Windows console: keep script output ASCII-safe (cp1252 crashes).
+- **Relative paths in config.yaml resolve against the CONFIG FILE, never the
+  cwd** — use `resolve_config_relative()` (`core/config.py`). `blipshell` is an
+  installed console script, so the cwd is wherever the user is standing while
+  the config is always found relative to the install; two anchors for one
+  setting means the config loads reliably and then names a file that moves.
+  Cost of learning this: 2026-08-11..08-20 the live instance was launched one
+  directory deep, `data/blipshell.db` resolved under `<repo>/blipshell/`,
+  SQLite CREATED a 16MB database and 9 days of sessions went there while the
+  real 491MB corpus sat untouched. Nothing raised — **an absent SQLite file is
+  a creation, not a failure** — so the only symptom was an assistant that had
+  quietly lost its history. `database.path` is anchored at the `ConfigManager`
+  chokepoint (d1e6ebf); absolute paths pass through, which is what keeps
+  `simulate --db` working. A `dir /s /b` sweep found SEVEN live-shaped copies,
+  and `data/data/` + `blipshell/blipshell/data/` can only come from a wrong-cwd
+  launch — this had recurred for months. `benchmark/` had already solved it
+  locally and that duplicate is exactly why the main path stayed broken: when
+  you fix a path bug, fix it at the chokepoint and delete the copies.
+  Since 2026-09-01 `database.require_existing: true` (production config)
+  additionally REFUSES to load when no file exists at the resolved path —
+  anchoring fixed the known cause, the guard catches the class ("an absent
+  SQLite file is a creation, not a failure"). Fresh installs set it false;
+  post-load overrides (`simulate --db`, benchmark temp DBs) are untouched.
+- **A test that compares the config VALUE instead of the resolved TARGET is
+  vacuous.** `test_same_path_from_any_working_directory` passed with anchoring
+  disabled, because unanchored the string stays `"data/blipshell.db"` from
+  either directory — matching strings, different files. Mutation testing was
+  the only reason this was caught, and one mutation was not enough: the
+  `save()` guard needed its own, because the first tripped a shared
+  precondition instead of the behaviour.
 
 ## Known open items (as of 2026-08-05)
 
@@ -314,8 +415,6 @@ is in progress. Remaining:
   and the 0.88–0.92 band is ~60% same-topic-different-fact (a `llama3.2`
   payload vs the identical `gemma3` one scores 0.9198). Re-run that script
   before ever revisiting the number; don't argue it from a merge count.
-- Benchmark realism: `run_session_review` never exercises chunk+merge, and the
-  cases are far below the chunking threshold.
 - Memory reranker as L2 — NOTE: enabling it as-written would *degrade* ranking
   (normalization is applied only to the top-N, and `logprobs` is never
   requested). Fix before any future enable.

@@ -13,6 +13,7 @@ Usage:
 import asyncio
 import json
 import sys
+import re
 import time
 from pathlib import Path
 
@@ -24,9 +25,9 @@ from rich.markup import escape
 from rich.table import Table
 
 from blipshell.llm.endpoints import EndpointManager
-from blipshell.llm.prompts import generate_plan, reflect_on_response
+from blipshell.llm.prompts import reflect_on_response, structured_compaction_prompt
 from blipshell.llm.router import LLMRouter, TaskType
-from blipshell.models.config import EndpointConfig, LLMConfig, ModelsConfig
+from blipshell.models.config import AgentConfig, EndpointConfig, LLMConfig, ModelsConfig
 
 # ---------------------------------------------------------------------------
 # Models to benchmark
@@ -44,10 +45,33 @@ OLLAMA_URL = "http://localhost:11434"
 # ---------------------------------------------------------------------------
 REASONING_TESTS = [
     {
-        "name": "plan_generation",
-        "description": "Generate a plan for a multi-step task",
-        "prompt_fn": "generate_plan",
-        "input": "Add retry logic with exponential backoff to the HTTP client, write tests for it, and update the README",
+        "name": "context_compaction",
+        "description": "Compact a conversation without losing decisions or open work",
+        # Replaces a plan_generation case built on generate_plan(), which had
+        # ZERO production callers (only this suite imported it) — the reasoning
+        # key was partly graded on a prompt nothing runs. structured_compaction_prompt
+        # IS live: chat_loop.py:520 calls it through TaskType.REASONING whenever a
+        # conversation overflows, and losing a decision there corrupts every
+        # later turn.
+        "prompt_fn": "structured_compaction",
+        "input": (
+            "User: The nightly entity merge archived 7491 entities last run. I want to "
+            "re-run it but I'm worried about the version-numbered ones.\n"
+            "Assistant: projectecho_v1 and projectecho_v2 embed at 0.996 cosine, well "
+            "above every threshold, so an embedding-only guard would merge them. "
+            "entity_names.version_distinguished blocks any merge where names differ in a "
+            "version or instance number.\n"
+            "User: Is that guard on both merge paths?\n"
+            "Assistant: No — until 2026-08-07 it lived on EntityMerger only, which is the "
+            "path that ships disabled. Creation-time resolution, the enabled one, had no "
+            "guard. Both use blipshell/memory/entity_names.py now.\n"
+            "User: OK. Decision: re-run the merge, but keep the ARCHIVE-never-DELETE rule "
+            "and take a backup first. Don't touch cleanup_entities.py, it hard-deletes.\n"
+            "Assistant: Understood. I'll back up data/blipshell.db, run merge_entities in "
+            "dry-run, then apply with --loop.\n"
+            "User: Also the get_all_entity_names cache — anything writing entity rows "
+            "outside the store's own methods has to call _invalidate_entity_name_cache."
+        ),
     },
     {
         "name": "technical_analysis",
@@ -351,7 +375,7 @@ TOOL_CALLING_TESTS = [
     {"name": "run_pytest", "message": "Run the test suite with pytest in this repo",
      "expected_tool": "run_command", "expected_args": {"command": "pytest"}},
     {"name": "edit_config", "message": "In config.yaml, change the server port to 9000",
-     "expected_tool": "edit_file", "expected_args": {"path": "config.yaml"}},
+     "expected_tool": ("edit_file", "read_file"), "expected_args": {"path": "config.yaml"}},
     {"name": "list_dir", "message": "List the files in the blipshell/memory folder",
      "expected_tool": "list_directory", "expected_args": {"path": "memory"}},
     {"name": "create_file", "message": "Create a new file notes.md containing a short todo list",
@@ -369,10 +393,91 @@ TOOL_CALLING_TESTS = [
     {"name": "concept_search", "message": "Search online for how reciprocal rank fusion (RRF) works",
      "expected_tool": "web_search", "expected_args": {"query": "rank fusion"}},
     {"name": "edit_doc", "message": "Fix the typo in docs/SYSTEM_REVIEW.md",
-     "expected_tool": "edit_file", "expected_args": {"path": "system_review.md"}},
+     "expected_tool": ("edit_file", "read_file"), "expected_args": {"path": "system_review.md"}},
 ]
 
 TOOL_LABELS = [t["name"] for t in TOOL_CALLING_TESTS]
+
+# The production interactive path ALWAYS sends a system prompt: agent_chat.py
+# builds one starting from AgentConfig.system_prompt before every ChatLoop turn.
+# This suite used to send a bare user turn with tools attached and no system
+# message at all, which measures "unprompted tool eagerness" — a condition
+# BlipShell never runs. It penalised cautious models (minimax-m3 asked for a
+# full path instead of calling read_file on "worker.py") and rewarded eager
+# ones, and it inverted the ranking against qwen3:14b.
+#
+# We use the AgentConfig DEFAULT rather than the loaded config.agent.system_prompt
+# on purpose: benchmark results are a committed corpus compared across two
+# machines and across months, so the condition must be a constant in code, not
+# whatever config.yaml happens to say on the box that ran it.
+TOOL_CALLING_SYSTEM = AgentConfig().system_prompt
+
+# How many assistant turns a tool-calling case gets before it is scored a miss.
+# Single-turn scoring could not evaluate an agentic model: asked to read
+# worker.py, minimax-m3 answered `run_command find . -name "worker.py"`, and
+# asked for README.md it answered `list_directory .`. Both are correct first
+# moves — locate, then read — and both scored as failures. Because a model
+# picks stochastically among several reasonable openers and only one counted,
+# that scoring WAS the measurement noise (sd ~0.09 across repeats), which is
+# large enough to have driven a routing decision off a coin flip.
+TOOL_CALLING_MAX_TURNS = 4
+
+# A small fake workspace so orienting calls return something usable and the
+# model can actually reach the goal. Contents are deliberately boring; the
+# point is that list/find/read return consistent, plausible results.
+_FAKE_FILES = {
+    "readme.md": "# BlipShell\n\nLocal LLM assistant with persistent memory.\n",
+    "worker.py": "class MemoryWorker:\n    def run(self):\n        pass\n",
+    "config.yaml": "server:\n  port: 8080\n  host: 0.0.0.0\n",
+    "notes.md": "",
+    "docs/system_review.md": "# System Review\n\nThe retreival layer needs work.\n",
+    "blipshell/ui/cli.py": "import click\n\n@click.group()\ndef main():\n    pass\n",
+}
+_FAKE_DIRS = {
+    ".": ["README.md", "worker.py", "config.yaml", "docs/", "blipshell/", "tests/"],
+    "docs": ["SYSTEM_REVIEW.md", "HISTORY.md", "V2_PLAN.md"],
+    "blipshell": ["ui/", "memory/", "core/", "llm/"],
+    "blipshell/memory": ["sqlite_store.py", "vector_store.py", "search.py", "processor.py"],
+    "memory": ["sqlite_store.py", "vector_store.py", "search.py", "processor.py"],
+    "blipshell/ui": ["cli.py", "views/", "commands/"],
+}
+
+
+def _fake_tool_result(name: str, args: dict) -> str:
+    """Plausible, consistent result for a mock tool call."""
+    args = args if isinstance(args, dict) else {}
+
+    def val(*keys):
+        return next((str(args[k]) for k in keys if k in args), "")
+
+    if name == "list_directory":
+        path = val("path", "directory", "dir").strip("./") or "."
+        entries = _FAKE_DIRS.get(path) or _FAKE_DIRS.get(path.rstrip("/")) or _FAKE_DIRS["."]
+        return "\n".join(entries)
+    if name == "read_file":
+        path = val("path", "file_path", "file").lstrip("./").lower()
+        body = _FAKE_FILES.get(path)
+        if body is None:
+            body = _FAKE_FILES.get(path.split("/")[-1])
+        return body if body is not None else "Error: %s: no such file" % path
+    if name == "run_command":
+        low = val("command", "cmd").lower()
+        if "pytest" in low:
+            return "===== 1546 passed, 3 skipped in 120.5s ====="
+        if "git status" in low:
+            return "On branch main\nnothing to commit, working tree clean"
+        if low.startswith(("find", "ls", "dir")) or " find " in low:
+            return "./README.md\n./worker.py\n./config.yaml\n./docs/SYSTEM_REVIEW.md"
+        return "(command completed, no output)"
+    if name == "web_search":
+        q = val("query", "q")
+        return "1. Result about %s\n2. Another result about %s\n3. Forum thread about %s" % (q, q, q)
+    if name == "search_memories":
+        q = val("query", "q")
+        return "Memory 1: earlier discussion about %s\nMemory 2: a follow-up about %s" % (q, q)
+    if name in ("edit_file", "write_file"):
+        return "OK: file written"
+    return "OK"
 
 console = Console()
 
@@ -380,15 +485,45 @@ console = Console()
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _tool_call_matches(called: dict, expected_tool: str, expected_args: dict | None) -> bool:
+_QUOTED = re.compile(r"""'[^']*'|"[^"]*\"""")
+
+
+def _command_invokes(command: str, expected: str) -> bool:
+    """True if `command` actually INVOKES `expected`, not merely mentions it.
+
+    Substring matching produced false positives that inflated scores: asked to
+    run the test suite, a model answered
+    `find . -name "pytest.ini" -o -name "pyproject.toml"` and scored a pass,
+    because "pytest" appears inside a quoted filename. We strip quoted regions
+    first, then require the expected token to appear on a word boundary, so
+    `pytest`, `python -m pytest` and `ls && pytest -q` pass while
+    `find -name "pytest.ini"` does not.
+    """
+    stripped = _QUOTED.sub(" ", command)
+    # Trailing "." must also block: an unquoted `grep -r pytest.ini .` mentions
+    # pytest inside a filename just as surely as a quoted one does.
+    pattern = r"(?<![\w./-])" + r"[\s]+".join(re.escape(p) for p in expected.split()) + r"(?![\w.-])"
+    return re.search(pattern, stripped) is not None
+
+
+def _tool_call_matches(called: dict, expected_tool, expected_args: dict | None) -> bool:
     """True if a tool call has the right name AND every required arg.
 
-    Tool name must match exactly. For each expected arg, the call must include
-    that key (exact or loose substring key match) and the value must contain the
-    expected substring (case-insensitive) — lenient on phrasing, strict on
-    whether the model actually supplied the right argument.
+    `expected_tool` is a name or a tuple of ACCEPTABLE names. A tuple is used
+    where more than one first action is correct under the production system
+    prompt: its rule 5 is "Read a file before editing it", so answering an edit
+    request with read_file on the right path is obedient, not wrong. Scoring is
+    single-turn and cannot see the follow-up edit, so penalising it would
+    measure the opposite of the behaviour we ask for. The expected_args path
+    check still holds — the model must target the right file either way.
+
+    For each expected arg, the call must include that key (exact or loose
+    substring key match) and the value must contain the expected substring
+    (case-insensitive) — lenient on phrasing, strict on whether the model
+    actually supplied the right argument.
     """
-    if called.get("name") != expected_tool:
+    acceptable = (expected_tool,) if isinstance(expected_tool, str) else tuple(expected_tool)
+    if called.get("name") not in acceptable:
         return False
     if not expected_args:
         return True
@@ -400,7 +535,12 @@ def _tool_call_matches(called: dict, expected_tool: str, expected_args: dict | N
         actual = lowered.get(key.lower())
         if actual is None:  # loose key match (e.g. "file_path" contains "path")
             actual = next((v for k, v in lowered.items() if key.lower() in k), None)
-        if actual is None or str(want).lower() not in actual:
+        if actual is None:
+            return False
+        if key.lower() in ("command", "cmd"):
+            if not _command_invokes(actual, str(want).lower()):
+                return False
+        elif str(want).lower() not in actual:
             return False
     return True
 
@@ -521,10 +661,11 @@ async def benchmark_reasoning(router: LLMRouter, extra_options: dict | None = No
     for test in REASONING_TESTS:
         start = time.perf_counter()
         try:
-            if test.get("prompt_fn") == "generate_plan":
-                prompt = generate_plan(test["input"])
+            if test.get("prompt_fn") == "structured_compaction":
+                system, prompt = structured_compaction_prompt(test["input"])
                 response = await _generate_with_options(
-                    router, TaskType.REASONING, prompt, extra_options=extra_options,
+                    router, TaskType.REASONING, prompt, system=system,
+                    extra_options=extra_options,
                 )
             elif test.get("prompt_fn") == "reflect_on_response":
                 prompt = reflect_on_response(test["user_message"], test["response"])
@@ -562,13 +703,25 @@ async def benchmark_coding(router: LLMRouter, extra_options: dict | None = None)
 
 
 async def benchmark_tool_calling(router: LLMRouter, extra_options: dict | None = None) -> list[dict]:
+    """Score whether the model REACHES the expected tool call within a few turns.
+
+    Runs a real multi-turn loop against a fake workspace (see _fake_tool_result)
+    with the production system prompt, mirroring how ChatLoop actually drives a
+    model. A case passes as soon as any turn emits the expected call; orienting
+    first (list/find, or read-before-edit) costs turns but is not a failure.
+    `turns` is recorded per case so a model that goes straight to the goal is
+    distinguishable from one that wanders there.
+    """
     model, client = await router.get_model_and_client(TaskType.TOOL_CALLING)
     if not client:
         return [{"error": "No client available", "time": 0}] * len(TOOL_CALLING_TESTS)
 
     results = []
     for test in TOOL_CALLING_TESTS:
-        messages = [{"role": "user", "content": test["message"]}]
+        messages = [
+            {"role": "system", "content": TOOL_CALLING_SYSTEM},
+            {"role": "user", "content": test["message"]},
+        ]
         start = time.perf_counter()
         chat_kwargs = {}
         if extra_options:
@@ -577,34 +730,63 @@ async def benchmark_tool_calling(router: LLMRouter, extra_options: dict | None =
             effort = extra_options.get("reasoning_effort")
             if effort:
                 chat_kwargs["think"] = effort
+        called_tools: list[dict] = []
+        correct = False
+        turns = 0
+        content = ""
         try:
-            response = await client.chat(messages=messages, model=model, tools=MOCK_TOOLS, **chat_kwargs)
-            content, tool_calls = extract_response(response)
+            for turn in range(TOOL_CALLING_MAX_TURNS):
+                turns = turn + 1
+                response = await client.chat(
+                    messages=messages, model=model, tools=MOCK_TOOLS, **chat_kwargs)
+                content, tool_calls = extract_response(response)
 
-            called_tools = []
-            if tool_calls:
-                for tc in tool_calls:
+                turn_calls = []
+                for tc in (tool_calls or []):
                     name, args = extract_tool_call_info(tc)
-                    called_tools.append({"name": name, "args": args})
+                    turn_calls.append({"name": name, "args": args})
+                called_tools.extend(turn_calls)
 
-            correct = any(
-                _tool_call_matches(t, test["expected_tool"], test.get("expected_args"))
-                for t in called_tools
-            )
+                if any(_tool_call_matches(t, test["expected_tool"], test.get("expected_args"))
+                       for t in turn_calls):
+                    correct = True
+                    break
+                if not turn_calls:
+                    # Answered in prose with no tool call — it has stopped acting,
+                    # so more turns would only re-ask the same question.
+                    break
+
+                # Feed results back and let it continue, exactly as ChatLoop does.
+                messages.append({"role": "assistant", "content": content or "",
+                                 "tool_calls": tool_calls})
+                for tc, t in zip(tool_calls, turn_calls):
+                    tc_id = ""
+                    if isinstance(tc, dict):
+                        tc_id = tc.get("id") or ""
+                    else:
+                        tc_id = getattr(tc, "id", "") or ""
+                    msg = {"role": "tool", "name": t["name"],
+                           "content": _fake_tool_result(t["name"], t["args"])}
+                    if tc_id:  # OpenAI-compat endpoints require it; Ollama ignores it
+                        msg["tool_call_id"] = tc_id
+                    messages.append(msg)
+
             result = {
                 "content": content,
                 "tool_calls": called_tools,
                 "expected": test["expected_tool"],
                 "expected_args": test.get("expected_args"),
                 "correct": correct,
+                "turns": turns,
                 "time": round(time.perf_counter() - start, 2),
             }
         except Exception as e:
             result = {
                 "content": f"ERROR: {e}",
-                "tool_calls": [],
+                "tool_calls": called_tools,
                 "expected": test["expected_tool"],
                 "correct": False,
+                "turns": turns,
                 "time": round(time.perf_counter() - start, 2),
             }
         results.append(result)

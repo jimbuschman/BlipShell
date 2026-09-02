@@ -63,8 +63,9 @@ JOB_OWNERS: dict[str, tuple[tuple[str, ...], str]] = {
         "import path only (live pipeline uses ranking_importance)",
     ),
     "session_review": (
-        ("session_review", "lessons"),
-        "session reflections, LESSON EXTRACTION, friction analysis",
+        ("session_review", "lessons", "session_review_chunked"),
+        "session reflections (incl. the chunk+merge path for oversized "
+        "sessions), LESSON EXTRACTION, friction analysis",
     ),
     "embedding": (
         ("embedding",),
@@ -79,14 +80,34 @@ JOB_SUITE = {
     "contradiction": "pipeline", "entity": "pipeline", "summarization": "pipeline",
     "lessons": "pipeline", "reasoning": "reasoning", "code_gen": "reasoning",
     "coding_agentic": "coding", "tool_calling": "reasoning",
-    "session_review": "session_review", "embedding": "embedding",
+    "session_review": "session_review",
+    "session_review_chunked": "session_review", "embedding": "embedding",
 }
 
-# A candidate must beat the incumbent by more than this on a job before it's
-# worth reporting as an improvement. Judge scores wobble between runs (kimi's
-# session_review moved 0.950 -> 0.925 across a scorer change alone), so a
-# smaller margin is noise, not signal.
+# Fallback noise floor, used ONLY when a run has no measured spread (--repeats 1).
+# Judge scores wobble between runs (kimi's session_review moved 0.950 -> 0.925
+# across a scorer change alone), so a smaller margin is noise, not signal.
+# When repeats ARE available, _noise_floor uses the measured spread instead:
+# 0.03 turned out to be well below the real floor (tool_calling spread 0.13-0.20),
+# which is how a coin flip could be reported as a clean win.
 MEANINGFUL_DELTA = 0.03
+
+
+def _noise_floor(job: str, spreads: dict, incumbent: str, candidate: str) -> float:
+    """Smallest delta on `job` that is not plausibly run-to-run noise.
+
+    A fixed 0.03 was BELOW the real noise floor. Measured on 2026-08-18,
+    tool_calling repeats gave sd 0.042-0.089 (spread 0.13-0.20) on a single
+    model — so a 0.03 "gain" was regularly a coin flip, and the harness would
+    report it as a clean win. When repeats supply a spread for both models we
+    require the delta to clear the mean of the two spreads; otherwise we fall
+    back to the constant and the reader is told the run was unreplicated.
+    """
+    per_job = spreads.get(job) or {}
+    observed = [per_job[m] for m in (incumbent, candidate) if isinstance(per_job.get(m), (int, float))]
+    if not observed:
+        return MEANINGFUL_DELTA
+    return max(MEANINGFUL_DELTA, sum(observed) / len(observed))
 
 
 def current_assignments(config) -> dict[str, str]:
@@ -116,6 +137,9 @@ def build_advice(report: dict, config) -> list[dict]:
     assignments = current_assignments(config)
     scores: dict[str, dict[str, float]] = {
         c["key"]: c["scores"] for c in report.get("categories", [])
+    }
+    spreads: dict[str, dict[str, float]] = {
+        c["key"]: c.get("spread", {}) for c in report.get("categories", [])
     }
     coverage = report.get("coverage", {})
     models = report.get("models", [])
@@ -152,9 +176,10 @@ def build_advice(report: dict, config) -> list[dict]:
                 if cand is None or inc is None:
                     continue
                 d = cand - inc
-                if d > MEANINGFUL_DELTA:
+                floor = _noise_floor(j, spreads, incumbent, r["model"])
+                if d > floor:
                     gains.append((j, d))
-                elif d < -MEANINGFUL_DELTA:
+                elif d < -floor:
                     losses.append((j, d))
             if gains or losses:
                 contenders.append({**r, "gains": gains, "losses": losses})
@@ -204,8 +229,11 @@ def build_advice(report: dict, config) -> list[dict]:
                 action = None
             else:
                 verdict = "KEEP"
-                reason = (f"No measured candidate beats {incumbent} by more "
-                          f"than {MEANINGFUL_DELTA:.2f} on this key's jobs.")
+                floors = [_noise_floor(j, spreads, incumbent, r["model"])
+                          for j in jobs for r in rows if r["model"] != incumbent]
+                worst = max(floors) if floors else MEANINGFUL_DELTA
+                reason = (f"No measured candidate beats {incumbent} by more than "
+                          f"the noise floor ({worst:.3f}) on this key's jobs.")
                 action = None
 
         blocks.append({

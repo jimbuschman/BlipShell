@@ -1,0 +1,26 @@
+======================================================================
+BENCHMARK TRANSCRIPT
+Model: devstral-small-2:24b
+Task: cross_file_cli_feature
+Timestamp: 2026-08-11 00:41:06 UTC
+======================================================================
+
+--- PLAN ---
+[Dynamic execution — single continuous conversation]
+
+--- EXECUTION ---
+
+======================================================================
+VERIFICATION: 4/8 checks passed
+======================================================================
+  FAIL diff_contains(('blipshell/memory/sqlite_store.py', '\\+.*async def get_recent_memories')): pattern not in diff (0 chars)
+  FAIL diff_contains(('blipshell/memory/sqlite_store.py', '\\+.*(SELECT|ORDER BY)')): pattern not in diff (0 chars)
+  PASS syntax_check(blipshell/memory/sqlite_store.py): compiles OK
+  FAIL diff_contains(('blipshell/ui/cli.py', '\\+.*recent')): pattern not in diff (0 chars)
+  PASS syntax_check(blipshell/ui/cli.py): compiles OK
+  PASS files_changed(2): 3 files changed (need >=2)
+  FAIL functional_test(import asyncio; from blipshell.memory.sqlite_store import SQLiteStore; async def check():   s = SQLiteStore(':memory:'); await s.initialize();   result = await s.get_recent_memories(5);   assert isinstance(result, list); asyncio.run(check())): snippet failed (rc=1):   File [35m"<string>"[0m, line [35m1[0m
+    import asyncio; from blipshell.memory.sqlite_store import SQLiteStore; [1;31masync[0m def check():   s = SQLiteStore(':memory:'); await s.initialize(
+  PASS no_unwanted_files: clean
+
+TIMING: plan=0.0s, total=4.6s

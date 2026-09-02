@@ -1,0 +1,445 @@
+{
+  "model": "devstral-small-2:24b",
+  "run_ts": "2026-08-13T04:31:33.973262+00:00",
+  "calls": [
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": null,
+      "prompt": "You are a task planner for an autonomous coding agent. Break this request into 1-5 focused steps. Use FEWER steps for simpler tasks.\n\nRules:\n- Each step must be a SINGLE action: read OR edit OR create OR test \u2014 NOT multiple\n- A 'read' step should ONLY read/explore \u2014 do NOT edit in the same step\n- An 'edit' step should do the implementation \u2014 it can read if needed first\n- Steps are sequential \u2014 later steps build on earlier ones\n- Simple tasks (add a function, edit one file) need only 1-2 steps\n- Do NOT include: 'review code', 'verify', 'create plan', 'write documentation'\n- Do NOT include verification/confirmation steps \u2014 the agent verifies as it goes\n- Do NOT include package installation as a step\n- Do NOT include greetings, explanations, or commentary\n- Respond with ONLY the numbered list\n\nFormat:\n1. First step description (tool_name)\n2. Second step description (tool_name)\n\nUser request: Add retry logic with exponential backoff to the HTTP client, write tests for it, and update the README",
+      "response": "1. Read the current HTTP client implementation (read_file)\n2. Edit the HTTP client to add retry logic with exponential backoff (edit_file)\n3. Create tests for the retry logic (create_file)\n4. Update the README to document the retry behavior (edit_file)",
+      "error": null,
+      "elapsed_s": 47.1,
+      "est_tok_s": 1.3
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "You are a helpful technical assistant. Be concise and specific.",
+      "prompt": "Why might an ESP32 with a MAX98357 I2S DAC produce noise or garbage audio? List the 3 most likely causes and how to debug each one.",
+      "response": "1. **Incorrect I2S Configuration**\n   - *Cause*: Mismatch in sample rate, bit depth, or channel configuration between ESP32 and MAX98357.\n   - *Debug*:\n     - Verify `i2s_set_sample_rates()` matches DAC's requirements (e.g., 16kHz\u201348kHz).\n     - Ensure `i2s_set_bits_per_sample()` is set to 16 or 32 bits (MAX98357 supports both).\n     - Check `i2s_set_channel_format()` for correct stereo/mono setup.\n\n2. **Ground Loops or Power Noise**\n   - *Cause*: Poor grounding or insufficient power supply decoupling.\n   - *Debug*:\n     - Add 100nF capacitors near ESP32 and MAX98357 power pins.\n     - Use separate ground paths for analog/digital if possible.\n     - Test with a clean 3.3V/5V supply (avoid USB noise).\n\n3. **Clock Signal Issues**\n   - *Cause*: Unstable or incorrect BCLK/WS signals from ESP32.\n   - *Debug*:\n     - Scope the I2S lines to confirm stable clock pulses.\n     - Reduce CPU load (e.g., disable Wi-Fi) if glitches occur during operation.\n     - Try lowering the sample rate (e.g., 16kHz) to test clock stability.\n\n**Bonus Check**: Ensure the MAX98357\u2019s `SD` pin is correctly wired to ESP32\u2019s I2S data output.",
+      "error": null,
+      "elapsed_s": 74.89,
+      "est_tok_s": 3.8
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": null,
+      "prompt": "You are reviewing an AI assistant's response for quality.\n\nCheck for:\n- Factual errors or incorrect statements\n- Missing information that would meaningfully improve the answer\n- Unclear or confusing explanations\n- Whether the response actually answers what was asked\n\nIf you find issues, return an improved version of the response.\nIf the response is already good, return exactly: NO_CHANGES\n\nDo NOT add pleasantries, disclaimers, or meta-commentary.\nDo NOT mention that you are reviewing or improving anything.\nJust return the improved response or NO_CHANGES.\n\nUser question: How do I connect an SSD1306 OLED to an ESP32?\n\nResponse to review:\nConnect VCC to 3.3V, GND to GND, SDA to GPIO 21, and SCL to GPIO 22. Use the Adafruit_SSD1306 library. Call display.begin(SSD1306_SWITCHCAPVCC, 0x3D) to initialize.",
+      "response": "Connect VCC to 3.3V, GND to GND, SDA to GPIO 21, and SCL to GPIO 22. Use the Adafruit_SSD1306 library. Call display.begin(SSD1306_SWITCHCAPVCC, 0x3C) to initialize.",
+      "error": null,
+      "elapsed_s": 16.57,
+      "est_tok_s": 2.5
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "You are a pragmatic software architect. Be concise and specific.",
+      "prompt": "For a single-user local assistant with 30k memories, compare a dual-store setup (SQLite + a separate vector DB) vs a single store (sqlite-vec inside the SQLite file). What's the main risk of the dual-store approach and when is it nonetheless justified?",
+      "response": "**Dual-Store (SQLite + Vector DB):**\n- **Main Risk:** *Consistency failures*. If the vector DB and SQLite are not transactionally synchronized, you may have stale or missing data (e.g., a memory exists in one store but not the other).\n- **Justified When:**\n  - The vector DB has superior performance/scalability for your use case (e.g., hybrid search with metadata filtering).\n  - You\u2019re using a managed vector DB service where embedding SQLite-vec would be impractical.\n  - You need advanced vector operations (e.g., dynamic pruning, custom indexes) not available in sqlite-vec.\n\n**Single-Store (sqlite-vec):**\n- **Advantage:** Atomic consistency\u2014updates to metadata and vectors happen in the same transaction.\n- **Trade-off:** May sacrifice some performance or flexibility if sqlite-vec lacks features you need.\n\n**Bottom Line:** Dual-store is riskier but justified for specific needs; otherwise, prefer sqlite-vec.",
+      "error": null,
+      "elapsed_s": 45.87,
+      "est_tok_s": 5.0
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "You are a debugging expert. Identify the most likely root cause and the fix.",
+      "prompt": "A python asyncio call to a thread-pool executor never times out even though it's wrapped in asyncio.wait_for. Why doesn't the timeout fire, and what's the correct fix?",
+      "response": "The issue you're describing\u2014where `asyncio.wait_for` doesn't trigger a timeout for a task running in a `ThreadPoolExecutor`\u2014is likely due to one of the following root causes:\n\n### **Most Likely Root Cause:**\n1. **The underlying thread-pool operation is not properly yielding control**\n   - If the work submitted to the `ThreadPoolExecutor` is CPU-bound or blocks indefinitely (e.g., waiting on I/O without releasing the GIL), Python's event loop may not get a chance to check the timeout.\n   - `asyncio.wait_for` relies on the event loop being able to interrupt the task. If the thread is stuck in a long-running operation, the timeout won't fire.\n\n2. **The executor is not properly integrated with asyncio**\n   - If you're using `loop.run_in_executor` but the executor is not properly managed (e.g., using a custom executor that doesn't respect timeouts), the timeout may be ignored.\n\n---\n\n### **How to Fix It:**\n#### **1. Ensure the Thread-Pool Task Can Be Interrupted**\n- If the task is I/O-bound, ensure it releases the GIL periodically (e.g., using `asyncio.sleep(0)` or yielding control).\n- If the task is CPU-bound, consider offloading it to a process pool (`ProcessPoolExecutor`) instead, as CPU-bound tasks block the thread and prevent timeout checks.\n\n#### **2. Use `loop.run_in_executor` Correctly**\nMake sure you're using `asyncio.wait_for` with `run_in_executor` like this:\n```python\nimport asyncio\n\ndef blocking_io():\n    # Simulate a long-running I/O task\n    import time\n    time.sleep(10)  # This will block the thread\n\nasync def main():\n    loop = asyncio.get_event_loop()\n    try:\n        await asyncio.wait_for(\n            loop.run_in_executor(None, blocking_io),\n            timeout=2.0  # Should raise TimeoutError after 2 seconds\n        )\n    except asyncio.TimeoutError:\n        print(\"Timeout occurred!\")\n\nasyncio.run(main())\n```\nIf this still doesn't time out, the issue is likely in the `blocking_io` function.\n\n#### **3. Use a Custom Executor That Respects Timeouts**\nIf you're using a custom executor (e.g., `concurrent.futures.ThreadPoolExecutor`), ensure it properly handles cancellation:\n```python\nfrom concurrent.futures import ThreadPoolExecutor\n\nexecutor = ThreadPoolExecutor(max_workers=1)\n\nasync def main():\n    loop = asyncio.get_event_loop()\n    try:\n        await asyncio.wait_for(\n            loop.run_in_executor(executor, blocking_io),\n            timeout=2.0\n        )\n    except asyncio.TimeoutError:\n        print(\"Timeout occurred!\")\n```\n\n#### **4. Check for Deadlocks or Blocking Calls**\nIf the thread is stuck in a synchronous call (e.g., `requests.get()` without async support), the timeout won't work. Use async alternatives like `aiohttp` instead.\n\n---\n\n### **Final Answer:**\nThe most likely cause is that the thread-pool task is blocking indefinitely, preventing the event loop from checking the timeout. The fix is to:\n1. Ensure the task yields control (e.g., avoid long CPU-bound work in threads).\n2. Use `asyncio.wait_for` with `run_in_executor` correctly.\n3. If necessary, switch to a process pool for CPU-bound tasks.\n\nIf the issue persists, share the code for further debugging.",
+      "error": null,
+      "elapsed_s": 167.63,
+      "est_tok_s": 4.7
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "Be concise. Give a ranked list with one-line justifications.",
+      "prompt": "I have limited GPU. Rank these background jobs by how much they need a large local model vs a small one: memory ranking (1-5), summarization, entity extraction, importance scoring, contradiction detection. Justify each.",
+      "response": "Here's the ranked list from most to least demanding on GPU memory:\n\n1. **Memory Ranking (1)** - Requires large context windows and complex attention mechanisms.\n2. **Summarization** - Needs to process entire documents and generate coherent summaries.\n3. **Entity Extraction** - Can use smaller models with focused token classification heads.\n4. **Importance Scoring** - Often relies on simpler regression or classification tasks.\n5. **Contradiction Detection (5)** - Typically uses lightweight pairwise comparisons or embeddings.\n\nJustification: Tasks requiring longer sequences or more complex outputs demand larger models, while simpler tasks can often be handled by smaller, specialized models.",
+      "error": null,
+      "elapsed_s": 29.65,
+      "est_tok_s": 5.9
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "Be concise and specific.",
+      "prompt": "A user says 'the search is broken, fix it.' Before changing code, what are the 3 most important clarifying questions, and what would each answer change about your approach?",
+      "response": "1. **What specific issue are you experiencing?** (e.g., no results, incorrect results, error messages)\n   - *Answer impacts*: Narrows down whether it's a UI, backend, or data problem.\n\n2. **When did this start happening?** (e.g., after a recent update, always, intermittently)\n   - *Answer impacts*: Helps determine if it\u2019s a regression, configuration issue, or environmental problem.\n\n3. **Can you reproduce it?** (e.g., with specific search terms, on certain devices/browsers)\n   - *Answer impacts*: Guides whether to investigate code logic, test cases, or user-specific configurations first.",
+      "error": null,
+      "elapsed_s": 29.76,
+      "est_tok_s": 5.0
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "Show the calculation briefly, then give the number.",
+      "prompt": "A free API tier allows 20 requests per minute. You must process 5,000 memories, each needing 1 summarization call. Ignoring failures, what's the minimum wall-clock time in minutes, and what's one way to cut it roughly in half?",
+      "response": "**Calculation:**\n\n- Requests per minute: 20\n- Total requests needed: 5,000\n- Minimum wall-clock time = Total requests / Requests per minute\n  = 5,000 / 20\n  = **250 minutes**\n\n**One way to cut it roughly in half:**\n\nUse multiple API keys or accounts (if allowed by the API terms) to parallelize requests. For example, with 4 API keys, you could process ~80 requests per minute (20 per key), reducing the time to ~63 minutes (~50% of 125 minutes).",
+      "error": null,
+      "elapsed_s": 29.43,
+      "est_tok_s": 3.8
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "Follow the format EXACTLY.",
+      "prompt": "List exactly 4 reasons local models are attractive for a personal assistant. Output ONLY a numbered list 1-4, each reason 6 words or fewer, no preamble, no trailing commentary.",
+      "response": "1. Enhanced data privacy and security.\n2. Reduced dependency on internet connectivity.\n3. Customization tailored to specific needs.\n4. Lower operational costs over time.",
+      "error": null,
+      "elapsed_s": 7.21,
+      "est_tok_s": 5.8
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "Be concise and specific.",
+      "prompt": "If a memory pipeline switched its embedding model but did NOT re-embed the existing corpus, what specifically would degrade, and why would search appear to 'mostly work' while quietly getting worse?",
+      "response": "**Degradation:**\n1. **Semantic drift**: New embeddings won\u2019t align with old ones, causing mismatches in vector space.\n2. **Ranking errors**: Relevant docs may be ranked lower if their old embeddings don\u2019t match the new model\u2019s expectations.\n\n**Why it \"mostly works\":**\n- Exact matches (e.g., keywords) still work because they rely on token overlap, not semantics.\n- Partial relevance is preserved for some queries where the new model\u2019s embeddings coincidentally align with old ones.\n- Gradual degradation goes unnoticed until users explicitly report precision drops.\n\n**Root cause**: The vector space continuity is broken\u2014old and new embeddings exist in incompatible distributions.",
+      "error": null,
+      "elapsed_s": 31.6,
+      "est_tok_s": 5.4
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": "Be concise.",
+      "prompt": "Explain Reciprocal Rank Fusion (RRF) for combining keyword and vector search results to a competent developer who has never used it. Include the formula and why the constant k matters, in under 120 words.",
+      "response": "Reciprocal Rank Fusion (RRF) combines ranked lists from multiple sources (e.g., keyword and vector search) by assigning scores based on their ranks.\n\n**Formula**:\nFor each document, compute:\n\\[ \\text{score} = \\sum_{i=1}^{n} \\frac{1}{k + r_i} \\]\nwhere \\( r_i \\) is the rank of the document in the \\( i \\)-th list, and \\( k \\) is a constant (typically 60).\n\n**Why \\( k \\) matters**:\n- Controls the influence of rank. A larger \\( k \\) reduces the impact of high ranks, making the fusion more conservative.\n- Balances contributions from different sources\u2014smaller \\( k \\) favors top-ranked items, while larger \\( k \\) smooths differences.\n\nRRF is simple, effective, and doesn\u2019t require learning or tuning beyond choosing \\( k \\).",
+      "error": null,
+      "elapsed_s": 41.17,
+      "est_tok_s": 4.4
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "reasoning",
+      "system": null,
+      "prompt": "You are reviewing an AI assistant's response for quality.\n\nCheck for:\n- Factual errors or incorrect statements\n- Missing information that would meaningfully improve the answer\n- Unclear or confusing explanations\n- Whether the response actually answers what was asked\n\nIf you find issues, return an improved version of the response.\nIf the response is already good, return exactly: NO_CHANGES\n\nDo NOT add pleasantries, disclaimers, or meta-commentary.\nDo NOT mention that you are reviewing or improving anything.\nJust return the improved response or NO_CHANGES.\n\nUser question: What's the default I2C address of most SSD1306 OLED displays?\n\nResponse to review:\nThe default I2C address for most SSD1306 OLED displays is 0x3C.",
+      "response": "NO_CHANGES",
+      "error": null,
+      "elapsed_s": 1.85,
+      "est_tok_s": 1.1
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "You are a code reviewer. Find bugs in the following code. List each bug concisely.",
+      "prompt": "Find the bugs in this Python function:\n\ndef retry_with_backoff(func, max_retries=3, base_delay=1.0):\n    for attempt in range(max_retries):\n        try:\n            return func()\n        except Exception as e:\n            if attempt == max_retries:\n                raise\n            delay = base_delay * (2 ** attempt)\n            time.sleep(delay)\n",
+      "response": "Here are the bugs in the provided Python function:\n\n1. **Missing `time` import**: The function uses `time.sleep()` but doesn't import the `time` module.\n2. **Incorrect retry logic**: The condition `if attempt == max_retries:` is checked inside the exception block, but this will never be true because the loop runs from `0` to `max_retries - 1`.\n3. **No final attempt after last delay**: If all retries fail, the function raises the exception immediately without making a final attempt after the last backoff delay.\n4. **No handling of non-retryable exceptions**: The function catches all exceptions (`Exception`), which might include ones that shouldn't be retried (e.g., `KeyboardInterrupt`, `SystemExit`).\n\n### Corrected Version:\n```python\nimport time\n\ndef retry_with_backoff(func, max_retries=3, base_delay=1.0):\n    last_exception = None\n    for attempt in range(max_retries + 1):  # Include final attempt after backoff\n        try:\n            return func()\n        except Exception as e:  # Consider more specific exceptions if needed\n            last_exception = e\n            if attempt == max_retries:\n                raise  # Re-raise the last exception if all retries fail\n            delay = base_delay * (2 ** attempt)\n            time.sleep(delay)\n    raise last_exception  # Fallback in case loop doesn't raise\n```\n\n### Key Fixes:\n1. Added `import time`.\n2. Changed loop to run `max_retries + 1` times to include a final attempt after the last backoff.\n3. Moved the `raise` outside the exception block to ensure it triggers only after all retries fail.\n4. Stored the last exception to re-raise it if needed.\n\nThis version ensures proper retry behavior with exponential backoff and handles edge cases better.",
+      "error": null,
+      "elapsed_s": 88.15,
+      "est_tok_s": 4.9
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "Write only the function code. No explanation, no markdown fences.",
+      "prompt": "Write a Python function `parse_rank(text: str) -> int` that extracts a rank (1-5) from LLM output text. It should find the first digit 1-5 in the text and return it, defaulting to 3 if none found.",
+      "response": "```python\ndef parse_rank(text: str) -> int:\n    for char in text:\n        if char.isdigit() and '1' <= char <= '5':\n            return int(char)\n    return 3\n```",
+      "error": null,
+      "elapsed_s": 9.68,
+      "est_tok_s": 4.1
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "You are a senior developer reviewing code. Give 3-5 actionable suggestions. Be concise.",
+      "prompt": "Review this code:\n\nasync def process_memory(text, router, db):\n    s, u = summarize_memory(text)\n    summary = await router.generate(\"summarization\", u, system=s, think=False)\n    s2, u2 = rank_memory(text)\n    r = await router.generate(\"ranking\", u2, system=s2, think=False)\n    rank = 3\n    for c in r:\n        if c.isdigit() and 1 <= int(c) <= 5:\n            rank = int(c)\n            break\n    s3, u3 = ask_importance(text)\n    imp = await router.generate(\"ranking\", u3, system=s3, think=False)\n    importance = 0.3\n    try:\n        importance = float(imp.strip())\n    except:\n        pass\n    await db.update(summary=summary, rank=rank, importance=importance)\n    return {\"summary\": summary, \"rank\": rank, \"importance\": importance}\n",
+      "response": "1. **Error Handling**: Add specific exception handling for the `float(imp.strip())` conversion to avoid silently failing on invalid inputs.\n\n2. **Magic Numbers**: Replace hardcoded values like `3`, `0.3`, and `5` with named constants or configuration variables for better maintainability.\n\n3. **Code Duplication**: The pattern of calling `router.generate()` is repeated three times. Consider extracting it into a helper function to reduce redundancy.\n\n4. **Type Hints**: Add type hints for parameters and return values to improve code clarity and enable better IDE support.\n\n5. **Logging**: Add logging statements to track the flow and debug issues, especially around the rank and importance extraction logic.",
+      "error": null,
+      "elapsed_s": 32.27,
+      "est_tok_s": 5.5
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "Return only the corrected function. No markdown fences, no explanation.",
+      "prompt": "This function should return the number of retries actually used, but it's wrong. Fix it:\n\ndef attempts_used(max_retries, succeeded_on):\n    # succeeded_on is the 1-based attempt that succeeded, or None if all failed\n    if succeeded_on:\n        return succeeded_on - 1\n    return max_retries\n# Bug: when it succeeds on attempt 1, 0 retries is right, but when succeeded_on is None\n# it returns max_retries when it should be max_retries (correct) \u2014 the real bug is the\n# off-by-one: a success on attempt N used N-1 retries, but the None branch and the truthiness\n# check on succeeded_on==0 are wrong. Fix the edge cases.",
+      "response": "def attempts_used(max_retries, succeeded_on):\n    if succeeded_on is not None:\n        return succeeded_on - 1\n    return max_retries",
+      "error": null,
+      "elapsed_s": 7.06,
+      "est_tok_s": 4.7
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "Return Python code only: the function and one pytest-style test. No prose.",
+      "prompt": "Write `clamp_unit(x: float) -> float | None` that clamps to [0,1], normalizes a value >1 and <=10 by /10, >10 and <=100 by /100, returns None for >100 or NaN or <0 after normalization. Include one pytest test covering the normalization and the None cases.",
+      "response": "```python\ndef clamp_unit(x: float) -> float | None:\n    if x < 0 or not (isinstance(x, float) or isinstance(x, int)):\n        return None\n    if x <= 1:\n        return min(max(0, x), 1)\n    elif 1 < x <= 10:\n        normalized = x / 10\n        return clamp_unit(normalized)\n    elif 10 < x <= 100:\n        normalized = x / 100\n        return clamp_unit(normalized)\n    else:\n        return None\n\nimport pytest\n\n@pytest.mark.parametrize(\"x, expected\", [\n    (5.0, 0.5),\n    (50.0, 0.5),\n    (101.0, None),\n    (-1.0, None),\n])\ndef test_clamp_unit(x, expected):\n    assert clamp_unit(x) == expected\n```",
+      "error": null,
+      "elapsed_s": 44.14,
+      "est_tok_s": 3.4
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "Be concise and specific.",
+      "prompt": "What does this do, and what's the subtle correctness problem?\n\nseen = set()\ndef dedupe(items):\n    out = []\n    for it in items:\n        if it not in seen:\n            seen.add(it)\n            out.append(it)\n    return out\n",
+      "response": "This function removes duplicates from a list while preserving order. The subtle correctness issue is that `seen` is a global variable, which can lead to unexpected behavior if the function is called multiple times\u2014it will retain items from previous calls, causing incorrect deduplication in subsequent runs.\n\n**Fix:** Move `seen = set()` inside the function to reset it on each call:\n\n```python\ndef dedupe(items):\n    seen = set()\n    out = []\n    for it in items:\n        if it not in seen:\n            seen.add(it)\n            out.append(it)\n    return out\n```\n\nThis ensures `dedupe` works correctly across multiple calls.",
+      "error": null,
+      "elapsed_s": 28.97,
+      "est_tok_s": 5.4
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "Return only the code.",
+      "prompt": "Write a Python snippet that calls an httpx client with a hard 30-second total timeout that WILL actually fire even if the server hangs. Show the client construction and one GET call.",
+      "response": "```python\nimport httpx\n\nwith httpx.Client(timeout=30.0) as client:\n    response = client.get('https://example.com')\n    print(response.status_code)\n```",
+      "error": null,
+      "elapsed_s": 9.02,
+      "est_tok_s": 4.1
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "Give the regex on its own line, then one sentence explaining it.",
+      "prompt": "Write a Python regex that extracts a float score from text like `{\"score\": 0.82, ...}` OR `score = .9` OR `Score: 1`. It must capture the number into group 1 and tolerate missing leading zero.",
+      "response": "```regex\n(-?\\d*\\.?\\d+)\n```\n\nThis regex captures a float score with optional negative sign, optional leading digits before decimal, and at least one digit after decimal (or just digits if no decimal point).",
+      "error": null,
+      "elapsed_s": 10.44,
+      "est_tok_s": 4.9
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "coding",
+      "system": "Be concise; give the refactored shape.",
+      "prompt": "This function does keyword filtering to decide which tools to pass to a model. Successful coding agents don't gate tools this way. Briefly explain why, and what to do instead.",
+      "response": "**Refactored Shape:**\n```python\ndef get_available_tools():\n    return list(tool_registry.values())\n```\n\n**Why not gate tools?**\n- Restricts agent flexibility.\n- Tools should be available unless explicitly forbidden (whitelist > blacklist).\n- Modern agents handle tool selection dynamically based on context.\n\n**What to do instead:**\n1. **Whitelist critical tools only** if absolutely necessary.\n2. **Let the model decide** which tools to use via natural language prompts.\n3. **Add safety checks** in tool implementations rather than pre-filtering.\n\nExample:\n```python\ndef safe_tool_execution(tool_name, *args):\n    if tool_name == \"dangerous_operation\":\n        raise PermissionError(\"Tool not allowed\")\n    return execute_tool(tool_name, *args)\n```\n\nThis shifts control from hardcoded filters to runtime validation.",
+      "error": null,
+      "elapsed_s": 39.64,
+      "est_tok_s": 5.1
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Search the web for an ESP32 MAX98357 I2S wiring diagram",
+      "response": "",
+      "tool_calls": [
+        "web_search"
+      ],
+      "error": null,
+      "elapsed_s": 6.13,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Read the contents of worker.py",
+      "response": "",
+      "tool_calls": [
+        "read_file"
+      ],
+      "error": null,
+      "elapsed_s": 9.04,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "What did we discuss last time about the desk robot connectors?",
+      "response": "",
+      "tool_calls": [
+        "search_memories"
+      ],
+      "error": null,
+      "elapsed_s": 4.64,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Look up the current price of a Raspberry Pi 5",
+      "response": "",
+      "tool_calls": [
+        "web_search"
+      ],
+      "error": null,
+      "elapsed_s": 5.21,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Run the test suite with pytest in this repo",
+      "response": "",
+      "tool_calls": [
+        "run_command"
+      ],
+      "error": null,
+      "elapsed_s": 11.44,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "In config.yaml, change the server port to 9000",
+      "response": "",
+      "tool_calls": [
+        "edit_file"
+      ],
+      "error": null,
+      "elapsed_s": 10.43,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "List the files in the blipshell/memory folder",
+      "response": "",
+      "tool_calls": [
+        "list_directory"
+      ],
+      "error": null,
+      "elapsed_s": 4.81,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Create a new file notes.md containing a short todo list",
+      "response": "",
+      "tool_calls": [
+        "write_file"
+      ],
+      "error": null,
+      "elapsed_s": 14.43,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Show me what's in README.md",
+      "response": "",
+      "tool_calls": [
+        "read_file"
+      ],
+      "error": null,
+      "elapsed_s": 3.49,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Find the latest news on the qwen3 model release",
+      "response": "",
+      "tool_calls": [
+        "web_search"
+      ],
+      "error": null,
+      "elapsed_s": 5.15,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Remind me what my daughter's name is",
+      "response": "I don't have access to your personal information or past conversations. Could you please remind me of your daughter's name?",
+      "tool_calls": null,
+      "error": null,
+      "elapsed_s": 6.77,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Check the git status of the repository",
+      "response": "",
+      "tool_calls": [
+        "run_command"
+      ],
+      "error": null,
+      "elapsed_s": 3.35,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Open blipshell/ui/cli.py so I can see it",
+      "response": "",
+      "tool_calls": [
+        "read_file"
+      ],
+      "error": null,
+      "elapsed_s": 5.08,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Search online for how reciprocal rank fusion (RRF) works",
+      "response": "",
+      "tool_calls": [
+        "web_search"
+      ],
+      "error": null,
+      "elapsed_s": 5.03,
+      "est_tok_s": null
+    },
+    {
+      "suite": "reasoning",
+      "repeat": 0,
+      "task_type": "chat",
+      "system": null,
+      "prompt": "Fix the typo in docs/SYSTEM_REVIEW.md",
+      "response": "",
+      "tool_calls": [
+        "read_file"
+      ],
+      "error": null,
+      "elapsed_s": 4.88,
+      "est_tok_s": null
+    }
+  ]
+}

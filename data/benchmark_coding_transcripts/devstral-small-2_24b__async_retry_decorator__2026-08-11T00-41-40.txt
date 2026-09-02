@@ -1,0 +1,48 @@
+======================================================================
+BENCHMARK TRANSCRIPT
+Model: devstral-small-2:24b
+Task: async_retry_decorator
+Timestamp: 2026-08-11 00:41:35 UTC
+======================================================================
+
+--- PLAN ---
+[Dynamic execution — single continuous conversation]
+
+--- EXECUTION ---
+
+======================================================================
+VERIFICATION: 1/12 checks passed
+======================================================================
+  FAIL file_exists(blipshell/utils/retry.py): not found
+  FAIL syntax_check(blipshell/utils/retry.py): file not found
+  FAIL grep_in_sandbox(('blipshell/utils/retry.py', 'def async_retry')): pattern not found
+  FAIL grep_in_sandbox(('blipshell/utils/retry.py', 'functools\\.wraps')): pattern not found
+  FAIL grep_in_sandbox(('blipshell/utils/retry.py', 'asyncio\\.sleep')): pattern not found
+  FAIL file_exists(tests/test_retry.py): not found
+  FAIL syntax_check(tests/test_retry.py): file not found
+  FAIL pytest_in_sandbox(tests/test_retry.py): test file not found
+  FAIL functional_test(import asyncio; from blipshell.utils.retry import async_retry; call_count = 0; @async_retry(max_retries=3, base_delay=0.01) 
+async def flaky(): 
+  global call_count; call_count += 1; 
+  if call_count < 3: raise ValueError('not yet'); 
+  return 'ok'; 
+assert asyncio.run(flaky()) == 'ok'; assert call_count == 3): snippet failed (rc=1):   File [35m"<string>"[0m, line [35m1[0m
+    import asyncio; from blipshell.utils.retry import async_retry; call_count = 0; [1;31m@[0masync_retry(max_retries=3, base_delay=0.01) 
+              
+  FAIL functional_test(import asyncio; from blipshell.utils.retry import async_retry; @async_retry(max_retries=3, base_delay=0.01, retry_on=(ValueError,)) 
+async def wrong_error(): raise TypeError('nope'); 
+try: asyncio.run(wrong_error()); assert False 
+except TypeError: pass): snippet failed (rc=1):   File [35m"<string>"[0m, line [35m1[0m
+    import asyncio; from blipshell.utils.retry import async_retry; [1;31m@[0masync_retry(max_retries=3, base_delay=0.01, retry_on=(ValueError,)) 
+      
+  FAIL functional_test(from blipshell.utils.retry import async_retry; @async_retry() 
+async def my_func(): 
+  '''My docstring'''; 
+  pass; 
+assert my_func.__name__ == 'my_func'; assert 'My docstring' in (my_func.__doc__ or '')): snippet failed (rc=1):   File [35m"<string>"[0m, line [35m1[0m
+    from blipshell.utils.retry import async_retry; [1;31m@[0masync_retry() 
+                                                   [1;31m^[0m
+[1;35mSynt
+  PASS no_unwanted_files: clean
+
+TIMING: plan=0.0s, total=4.6s

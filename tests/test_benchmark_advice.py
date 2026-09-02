@@ -145,8 +145,8 @@ class TestVerdicts:
         """The kimi/lessons trap: leads session_review, last on lessons, and the
         one key controls both."""
         rep = _report({
-            "mine": {"session_review": 0.844, "lessons": 0.600},
-            "kimi": {"session_review": 0.925, "lessons": 0.395},
+            "mine": {"session_review": 0.844, "lessons": 0.600, "session_review_chunked": 0.90},
+            "kimi": {"session_review": 0.925, "lessons": 0.395, "session_review_chunked": 0.90},
         })
         b = _block(build_advice(rep, self._cfg(session_review="mine")), "session_review")
         assert b["verdict"] == "KEEP"
@@ -154,8 +154,8 @@ class TestVerdicts:
 
     def test_clear_win_on_all_owned_jobs_is_consider(self):
         rep = _report({
-            "mine": {"session_review": 0.600, "lessons": 0.500},
-            "better": {"session_review": 0.900, "lessons": 0.800},
+            "mine": {"session_review": 0.600, "lessons": 0.500, "session_review_chunked": 0.50},
+            "better": {"session_review": 0.900, "lessons": 0.800, "session_review_chunked": 0.80},
         })
         b = _block(build_advice(rep, self._cfg(session_review="mine")), "session_review")
         assert b["verdict"] == "CONSIDER"
@@ -165,8 +165,9 @@ class TestVerdicts:
         """kimi's session_review moved 0.950 -> 0.925 across a scorer change
         alone, so a margin that small is not evidence."""
         rep = _report({
-            "mine": {"session_review": 0.900, "lessons": 0.700},
+            "mine": {"session_review": 0.900, "lessons": 0.700, "session_review_chunked": 0.90},
             "other": {"session_review": 0.900 + MEANINGFUL_DELTA / 2,
+                      "session_review_chunked": 0.900 + MEANINGFUL_DELTA / 2,
                       "lessons": 0.700},
         })
         b = _block(build_advice(rep, self._cfg(session_review="mine")), "session_review")
@@ -187,7 +188,7 @@ class TestVerdicts:
         assert "lfm2.5" in b["reason"]
 
     def test_no_candidates_at_all_is_keep(self):
-        rep = _report({"mine": {"session_review": 0.8, "lessons": 0.7}})
+        rep = _report({"mine": {"session_review": 0.8, "lessons": 0.7, "session_review_chunked": 0.8}})
         b = _block(build_advice(rep, self._cfg(session_review="mine")), "session_review")
         assert b["verdict"] == "KEEP"
         assert b["action"] is None
@@ -196,8 +197,8 @@ class TestVerdicts:
 class TestRendering:
     def _advice(self):
         rep = _report({
-            "mine": {"session_review": 0.844, "lessons": 0.600},
-            "kimi": {"session_review": 0.925, "lessons": 0.395},
+            "mine": {"session_review": 0.844, "lessons": 0.600, "session_review_chunked": 0.90},
+            "kimi": {"session_review": 0.925, "lessons": 0.395, "session_review_chunked": 0.90},
         })
         return build_advice(rep, _Cfg(_Models(session_review="mine")))
 
@@ -240,9 +241,9 @@ class TestCandidateRanking:
 
     def _rep(self):
         return _report({
-            "qwen3:14b": {"session_review": 0.844, "lessons": 0.420},
-            "glm-5.2:cloud": {"session_review": 0.819, "lessons": 0.658},
-            "minimax-m3:cloud": {"session_review": 0.944, "lessons": 0.585},
+            "qwen3:14b": {"session_review": 0.844, "lessons": 0.420, "session_review_chunked": 0.80},
+            "glm-5.2:cloud": {"session_review": 0.819, "lessons": 0.658, "session_review_chunked": 0.80},
+            "minimax-m3:cloud": {"session_review": 0.944, "lessons": 0.585, "session_review_chunked": 0.80},
         })
 
     def test_prefers_the_candidate_better_on_every_job(self):
@@ -255,5 +256,8 @@ class TestCandidateRanking:
     def test_reason_reports_the_mean_gain_across_the_keys_jobs(self):
         b = _block(build_advice(self._rep(), _Cfg(_Models(session_review="qwen3:14b"))),
                    "session_review")
-        # (0.944-0.844 + 0.585-0.420) / 2 = +0.1325
-        assert "+0.132" in b["reason"] or "+0.133" in b["reason"]
+        # Mean over ALL THREE jobs the key owns, including the chunked path
+        # where both models tie: (0.100 + 0.165 + 0.000) / 3 = +0.0883.
+        # The point is that the reason reports the MEAN across every job the key
+        # controls, not the single largest gain.
+        assert "+0.088" in b["reason"]

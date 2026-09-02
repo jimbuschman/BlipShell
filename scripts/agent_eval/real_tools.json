@@ -1,0 +1,312 @@
+[
+ {
+  "type": "function",
+  "function": {
+   "name": "read_file",
+   "description": "Read the contents of a file. Returns up to 500 lines by default with line numbers.\nFor large files, a footer shows total lines and how to read the next section.\n\nIMPORTANT:\n- For large files, use start_line to continue reading from where you left off.\n- Use max_lines to read smaller chunks if you only need a specific section.\n- Always read a file BEFORE trying to edit it with edit_file.",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "path": {
+      "type": "string",
+      "description": "Absolute or relative file path to read"
+     },
+     "start_line": {
+      "type": "integer",
+      "description": "Line number to start reading from (1-based, default: 1)"
+     },
+     "max_lines": {
+      "type": "integer",
+      "description": "Maximum number of lines to return (default: 500)"
+     }
+    },
+    "required": [
+     "path"
+    ]
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "write_file",
+   "description": "Create a new file or completely overwrite an existing file.\n\nIMPORTANT:\n- For EXISTING files, prefer edit_file instead \u2014 it's safer and only changes what you specify. write_file replaces the ENTIRE file.\n- For NEW files, this is the right tool. Parent directories are created automatically.\n- You must provide the complete file content \u2014 there is no append mode.",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "path": {
+      "type": "string",
+      "description": "File path to write to"
+     },
+     "content": {
+      "type": "string",
+      "description": "Complete file content to write"
+     }
+    },
+    "required": [
+     "path",
+     "content"
+    ]
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "edit_file",
+   "description": "Replace a specific string in a file with new content. The old_text must match exactly (whitespace and indentation matter). Read the file first to get the exact text. If the edit fails, re-read the file once and retry with the correct text.",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "path": {
+      "type": "string",
+      "description": "File path to edit"
+     },
+     "old_text": {
+      "type": "string",
+      "description": "Exact text to find and replace (copy from the file)"
+     },
+     "new_text": {
+      "type": "string",
+      "description": "Replacement text"
+     }
+    },
+    "required": [
+     "path",
+     "old_text",
+     "new_text"
+    ]
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "list_directory",
+   "description": "List files and subdirectories at the given path. Shows one level only.\n\nWhen to use:\n- To see what files exist in a specific directory\n- To verify a file path before reading\n\nWhen NOT to use:\n- To find files by name \u2192 use glob_files instead\n- To search file contents \u2192 use grep_files instead\n- If the project code structure was already provided in your context, you likely don't need this.",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "path": {
+      "type": "string",
+      "description": "Directory path to list (default: project root)"
+     }
+    },
+    "required": []
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "glob_files",
+   "description": "Find files matching a glob pattern in a directory tree. Returns file paths with sizes, sorted by modification time (newest first).\n\nWhen to use:\n- To find files by name or extension (e.g. '**/*.py', 'src/**/*.ts')\n- To see all files of a certain type in the project\n\nWhen NOT to use:\n- To search file CONTENTS \u2192 use grep_files instead\n- To see a specific directory \u2192 use list_directory instead",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "pattern": {
+      "type": "string",
+      "description": "Glob pattern to match (e.g. '**/*.py')"
+     },
+     "path": {
+      "type": "string",
+      "description": "Directory to search in (default: project root or cwd)"
+     },
+     "max_results": {
+      "type": "integer",
+      "description": "Maximum number of files to return (default: 100)"
+     }
+    },
+    "required": [
+     "pattern"
+    ]
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "grep_files",
+   "description": "Search for a regex pattern across files in a directory tree.\n\nOutput modes:\n- 'content' (default): matching lines as 'file:line_number: content'\n- 'files_with_matches': only unique file paths that contain a match\n- 'count': match count per file as 'file: N'\n\nFeatures:\n- Context lines: show N lines before/after each match\n- Multiline: match patterns across line boundaries\n- Case insensitive: ignore case when matching\n- Type filter: shorthand for file type (e.g. 'py' instead of '*.py')\n\nIMPORTANT:\n- The path must be a DIRECTORY, not a file. To search within a single file, use read_file instead.\n- Use 'include' for glob patterns or 'type_filter' for common extensions.\n- Results are capped at max_results (default 50).",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "pattern": {
+      "type": "string",
+      "description": "Regex pattern to search for"
+     },
+     "path": {
+      "type": "string",
+      "description": "Directory to search in (default: project root). Must be a directory, not a file path."
+     },
+     "include": {
+      "type": "string",
+      "description": "Glob filter for files to include (e.g. '*.py', '*.{ts,tsx}')"
+     },
+     "type_filter": {
+      "type": "string",
+      "description": "File type shorthand (e.g. 'py', 'js', 'ts', 'rust'). Alternative to include."
+     },
+     "max_results": {
+      "type": "integer",
+      "description": "Maximum number of results to return (default: 50)"
+     },
+     "output_mode": {
+      "type": "string",
+      "description": "Output format: 'content' (matching lines, default), 'files_with_matches' (file paths only), 'count' (match count per file)"
+     },
+     "context_lines": {
+      "type": "integer",
+      "description": "Number of lines to show before AND after each match (default: 0)"
+     },
+     "before_context": {
+      "type": "integer",
+      "description": "Lines to show before each match (overrides context_lines for before)"
+     },
+     "after_context": {
+      "type": "integer",
+      "description": "Lines to show after each match (overrides context_lines for after)"
+     },
+     "multiline": {
+      "type": "boolean",
+      "description": "Match pattern across line boundaries (default: false)"
+     },
+     "case_insensitive": {
+      "type": "boolean",
+      "description": "Ignore case when matching (default: false)"
+     }
+    },
+    "required": [
+     "pattern"
+    ]
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "run_command",
+   "description": "Run a shell command and return its output. This is Windows. Do NOT use Unix commands (ls, cat, grep, head, wc). Use the dedicated tools instead: list_directory, read_file, grep_files, glob_files.\n\nIMPORTANT:\n- Do NOT use this for file searching \u2014 use grep_files or glob_files instead.\n- Do NOT use this for reading files \u2014 use read_file instead.\n- Foreground commands time out after 30 seconds. Do NOT run interactive programs.\n- Use run_in_background=true for long-running processes (tests, servers, builds). This returns a PID immediately \u2014 use check_process to see output later.\n- Use this for: syntax validation, pip install, git, python -c '...', pytest, etc.",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "command": {
+      "type": "string",
+      "description": "The shell command to execute"
+     },
+     "timeout": {
+      "type": "integer",
+      "description": "Timeout in seconds for foreground commands (default 30, max 600)"
+     },
+     "run_in_background": {
+      "type": "boolean",
+      "description": "Start the process in background and return immediately with a PID (default: false)"
+     }
+    },
+    "required": [
+     "command"
+    ]
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "search_memories",
+   "description": "Search past conversation memories for specific information.\n\nYour context already includes automatically-retrieved memories, but they're limited to the top results for the user's current message. Use this tool when:\n- You need more detail about a topic than what's in your context\n- The user asks about something specific from a past conversation\n- You want to verify a fact before stating it\n- The automatically-loaded context doesn't cover what the user is asking about\n\nReturns full conversation content, not just summaries.",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "query": {
+      "type": "string",
+      "description": "Search query \u2014 be specific (e.g. 'cat name' not 'what do you know about me')"
+     },
+     "max_results": {
+      "type": "integer",
+      "description": "Maximum results to return (default 5)"
+     }
+    },
+    "required": [
+     "query"
+    ]
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "web_search",
+   "description": "Search the web and return results.\n\nWhen to use:\n- User asks a factual question you're not confident about\n- User explicitly asks you to search or look something up\n- You need current information (news, docs, releases, prices)\n\nWhen NOT to use:\n- Questions you can answer from memory or general knowledge\n- Coding questions where you already know the answer\n\nTips:\n- Use specific, concise queries (like you'd type into Google)\n- Include the year for time-sensitive queries (e.g. 'Python 3.13 release date 2025')\n- If the first search doesn't help, try rephrasing before giving up",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "query": {
+      "type": "string",
+      "description": "Search query"
+     },
+     "max_results": {
+      "type": "integer",
+      "description": "Maximum number of results (default 5)"
+     }
+    },
+    "required": [
+     "query"
+    ]
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "task_complete",
+   "description": "Signal that the current task is finished. Call this tool when you have completed all the work requested. Include a summary of what you did, files you changed, and anything the user should know or test. Do NOT call this until you have actually made the changes \u2014 planning or describing what you would do is not completion.",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "summary": {
+      "type": "string",
+      "description": "Summary of what you did (2-4 sentences)"
+     },
+     "files_modified": {
+      "type": "string",
+      "description": "Comma-separated list of files created or modified"
+     },
+     "decisions_made": {
+      "type": "string",
+      "description": "Key design decisions or trade-offs worth noting"
+     }
+    },
+    "required": [
+     "summary"
+    ]
+   }
+  }
+ },
+ {
+  "type": "function",
+  "function": {
+   "name": "ask_user",
+   "description": "Ask the user a question when you need clarification. Use this when:\n- The task description is ambiguous or could be interpreted multiple ways\n- You need to choose between multiple valid approaches\n- Something has failed twice and you're unsure how to proceed\n- The task would delete or significantly modify existing code\n\nFor multiple-choice questions, provide options as a comma-separated list.\nDo not ask trivial questions \u2014 only ask when user input would change your approach.",
+   "parameters": {
+    "type": "object",
+    "properties": {
+     "question": {
+      "type": "string",
+      "description": "The question to ask the user"
+     },
+     "options": {
+      "type": "string",
+      "description": "Comma-separated list of options (e.g. 'Option A, Option B, Option C'). User can pick by number or type a custom answer."
+     },
+     "allow_free_text": {
+      "type": "boolean",
+      "description": "Allow user to type a custom answer beyond the options (default: true)"
+     }
+    },
+    "required": [
+     "question"
+    ]
+   }
+  }
+ }
+]
