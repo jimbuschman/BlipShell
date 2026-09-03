@@ -162,3 +162,51 @@ async def test_fold_disabled_by_zero_threshold(sqlite_store, tmp_path):
     result = await runner._job_clean_junk_lessons(lambda m: None)
     assert result["folded"] == 0
     assert len(await sqlite_store.get_all_lessons()) == 2
+
+
+# --- backfill exclusions (2026-09-03 timeout follow-up) -------------------------
+
+async def test_folded_sessions_are_excluded_from_backfill(sqlite_store):
+    """Deleting a duplicate lesson must not make its session look
+    never-extracted — that re-creates the duplicate via backfill_lessons."""
+    from blipshell.models.memory import Memory
+
+    sid = await sqlite_store.create_session(title="s")
+    for i in range(6):
+        await sqlite_store.create_memory(Memory(
+            session_id=sid, role="user", content=f"substantive message {i} here",
+            importance=0.5))
+    # No lessons -> session is missing one.
+    missing = await sqlite_store.get_sessions_missing_lessons()
+    assert any(s["id"] == sid for s in missing)
+    # Marked as deliberately consolidated -> no longer "missing".
+    await sqlite_store.add_lesson_backfill_exclusions([sid])
+    missing = await sqlite_store.get_sessions_missing_lessons()
+    assert not any(s["id"] == sid for s in missing)
+    # Idempotent, accumulative, None-tolerant.
+    n = await sqlite_store.add_lesson_backfill_exclusions([sid, None, 999])
+    assert n == 2
+    assert await sqlite_store.get_lesson_backfill_exclusions() == {sid, 999}
+
+
+async def test_nightly_fold_records_exclusions(sqlite_store, tmp_path):
+    from blipshell.models.memory import Lesson
+
+    sid = await sqlite_store.create_session(title="dup source")
+    await sqlite_store.create_lesson(Lesson(
+        content="User prefers direct practical code solutions over lengthy "
+                "theoretical explanations when debugging.", importance=0.7,
+        source_session_id=sid))
+    await sqlite_store.create_lesson(Lesson(
+        content="User prefers direct practical code solutions rather than "
+                "lengthy theoretical explanations while debugging errors.",
+        importance=0.8))
+
+    config = BlipShellConfig(memory=MemoryConfig())
+    config.database.path = str(tmp_path / "blipshell.db")
+    runner = NightlyRunner(config, sqlite_store, vectors=MagicMock(),
+                           router=MagicMock(), processor=None)
+    result = await runner._job_clean_junk_lessons(lambda m: None)
+    assert result["folded"] == 1
+    # The deleted duplicate's session is now excluded from re-extraction.
+    assert sid in await sqlite_store.get_lesson_backfill_exclusions()

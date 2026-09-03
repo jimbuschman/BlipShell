@@ -2116,9 +2116,42 @@ class SQLiteStore:
         )
         await self._db.commit()
 
+    _LESSON_BACKFILL_EXCLUSIONS_KEY = "lesson_backfill_exclusions"
+
+    async def get_lesson_backfill_exclusions(self) -> set[int]:
+        """Sessions whose lessons were DELIBERATELY removed (folded as
+        paraphrase duplicates — the insight survives in another session's
+        keeper). Without this set, deleting a duplicate lesson makes its
+        session look never-extracted and backfill_lessons re-creates the
+        duplicate: the 2026-09-02 consolidation deleted 358 lessons and the
+        next nightly's backfill promptly timed out re-extracting them."""
+        import json
+        raw = await self.get_metadata(self._LESSON_BACKFILL_EXCLUSIONS_KEY)
+        if not raw:
+            return set()
+        try:
+            return {int(x) for x in json.loads(raw)}
+        except (ValueError, TypeError):
+            return set()
+
+    async def add_lesson_backfill_exclusions(self, session_ids) -> int:
+        """Add sessions to the never-re-extract set. Returns new set size."""
+        import json
+        current = await self.get_lesson_backfill_exclusions()
+        current |= {int(s) for s in session_ids if s is not None}
+        await self.set_metadata(self._LESSON_BACKFILL_EXCLUSIONS_KEY,
+                                json.dumps(sorted(current)))
+        return len(current)
+
     async def get_sessions_missing_lessons(self, limit: int = 50) -> list[dict]:
-        """Find sessions with 5+ messages but no lessons extracted."""
-        cursor = await self._db.execute("""
+        """Find sessions with 5+ messages but no lessons extracted.
+
+        Excludes sessions whose lessons were deliberately consolidated away
+        (see get_lesson_backfill_exclusions) — those are not missing, they
+        are represented by a keeper elsewhere.
+        """
+        excluded = await self.get_lesson_backfill_exclusions()
+        rows = await self._db.execute_fetchall("""
             SELECT s.id, s.project, COUNT(m.id) as msg_count
             FROM sessions s
             JOIN memories m ON m.session_id = s.id AND m.is_archived = 0
@@ -2128,9 +2161,15 @@ class SQLiteStore:
             GROUP BY s.id
             HAVING COUNT(m.id) >= 5
             ORDER BY s.id DESC
-            LIMIT ?
-        """, (limit,))
-        return [dict(r) for r in await cursor.fetchall()]
+        """)
+        out = []
+        for r in rows:
+            if r["id"] in excluded:
+                continue
+            out.append(dict(r))
+            if len(out) >= limit:
+                break
+        return out
 
     async def get_session_messages_for_lesson(self, session_id: int, include_archived: bool = False) -> list[dict]:
         """Get conversation messages for lesson/reflection extraction.

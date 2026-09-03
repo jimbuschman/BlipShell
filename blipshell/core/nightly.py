@@ -727,10 +727,23 @@ class NightlyRunner:
         if not sessions:
             return {"processed": 0, "total": 0}
 
+        # Time-budgeted like session_reflections: each session is an LLM
+        # call, so a backlog must exit with partial progress instead of being
+        # hard-killed at _JOB_TIMEOUT (which is how the 2026-09-03 run
+        # reported "timeout" while chewing the post-consolidation backlog).
+        budget = _JOB_TIMEOUT - 30
+        start = time.monotonic()
+        stopped_early = False
         processed = 0
         failed = 0
         cloud_routed = 0
         for session in sessions:
+            if time.monotonic() - start > budget:
+                stopped_early = True
+                logger.info(
+                    "backfill_lessons hit time budget (%ds), stopping with "
+                    "partial progress (%d/%d)", budget, processed, len(sessions))
+                break
             sid = session["id"]
             project = session.get("project")
             try:
@@ -751,7 +764,9 @@ class NightlyRunner:
                 logger.error("Lesson backfill failed for session %d: %s", sid, e)
                 failed += 1
 
-        return {"processed": processed, "failed": failed, "cloud_routed": cloud_routed, "total": len(sessions)}
+        return {"processed": processed, "failed": failed,
+                "cloud_routed": cloud_routed, "total": len(sessions),
+                "stopped_early": stopped_early}
 
     async def _job_score_lessons(self, on_status) -> dict:
         """Score lessons that still have default rank=3/importance=0.5."""
@@ -900,6 +915,10 @@ class NightlyRunner:
                             pass  # orphan vectors swept by maintenance
                         folded += 1
                     await db.commit()
+                    # A folded lesson's session must not look never-extracted,
+                    # or backfill_lessons re-creates the duplicate next run.
+                    await self.sqlite.add_lesson_backfill_exclusions(
+                        r[4] for r in receipt_rows if r[4] is not None)
                     on_status(f"  folded {folded} paraphrase-duplicate "
                               f"lesson(s); receipts -> {receipt.name}")
 
