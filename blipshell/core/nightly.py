@@ -8,6 +8,7 @@ or headless via `blipshell nightly`.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import time
@@ -36,6 +37,7 @@ JOB_ORDER = [
     "clean_junk_lessons",
     "session_reflections",
     "self_reflection",
+    "revote_lessons",
     "friction_analysis",
     "entity_extraction",
     "entity_cleanup",
@@ -63,7 +65,8 @@ JOB_ORDER = [
 _OLLAMA_JOBS = {
     "backfill_vectors", "backfill_summaries", "resummarize",
     "backfill_lessons", "score_lessons", "clean_junk_lessons",
-    "session_reflections", "self_reflection", "friction_analysis",
+    "session_reflections", "self_reflection", "revote_lessons",
+    "friction_analysis",
     "entity_extraction", "batch_tag",
     "merge_entities",
     "rebuild_digests",
@@ -306,6 +309,7 @@ class NightlyRunner:
             "clean_junk_lessons": self._job_clean_junk_lessons,
             "session_reflections": self._job_session_reflections,
             "self_reflection": self._job_self_reflection,
+            "revote_lessons": self._job_revote_lessons,
             "friction_analysis": self._job_friction_analysis,
             "entity_extraction": self._job_entity_extraction,
             "entity_cleanup": self._job_entity_cleanup,
@@ -833,7 +837,74 @@ class NightlyRunner:
         if deleted_dupes:
             await db.commit()
 
-        return {"deleted_junk": deleted_junk, "deleted_dupes": deleted_dupes}
+        # Phase 3: fold paraphrase families (2026-09-02 audit follow-up).
+        # The vector dedup above catches near-verbatim copies (>0.92); the
+        # audit found the real accumulation was PARAPHRASES — 456 lessons in
+        # 127 Jaccard families that vectors scored as distinct. Threshold is
+        # deliberately stricter (default 0.35) than the audit's 0.20 measuring
+        # ruler: the hand-reviewed one-shot found 6 false families in 127 at
+        # 0.20, and an unattended job gets no human review, so it only merges
+        # blatant rewordings. Keep-best (importance, then length, then
+        # newest); receipts written next to the database before deletion.
+        folded = 0
+        fold_threshold = getattr(
+            self.config.memory, "lesson_family_fold_threshold", 0.35)
+        if fold_threshold and fold_threshold < 1.0:
+            from collections import defaultdict
+
+            from blipshell.memory.themes import family_sizes
+
+            rows = await db.execute_fetchall(
+                "SELECT id, importance, content FROM lessons ORDER BY id")
+            ids = [r[0] for r in rows]
+            info = {r[0]: (r[1] or 0.0, r[2] or "") for r in rows}
+            fam, _ = family_sizes([info[i][1] for i in ids],
+                                  threshold=fold_threshold,
+                                  link="representative")
+            groups = defaultdict(list)
+            for idx, f in enumerate(fam):
+                groups[f].append(ids[idx])
+            doomed: list[int] = []
+            for members in groups.values():
+                if len(members) < 2:
+                    continue
+                keeper = max(members, key=lambda lid: (
+                    info[lid][0], len(info[lid][1]), lid))
+                doomed.extend(m for m in members if m != keeper)
+            if doomed:
+                receipt_rows = await db.execute_fetchall(
+                    f"SELECT id, content, summary, timestamp, "
+                    f"source_session_id, project FROM lessons "
+                    f"WHERE id IN ({','.join('?' * len(doomed))})", doomed)
+                from datetime import datetime, timezone
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+                receipt = (Path(self.config.database.path).parent
+                           / f"lessons_folded_{stamp}.json")
+                try:
+                    receipt.write_text(json.dumps(
+                        [dict(zip(("id", "content", "summary", "timestamp",
+                                   "source_session_id", "project"), r))
+                         for r in receipt_rows], indent=1, ensure_ascii=False),
+                        encoding="utf-8")
+                except Exception as e:
+                    logger.warning("Fold receipts failed, skipping fold: %s", e)
+                else:
+                    for lid in doomed:
+                        await db.execute(
+                            "DELETE FROM lesson_tags WHERE lesson_id = ?", (lid,))
+                        await db.execute(
+                            "DELETE FROM lessons WHERE id = ?", (lid,))
+                        try:
+                            self.vectors.delete_lesson(lid)
+                        except Exception:
+                            pass  # orphan vectors swept by maintenance
+                        folded += 1
+                    await db.commit()
+                    on_status(f"  folded {folded} paraphrase-duplicate "
+                              f"lesson(s); receipts -> {receipt.name}")
+
+        return {"deleted_junk": deleted_junk, "deleted_dupes": deleted_dupes,
+                "folded": folded}
 
     async def _job_session_reflections(self, on_status) -> dict:
         """Generate holistic reflections for unreflected sessions.
@@ -1000,6 +1071,110 @@ class NightlyRunner:
             "thought": text[:200],
             "themes": _themes_now(items),
         }
+
+    _REVOTE_WATERMARK = "lesson_revote_watermark"
+
+    async def _job_revote_lessons(self, on_status) -> dict:
+        """Revote lessons against the night's fresh session reflections.
+
+        ExpeL-style lifecycle (2026-09-02 audit follow-up): each new
+        reflection is paired with the lessons most similar to it, and the
+        LOCAL model judges CONFIRMS / CONTRADICTS / NEUTRAL. Votes move
+        importance (down harder than up); the lessons pool's top-30 cut does
+        the rest. Demotion only — never deletion — so a lesson can recover.
+
+        Ships disabled, and dry-run when enabled: it reports what it WOULD
+        do until lesson_revote_dry_run is explicitly false. The watermark
+        always advances to the last reflection read, so a dry-run night is a
+        report on that night's evidence, not a growing replay.
+        """
+        from blipshell.llm.router import TaskType
+        from blipshell.memory.lesson_revote import (
+            JUDGE_SYSTEM, adjusted_importance, parse_verdict, revote_prompt,
+        )
+
+        cfg = self.config.memory
+        if not getattr(cfg, "lesson_revote_enabled", False):
+            return {"skipped": "lesson_revote_enabled=false"}
+        if self.vectors is None:
+            return {"skipped": "no vector store (lesson pairing unavailable)"}
+
+        since = await self.sqlite.get_metadata(self._REVOTE_WATERMARK)
+        reflections = await self.sqlite.get_reflection_texts_since(
+            since, limit=12,
+        )
+        if not reflections:
+            return {"reflections": 0, "pairs": 0}
+
+        lessons = {l.id: l for l in await self.sqlite.get_all_lessons()}
+        dry_run = getattr(cfg, "lesson_revote_dry_run", True)
+        per_reflection = getattr(cfg, "lesson_revote_per_reflection", 3)
+        max_pairs = getattr(cfg, "lesson_revote_max_pairs", 40)
+
+        stats = {"reflections": len(reflections), "pairs": 0,
+                 "confirms": 0, "contradicts": 0, "neutral": 0,
+                 "no_verdict": 0, "dry_run": dry_run}
+        votes: list[dict] = []
+        loop = asyncio.get_running_loop()
+        last_read = since
+        for text, created_at in reflections:
+            last_read = created_at
+            if not text or text.startswith("Session skipped"):
+                continue
+            try:
+                similar = await loop.run_in_executor(
+                    None, functools.partial(
+                        self.vectors.search_lessons, text,
+                        n_results=per_reflection),
+                )
+            except Exception as e:
+                logger.warning("Lesson pairing failed: %s", e)
+                continue
+            for hit in similar:
+                if stats["pairs"] >= max_pairs:
+                    break
+                lesson = lessons.get(hit.get("id"))
+                if lesson is None:
+                    continue
+                stats["pairs"] += 1
+                try:
+                    reply = await self.router.generate(
+                        TaskType.REASONING,
+                        revote_prompt(lesson.content, text),
+                        system=JUDGE_SYSTEM,
+                    )
+                except Exception as e:
+                    logger.warning("Revote judge failed: %s", e)
+                    stats["no_verdict"] += 1
+                    continue
+                verdict = parse_verdict(reply)
+                if verdict is None:
+                    stats["no_verdict"] += 1
+                    continue
+                stats[verdict.lower()] += 1
+                if verdict == "NEUTRAL":
+                    continue
+                new_importance = adjusted_importance(
+                    lesson.importance, verdict,
+                    getattr(cfg, "lesson_revote_up", 0.05),
+                    getattr(cfg, "lesson_revote_down", 0.15),
+                )
+                votes.append({"lesson_id": lesson.id, "verdict": verdict,
+                              "old": lesson.importance, "new": new_importance})
+                if not dry_run and new_importance != lesson.importance:
+                    await self.sqlite.update_lesson_scores(
+                        lesson.id, lesson.rank, new_importance,
+                    )
+                    lesson.importance = new_importance
+
+        await self.sqlite.set_metadata(self._REVOTE_WATERMARK, last_read)
+        stats["votes"] = votes[:20]
+        mode = "[dry-run] would move" if dry_run else "moved"
+        moved = [v for v in votes if v["old"] != v["new"]]
+        on_status(f"  revote_lessons: {stats['pairs']} pairs judged, "
+                  f"{mode} {len(moved)} importances "
+                  f"({stats['confirms']} confirm / {stats['contradicts']} contradict)")
+        return stats
 
     async def _job_friction_analysis(self, on_status) -> dict:
         """Analyze recent sessions for system-level friction.

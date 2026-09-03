@@ -93,7 +93,14 @@ def create_chat_session(bottom_toolbar=None, completer=None) -> Optional[PromptS
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
         return PromptSession(
             history=SafeFileHistory(str(_HISTORY_FILE)),
-            enable_history_search=True,
+            # prompt_toolkit HARD-disables complete_while_typing whenever
+            # enable_history_search is on (shortcuts/prompt.py: "Make sure
+            # that complete_while_typing is disabled when
+            # enable_history_search is enabled") — with both requested, the
+            # '/' dropdown silently never fired (live report 2026-09-03).
+            # With a completer, the dropdown wins; plain up/down history
+            # cycling still works, only prefix-search-on-up is lost.
+            enable_history_search=completer is None,
             mouse_support=False,
             multiline=False,
             bottom_toolbar=bottom_toolbar,

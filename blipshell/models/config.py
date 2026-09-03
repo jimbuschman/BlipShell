@@ -177,6 +177,27 @@ class MemoryConfig(BaseModel):
     fadem_importance_factor: float = 2.0  # how much importance slows decay (higher = slower for imp=1.0)
     fadem_access_hours: float = 24.0  # hours subtracted per access_count (strengthening)
     dedup_jaccard_threshold: float = 0.65  # Jaccard similarity to consider summaries duplicate
+
+    # Lesson lifecycle (2026-09-02 audit follow-up) — the store's two decay
+    # modes were unbounded accumulation of paraphrase-duplicate lessons and
+    # once-at-birth importance scores that no evidence ever revisited.
+    # Family folding: nightly, inside clean_junk_lessons. STRICTER than the
+    # audit's 0.20 measuring threshold — the hand-reviewed one-shot found 6
+    # false families in 127 at 0.20; an unattended job only merges blatant
+    # paraphrases. 0 disables.
+    lesson_family_fold_threshold: float = 0.35
+    # Revoting: nightly job pairs fresh session reflections with the most
+    # similar lessons and asks the LOCAL model confirms/contradicts; votes
+    # move importance (down harder than up), and the lessons pool's top-30
+    # cut does the rest. Demotion only, never deletion. Ships OFF + dry-run:
+    # an LLM auto-editing a permanent pool earns trust through its dry-run
+    # reports first (same pattern as entity_merge).
+    lesson_revote_enabled: bool = False
+    lesson_revote_dry_run: bool = True
+    lesson_revote_up: float = 0.05
+    lesson_revote_down: float = 0.15
+    lesson_revote_per_reflection: int = 3   # lessons judged per new reflection
+    lesson_revote_max_pairs: int = 40       # per-night cap (fits the job budget)
     project_session_limit: int = 50  # max recent project sessions for two-pass search
     centroid_tag_similarity: float = 0.75  # cosine similarity threshold for centroid tag assignment
     centroid_tag_min_members: int = 10  # minimum tagged memories to compute a tag centroid
