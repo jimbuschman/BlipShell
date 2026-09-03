@@ -6,10 +6,9 @@ content, then newest) and delete the rest (rows, tags, vectors), receipts
 written next to the database. Six human-judged FALSE families are skipped.
 No content is rewritten, so surviving vectors stay valid.
 
-Usage:
-    python consolidate_lessons.py [path\to\blipshell.db]
-Default DB path: the dev-box Downloads copy. Run from anywhere; the BlipShell
-repo is auto-located (needed for blipshell.memory.themes).
+Usage (on the box holding the live DB, with BLIPSHELL CLOSED — this writes):
+    python scripts/consolidate_lessons_20260902.py [path\to\blipshell.db]
+Default DB path: the repo's data/blipshell.db, anchored to this file.
 """
 
 import json
@@ -32,7 +31,8 @@ else:
 import sqlite_vec  # noqa: E402
 from blipshell.memory.themes import family_sizes  # noqa: E402
 
-DEFAULT_DB = r"C:\Users\[user]\Downloads\blipshell.db"
+# Anchored to this file, never the cwd (the nine-lost-days lesson).
+DEFAULT_DB = str(Path(__file__).resolve().parent.parent / "data" / "blipshell.db")
 DB = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_DB
 if not Path(DB).exists():
     sys.exit(f"No database at {DB} — pass the path as an argument.")
