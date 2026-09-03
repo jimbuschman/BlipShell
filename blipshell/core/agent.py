@@ -944,6 +944,50 @@ class Agent(
 
     # ── Session end & cleanup ────────────────────────────────────────────────
 
+    async def _write_session_handoff(self, _status=lambda m: None):
+        """Generate and persist the session's working-state note.
+
+        A first-person note-to-self (momentum, open threads, intentions), not
+        a recap — see core/handoff.py for the design and its pre-registered
+        measurement. Skipped for near-empty sessions. Fail-open: a failed
+        note costs one boot's continuity, never the shutdown.
+        """
+        cfg = getattr(self.config, "handoff", None)
+        if not cfg or not cfg.enabled:
+            return
+        if self.session_manager is None or self.router is None:
+            return
+        try:
+            import json as _json
+            from datetime import datetime, timezone
+
+            from blipshell.core.handoff import (
+                HANDOFF_KEY, HANDOFF_META_KEY, HANDOFF_SYSTEM, clean_note,
+                handoff_prompt, should_generate, transcript_tail,
+            )
+            from blipshell.llm.router import TaskType
+
+            messages = self.session_manager.get_messages()
+            if not should_generate(len(messages)):
+                return
+            _status("Writing handoff note...")
+            reply = await self.router.generate(
+                TaskType.REASONING,
+                handoff_prompt(transcript_tail(messages)),
+                system=HANDOFF_SYSTEM,
+            )
+            note = clean_note(reply)
+            if not note:
+                return
+            await self.sqlite.set_metadata(HANDOFF_KEY, note)
+            await self.sqlite.set_metadata(HANDOFF_META_KEY, _json.dumps({
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+                "session_id": self.session_manager.session_id,
+            }))
+            logger.info("Session handoff note saved (%d chars)", len(note))
+        except Exception as e:
+            logger.warning("Session handoff failed (continuing shutdown): %s", e)
+
     async def end_session(self, on_status=None):
         """End the current session and clean up."""
         def _status(msg: str):
@@ -953,6 +997,11 @@ class Agent(
         # Kill any background shell processes
         from blipshell.core.tools.shell import cleanup_background_processes
         await cleanup_background_processes()
+
+        # Write the working-state handoff note for the next boot while the
+        # session's messages are still in hand (core/handoff.py). Local model;
+        # follows the session-close no-timeout convention.
+        await self._write_session_handoff(_status)
 
         # Stop the cube transport server (closes listening socket)
         if self._cube_server is not None:

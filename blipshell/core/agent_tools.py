@@ -98,6 +98,12 @@ class ToolsMixin:
         # Time awareness (read-only, available in all modes)
         self.tool_registry.register(GetCurrentTimeTool(), group="general")
 
+        # Self-transparency (read-only): the architecture card — how its own
+        # memory/thought/continuity mechanisms work, consultable on demand.
+        from blipshell.core.tools.architecture_tools import DescribeArchitectureTool
+        self.tool_registry.register(
+            DescribeArchitectureTool(self.config), group="general")
+
         # Plan mode tools
         self.tool_registry.register(
             EnterPlanModeTool(self.tool_registry), group="general")

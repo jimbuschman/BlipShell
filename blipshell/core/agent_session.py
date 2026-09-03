@@ -54,6 +54,9 @@ class SessionMixin:
         # Load lessons into Core pool
         await self._load_lessons()
 
+        # Load the previous session's working-state handoff note (continuity)
+        await self._load_handoff()
+
         # Summarize sessions that never closed properly (crash, Ollama died, etc.)
         await self._summarize_orphaned_sessions()
 
@@ -70,6 +73,50 @@ class SessionMixin:
         await self._load_session_notes()
 
         return session_id
+
+    async def _load_handoff(self):
+        """Load the previous session's working-state note into the Core pool.
+
+        The note is BlipShell's own note-to-self written at the last session's
+        close (core/handoff.py) — momentum and open threads, not a recap.
+        Framed as exactly what it is (its own note read back), loaded ahead of
+        the factual digests. Skipped when stale (>14 days: momentum expires),
+        when this session is the one that wrote it (a resumed session reading
+        its own closing note is a loop, not continuity), or when disabled —
+        the toggle is the pre-registered A/B switch for the continuity probe.
+        """
+        cfg = getattr(self.config, "handoff", None)
+        if not cfg or not cfg.enabled:
+            return
+        try:
+            import json
+
+            from blipshell.core.handoff import (
+                HANDOFF_KEY, HANDOFF_META_KEY, frame_for_boot, is_stale,
+            )
+            note = await self.sqlite.get_metadata(HANDOFF_KEY)
+            if not note:
+                return
+            meta = {}
+            raw = await self.sqlite.get_metadata(HANDOFF_META_KEY)
+            if raw:
+                meta = json.loads(raw)
+            if meta.get("session_id") == getattr(self.session_manager,
+                                                 "session_id", None):
+                return
+            if is_stale(meta.get("saved_at")):
+                return
+            self.memory_manager.add_memory("Core", PoolItem(
+                text=frame_for_boot(note, meta.get("saved_at")),
+                session_role="system",
+                # Between curated core facts (importance+1.0, always >=1.0)
+                # and the user model (0.9): at boot, momentum outranks derived
+                # conclusions, but identity facts win the squeeze.
+                priority_score=0.95,
+            ))
+            logger.info("Loaded session handoff note")
+        except Exception as e:
+            logger.warning("Handoff load failed (continuing without): %s", e)
 
     async def _backfill_vectors_startup(self):
         """Backfill any missing vectors at session start."""

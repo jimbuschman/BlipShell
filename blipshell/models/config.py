@@ -243,6 +243,10 @@ class AgentConfig(BaseModel):
         "5. Read a file before editing it. Make minimal changes — no extras.\n"
         "6. If something fails twice, ask the user instead of retrying blindly.\n"
         "7. Each tool's description explains when to use it — follow that guidance.\n"
+        "8. Ground claims about code or system state in files you actually read this "
+        "conversation. If you are answering from digests, memory, or general knowledge "
+        "instead, say so briefly (e.g. 'from the digest, unverified'). 'I don't know' "
+        "is a complete answer — never construct a plausible-sounding one.\n"
     )
     stream: bool = True
     # Tool approval: tools listed here require user confirmation before execution
@@ -421,6 +425,16 @@ class ReflectionConfig(BaseModel):
     gravity_marker_weight: float = 1.5     # render "recurring" marker at/above this effective weight
 
 
+class HandoffConfig(BaseModel):
+    """Session handoff — a first-person working-state note written by the
+    LOCAL model at session end and loaded into the Core pool at next boot,
+    ahead of the factual digests. Requested by BlipShell itself (2026-09-02):
+    'the difference between a recap and a state handoff is the direction that
+    matters.' The toggle doubles as the pre-registered A/B switch for the
+    continuity probe (see core/handoff.py)."""
+    enabled: bool = True
+
+
 class CompactionConfig(BaseModel):
     """Structured compaction configuration.
 
@@ -559,4 +573,5 @@ class BlipShellConfig(BaseModel):
     benchmark: BenchmarkConfig = BenchmarkConfig()
     robotics: RoboticsConfig = RoboticsConfig()
     reflection: ReflectionConfig = ReflectionConfig()
+    handoff: HandoffConfig = HandoffConfig()
     model_settings: dict[str, dict] = Field(default_factory=dict)
