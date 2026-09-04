@@ -27,3 +27,33 @@ data/benchmark/
 !benchmark_results/
 data/chroma/
 data/.blipshell_history
+
+# --- 2026-09-04 hardening: a near-miss almost pushed 2.5GB of personal data ---
+# Ignore the data tree by default (the DB, backups, exports, images, snapshots
+# and receipts all live under it; anything a script drops next to the DB is
+# personal by default), carving out only the non-personal benchmark artifacts
+# that must sync between machines. `data/*` not `data/` so the negations work.
+data/*
+!data/benchmark_coding_transcripts/
+!data/.gitkeep
+!data/search_ground_truth.json
+!data/test_sample_ids.json
+# DB copies and ad-hoc backup folders anywhere in the repo.
+*.db
+*.db-shm
+*.db-wal
+*.db.backup.*
+backups/
+Clean DB/
+blipshell/data/
+blipshell/data - Copy/
+# Command history, personal digest, telemetry.
+.blipshell_history
+.blipshell/
+.deepeval/
+# Agent-eval scratch files dropped in the repo root by benchmark stress runs.
+stress_test_*
+canned_test_scratch.py
+graph.json
+graph.html
+reasoning_spike.txt
