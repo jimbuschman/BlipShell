@@ -1,13 +1,13 @@
 === BlipShell tool_calling sweep ===
 started : Wed Aug 12 22:11:22 CDT 2026
-endpoint: http://[tailscale-ip]:11434
+endpoint: http://<tailscale-ollama-host>:11434
 models  : 33 (16 cloud, 17 local)
 jobs    : reasoning (tool_pass_rate is deterministic; --no-judge)
 log     : /c/Users/[user]/source/repos/jimbuschman/BlipShell/benchmark_results/sweep_20260812T221121.log
 tsv     : /c/Users/[user]/source/repos/jimbuschman/BlipShell/benchmark_results/sweep_20260812T221121.tsv
 
 [1/33] 22:11:22 START minimax-m3:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ---------------- Benchmarking minimax-m3:cloud — full deep run ----------------
@@ -231,7 +231,7 @@ d
 son
 [1/33] 22:16:54 ok minimax-m3:cloud  332s
 [2/33] 22:16:54 START kimi-k3:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ----------------- Benchmarking kimi-k3:cloud — full deep run ------------------
@@ -607,7 +607,7 @@ d
 son
 [2/33] 22:19:08 ok kimi-k3:cloud  133s
 [3/33] 22:19:08 START glm-5.2:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ----------------- Benchmarking glm-5.2:cloud — full deep run ------------------
@@ -835,7 +835,7 @@ d
 son
 [3/33] 22:21:54 ok glm-5.2:cloud  166s
 [4/33] 22:21:54 START glm-5.1:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ----------------- Benchmarking glm-5.1:cloud — full deep run ------------------
@@ -1066,7 +1066,7 @@ d
 son
 [4/33] 22:29:34 ok glm-5.1:cloud  460s
 [5/33] 22:29:34 START glm-5:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ------------------ Benchmarking glm-5:cloud — full deep run -------------------
@@ -1377,7 +1377,7 @@ d
 son
 [5/33] 22:29:47 ok glm-5:cloud  13s
 [6/33] 22:29:47 START glm-4.7:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ----------------- Benchmarking glm-4.7:cloud — full deep run ------------------
@@ -1690,7 +1690,7 @@ d
 son
 [6/33] 22:30:01 ok glm-4.7:cloud  13s
 [7/33] 22:30:01 START deepseek-v4-flash:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ------------ Benchmarking deepseek-v4-flash:cloud — full deep run -------------
@@ -1928,7 +1928,7 @@ d
 son
 [7/33] 22:32:43 ok deepseek-v4-flash:cloud  162s
 [8/33] 22:32:43 START deepseek-v3.2:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 -------------- Benchmarking deepseek-v3.2:cloud — full deep run ---------------
@@ -2246,7 +2246,7 @@ d
 son
 [8/33] 22:32:57 ok deepseek-v3.2:cloud  14s
 [9/33] 22:32:57 START kimi-k2.7-code:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 -------------- Benchmarking kimi-k2.7-code:cloud — full deep run --------------
@@ -2489,7 +2489,7 @@ d
 son
 [9/33] 22:40:24 ok kimi-k2.7-code:cloud  447s
 [10/33] 22:40:24 START kimi-k2-thinking:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ------------- Benchmarking kimi-k2-thinking:cloud — full deep run -------------
@@ -2811,7 +2811,7 @@ d
 son
 [10/33] 22:40:38 ok kimi-k2-thinking:cloud  14s
 [11/33] 22:40:38 START kimi-k2.5:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ---------------- Benchmarking kimi-k2.5:cloud — full deep run -----------------
@@ -3135,7 +3135,7 @@ d
 son
 [11/33] 22:40:53 ok kimi-k2.5:cloud  13s
 [12/33] 22:40:53 START minimax-m2.7:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 --------------- Benchmarking minimax-m2.7:cloud — full deep run ---------------
@@ -3384,7 +3384,7 @@ d
 son
 [12/33] 22:47:09 ok minimax-m2.7:cloud  376s
 [13/33] 22:47:09 START minimax-m2.5:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 --------------- Benchmarking minimax-m2.5:cloud — full deep run ---------------
@@ -3713,7 +3713,7 @@ d
 son
 [13/33] 22:47:22 ok minimax-m2.5:cloud  13s
 [14/33] 22:47:22 START qwen3-coder-next:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ------------- Benchmarking qwen3-coder-next:cloud — full deep run -------------
@@ -4044,7 +4044,7 @@ d
 son
 [14/33] 22:47:36 ok qwen3-coder-next:cloud  14s
 [15/33] 22:47:36 START nemotron-3-super:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ------------- Benchmarking nemotron-3-super:cloud — full deep run -------------
@@ -4055,7 +4055,7 @@ Scoped to jobs: reasoning
   reasoning: code generation
 [15/33] 23:07:36 TIMEOUT nemotron-3-super:cloud  1200s
 [16/33] 23:07:37 START gemini-3-flash-preview:cloud (cloud)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ---------- Benchmarking gemini-3-flash-preview:cloud — full deep run ----------
@@ -4388,7 +4388,7 @@ d
 son
 [16/33] 23:07:50 ok gemini-3-flash-preview:cloud  13s
 [17/33] 23:07:50 START qwen3-coder:30b (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ---------------- Benchmarking qwen3-coder:30b — full deep run -----------------
@@ -4645,7 +4645,7 @@ d
 son
 [17/33] 23:11:29 ok qwen3-coder:30b  219s
 [18/33] 23:11:29 START qwen3.6:27b (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ------------------ Benchmarking qwen3.6:27b — full deep run -------------------
@@ -4663,7 +4663,7 @@ Scoped to jobs: reasoning
 2026-08-12 23:29:39,883 [blipshell.llm.client] ERROR: Generate request failed after retries: Ollama call timed out after 180s
 [18/33] 23:31:30 TIMEOUT qwen3.6:27b  1201s
 [19/33] 23:31:30 START devstral-small-2:24b (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 -------------- Benchmarking devstral-small-2:24b — full deep run --------------
@@ -4922,7 +4922,7 @@ d
 son
 [19/33] 23:46:30 ok devstral-small-2:24b  900s
 [20/33] 23:46:31 START gpt-oss:latest (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ----------------- Benchmarking gpt-oss:latest — full deep run -----------------
@@ -5183,7 +5183,7 @@ d
 son
 [20/33] 23:55:07 ok gpt-oss:latest  516s
 [21/33] 23:55:07 START qwen3:14b (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ------------------- Benchmarking qwen3:14b — full deep run --------------------
@@ -5448,7 +5448,7 @@ d
 son
 [21/33] 00:13:08 ok qwen3:14b  1081s
 [22/33] 00:13:08 START ministral-3:14b (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ---------------- Benchmarking ministral-3:14b — full deep run -----------------
@@ -5715,7 +5715,7 @@ d
 son
 [22/33] 00:16:47 ok ministral-3:14b  219s
 [23/33] 00:16:47 START qwen2.5-coder:14b (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 --------------- Benchmarking qwen2.5-coder:14b — full deep run ----------------
@@ -5984,7 +5984,7 @@ d
 son
 [23/33] 00:19:24 ok qwen2.5-coder:14b  156s
 [24/33] 00:19:24 START qwen2.5:14b (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ------------------ Benchmarking qwen2.5:14b — full deep run -------------------
@@ -6256,7 +6256,7 @@ d
 son
 [24/33] 00:22:46 ok qwen2.5:14b  202s
 [25/33] 00:22:47 START gemma4:e4b (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ------------------- Benchmarking gemma4:e4b — full deep run -------------------
@@ -6530,7 +6530,7 @@ d
 son
 [25/33] 00:28:56 ok gemma4:e4b  369s
 [26/33] 00:28:57 START gemma3n:e4b (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ------------------ Benchmarking gemma3n:e4b — full deep run -------------------
@@ -6821,7 +6821,7 @@ d
 son
 [26/33] 00:31:00 ok gemma3n:e4b  123s
 [27/33] 00:31:00 START qwen3.5:9b (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ------------------- Benchmarking qwen3.5:9b — full deep run -------------------
@@ -6832,7 +6832,7 @@ Scoped to jobs: reasoning
   reasoning: code generation
 [27/33] 00:51:01 TIMEOUT qwen3.5:9b  1200s
 [28/33] 00:51:01 START qwen3:8b (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 -------------------- Benchmarking qwen3:8b — full deep run --------------------
@@ -7111,7 +7111,7 @@ d
 son
 [28/33] 01:02:38 ok qwen3:8b  697s
 [29/33] 01:02:38 START glm4:latest (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ------------------ Benchmarking glm4:latest — full deep run -------------------
@@ -7393,7 +7393,7 @@ d
 son
 [29/33] 01:05:39 ok glm4:latest  181s
 [30/33] 01:05:39 START lfm2.5:latest (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ----------------- Benchmarking lfm2.5:latest — full deep run ------------------
@@ -7678,7 +7678,7 @@ d
 son
 [30/33] 01:09:30 ok lfm2.5:latest  231s
 [31/33] 01:09:31 START qwen2.5-coder:7b (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ---------------- Benchmarking qwen2.5-coder:7b — full deep run ----------------
@@ -7966,7 +7966,7 @@ d
 son
 [31/33] 01:11:12 ok qwen2.5-coder:7b  100s
 [32/33] 01:11:12 START qwen2.5:7b (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ------------------- Benchmarking qwen2.5:7b — full deep run -------------------
@@ -8257,7 +8257,7 @@ d
 son
 [32/33] 01:12:52 ok qwen2.5:7b  100s
 [33/33] 01:12:52 START qwen3.5:4b (local)
-No configured endpoint matches http://[tailscale-ip]:11434 — sending no num_ctx,
+No configured endpoint matches http://<tailscale-ollama-host>:11434 — sending no num_ctx,
 so Ollama's default window applies and long prompts may be truncated. 
 timeout=180s
 ------------------- Benchmarking qwen3.5:4b — full deep run -------------------

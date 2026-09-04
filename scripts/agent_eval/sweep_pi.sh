@@ -6,9 +6,11 @@
 #
 # Sizes are the on-disk footprint; a Pi 5 8GB realistically wants <=4GB of
 # weights to leave room for the KV cache.
-cd "C:/Windows/TEMP/claude/C--Users-[user]-source-repos-jimbuschman-BlipShell/96b97df7-8444-4a6d-9d97-26ee6bb0f1e0/scratchpad/deeptest" || exit 1
+# Machine-specific values come from the environment (repo is public — never
+# hardcode the Tailscale endpoint or a local working directory here).
+cd "${DEEPTEST_DIR:?set DEEPTEST_DIR to the deeptest working directory}" || exit 1
 
-export DEEPTEST_URL="http://[tailscale-ip]:11434"
+export DEEPTEST_URL="${DEEPTEST_URL:?set DEEPTEST_URL to your Ollama endpoint, e.g. http://localhost:11434}"
 export DEEPTEST_TIMEOUT=240
 export PYTHONIOENCODING=utf-8
 

@@ -31,7 +31,8 @@ coding-agent parity.
   behavior* — benchmarks, stress tests, live testing. Code synced via git
   (github.com/jimbuschman/BlipShell).
 - **Since 2026-08-10 the dev box reaches the Ollama PC's models over Tailscale**
-  (`http://[tailscale-ip]:11434`, when that PC is on): model-touching work —
+  (endpoint in the uncommitted `config.local.yaml`, when that PC is on; the
+  repo is public — never commit the Tailscale URL): model-touching work —
   `benchmark run --url`, simulate (`openai` installed here), live prompt
   validation — can now be DRIVEN from here, executing on the real GPU. The
   split still holds as a statement about *judgment* (a green suite here says

@@ -160,7 +160,7 @@ Rule this establishes: **read the transcript before believing the score**, and t
 ```bash
 cd scripts/agent_eval
 python run.py <model> 3                      # localhost:11434
-DEEPTEST_URL=http://[tailscale-ip]:11434 python run.py <model> 3   # Ollama PC
+DEEPTEST_URL=http://<tailscale-ollama-host>:11434 python run.py <model> 3   # Ollama PC
 python regrade.py                            # re-grade saved transcripts, no model calls
 ```
 
