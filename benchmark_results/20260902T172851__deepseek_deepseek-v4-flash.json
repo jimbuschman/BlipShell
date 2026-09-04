@@ -1,0 +1,119 @@
+{
+  "schema": 1,
+  "model": "deepseek/deepseek-v4-flash",
+  "run_group": "deepseek_deepseek-v4-flash@2026-09-02T17:28:51.780207+00:00",
+  "run_ts": "2026-09-02T17:28:51.780207+00:00",
+  "tier": "deep",
+  "judge_model": "anthropic/claude-opus-4.8",
+  "jobs": [
+    "reasoning"
+  ],
+  "git_sha": "86da755",
+  "host": "HPBENDERTWO",
+  "rows": [
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "quality",
+      "value": 0.7683,
+      "unit": "ratio",
+      "raw": {
+        "scored": 12,
+        "cases": 12
+      },
+      "values": [
+        0.7708,
+        0.7667,
+        0.7667,
+        0.7667,
+        0.7708
+      ],
+      "spread": 0.0041
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "length_words",
+      "value": 199.3,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        199.3,
+        199.3,
+        199.3,
+        199.3,
+        199.3
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "quality",
+      "value": 0.8522,
+      "unit": "ratio",
+      "raw": {
+        "scored": 9,
+        "cases": 9
+      },
+      "values": [
+        0.8556,
+        0.8556,
+        0.8444,
+        0.8556,
+        0.85
+      ],
+      "spread": 0.0112
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "length_words",
+      "value": 66.1,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        66.1,
+        66.1,
+        66.1,
+        66.1,
+        66.1
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "tool_calling",
+      "metric": "tool_pass_rate",
+      "value": 0.9733,
+      "unit": "ratio",
+      "raw": {
+        "system_prompt": true
+      },
+      "values": [
+        1.0,
+        0.9333,
+        1.0,
+        1.0,
+        0.9333
+      ],
+      "spread": 0.0667
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning_suite",
+      "metric": "latency_s",
+      "value": 3.3582,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        11.158,
+        1.621,
+        1.288,
+        1.403,
+        1.321
+      ],
+      "spread": 9.87
+    }
+  ]
+}

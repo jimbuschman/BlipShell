@@ -1,0 +1,141 @@
+======================================================================
+BENCHMARK TRANSCRIPT
+Model: glm-5.2:cloud
+Task: debug_from_traceback
+Timestamp: 2026-06-23 17:11:37 UTC
+======================================================================
+
+--- PLAN ---
+[Dynamic execution — single continuous conversation]
+
+--- EXECUTION ---
+I'll start by reading the search.py file to understand the `_apply_boosts` method.
+[2m  ▸ read_file blipshell/memory/search.py[0m
+[2m    │ read_file:     1: """Semantic memory search (port of MemoryDB.SearchMemoriesAsync).     2: [0m
+
+The line numbers in the traceback don't match this file version. Let me search for `_apply_boosts`.
+[2m  ▸ grep_files _apply_boosts[0m
+[2m    │ grep_files: Error: 'blipshell/memory/search.py' is a file, not a directory. Use read_file to[0m
+
+
+[2m  ▸ grep_files _apply_boosts[0m
+[2m    │ grep_files: No matches found for pattern '_apply_boosts' in C:\Users\JimBu\AppData\Local\Tem[0m
+
+There's no `_apply_boosts` method in this version of the file — the traceback references an older/different version. The actual tag-overlap logic that crashes is inline at lines 315-320. Let me check how `get_tags_for_memories` returns data to understand the malformed-data scenarios.
+[2m  ▸ grep_files get_tags_for_memories[0m
+[2m    │ grep_files: blipshell\memory\centroid_tagger.py blipshell\memory\search.py blipshell\memory\[0m
+
+
+[2m  ▸ grep_files def get_tags_for_memories[0m
+[2m    │ grep_files: Error: 'C:\Users\JimBu\AppData\Local\Temp\blip_bench_18wqkes4\blipshell\memory\s[0m
+
+
+[2m  ▸ grep_files def get_tags_for_memories[0m
+[2m    │ grep_files: blipshell\memory\sqlite_store.py:1502:          await self._db.executemany( blip[0m
+
+The `_apply_boosts` method in the traceback doesn't exist in this version of the file — the tag-overlap logic is inline at lines 315-320. The crash happens at `set(memory_tags)` (line 319). My plan: add a small static helper `_normalize_tags` that handles string-JSON, nested lists, None, and empty cases, and apply it at the one usage site. Minimal change, no refactor.
+[2m  ▸ edit_file blipshell/memory/search.py[0m
+[2m    │ Successfully edited blipshell/memory/search.py[0m
+[1m--- a/search.py[0m
+[1m+++ b/search.py[0m
+[36m@@ -1,5 +1,5 @@[0m
+             # Tag overlap boost
+[31m-            memory_tags = tags_by_memory.get(memory_id, [])[0m
+[32m+            memory_tags = self._normalize_tags(tags_by_memory.get(memory_id, []))[0m
+             tag_boost = 0.0
+             if query_tags and memory_tags:
+                 overlap_count = len(query_tags & set(memory_tags))
+
+Now I'll add the `_normalize_tags` static helper. I'll place it right before the `ENTITY_STOP_WORDS` constant (after the `search` method ends at line 475).
+[2m  ▸ edit_file blipshell/memory/search.py[0m
+[2m    │ edit_file: Successfully edited blipshell/memory/search.py[0m
+
+That edit was a no-op. Let me insert the helper method before the `ENTITY_STOP_WORDS` comment.
+[2m  ▸ read_file blipshell/memory/search.py[0m
+[2m    │ read_file:   472:             "total_ms": round(_t_total_ms, 1),   473:         }   474:   [0m
+
+
+[2m  ▸ edit_file blipshell/memory/search.py[0m
+[2m    │ Successfully edited blipshell/memory/search.py[0m
+[1m--- a/search.py[0m
+[1m+++ b/search.py[0m
+[36m@@ -1,4 +1,29 @@[0m
+         return final
+[32m+[0m
+[32m+    @staticmethod[0m
+[32m+    def _normalize_tags(tags) -> list[str]:[0m
+[32m+        """Coerce a tags value into a flat list of strings, never raising.[0m
+[32m+[0m
+[32m+        Handles:[0m
+[32m+          - None / empty -> [][0m
+[32m+          - JSON string (e.g. '["python", "coding"]') -> parsed list[0m
+[32m+          - lists containing non-strings (e.g. nested lists, dicts) -> skipped[0m
+[32m+        """[0m
+[32m+        import json[0m
+[32m+        if not tags:[0m
+[32m+            return [][0m
+[32m+        # Tags sometimes stored as a JSON string instead of a parsed list.[0m
+[32m+        if isinstance(tags, str):[0m
+[32m+            try:[0m
+[2m  ... (12 more lines)[0m
+
+Now let me write the test file.
+[2m  ▸ write_file tests/test_search_boost_fix.py[0m
+[2m    │ write_file: Successfully wrote 1827 characters to tests/test_search_boost_fix.py[0m
+
+
+[2m  ▸ run_command cd "C:\Users\JimBu\AppData\Local\Temp\blip_bench_18wqkes4" &[0m
+[2m    │ run_command: Error: 'cd' is not allowed. Allowed: dir, echo, git, pip, pytest, python, type[0m
+
+
+[2m  ▸ run_command python -m pytest tests/test_search_boost_fix.py -q[0m
+[2m    │ run_command: .......F                                                                 [100%][0m
+
+My test assertion was wrong — `["python"]` (a list) is skipped, so only `rust` overlaps. Fix the assertion.
+[2m  ▸ edit_file tests/test_search_boost_fix.py[0m
+[2m    │ Successfully edited tests/test_search_boost_fix.py[0m
+[1m--- a/test_search_boost_fix.py[0m
+[1m+++ b/test_search_boost_fix.py[0m
+[36m@@ -1,5 +1,6 @@[0m
+ def test_result_is_usable_in_set():
+     """The returned list can be intersected via set() without raising."""
+     query_tags = {"python", "rust"}
+[32m+    # [["python"], "coding", "rust"] -> the nested list is dropped, "rust" survives.[0m
+     normalized = MemorySearch._normalize_tags([["python"], "coding", "rust"])
+[31m-    assert query_tags & set(normalized) == {"python", "rust"}[0m
+[32m+    assert query_tags & set(normalized) == {"rust"}[0m
+
+
+[2m  ▸ run_command python -m pytest tests/test_search_boost_fix.py -q[0m
+[2m    │ run_command: ........                                                                 [100%][0m
+
+All 8 tests pass. Let me verify the fix imports cleanly and there's no syntax issue in the edited region.
+[2m  ▸ run_command python -c "import ast; ast.parse(open('blipshell/memory/sear[0m
+[2m    │ run_command: Error: 'search.py,' is not allowed. Allowed: dir, echo, git, pip, pytest, python[0m
+
+
+[2m  ▸ run_command python -c "import ast,io; ast.parse(io.open('blipshell/memor[0m
+[2m    │ run_command: Error: 'search.py,' is not allowed. Allowed: dir, echo, git, pip, pytest, python[0m
+
+The shell parser rejects commas. Let me verify by importing the module directly via pytest collection instead.
+[2m  ▸ run_command python -m pytest tests/test_search_boost_fix.py --collect-on[0m
+[2m    │ run_command: tests/test_search_boost_fix.py::test_normal_list_tags tests/test_search_boost_f[0m
+
+Module imports cleanly. Done.
+[2m  ▸ task_complete[0m
+  [Task complete signal received]
+[2m    │ task_complete: Fixed the `TypeError: unhashable type: 'list'` crash in the tag-overlap boost lo[0m
+
+
+======================================================================
+VERIFICATION: 6/7 checks passed
+======================================================================
+  PASS diff_contains(('blipshell/memory/search.py', '\\+.*(json\\.loads|isinstance|str)')): pattern in diff
+  PASS syntax_check(blipshell/memory/search.py): compiles OK
+  PASS file_exists(tests/test_search_boost_fix.py): exists
+  PASS syntax_check(tests/test_search_boost_fix.py): compiles OK
+  PASS pytest_in_sandbox(tests/test_search_boost_fix.py): tests passed
+  FAIL max_diff_lines(('blipshell/memory/search.py', 20)): 
+  PASS no_unwanted_files: clean
+
+TIMING: plan=0.0s, total=60.0s

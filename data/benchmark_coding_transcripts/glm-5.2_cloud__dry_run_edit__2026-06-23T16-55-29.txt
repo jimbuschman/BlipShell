@@ -1,0 +1,161 @@
+======================================================================
+BENCHMARK TRANSCRIPT
+Model: glm-5.2:cloud
+Task: dry_run_edit
+Timestamp: 2026-06-23 16:54:27 UTC
+======================================================================
+
+--- PLAN ---
+[Dynamic execution — single continuous conversation]
+
+--- EXECUTION ---
+
+[2m  ▸ read_file blipshell/core/tools/filesystem.py[0m
+[2m    │ read_file:     1: """Filesystem tools: read, write, edit, list files."""     2:      3: imp[0m
+
+
+[2m  ▸ read_file blipshell/core/tools/filesystem.py[0m
+[2m    │ read_file: [Lines 500-641 of 641]   500:     @staticmethod   501:     def _find_dedented_ma[0m
+
+Now let me check the `ToolParameter` and `ToolParameterType` models:
+[2m  ▸ read_file blipshell/models/tools.py[0m
+[2m    │ read_file: """Tool-related Pydantic models for native Ollama tool calling."""  from datetim[0m
+
+Now I have enough context. Let me make the changes. First, add `dry_run` parameter to the `EditFileTool.definition()` and `execute()` method:
+[2m  ▸ edit_file blipshell/core/tools/filesystem.py[0m
+[2m    │ Successfully edited blipshell/core/tools/filesystem.py[0m
+[1m--- a/filesystem.py[0m
+[1m+++ b/filesystem.py[0m
+[36m@@ -5,7 +5,9 @@[0m
+                 "Replace a specific string in a file with new content. "
+                 "The old_text must match exactly (whitespace and indentation matter). "
+                 "Read the file first to get the exact text. If the edit fails, "
+[31m-                "re-read the file once and retry with the correct text."[0m
+[32m+                "re-read the file once and retry with the correct text.\n\n"[0m
+[32m+                "If dry_run is True, return a unified diff preview of what would change "[0m
+[32m+                "WITHOUT modifying the file."[0m
+             ),
+             parameters=[
+                 ToolParameter(name="path", type=ToolParameterType.STRING,
+[36m@@ -14,5 +16,8 @@[0m
+                               description="Exact text to find and replace (copy from the file)"),
+                 ToolParameter(name="new_text", type=ToolParameterType.STRING,
+                               description="Replacement text"),
+[32m+                ToolParameter(name="dry_run", type=ToolParameterType.BOOLEAN,[0m
+[32m+                              description="If True, return a unified diff preview without modifying the file (default: False)",[0m
+[32m+                              required=False, default=False),[0m
+[2m  ... (2 more lines)[0m
+
+Now let me refactor the `execute` method to compute the new content and return a diff when `dry_run=True`. Let me add a helper that computes the new content without writing, then handle dry_run:
+[2m  ▸ edit_file blipshell/core/tools/filesystem.py[0m
+[2m    │ Successfully edited blipshell/core/tools/filesystem.py[0m
+[1m--- a/filesystem.py[0m
+[1m+++ b/filesystem.py[0m
+[36m@@ -1,4 +1,5 @@[0m
+[31m-    async def execute(self, path: str = "", old_text: str = "", new_text: str = "", **kwargs) -> str:[0m
+[32m+    async def execute(self, path: str = "", old_text: str = "", new_text: str = "",[0m
+[32m+                      dry_run: bool = False, **kwargs) -> str:[0m
+         if not path:
+             return "Error: 'path' argument is required."
+         if not old_text:
+[36m@@ -39,43 +40,57 @@[0m
+             except Exception:
+                 return msg
+ 
+[31m-        # Layer 1: Exact match[0m
+[31m-        if old_text in content:[0m
+[31m-            new_content = content.replace(old_text, new_text, 1)[0m
+[31m-            lint_err = self._lint_python(resolved, new_content)[0m
+[31m-            if lint_err:[0m
+[31m-                return lint_err[0m
+[31m-            resolved.write_text(new_content, encoding="utf-8")[0m
+[2m  ... (84 more lines)[0m
+
+Now let me verify the change reads correctly:
+[2m  ▸ read_file blipshell/core/tools/filesystem.py[0m
+[2m    │ read_file:   286:     def definition(self) -> ToolDefinition:   287:         return ToolDef[0m
+
+Now let me check an existing test to follow the project's conventions:
+[2m  ▸ glob_files tests/test_*.py[0m
+[2m    │ glob_files: tests\test_benchmark_harness.py  (20KB) tests\test_nightly_friction.py  (3KB) te[0m
+
+
+[2m  ▸ read_file tests/test_filesystem_tools.py[0m
+[2m    │ read_file: """Tests for filesystem tools. Focused on the read_file binary/image guard — rea[0m
+
+Now let me write the test:
+[2m  ▸ write_file tests/test_dry_run_edit.py[0m
+[2m    │ write_file: Successfully wrote 1030 characters to tests/test_dry_run_edit.py[0m
+
+
+[2m  ▸ run_command cd /d %CD% && python -m pytest tests/test_dry_run_edit.py -x[0m
+[2m    │ run_command: Error: 'cd' is not allowed. Allowed: dir, echo, git, pip, pytest, python, type[0m
+
+
+[2m  ▸ run_command python -m pytest tests/test_dry_run_edit.py -x -q[0m
+[2m    │ run_command: .                                                                        [100%][0m
+
+Test passes. Let me also run the existing filesystem and edit tests to confirm I didn't regress anything:
+[2m  ▸ run_command python -m pytest tests/test_filesystem_tools.py tests/test_e[0m
+[2m    │ run_command: ...........                                                              [100%][0m
+
+All tests pass. Let me verify the syntax of the modified module:
+[2m  ▸ run_command python -c "import ast; ast.parse(open('blipshell/core/tools/[0m
+[2m    │ run_command: Error: 'filesystem.py,' is not allowed. Allowed: dir, echo, git, pip, pytest, py[0m
+
+
+[2m  ▸ run_command python -c "from blipshell.core.tools.filesystem import EditF[0m
+[2m    │ run_command: Error: 'd=EditFileTool().definition()' is not allowed. Allowed: dir, echo, git, [0m
+
+
+[2m  ▸ run_command python -c "import blipshell.core.tools.filesystem as f; prin[0m
+[2m    │ run_command: Error: 'print('import' is not allowed. Allowed: dir, echo, git, pip, pytest, pyt[0m
+
+The shell is splitting on quotes oddly. Let me use a script file:
+[2m  ▸ run_command python -c "import ast, pathlib; ast.parse(pathlib.Path('blip[0m
+[2m    │ run_command: Error: 'filesystem.py).read_text(encoding=utf-8))' is not allowed. Allowed: dir,[0m
+
+The command runner is stripping quotes. The passing pytest run already confirms the module imports and works. Let me confirm the diff output looks right by checking the test output more verbosely:
+[2m  ▸ run_command python -m pytest tests/test_dry_run_edit.py -v -s[0m
+[2m    │ run_command: ============================= test session starts =============================[0m
+
+All tests pass. The task is complete.
+
+## Summary
+
+I added a `dry_run` boolean parameter to the `edit_file` tool in `blipshell/core/tools/filesystem.py` and wrote a focused test.
+
+### Changes to `blipshell/core/tools/filesystem.py` (`EditFileTool`)
+
+1. **Definition** — Added a new optional `dry_run` boolean `ToolParameter` (`required=False, default=False`) and extended the tool description to explain the dry-run preview behavior.
+
+2. **`execute()` method** — Added a `dry_run: bool = False` parameter. I refactored the three-layer matching (exact → whitespace-normalized → fuzzy) into a single `_compute_new_content()` helper that returns the resulting content and a note. When `dry_run=True`, after computing what the new content would be, the method builds a unified diff via `difflib.unified_diff` (using `a/<name>` and `b/<name>` file headers) and returns the preview string WITHOUT calling `write_text` — the file on disk is untouched. If there would be no changes, it reports that. The real (non-dry-run) path still lints `.py` files and writes exactly as before.
+
+### New test: `tests/test_dry_run_edit.py`
+
+A simple, self-contained pytest that creates a temp file, calls `edit_file` with `dry_run=True`, and asserts:
+- the file on disk equals the original (NOT modified),
+- the returned output contains `---` and `+++` diff markers,
+- both the removed (`beta`) and proposed (`BETA`) content appear,
+- the output is framed as "NOT modified".
+
+### Verification
+- New test passes.
+- Existing `test_filesystem_tools.py` and `test_edit_fuzzy.py` (11 tests) still pass — no regressions in the normal edit path.
+
+### Design decisions
+- Refactored the matching logic into a shared helper so dry-run and real-write use the exact same resolution path (no behavior drift between preview and actual edit). The lint check still only runs on the real write path, preserving the original safety/behavior.
+- Dry run skips linting (it's a preview only), matching the principle of "show what would change" without side effects.
+======================================================================
+VERIFICATION: 8/8 checks passed
+======================================================================
+  PASS diff_contains(('blipshell/core/tools/filesystem.py', '\\+.*dry_run')): pattern in diff
+  PASS diff_contains(('blipshell/core/tools/filesystem.py', '\\+.*unified_diff')): pattern in diff
+  PASS syntax_check(blipshell/core/tools/filesystem.py): compiles OK
+  PASS file_exists(tests/test_dry_run_edit.py): exists
+  PASS grep_in_sandbox(('tests/test_dry_run_edit.py', 'assert')): pattern found
+  PASS syntax_check(tests/test_dry_run_edit.py): compiles OK
+  PASS pytest_in_sandbox(tests/test_dry_run_edit.py): tests passed
+  PASS functional_test(from blipshell.core.tools.filesystem import EditFileTool; t = EditFileTool(); assert 'dry_run' in [p.name for p in t.definition().parameters]): snippet passed
+
+TIMING: plan=0.0s, total=60.0s

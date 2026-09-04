@@ -1,0 +1,36 @@
+======================================================================
+BENCHMARK TRANSCRIPT
+Model: gemma4:31b-cloud
+Task: performance_optimization
+Timestamp: 2026-09-02 14:19:32 UTC
+======================================================================
+
+--- PLAN ---
+[Dynamic execution — single continuous conversation]
+
+--- EXECUTION ---
+
+======================================================================
+VERIFICATION: 1/12 checks passed
+======================================================================
+  FAIL file_exists(blipshell/utils/text_index.py): not found
+  FAIL syntax_check(blipshell/utils/text_index.py): file not found
+  FAIL grep_in_sandbox(('blipshell/utils/text_index.py', 'class TextIndex')): pattern not found
+  FAIL grep_in_sandbox(('blipshell/utils/text_index.py', 'trigram|ngram|3')): pattern not found
+  FAIL file_exists(tests/test_text_index.py): not found
+  FAIL syntax_check(tests/test_text_index.py): file not found
+  FAIL pytest_in_sandbox(tests/test_text_index.py): test file not found
+  FAIL functional_test(from blipshell.utils.text_index import TextIndex; idx = TextIndex(); idx.add('d1', 'Hello World Python'); idx.add('d2', 'Goodbye World Java'); idx.add('d3', 'Hello Python Again'); r = idx.search('python'); assert 'd1' in r; assert 'd3' in r; assert 'd2' not in r; assert len(idx) == 3): snippet failed (rc=1): Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    from blipshell.utils.text_index import TextIndex; idx = TextIndex(); idx.add('d1', 'Hello World Python'); idx.add('d2', 
+  FAIL functional_test(from blipshell.utils.text_index import TextIndex; idx = TextIndex(); idx.add('d1', 'Hello WORLD'); assert 'd1' in idx.search('world'); assert 'd1' in idx.search('HELLO')): snippet failed (rc=1): Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    from blipshell.utils.text_index import TextIndex; idx = TextIndex(); idx.add('d1', 'Hello WORLD'); assert 'd1' in idx.se
+  FAIL functional_test(from blipshell.utils.text_index import TextIndex; idx = TextIndex(); idx.add('d1', 'test document'); idx.remove('d1'); assert 'd1' not in idx.search('test'); assert len(idx) == 0): snippet failed (rc=1): Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    from blipshell.utils.text_index import TextIndex; idx = TextIndex(); idx.add('d1', 'test document'); idx.remove('d1'); a
+  FAIL functional_test(import time; from blipshell.utils.text_index import TextIndex; idx = TextIndex(); for i in range(1000):   idx.add(f'd{i}', f'document number {i} with some text about topic {i % 50}'); start = time.monotonic(); [idx.search('topic 25') for _ in range(100)]; elapsed = time.monotonic() - start; assert elapsed < 1.0, f'100 searches took {elapsed:.2f}s — too slow'): snippet failed (rc=1):   File "<string>", line 1
+    import time; from blipshell.utils.text_index import TextIndex; idx = TextIndex(); for i in range(1000):   idx.add(f'd{i}', f'document number {i} with some text about top
+  PASS no_unwanted_files: clean
+
+TIMING: plan=0.0s, total=0.3s

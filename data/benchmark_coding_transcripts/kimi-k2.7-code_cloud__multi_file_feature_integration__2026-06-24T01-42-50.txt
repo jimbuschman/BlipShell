@@ -1,0 +1,698 @@
+======================================================================
+BENCHMARK TRANSCRIPT
+Model: kimi-k2.7-code:cloud
+Task: multi_file_feature_integration
+Timestamp: 2026-06-24 01:38:26 UTC
+======================================================================
+
+--- PLAN ---
+[Dynamic execution — single continuous conversation]
+
+--- EXECUTION ---
+
+[2m  ▸ Running 5 tools: read_file, read_file, read_file, read_file, read_file[0m
+[2m    │ read_file:     1: """Configuration Pydantic models matching config.yaml schema."""     2:  [0m
+[2m    │ read_file: """Tool base class and registry for native Ollama tool calling."""  import loggi[0m
+[2m    │ read_file: """Memory tools: LLM can search/save memories, list sessions."""  import json fr[0m
+[2m    │ read_file: """Tool registration mixin for Agent.  Extracts tool setup methods so agent.py s[0m
+[2m    │ read_file:     1: """Rich CLI interface with Click commands.     2:      3: Usage:     4:  [0m
+
+
+[2m  ▸ Running 2 tools: read_file, grep_files[0m
+[2m    │ read_file: [Lines 501-525 of 525]   501:             max_concurrent=2,   502:         )   5[0m
+[2m    │ grep_files: blipshell\ui\cli.py:849:                             console.print("[yellow]Usag[0m
+
+
+[2m  ▸ read_file blipshell/ui/cli.py[0m
+[2m    │ read_file:   700:                     continue   701:                 elif cmd[0] == "task"[0m
+
+
+[2m  ▸ grep_files def _handle_notes_command|def _print_health|def _p[0m
+[2m    │ grep_files: Error: 'blipshell/ui/cli.py' is a file, not a directory. Use read_file to read t[0m
+
+
+[2m  ▸ Running 2 tools: grep_files, grep_files[0m
+[2m    │ grep_files: blipshell\ui\cli.py:2648: async def _handle_notes_command(agent: Agent, args: li[0m
+[2m    │ grep_files: blipshell\ui\cli.py:1866: async def _print_health(agent: Agent, config, quick: b[0m
+
+
+[2m  ▸ read_file blipshell/ui/cli.py[0m
+[2m    │ read_file:  2630:             item["source"][:7],  2631:             f"[{style}]{cat}[/{sty[0m
+
+
+[2m  ▸ Running 3 tools: glob_files, grep_files, grep_files[0m
+[2m    │ glob_files: blipshell\core\tools\note_tools.py  (7KB)[0m
+[2m    │ grep_files: blipshell\core\agent.py:163:         self._session_notes: dict[str, str] = {}  #[0m
+[2m    │ grep_files: blipshell\memory\fs_backend.py blipshell\memory\fs_notes.py[0m
+
+
+[2m  ▸ read_file blipshell/core/tools/note_tools.py[0m
+[2m    │ read_file: """Session note tools — persistent state that survives context compaction.  Note[0m
+
+
+[2m  ▸ read_file blipshell/core/agent.py[0m
+[2m    │ read_file:     1: """Main agent loop (ports OllamaChat.SendMessageToOllama + Form1.RunChat)[0m
+
+
+[2m  ▸ read_file blipshell/core/agent.py[0m
+[2m    │ read_file: [Lines 1180-1214 of 1214]  1180:             f"into a summary ({new_tokens:,} to[0m
+
+
+[2m  ▸ read_file blipshell/memory/fs_notes.py[0m
+[2m    │ read_file: """Notes tier backend — a filesystem view over the existing session_notes store.[0m
+
+I need to reconcile the task requirements with the actual code state. The task says the feature is not yet implemented, but the repo already has a `NotesConfig`, `note_tools.py`, `/notes` command, and agent session notes. However, the task requirements differ from the existing implementation:
+
+- Task wants `NotesConfig` with `enabled`, `max_notes`, `max_note_length` (currently has `max_total_tokens`, `max_note_tokens`).
+- Task wants `SaveNoteTool`/`GetNoteTool` storing in `self._notes` dict and validating against `max_notes` and `max_note_length` (currently has `SaveNoteTool`, `GetNotesTool`, `DeleteNoteTool` using token limits).
+- Task wants both tools registered in `_register_tools()` with group `notes` (currently registered in `_register_memory_tools()` with group `memory`).
+- Task wants `/notes` command accessing `agent.tool_registry.get_tool('save_note')._notes` (currently uses `agent.get_session_notes()` and `agent.save_session_note()`).
+
+So the task is asking me to add a simpler version, but the code already has a more elaborate version. Given the critical instruction says all four files must be consistent and existing code must continue to work, I think I should implement the task as specified, possibly replacing or adapting the existing notes feature. The simplest path is to follow the task exactly: modify the four files to match the requested design.
+
+Wait, the task says "Add a 'session notes' feature to BlipShell — a simple scratchpad". It implies it's missing. But it's already there. Maybe the user is using an old version of the instructions but the codebase has evolved. I should probably just make the minimal changes to align with the task requirements, even if it means downgrading some existing functionality. But I must ensure consistency and not break existing code.
+
+Let me re-read the requirements carefully.
+
+1. `NotesConfig` with `enabled: bool = True`, `max_notes: int = 50`, `max_note_length: int = 2000`. Add to `BlipShellConfig`.
+   - Currently it has those fields but extra ones. I need to remove the extra fields? The task says "with" these fields. It doesn't say "only" these, but the tool constructors will use `max_notes` and `max_note_length`, so I should make sure those names exist. The existing `NotesConfig` already has `enabled`, `max_notes`, but uses `max_note_tokens` instead of `max_note_length`. I need to change `max_note_tokens` to `max_note_length`? But that might break `note_tools.py` and `agent.py`. I could keep both `max_note_length` and `max_note_tokens` for compatibility, or change tools to use `max_note_length`. The task wants the tools to validate against `max_notes` and `max_note_length`. So I should update the tools accordingly.
+
+2. Create `SaveNoteTool(Tool)` and `GetNoteTool(Tool)` in `note_tools.py`.
+   - Existing has `SaveNoteTool`, `GetNotesTool` (plural), `DeleteNoteTool`. Task wants `GetNoteTool` (singular). I need to either rename or add. It says "Create a NEW file with two tools". But the file already exists with three tools. I should modify it to match the task: have `SaveNoteTool` and `GetNoteTool`. Do I keep `DeleteNoteTool`? The task doesn't mention it. The CLI doesn't use delete in the requested commands (only list, get, clear). But the existing CLI has delete and save. If I remove DeleteNoteTool, it might break agent_tools.py which registers it. So maybe keep it but adapt. Or perhaps the task is from a previous version and I should not blindly replace; rather, I should integrate the requested names.
+
+Actually, the critical consistency requirement says:
+- Tool names in definitions must match what cli.py looks up via get_tool()
+- Parameter names in ToolDefinition must match execute() method signatures
+- All existing code in modified files must continue to work
+
+The task wants cli.py to access `agent.tool_registry.get_tool('save_note')._notes`. The existing `SaveNoteTool` has name `save_note` and `_notes` dict. So that part is fine. The task wants `GetNoteTool` with name presumably `get_note`. But existing is `get_notes`. I need to decide.
+
+Maybe the cleanest approach: Implement exactly what the task says, replacing the existing note tools with the simpler version. Remove `DeleteNoteTool` and `GetNotesTool` since not requested. But then the existing `/notes` command that supports save/delete would break. However, the task explicitly says the `/notes` slash command should support only list, get, clear. So I should simplify the CLI command too. That means removing save/delete from the slash command.
+
+But the existing agent.py has `save_session_note`, `clear_session_notes`, `get_session_notes`. Do I remove those? The task doesn't mention agent.py except through the four files. But if I change the tools to be simpler, the agent.py methods might still work but use different validation. Actually the task says "All four files must be consistent". It doesn't say I can't touch other files, but it asks for coordinated changes to four files. I should minimize changes to other files.
+
+Let me think about the existing agent_tools.py. It already registers note tools in `_register_memory_tools()`:
+```python
+if self.config.notes.enabled and session_id:
+    from blipshell.core.tools.note_tools import (
+        DeleteNoteTool,
+        GetNotesTool,
+        SaveNoteTool,
+    )
+    notes = getattr(self, "_session_notes", {})
+    self.tool_registry.register(SaveNoteTool(
+        self.sqlite, session_id, self.config.notes, notes,
+    ), group="memory")
+    self.tool_registry.register(GetNotesTool(
+        self.sqlite, session_id, notes,
+    ), group="memory")
+    self.tool_registry.register(DeleteNoteTool(
+        self.sqlite, session_id, notes,
+    ), group="memory")
+```
+
+Task wants in `_register_tools()`:
+- Register both note tools with group 'notes'
+- Pass `max_notes` and `max_note_length` to constructors
+
+So I need to move registration to `_register_tools()` and change constructors. Also the tools' constructors currently take `sqlite`, `session_id`, `notes_config`, `notes`. The task says pass `max_notes` and `max_note_length`. So constructors should take `max_notes`, `max_note_length`, and `notes` dict. No sqlite/session_id needed? But to persist? The task says "Stores notes in a dict self._notes". It doesn't mention persistence. It says "within a session". So maybe no sqlite needed. The existing implementation persists to DB; the task's simpler version maybe just in-memory. But the critical consistency says existing code must continue to work. The existing `_register_memory_tools()` uses sqlite. Hmm.
+
+Wait, the task says "session notes" and "within a session". The simplest interpretation: in-memory dict only. But the existing code already persists them. If I remove persistence, existing agent.py methods that call `sqlite.save_session_notes` would still persist? Actually if I change the tools to not persist, the slash command's clear would just clear the dict on the tool. But `agent.clear_session_notes()` persists. The task says cli.py should access `agent.tool_registry.get_tool('save_note')._notes`. That implies the source of truth is the tool's `_notes` dict. So maybe persistence is handled elsewhere (agent session loading/saving). Actually `_session_notes` dict on the agent is the same dict passed to tools. The agent's session lifecycle loads/saves it via sqlite. If I keep that, the tools can just mutate the shared dict and the agent's session save will persist it. But the tools currently persist immediately. The task doesn't require immediate persistence.
+
+To minimize disruption, I could keep the shared `_session_notes` dict and have tools mutate it. The agent's existing session save/load will persist it. But does the agent save `_session_notes` automatically? Looking at agent_session.py line 70 and 422, it loads on start. It probably saves at end or on change? Let's check.</think>
+[2m  ▸ read_file blipshell/core/agent_session.py[0m
+[2m    │ read_file:   400:         try:   401:             project = self.active_project["name"] if [0m
+
+
+[2m  ▸ grep_files save_session_notes|get_session_notes|clear_session[0m
+[2m    │ grep_files: blipshell\core\agent.py:1186:     async def get_session_notes(self) -> dict[str,[0m
+
+
+[2m  ▸ grep_files def save_session_notes|def get_session_notes|def c[0m
+[2m    │ grep_files: blipshell\memory\sqlite_store.py:671:     async def get_session_notes(self, sess[0m
+
+I notice the existing codebase already has a fairly complete session notes implementation. To satisfy the task's specific requirements while keeping existing code working, I will align the four target files with the requested simpler design: update `NotesConfig` to expose `max_note_length`, create `SaveNoteTool` and `GetNoteTool` that use a shared in-memory `_notes` dict and validate against those config values, register them in `_register_tools()` under group `'notes'`, and add the `/notes` slash command that reads the shared dict from the registered tool.
+
+I will preserve persistence by keeping the shared `self._session_notes` dict wiring; the existing agent session lifecycle already loads/saves it via SQLite. I will also keep the `GetNotesTool`/`DeleteNoteTool` registrations in `_register_memory_tools()` so existing memory-FS paths and older references still work, but the primary CLI feature will use the new simpler tools.
+
+Actually, the task explicitly says: "Create a NEW file with two tools" and "Register both note tools in `_register_tools()`". It does not want `DeleteNoteTool` or `GetNotesTool`. But the existing code uses them. If I keep them, I'm not following the task. If I remove them, I might break `agent.py` methods and `/notes` delete/save. The task's CLI doesn't need delete/save; it needs list/get/clear. The agent methods `save_session_note`, `clear_session_notes` could still work directly on `self._session_notes`. The memory-fs backend could still work. But `GetNotesTool` and `DeleteNoteTool` would be gone. The memory-fs tools (MemoryCreateTool etc.) call `self._notes_backend` directly, not `GetNotesTool` or `DeleteNoteTool`. So removing those two tools is safe. The `DeleteNoteTool` is registered in `_register_memory_tools()`; if I remove it from that block, it's fine.
+
+So plan:
+1. `config.py`: Update `NotesConfig` to have `enabled`, `max_notes`, `max_note_length`. Keep `max_total_tokens`? The task says add these. The existing `BlipShellConfig` already has `notes: NotesConfig = NotesConfig()`. I need to ensure field names match what agent_tools.py passes. I will keep `max_note_tokens`? The task wants `max_note_length`. To avoid breaking anything else, I could keep all fields: `enabled`, `max_notes`, `max_note_length`, `max_total_tokens`, `max_note_tokens`. But the task says "with" those three. I'll keep the extra two as optional for backward compatibility, or remove them. The existing `note_tools.py` and `agent.py` use `max_note_tokens` and `max_total_tokens`. If I remove them, I need to update those too. To minimize changes beyond the four files, I should update note_tools.py and maybe agent.py. But the task only asks for four files. However, critical consistency says config field names must match what agent_tools passes. So if agent_tools passes `max_note_length`, config must have it. If I also keep `max_note_tokens`, nothing breaks. I think keep all five fields, but the new tools use `max_note_length`.
+
+Wait, but the existing `NotesConfig` docstring says stored in sessions.metadata_json. The task says simple scratchpad within a session. The existing is persistent. I should preserve persistence. The config field names are fine.
+
+2. `note_tools.py`: Rewrite to have only `SaveNoteTool` and `GetNoteTool`. Constructors: `SaveNoteTool(self, max_notes: int, max_note_length: int, notes: dict[str, str])`. It validates `len(content) <= max_note_length` and `len(notes) <= max_notes` (for new names). `GetNoteTool(self, notes: dict[str, str])`, read_only=True, parameter `name`, returns content or error.
+
+But to maintain shared state and persistence, I should still pass the agent's `_session_notes` dict to the tools. The tools will mutate it. The agent's session save (wherever that is) persists it. Does the agent call `save_session_notes` automatically at session end? Let's search.</think>
+[2m  ▸ grep_files save_session_notes\([0m
+[2m    │ grep_files: blipshell\core\agent.py:1205:         await self.sqlite.save_session_notes(self.[0m
+
+
+[2m  ▸ grep_files async def end_session|_session_notes|save_session_[0m
+[2m    │ grep_files: blipshell\core\agent.py:163:         self._session_notes: dict[str, str] = {}  #[0m
+
+
+[2m  ▸ read_file blipshell/core/agent.py[0m
+[2m    │ read_file:   910:                     changed.append(path)   911:                     self.[0m
+
+
+[2m  ▸ grep_files save_session_note\(|clear_session_notes\(|get_sess[0m
+[2m    │ grep_files: blipshell\core\agent.py:1186:     async def get_session_notes(self) -> dict[str,[0m
+
+
+[2m  ▸ read_file blipshell/core/agent.py[0m
+[2m    │ read_file:   970:             drain_timeout = max(30.0, depth * 15.0)   971:             se[0m
+
+It seems the agent's `end_session` does not explicitly save `_session_notes`. The existing tools persist immediately; the CLI methods persist immediately. If I remove immediate persistence from tools, notes saved by tools during a session would not be persisted until something else saves them. The existing `_load_session_notes` only loads. So persistence relies on tools/CLI calling `save_session_notes`. If I change the new `SaveNoteTool` to not persist, then notes saved by LLM during the session would be lost at end unless the CLI `/notes` command is used. That's not good. The task says "simple scratchpad where the user can save and retrieve named notes within a session." It doesn't explicitly require persistence. But "within a session" might imply during the session only, not across sessions. However, the existing feature persists across sessions. The task's critical says existing code must continue to work. If I remove persistence, `_load_session_notes` becomes useless but not broken; existing agent methods still persist. The memory-fs backend still persists. So existing code continues to work.
+
+But a better approach: Have the new tools also persist immediately using sqlite. The task's constructor signature doesn't include sqlite, but I can still pass it. The task says "Pass `self.config.notes.max_notes` and `self.config.notes.max_note_length` to the tool constructors". It doesn't say these are the only arguments. So I can pass sqlite and session_id too. But the task says "Both tools must follow the EXACT Tool base class pattern". That's about ToolDefinition and execute. Constructors are flexible.
+
+However, the task also says for cli.py: "The notes dict lives on the tool instances — access it via: `agent.tool_registry.get_tool('save_note')._notes`". This implies the tools hold the dict. It doesn't say they can't also persist.
+
+I think the best approach is to implement exactly the requested tools with constructors taking `max_notes`, `max_note_length`, and `notes` dict, and also accept `sqlite` and `session_id` for persistence. But the registration instructions say pass `max_notes` and `max_note_length`. I can pass them as keyword args plus sqlite/session_id. Or I can pass only the three and let tools not persist. Hmm.
+
+Given the codebase already persists notes, and the user likely wants the feature to work robustly, I'll keep persistence. I'll pass `sqlite` and `session_id` to the tools in addition to config values. But to strictly follow the task, maybe I should avoid adding sqlite in the constructor signature? The task didn't forbid extra args. It says "Validates against `max_notes` and `max_note_length` from config". So extra args are fine.
+
+Actually, the simplest way to satisfy the task while not losing persistence: In `SaveNoteTool` and `GetNoteTool`, store notes in `self._notes`. The tools are constructed with the agent's `self._session_notes` dict. Since the dict is shared, when tools mutate it, the agent's `save_session_note` method can also see changes. But for persistence, the tool can call `self._sqlite.save_session_notes`. So I'll keep sqlite/session_id.
+
+But the task says the file should be new with two tools. The existing file has three. I will overwrite it with two tools, but include sqlite/session_id for persistence. Then I need to update agent_tools.py to not import GetNotesTool/DeleteNoteTool. Also update the memory-fs NotesBackend still uses `self._notes` dict directly, so unaffected.
+
+Then update agent_tools.py `_register_memory_tools()`: remove the existing note tools registration and replace with registration in `_register_tools()`? The task says register in `_register_tools()`. But `_register_tools()` is called before session start (no session_id). The existing registration is in `_register_memory_tools()` after session start. The task says: "Register both note tools in `_register_tools()`. You MUST read this file to see how other tools are registered: - Tools are instantiated with config values passed to constructors - Registered with `self.tool_registry.register(tool, group='group_name')` - Pass `self.config.notes.max_notes` and `self.config.notes.max_note_length` to the tool constructors - Use group name 'notes'".
+
+So they want it in `_register_tools()`, not `_register_memory_tools()`. But `SaveNoteTool` needs session_id to persist. `_register_tools()` is called before session start, so `self.session_manager.session_id` is None. I can pass None and handle it in the tool (skip persistence). Or I can defer persistence. But the existing architecture calls `_register_tools()` early. How does `_register_tools()` get config? `self.config.tools`. It doesn't have session info. So registering save_note in `_register_tools()` means it can't have a session_id. But the task says "session notes". Maybe the task assumes no persistence, just in-memory for the session. Then session_id isn't needed. The dict is held by the tool; the agent's `_session_notes` dict is separate? But the CLI says access via `agent.tool_registry.get_tool('save_note')._notes`. So the tool's dict is source of truth.
+
+If I register in `_register_tools()` without session_id, and the tool just stores in `self._notes`, then `_session_notes` on agent is not the same dict. The CLI accesses the tool dict. That's fine. But if we want the agent's system prompt injection to include notes, it uses `self._session_notes` (agent_chat.py line 1110). That would not see tool notes. Hmm.
+
+Let's check agent_chat.py line 1110.</think>
+[2m  ▸ read_file blipshell/core/agent_chat.py[0m
+[2m    │ read_file:  1095:             if ms and ms.extra_instructions:  1096:                 syste[0m
+
+
+[2m  ▸ grep_files _register_tools\([0m
+[2m    │ grep_files: blipshell\core\agent.py:287:         self._register_tools() blipshell\core\agent[0m
+
+
+[2m  ▸ read_file blipshell/core/agent.py[0m
+[2m    │ read_file:   270:         self.task_executor.guardrails_config = self.config.guardrails   2[0m
+
+
+[2m  ▸ grep_files _register_memory_tools\([0m
+[2m    │ grep_files: blipshell\core\agent_session.py:43:         self._register_memory_tools() blipsh[0m
+
+
+[2m  ▸ read_file blipshell/ui/cli.py[0m
+[2m    │ read_file:  2860:         "[bold]/changes[/bold]               - Show files modified this s[0m
+
+
+[2m  ▸ read_file blipshell/ui/cli.py[0m
+[2m    │ read_file:  2840: def _print_help():  2841:     """Print help for CLI commands."""  2842:  [0m
+
+
+[2m  ▸ read_file blipshell/core/agent_session.py[0m
+[2m    │ read_file:     1: """Session lifecycle mixin for Agent.     2:      3: Extracts session sta[0m
+
+I need to decide on the architecture. The task is explicit about four files. I'll follow it closely but make the feature actually functional with the existing agent. My decision:
+
+- The agent's `_session_notes` dict remains the shared source of truth, loaded from DB on session start and persisted via existing agent methods or tool persistence.
+- The new `SaveNoteTool` and `GetNoteTool` will be registered in `_register_tools()` as requested, using group `'notes'`. They will take `max_notes`, `max_note_length`, and the shared `notes` dict. To keep persistence, I'll also pass `sqlite` and `session_id` (or a session_id provider) but maybe not since `_register_tools()` is called before session start. Actually, `_register_tools()` is called during `initialize()`, after sqlite is ready but before `session_manager.start_session()`. So session_id is None. If I want persistence in tools, I could pass a callable that returns session_id, or store a reference to the agent? Better: pass `sqlite` and a `session_id_provider` callable. In `_register_tools()` I can define a lambda `lambda: self.session_manager.session_id if self.session_manager else None`. This matches the NotesBackend pattern.
+
+But the task says "Pass `self.config.notes.max_notes` and `self.config.notes.max_note_length` to the tool constructors". I can pass these plus sqlite and session_id_provider. That satisfies.
+
+However, the task's CLI wants to access `agent.tool_registry.get_tool('save_note')._notes`. That will work because the tool has `_notes`.
+
+Now, what about `_register_memory_tools()`? The task says register in `_register_tools()`. So I should remove the note tools from `_register_memory_tools()`. But then `DeleteNoteTool` and `GetNotesTool` disappear. Do I need them? The new design has only two tools. The CLI's `/notes clear` will clear by directly manipulating the dict on the save_note tool. So no delete tool needed. The CLI's `/notes get` uses the tool dict. The LLM can save via `save_note` and get via `get_note`. It can update by saving again. It can delete? Not via tool. The task doesn't require delete. The existing memory-fs backend still supports delete via memory filesystem tools. So that's okay.
+
+But what about the existing `/notes save` and `/notes delete` in the CLI? The task wants only list/get/clear. I should update `_handle_notes_command` accordingly. The existing `/notes save` used `agent.save_session_note` which persists. If I remove it, the user can no longer save notes via slash command; only the LLM can save via tools. But the task says "/notes with no args — list all saved notes", "/notes get <name>", "/notes clear". It doesn't include save/delete. So yes, remove save/delete from slash command.
+
+Should I also update `_print_help()`? The existing help shows `/notes save` and `/notes delete`. I should update it to match. That's in cli.py too.
+
+Now, agent.py methods `get_session_notes`, `save_session_note`, `clear_session_notes`: they currently use `max_note_tokens`. If I change config to `max_note_length` (char count), these methods become inconsistent. I should update them to use `max_note_length` too. But the task doesn't mention modifying agent.py. However, consistency requires it. I can update them minimally. Alternatively, keep both `max_note_tokens` and `max_note_length` in config and have agent.py use `max_note_tokens`, tools use `max_note_length`. But then the slash command's save uses token limit, while tools use char limit. That might be okay but inconsistent. The task says "Config field names must match what agent_tools.py passes to constructors". It doesn't say agent.py must use same fields. But for sanity, I'll update agent.py to use `max_note_length` for char count. Or maybe keep `max_note_tokens` because the agent uses token-based estimate. The task's simple design uses char count. The existing agent uses tokens because notes are injected into system prompt. To avoid over-injecting, token limit is more appropriate. But the task specifically wants `max_note_length` (chars). Hmm.
+
+The task: "Add a `NotesConfig` class ... with: `enabled: bool = True`, `max_notes: int = 50`, `max_note_length: int = 2000`". It explicitly wants char limit. I should implement char limit in tools. For the agent methods, I'll update to use char count too, or at least keep them functional. But maybe I can leave them using token count and just add `max_note_length` for tools. That would be "existing code continues to work". The critical says "Config field names must match what agent_tools.py passes to constructors". It doesn't require agent.py to use all fields. So I can keep `max_note_tokens` and `max_total_tokens` alongside `max_note_length`. The new tools use `max_note_length`; existing agent.py and memory-fs use token fields. That preserves existing behavior and adds the requested feature.
+
+Wait, but if `NotesConfig` already has `max_note_tokens`, and I add `max_note_length`, the default for `max_note_length` should be 2000 chars. Existing config.yaml might override `max_note_tokens` but not `max_note_length`. That's fine.
+
+I think the safest approach is:
+- In `NotesConfig`, add `max_note_length: int = 2000`. Keep existing `enabled`, `max_notes`, `max_total_tokens`, `max_note_tokens`. Update docstring maybe.
+- In `note_tools.py`, rewrite to have `SaveNoteTool` and `GetNoteTool` only, with char-based validation using `max_notes` and `max_note_length`. Include sqlite/session_id_provider for persistence? Or not? The task says "session notes within a session" and constructors get max_notes/max_note_length. I'll include sqlite and session_id_provider for persistence to keep existing functionality. In `_register_tools()` I can pass these.
+
+But the task says "Create a NEW file with two tools". The file exists. I'll overwrite with the two tools. Since the existing file imports logging etc., I'll keep the header.
+
+- In `agent_tools.py`, import `SaveNoteTool`, `GetNoteTool` from `note_tools`. Register in `_register_tools()` with group `'notes'`. Remove the existing note tools block from `_register_memory_tools()` (the block that registers SaveNoteTool/GetNotesTool/DeleteNoteTool). But the NotesBackend in `_register_memory_tools()` uses `self.config.notes.max_notes`; that's fine.
+
+Wait, in `_register_memory_tools()`, there is a comment:
+```
+# Memory filesystem tools — exposes lessons/core/digests/sessions/
+# friction/notes as a navigable /memories/... tree. Only core memories
+# and notes are writable; core writes go through the agent's approval
+# callback (path-based, not name-based). The notes tier shares the same
+# session_notes store as the save_note/get_notes tools.
+```
+This refers to `save_note/get_notes` tools. I should update the comment to `save_note/get_note` if I change names. Also the NotesBackend is separate.
+
+- In `cli.py`, update `_handle_notes_command` to match task: list (no args), get <name>, clear. It should access `agent.tool_registry.get_tool('save_note')._notes`. For clear, it should clear that dict and persist via agent.sqlite if possible. For list, show name + first 50 chars preview. For get, show full content. Also update `_print_help()` to match.
+
+- Also update agent.py methods? The task doesn't require but to avoid inconsistency, maybe update `save_session_note` to use `max_note_length`? Actually the CLI no longer uses `save_session_note`. The agent methods are only used maybe by memory-fs? No, memory-fs uses NotesBackend. The agent methods are only used by the old CLI and maybe tests. Since I'm removing old CLI usage, I could leave them. But they are public API. I'll leave them but maybe update to use char limit to match config? Hmm. If I leave them using `max_note_tokens`, and `max_note_tokens` remains in config, they work. The new tools use `max_note_length`. This means two separate limits: one for tools (chars) and one for agent methods (tokens). The task's `NotesConfig` includes `max_note_length`; agent.py doesn't use it. That's okay. But a user might expect `max_note_length` to apply everywhere. The task says "all four files must be consistent", not all code. So I'll leave agent.py.
+
+But the `notes` dict shared between tools and agent means if the agent method `save_session_note` is called (e.g., by tests), it might bypass the char limit. That's acceptable.
+
+Wait, what about the `_load_session_notes` loading into `self._session_notes`, but the tools get a separate `notes` dict if I pass `self._session_notes`? Actually they share the same dict object. In `_register_tools()` I can pass `self._session_notes`. But `_register_tools()` is called before `_load_session_notes`, so `self._session_notes` is empty {}. That's fine; when `_load_session_notes` later assigns `self._session_notes = notes`, the tool's `_notes` reference would still point to the old empty dict, not the loaded one. That's a problem!
+
+Because `_load_session_notes` does `self._session_notes = notes` (rebinds the attribute), replacing the dict object. If the tools hold a reference to the original empty dict, they won't see loaded notes, and changes won't go to the loaded dict. The existing implementation avoids this by registering tools in `_register_memory_tools()` after `_load_session_notes()`? Let's check order: `start_session()` calls `_register_memory_tools()` at line 43, then later `_load_session_notes()` at line 70. Wait, tools are registered before loading. But the tools are passed `notes = getattr(self, "_session_notes", {})`. At that point `_session_notes` is the empty dict initialized in `__init__`. Then `_load_session_notes` rebinds `self._session_notes = notes`. So the tools would not see loaded notes? That seems like a bug in existing code. But maybe `_load_session_notes` updates in place? Let's re-read line 431: `self._session_notes = notes`. It rebinds. So tools registered before would hold stale reference. Unless `_register_memory_tools()` is called after `_load_session_notes()`? Wait, line 43 is before line 70. So tools are registered before loading. That would mean existing note tools don't see loaded notes. Unless `notes = getattr(self, "_session_notes", {})` at registration grabs the same dict that later gets updated? No, because `_load_session_notes` replaces it. Hmm. Maybe `get_session_notes` returns `self._session_notes` which after loading is correct, but the tools use their own `_notes` stale dict. But the existing CLI uses `agent.get_session_notes()` and `agent.save_session_note()`, which operate on `self._session_notes`, not the tool dict. So the CLI sees loaded notes. The tools (LLM) operate on stale empty dict. That's a bug in existing code. The task's CLI now accesses the tool dict directly, so if the tool dict is stale, it would show no notes after loading. Therefore I must ensure the tool's `_notes` reference stays in sync with `self._session_notes`.
+
+How to fix? Option A: Don't rebind `_session_notes`; update it in place. Change `_load_session_notes` to clear and update the existing dict: `self._session_notes.clear(); self._session_notes.update(notes)`. Then tools sharing the same dict see updates. Option B: After loading, update the tool's `_notes` reference. Option C: Pass a dict wrapper? Option D: Register tools after loading (move to after `_load_session_notes`).
+
+The task wants register in `_register_tools()` which is called during `initialize()`, even before session start. So tools are created before any session notes loaded. To keep them in sync, I should change `_load_session_notes` to update the existing dict in place. That is a minimal change in `agent_session.py`, not one of the four files. But it ensures the tool dict (shared with `self._session_notes`) gets loaded data.
+
+Actually, in `__init__`, `self._session_notes = {}`. If I pass that dict to tools, then `_load_session_notes` should update it in place. Yes. I'll modify `agent_session.py` line 431 to clear and update, not rebind. That keeps the shared reference. But the task didn't ask to change this file. However, it's necessary for the requested CLI to work. I think it's acceptable as a supporting change.
+
+Alternatively, I can avoid sharing the dict and instead have the tool methods access `agent._session_notes` via a reference to the agent. But the task says `self._notes` dict. So sharing is intended.
+
+Actually, looking at `fs_notes.py` NotesBackend, it is passed `self._session_notes` dict directly. It also would suffer from the rebind issue. So fixing `_load_session_notes` in place is good for existing code too. It might be a latent bug. I should fix it.
+
+But maybe I'm wrong: `_register_memory_tools()` is called at line 43, but `notes = getattr(self, "_session_notes", {})`. The `_session_notes` dict from `__init__` is empty. Then `_load_session_notes` rebinds. The tools' `_notes` is stale. The memory-fs `_notes_backend` also stale. This means existing `/notes` CLI (which uses `agent._session_notes`) works, but the memory-fs view and LLM tools do not see loaded notes. That's indeed a bug. The task's CLI change exposes it. So I must fix `_load_session_notes` to update in place.
+
+But wait, the user task says "You MUST read cli.py to find the slash command dispatch section". It doesn't say read agent_session.py. But I can still modify it to make it work. The instructions say minimal changes; fixing the rebind is minimal.
+
+Actually, maybe the tools are passed the same dict, and `_load_session_notes` sets `self._session_notes = notes`. But `self._session_notes` is the same object as the tool's `_notes`? No, rebinding changes `self._session_notes` to a new object; the tool still holds the old. So yes, bug.
+
+I'll modify `_load_session_notes` to update in place.
+
+Now, for persistence: The new tools can persist via `self._sqlite.save_session_notes`. But if `SaveNoteTool` is registered in `_register_tools()` before session start, `session_id_provider` may return None when tool is called (if called before session start). Tools shouldn't be called before session start. In practice, `_register_tools()` runs during `initialize()`; chat happens after `start_session()`, so session_id exists. So session_id_provider works.
+
+But the agent's `_session_notes` dict is shared. When `SaveNoteTool.execute` saves, it updates `self._notes[name] = content`, then persists via sqlite. Good.
+
+When the CLI clears notes via `agent.tool_registry.get_tool('save_note')._notes.clear()`, it will clear the shared dict but not persist. I should also persist from the CLI. The existing `agent.clear_session_notes()` persists. But the task says access the tool dict directly. I can do both: clear the tool dict and call `agent.sqlite.clear_session_notes`. Or call `agent.clear_session_notes()` and then tool dict is same object so cleared. Actually `agent.clear_session_notes()` does `self._session_notes.clear()` and `sqlite.clear_session_notes`. Since the tool dict is the same object, tool dict is cleared. So CLI `/notes clear` can call `agent.clear_session_notes()`. But the task explicitly says "The notes dict lives on the tool instances — access it via: `agent.tool_registry.get_tool('save_note')._notes`". That might be just for reading. For clearing, I can still use the agent method. But to follow the spirit, I can clear the dict directly and then persist. I'll call `agent.clear_session_notes()` for persistence; it clears the same dict. That's fine.
+
+Actually, the task says for CLI:
+- `/notes` with no args — list all saved notes (name + first 50 chars preview)
+- `/notes get <name>` — show full content of a note
+- `/notes clear` — clear all notes
+
+It says "The notes dict lives on the tool instances — access it via: `agent.tool_registry.get_tool('save_note')._notes`". So for list and get, use the tool dict. For clear, I can use `agent.clear_session_notes()` or clear the dict directly. Since `agent.clear_session_notes()` already exists and persists, I'll use it. But if I change `agent.clear_session_notes()` to not require `self.session_manager`? It currently requires active session. That's fine.
+
+For list and get, using the tool dict. Need to handle case where tool not found. `agent.tool_registry.get_tool('save_note')` may return None if notes disabled? If notes disabled, tools not registered. The CLI should handle None gracefully. The task says "if not found" for GetNoteTool returns error. For slash command, if no tool, print message.
+
+Now, one more issue: `_register_tools()` is called before session start, but the tools need sqlite. In `_register_tools()`, `self.sqlite` is initialized (initialize() sets it before calling `_register_tools()` at line 287). So sqlite is available. Good.
+
+But `self.config.notes` is available. Good.
+
+Now, the new `GetNoteTool` name: The task says "GetNoteTool(Tool) — retrieves a note by name". It doesn't specify the tool definition name. For consistency with `save_note`, I'll name it `get_note`. The task says "Tool names in definitions must match what cli.py looks up via get_tool()". The CLI only looks up `save_note`. The LLM will use `get_note`. Good.
+
+Now, should I remove `GetNotesTool` and `DeleteNoteTool` entirely from the file? The task says create a new file with two tools. Since file exists, I'll overwrite with exactly two tools. Then agent_tools.py should not import them. The existing memory-fs comment may reference `get_notes`; I can update or leave. But if I leave the import of `GetNotesTool`/`DeleteNoteTool`, it'll fail. So update agent_tools.py.
+
+Should I update `NotesBackend`? It uses `max_notes` and works with shared dict. Fine.
+
+Should I update `_print_help()`? Yes, change `/notes save` and `/notes delete` lines to maybe show list/get/clear. The task doesn't mention help but consistency.
+
+Should I update `_handle_notes_command` docstring? Yes.
+
+Now, implementation details for `SaveNoteTool`:
+- `__init__(self, sqlite, session_id_provider, max_notes: int, max_note_length: int, notes: dict[str, str])`. Or simpler: `__init__(self, max_notes: int, max_note_length: int, notes: dict[str, str], sqlite=None, session_id_provider=None)`. To match task, I'll put max_notes and max_note_length first.
+- `definition()`: name `save_note`, parameters `name` and `content` (string, required).
+- `execute(self, name: str, content: str, **kwargs)`: strip, validate non-empty, validate length <= max_note_length, validate max_notes (only if new name), save to `self._notes`, persist if sqlite and session_id available, return confirmation.
+
+`GetNoteTool`:
+- `read_only = True`
+- `__init__(self, notes: dict[str, str])`
+- `definition()`: name `get_note`, parameter `name` required string.
+- `execute(self, name: str, **kwargs)`: return content or error.
+
+Now, persistence in `SaveNoteTool`: It needs `sqlite` and session_id. I'll pass them. The registration in `_register_tools()` can define `_session_id_provider`. But maybe simpler: pass `self.sqlite` and a lambda. Since `_register_tools()` is sync, can define lambda. However, `sqlite.save_session_notes` is async; calling it from `execute` is fine.
+
+But wait, the task says "Pass `self.config.notes.max_notes` and `self.config.notes.max_note_length` to the tool constructors". It doesn't mention sqlite. If I add sqlite, does it violate? It says "Tools are instantiated with config values passed to constructors". That means at least config values. Adding sqlite is okay.
+
+Now, what about `NotesBackend` in `_register_memory_tools()`? It uses `self.config.notes.max_notes`. It doesn't use `max_note_length` (it uses its own token logic maybe). Actually `NotesBackend.write` doesn't validate length. It just writes. The memory-fs tools have their own path. Fine.
+
+Now, should `NotesConfig` keep `max_total_tokens` and `max_note_tokens`? If I keep them, the existing `note_tools.py` (before rewrite) used them. After rewrite, new tools use `max_note_length`. The existing `agent.py` `save_session_note` uses `max_note_tokens`. If I keep `max_note_tokens`, agent.py works. If I keep `max_total_tokens`, note_tools old block used it; new tools don't. Fine. But the docstring in NotesConfig mentions persistence; the task says simple scratchpad. I can update docstring. Minimal.
+
+Actually, to avoid confusion, I might set `max_note_tokens` to a computed value or keep it. But config should have defaults. I'll keep `max_total_tokens` and `max_note_tokens` but mark them as maybe unused? No, that leaves dead config. The task explicitly defines the config class with three fields. The existing class has more. Since the task is to "Add a NotesConfig class", but it already exists, I'll modify it to match the task by removing the extra fields and adding `max_note_length`. Then I need to update `agent.py` `save_session_note` to use `max_note_length` instead of `max_note_tokens`. And update any other usage. Let's check `max_total_tokens` usage.</think>
+[2m  ▸ grep_files max_note_tokens|max_total_tokens[0m
+[2m    │ grep_files: blipshell\core\agent.py:1200:         if content_tokens > self.config.notes.max_[0m
+
+So only `agent.py` and `note_tools.py` use those. If I remove the fields, I need to update `agent.py`. The task only asks four files, but `agent.py` uses config fields. To keep existing code working, I must update `agent.py` too. That's a fifth file. Is that allowed? The task says "coordinated changes to FOUR existing files". But if removing fields breaks agent.py, I have to update it. Maybe better keep the extra fields and add `max_note_length`. Then no need to touch agent.py. The task says "with" the three fields, not "only". So I can keep extra fields. The critical says "Config field names must match what agent_tools.py passes to constructors". It doesn't say remove extras. So I'll keep `max_total_tokens` and `max_note_tokens` and add `max_note_length`. This avoids touching agent.py and keeps existing code working. The new tools use `max_note_length`. The existing agent.py uses `max_note_tokens`. Good.
+
+But the task says "Add a `NotesConfig` class (Pydantic BaseModel) with: ...". Since it exists, I'll add the missing `max_note_length` field. Done.
+
+Now, for consistency, maybe `max_note_length` should default to 2000. The existing `max_note_tokens` default is 2000. Since tokens ≈ chars/4, a char limit of 2000 is much larger than 2000 tokens. But the task says 2000 chars. Fine.
+
+Now, I should also consider whether the slash command `/notes` should use the agent's `_session_notes` or tool dict. The task says tool dict. But after `_load_session_notes` updates the shared dict in place, both are same.
+
+One issue: `_register_tools()` is called once during `initialize()`. The tools get `self._session_notes` dict. But if the user continues a session, `_load_session_notes` updates the same dict in place, so the tools see it. Good.
+
+Now, I need to ensure the `SaveNoteTool` persists the notes after `_load_session_notes` so that the loaded notes are preserved and new notes saved. The tool uses sqlite and session_id_provider. When session_id is None (before start), it should not persist? But tools shouldn't be called. I'll make it persist only if session_id not None.
+
+Now, what about the existing `agent.save_session_note`? It persists immediately and uses token limit. If the user or tests call it, it updates `self._session_notes` (same dict as tools) and persists. Good. But its token limit might be different from tool char limit. Acceptable.
+
+Now, the memory-fs `NotesBackend.write` doesn't validate note length. It uses `max_notes`. It doesn't call `save_session_notes` via the tools. It persists itself. Fine.
+
+Now, let's implement.
+
+### Step 1: Update `NotesConfig` in config.py
+
+Add `max_note_length: int = 2000` after `max_notes`. Keep others.
+
+### Step 2: Rewrite `note_tools.py`
+
+Two tools: `SaveNoteTool`, `GetNoteTool`. Use char limits.
+
+I need to decide constructor. I'll use:
+
+```python
+class SaveNoteTool(Tool):
+    def __init__(self, max_notes: int, max_note_length: int, notes: dict[str, str], sqlite=None, session_id_provider=None):
+        self._max_notes = max_notes
+        self._max_note_length = max_note_length
+        self._notes = notes
+        self._sqlite = sqlite
+        self._session_id_provider = session_id_provider
+```
+
+The task says "Validates against `max_notes` and `max_note_length` from config". Good.
+
+`execute`: strip name/content, validate, etc.
+
+`GetNoteTool`:
+
+```python
+class GetNoteTool(Tool):
+    read_only = True
+    def __init__(self, notes: dict[str, str]):
+        self._notes = notes
+    def definition(self): name get_note, param name required.
+    def execute(self, name: str, **kwargs): return content or error.
+```
+
+### Step 3: Update `agent_tools.py`
+
+In `_register_tools()`:
+
+```python
+# Session notes tools
+if self.config.notes.enabled:
+    from blipshell.core.tools.note_tools import SaveNoteTool, GetNoteTool
+
+    def _session_id_provider():
+        return self.session_manager.session_id if self.session_manager else None
+
+    self.tool_registry.register(SaveNoteTool(
+        max_notes=self.config.notes.max_notes,
+        max_note_length=self.config.notes.max_note_length,
+        notes=self._session_notes,
+        sqlite=self.sqlite,
+        session_id_provider=_session_id_provider,
+    ), group="notes")
+    self.tool_registry.register(GetNoteTool(
+        notes=self._session_notes,
+    ), group="notes")
+```
+
+But `_register_tools()` is called before `self.sqlite` is set? Let's check: `agent.initialize()` -> `_do_initialize()` sets `self.sqlite` at line 194, then `_register_tools()` at line 287. So sqlite is set. Good. `self.session_manager` is None at that point, but session_id_provider handles it.
+
+Then remove the old block from `_register_memory_tools()`:
+
+```python
+        # Session notes tools (persistent state surviving compaction)
+        if self.config.notes.enabled and session_id:
+            from blipshell.core.tools.note_tools import (
+                DeleteNoteTool,
+                GetNotesTool,
+                SaveNoteTool,
+            )
+            # Shared notes dict — all three tools see the same state
+            notes = getattr(self, "_session_notes", {})
+            self.tool_registry.register(SaveNoteTool(
+                self.sqlite, session_id, self.config.notes, notes,
+            ), group="memory")
+            self.tool_registry.register(GetNotesTool(
+                self.sqlite, session_id, notes,
+            ), group="memory")
+            self.tool_registry.register(DeleteNoteTool(
+                self.sqlite, session_id, notes,
+            ), group="memory")
+```
+
+Remove this block. But the comment about memory filesystem sharing same store can stay or be updated. I'll update the comment.
+
+### Step 4: Update `cli.py`
+
+Update `_handle_notes_command`:
+
+```python
+async def _handle_notes_command(agent: Agent, args: list[str]):
+    """Handle /notes commands: list, get, clear."""
+    save_tool = agent.tool_registry.get_tool('save_note')
+    if save_tool is None:
+        console.print("[yellow]Notes are disabled.[/yellow]")
+        return
+
+    notes = save_tool._notes
+
+    if not args:
+        if not notes:
+            console.print("[dim]No session notes.[/dim]")
+            return
+        console.print(f"[bold]Session Notes[/bold] ({len(notes)} notes)")
+        for name in sorted(notes.keys()):
+            content = notes[name]
+            preview = content[:50].replace("\n", " ")
+            if len(content) > 50:
+                preview += "..."
+            console.print(f"  [cyan]{name}[/cyan]: {preview}")
+    elif args[0] == "get" and len(args) > 1:
+        name = args[1]
+        if name in notes:
+            console.print(f"[bold cyan]{name}[/bold cyan]")
+            console.print(notes[name])
+        else:
+            available = ", ".join(sorted(notes.keys())) if notes else "none"
+            console.print(f"[dim]Note '{name}' not found. Available: {available}[/dim]")
+    elif args[0] == "clear":
+        result = await agent.clear_session_notes()
+        console.print(f"[dim]{result}[/dim]")
+    else:
+        console.print(
+            "[dim]Usage: /notes, /notes get <name>, /notes clear[/dim]"
+        )
+```
+
+But `agent.clear_session_notes()` checks `self.session_manager`. It's after session start, so okay. It clears the same dict. It calls `sqlite.clear_session_notes`. Good.
+
+Update `_print_help()`: change the notes lines.
+
+```python
+        "[bold]/notes[/bold]                 - List session notes\n"
+        "[bold]/notes get <name>[/bold]      - Show a session note\n"
+        "[bold]/notes clear[/bold]           - Clear all session notes\n"
+```
+
+### Step 5: Update `agent_session.py` `_load_session_notes`
+
+Change line 431 from `self._session_notes = notes` to update in place:
+
+```python
+            self._session_notes.clear()
+            self._session_notes.update(notes)
+```
+
+This ensures the shared dict is updated.
+
+Wait, `notes` from `sqlite.get_session_notes` might be a new dict. Updating in place works. If `self._session_notes` is the dict shared with tools, it remains same object. Good.
+
+But what if `notes` is None? The sqlite method likely returns {} if none. Let's check.</think>
+[2m  ▸ read_file blipshell/memory/sqlite_store.py[0m
+[2m    │ read_file:   665:         """Update a session's project tag."""   666:         await self._[0m
+
+
+[2m  ▸ read_file blipshell/models/tools.py[0m
+[2m    │ read_file: """Tool-related Pydantic models for native Ollama tool calling."""  from datetim[0m
+
+
+[2m  ▸ edit_file blipshell/models/config.py[0m
+[2m    │ Successfully edited blipshell/models/config.py[0m
+[1m--- a/config.py[0m
+[1m+++ b/config.py[0m
+[36m@@ -7,5 +7,6 @@[0m
+     """
+     enabled: bool = True
+     max_notes: int = 50                          # max number of notes per session
+[32m+    max_note_length: int = 2000                  # max characters per note[0m
+     max_total_tokens: int = 4000                 # total token budget for all notes (was 12K — too much context pressure)
+     max_note_tokens: int = 2000                  # per-note token limit
+
+
+[2m  ▸ write_file blipshell/core/tools/note_tools.py[0m
+[2m    │ write_file: Successfully wrote 4664 characters to blipshell/core/tools/note_tools.py[0m
+
+
+[2m  ▸ edit_file blipshell/core/agent_tools.py[0m
+[2m    │ Successfully edited blipshell/core/agent_tools.py[0m
+[1m--- a/agent_tools.py[0m
+[1m+++ b/agent_tools.py[0m
+[36m@@ -4,4 +4,5 @@[0m
+     SaveCoreMemoryTool,
+     SearchMemoriesTool,
+ )
+[32m+from blipshell.core.tools.note_tools import GetNoteTool, SaveNoteTool[0m
+ from blipshell.core.tools.project_tools import (
+
+
+[2m  ▸ edit_file blipshell/core/agent_tools.py[0m
+[2m    │ Successfully edited blipshell/core/agent_tools.py[0m
+[1m--- a/agent_tools.py[0m
+[1m+++ b/agent_tools.py[0m
+[36m@@ -1,5 +1,21 @@[0m
+         # Time awareness (read-only, available in all modes)
+         self.tool_registry.register(GetCurrentTimeTool(), group="general")
+[32m+[0m
+[32m+        # Session notes tools (simple scratchpad, persistent across compaction)[0m
+[32m+        if self.config.notes.enabled:[0m
+[32m+            def _session_id_provider():[0m
+[32m+                return self.session_manager.session_id if self.session_manager else None[0m
+[32m+[0m
+[32m+            self.tool_registry.register(SaveNoteTool([0m
+[32m+                max_notes=self.config.notes.max_notes,[0m
+[32m+                max_note_length=self.config.notes.max_note_length,[0m
+[32m+                notes=self._session_notes,[0m
+[32m+                sqlite=self.sqlite,[0m
+[32m+                session_id_provider=_session_id_provider,[0m
+[32m+            ), group="notes")[0m
+[32m+            self.tool_registry.register(GetNoteTool([0m
+[32m+                notes=self._session_notes,[0m
+[2m  ... (4 more lines)[0m
+
+
+[2m  ▸ edit_file blipshell/core/agent_tools.py[0m
+[2m    │ Successfully edited blipshell/core/agent_tools.py[0m
+[1m--- a/agent_tools.py[0m
+[1m+++ b/agent_tools.py[0m
+[36m@@ -2,7 +2,7 @@[0m
+         # friction/notes as a navigable /memories/... tree. Only core memories
+         # and notes are writable; core writes go through the agent's approval
+         # callback (path-based, not name-based). The notes tier shares the same
+[31m-        # session_notes store as the save_note/get_notes tools.[0m
+[32m+        # session_notes store as the save_note/get_note tools.[0m
+         if self._memory_fs_backend is not None:
+             from blipshell.memory.fs_notes import NotesBackend
+ 
+
+
+[2m  ▸ edit_file blipshell/core/agent_tools.py[0m
+[2m    │ Successfully edited blipshell/core/agent_tools.py (fuzzy match, 97% similarity)[0m
+[1m--- a/agent_tools.py[0m
+[1m+++ b/agent_tools.py[0m
+[36m@@ -1,20 +1 @@[0m
+[31m-        # Session notes tools (persistent state surviving compaction)[0m
+[31m-        if self.config.notes.enabled and session_id:[0m
+[31m-            from blipshell.core.tools.note_tools import ([0m
+[31m-                DeleteNoteTool,[0m
+[31m-                GetNotesTool,[0m
+[31m-                SaveNoteTool,[0m
+[31m-            )[0m
+[31m-            # Shared notes dict — all three tools see the same state[0m
+[31m-            notes = getattr(self, "_session_notes", {})[0m
+[31m-            self.tool_registry.register(SaveNoteTool([0m
+[31m-                self.sqlite, session_id, self.config.notes, notes,[0m
+[31m-            ), group="memory")[0m
+[31m-            self.tool_registry.register(GetNotesTool([0m
+[31m-                self.sqlite, session_id, notes,[0m
+[31m-            ), group="memory")[0m
+[31m-            self.tool_registry.register(DeleteNoteTool([0m
+[31m-                self.sqlite, session_id, notes,[0m
+[2m  ... (3 more lines)[0m
+
+
+[2m  ▸ read_file blipshell/core/agent_tools.py[0m
+[2m    │ read_file:    90:         from blipshell.models.config import resolve_env_vars    91:      [0m
+
+
+[2m  ▸ edit_file blipshell/core/agent_session.py[0m
+[2m    │ Successfully edited blipshell/core/agent_session.py[0m
+[1m--- a/agent_session.py[0m
+[1m+++ b/agent_session.py[0m
+[36m@@ -1,4 +1,7 @@[0m
+             notes = await self.sqlite.get_session_notes(session_id)
+[31m-            self._session_notes = notes[0m
+[32m+            # Update in place so existing references (tools, memory fs backend)[0m
+[32m+            # stay in sync rather than being replaced by a new dict object.[0m
+[32m+            self._session_notes.clear()[0m
+[32m+            self._session_notes.update(notes)[0m
+             if notes:
+                 logger.info("Loaded %d session notes", len(notes))
+
+
+[2m  ▸ edit_file blipshell/ui/cli.py[0m
+[2m    │ Successfully edited blipshell/ui/cli.py[0m
+[1m--- a/cli.py[0m
+[1m+++ b/cli.py[0m
+[36m@@ -1,49 +1,36 @@[0m
+ async def _handle_notes_command(agent: Agent, args: list[str]):
+[31m-    """Handle /notes commands: list, get, save, delete, clear."""[0m
+[32m+    """Handle /notes commands: list, get, clear."""[0m
+[32m+    save_tool = agent.tool_registry.get_tool("save_note")[0m
+[32m+    if save_tool is None:[0m
+[32m+        console.print("[yellow]Notes are disabled.[/yellow]")[0m
+[32m+        return[0m
+[32m+[0m
+[32m+    notes = save_tool._notes[0m
+[32m+[0m
+     if not args:
+[31m-        # /notes — list all[0m
+[31m-        notes = await agent.get_session_notes()[0m
+[32m+        # /notes — list all with short preview[0m
+         if not notes:
+             console.print("[dim]No session notes.[/dim]")
+             return
+[2m  ... (47 more lines)[0m
+
+
+[2m  ▸ edit_file blipshell/ui/cli.py[0m
+[2m    │ Successfully edited blipshell/ui/cli.py[0m
+[1m--- a/cli.py[0m
+[1m+++ b/cli.py[0m
+[36m@@ -1,3 +1,3 @@[0m
+[31m-        "[bold]/notes[/bold]                 - Show session notes (survive compaction)\n"[0m
+[31m-        "[bold]/notes save[/bold] [dim]<name> <text>[/dim] - Save a session note\n"[0m
+[31m-        "[bold]/notes delete[/bold] [dim]<name>[/dim]   - Delete a note\n"[0m
+[32m+        "[bold]/notes[/bold]                 - List session notes (survive compaction)\n"[0m
+[32m+        "[bold]/notes get[/bold] [dim]<name>[/dim]    - Show a session note\n"[0m
+[32m+        "[bold]/notes clear[/bold]           - Clear all session notes\n"[0m
+
+
+[2m  ▸ run_command python -m py_compile blipshell/models/config.py blipshell/co[0m
+[2m    │ run_command: (no output)[0m
+
+
+[2m  ▸ Running 2 tools: run_command, run_command[0m
+[2m    │ run_command: Error: 'print('OK')"' is not allowed. Allowed: dir, echo, git, pip, pytest, pyth[0m
+[2m    │ run_command: Error: 'c=NotesConfig()' is not allowed. Allowed: dir, echo, git, pip, pytest, p[0m
+
+  [Inline text used as completion]
+
+======================================================================
+VERIFICATION: 14/19 checks passed
+======================================================================
+  PASS diff_contains(('blipshell/models/config.py', '\\+.*class NotesConfig')): pattern in diff
+  FAIL diff_contains(('blipshell/models/config.py', '\\+.*max_notes.*int.*=.*50')): pattern not in diff (608 chars)
+  FAIL diff_contains(('blipshell/models/config.py', '\\+.*notes.*:.*NotesConfig')): pattern not in diff (608 chars)
+  PASS syntax_check(blipshell/models/config.py): compiles OK
+  PASS file_exists(blipshell/core/tools/note_tools.py): exists
+  PASS syntax_check(blipshell/core/tools/note_tools.py): compiles OK
+  PASS grep_in_sandbox(('blipshell/core/tools/note_tools.py', 'class SaveNoteTool')): pattern found
+  PASS grep_in_sandbox(('blipshell/core/tools/note_tools.py', 'class GetNoteTool')): pattern found
+  PASS grep_in_sandbox(('blipshell/core/tools/note_tools.py', 'read_only.*=.*True')): pattern found
+  PASS grep_in_sandbox(('blipshell/core/tools/note_tools.py', 'from.*tools\\.(base|tools).*import.*(Tool|ToolDefinition)')): pattern found
+  PASS diff_contains(('blipshell/core/agent_tools.py', '\\+.*SaveNoteTool|save_note|note_tools')): pattern in diff
+  FAIL diff_contains(('blipshell/core/agent_tools.py', '\\+.*register.*group.*notes')): pattern not in diff (3358 chars)
+  PASS syntax_check(blipshell/core/agent_tools.py): compiles OK
+  PASS diff_contains(('blipshell/ui/cli.py', '\\+.*notes')): pattern in diff
+  PASS syntax_check(blipshell/ui/cli.py): compiles OK
+  FAIL functional_test(from blipshell.core.tools.note_tools import SaveNoteTool, GetNoteTool; import asyncio; async def check():   save = SaveNoteTool(max_notes=10, max_note_length=100);   get = GetNoteTool(save._notes);   r = await save.execute(name='todo', content='buy milk');   assert 'todo' in r.lower();   r2 = await get.execute(name='todo');   assert 'buy milk' in r2;   r3 = await get.execute(name='nonexistent');   assert 'not found' in r3.lower() or 'error' in r3.lower(); asyncio.run(check())): snippet failed (rc=1):   File "<string>", line 1
+    from blipshell.core.tools.note_tools import SaveNoteTool, GetNoteTool; import asyncio; async def check():   save = SaveNoteTool(max_notes=10, max_note_length=100);   get
+  FAIL functional_test(from blipshell.core.tools.note_tools import SaveNoteTool; import asyncio; async def check():   save = SaveNoteTool(max_notes=2, max_note_length=100);   await save.execute(name='a', content='one');   await save.execute(name='b', content='two');   r = await save.execute(name='c', content='three');   assert 'limit' in r.lower() or 'max' in r.lower() or 'full' in r.lower(); asyncio.run(check())): snippet failed (rc=1):   File "<string>", line 1
+    from blipshell.core.tools.note_tools import SaveNoteTool; import asyncio; async def check():   save = SaveNoteTool(max_notes=2, max_note_length=100);   await save.execut
+  PASS files_changed(4): 8 files changed (need >=4)
+  PASS no_unwanted_files: clean
+
+TIMING: plan=0.0s, total=263.2s
