@@ -237,8 +237,9 @@ def _backfill_runner(sqlite_store):
 async def test_backfill_hung_session_is_cut_off_not_job_killed(
         sqlite_store, monkeypatch):
     """One hung extraction must trip the per-session cap, not run to the
-    _JOB_TIMEOUT hard kill (the 2026-09-04 nightly error). The budget check
-    alone can't see it — it only runs between sessions."""
+    job's hard kill (the 2026-09-04 nightly error). The budget check alone
+    can't see it — it only runs between sessions. The session stays eligible:
+    slow is not a crime, it's retried the next run."""
     import asyncio
 
     from blipshell.core import nightly as nightly_mod
@@ -253,16 +254,19 @@ async def test_backfill_hung_session_is_cut_off_not_job_killed(
 
     result = await runner._job_backfill_lessons(lambda m: None)
     assert result["timed_out"] == 1 and result["processed"] == 0
-    # Strike 1: not yet excluded — a transient slow night isn't a monster.
+    # NOT excluded — it will be retried next nightly.
     assert sid not in await sqlite_store.get_lesson_backfill_exclusions()
+    assert any(s["id"] == sid for s in
+               await sqlite_store.get_sessions_missing_lessons())
 
-    # Strike 2 (next nightly): excluded so it can't poison the same slot
-    # forever (the missing list comes back in the same order every run).
-    result = await runner._job_backfill_lessons(lambda m: None)
-    assert result["excluded_after_repeat_timeouts"] == [sid]
-    assert sid in await sqlite_store.get_lesson_backfill_exclusions()
-    assert not any(s["id"] == sid for s in
-                   await sqlite_store.get_sessions_missing_lessons())
+
+def test_backfill_job_window_is_generous():
+    """backfill_lessons gets a long job window: the nightly runs headless at
+    2am, so a real backlog being slow must not be treated as a hang."""
+    from blipshell.core.nightly import _JOB_TIMEOUT, _JOB_TIMEOUTS
+
+    assert _JOB_TIMEOUTS["backfill_lessons"] >= 3600
+    assert _JOB_TIMEOUT == 300  # other jobs keep the tight default
 
 
 async def test_backfill_timeout_does_not_block_later_sessions(
@@ -285,8 +289,7 @@ async def test_backfill_timeout_does_not_block_later_sessions(
     assert result["timed_out"] == 1 and result["processed"] == 1
 
 
-async def test_backfill_success_clears_no_strikes_for_others(sqlite_store):
-    """A clean run: processed counts, no timeout bookkeeping side effects."""
+async def test_backfill_clean_run(sqlite_store):
     sid = await _seed_missing_session(sqlite_store)
     runner, processor = _backfill_runner(sqlite_store)
 
@@ -299,5 +302,3 @@ async def test_backfill_success_clears_no_strikes_for_others(sqlite_store):
     result = await runner._job_backfill_lessons(lambda m: None)
     assert result["processed"] == 1 and result["timed_out"] == 0
     assert seen == [sid]
-    assert await sqlite_store.get_metadata(
-        "lesson_backfill_timeout_strikes") is None

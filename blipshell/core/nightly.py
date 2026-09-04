@@ -78,6 +78,14 @@ _OLLAMA_JOBS = {
 # Max time per job (seconds). Prevents a single hung job from burning hours.
 _JOB_TIMEOUT = 300  # 5 minutes per job
 
+# Per-job overrides for jobs whose legitimate work is a long batch. The
+# nightly runs headless at 2am with the whole night available — a real
+# backlog being SLOW is not the failure the cap exists for (HUNG is; the
+# per-call LLM timeouts and per-session caps below cover that).
+_JOB_TIMEOUTS = {
+    "backfill_lessons": 3600,
+}
+
 # Sentinel distinguishing "caller didn't specify a budget, use the nightly
 # default" from an explicit None ("no budget, full pass"). Used by
 # _job_merge_entities so the scheduled run gets budgeted while the standalone
@@ -91,16 +99,13 @@ _DEFAULT_BUDGET = object()
 # full per-session budget fits before the cap. Module-level so tests can shrink it.
 _FRICTION_SESSION_TIMEOUT = 90.0
 
-# Same two-layer pattern for lesson backfill (the 2026-09-04 timeout: the
-# between-sessions budget alone couldn't stop one oversized session — the
-# February import monsters — from eating the whole 300s between checks).
-# Higher than friction's cap because large sessions legitimately chunk into
-# several LLM calls. A session that exceeds it twice is moved to the backfill
-# exclusion set: the missing-lessons list comes back in the same order every
-# night, so an unexcluded monster would burn this cap at the same spot forever.
-_LESSON_SESSION_TIMEOUT = 120.0
-_LESSON_TIMEOUT_STRIKES_KEY = "lesson_backfill_timeout_strikes"
-_LESSON_TIMEOUT_MAX_STRIKES = 2
+# Per-session hang insurance for lesson backfill, NOT a slowness penalty:
+# generous, because a large session legitimately chunks into many LLM calls.
+# A session that hits it is skipped for the night and retried the next run —
+# the loop continues, so one bad session can't block the rest (the 2026-09-04
+# timeout: a between-sessions budget alone couldn't stop one oversized
+# session from eating the whole job window between checks).
+_LESSON_SESSION_TIMEOUT = 900.0
 
 
 class NightlyRunner:
@@ -241,10 +246,11 @@ class NightlyRunner:
 
             _status(f"Running job: {job_name}...")
             t0 = time.monotonic()
+            job_timeout = _JOB_TIMEOUTS.get(job_name, _JOB_TIMEOUT)
             try:
                 job_result = await asyncio.wait_for(
                     self.run_job(job_name, on_status=on_status),
-                    timeout=_JOB_TIMEOUT,
+                    timeout=job_timeout,
                 )
                 elapsed = time.monotonic() - t0
                 job_result["status"] = "ok"
@@ -253,13 +259,13 @@ class NightlyRunner:
                 _status(f"  {job_name} completed in {elapsed:.1f}s")
             except asyncio.TimeoutError:
                 elapsed = time.monotonic() - t0
-                logger.error("Nightly job %s timed out after %ds", job_name, _JOB_TIMEOUT)
+                logger.error("Nightly job %s timed out after %ds", job_name, job_timeout)
                 results[job_name] = {
                     "status": "timeout",
-                    "error": f"Timed out after {_JOB_TIMEOUT}s",
+                    "error": f"Timed out after {job_timeout}s",
                     "elapsed_s": round(elapsed, 1),
                 }
-                _status(f"  {job_name} TIMED OUT after {_JOB_TIMEOUT}s")
+                _status(f"  {job_name} TIMED OUT after {job_timeout}s")
             except Exception as e:
                 elapsed = time.monotonic() - t0
                 logger.error("Nightly job %s failed: %s", job_name, e, exc_info=True)
@@ -738,18 +744,17 @@ class NightlyRunner:
 
         # Two layers, same pattern (and same bug history) as friction_analysis:
         # (1) a between-sessions budget that won't START a session it can't
-        # finish, and (2) a per-session wait_for so one slow/hung extraction
-        # can't run past the budget check to the hard _JOB_TIMEOUT kill (the
-        # 2026-09-04 timeout: budget alone was not enough). A session that
-        # times out twice is excluded — the missing list is stably ordered, so
-        # a monster session would otherwise re-poison the same slot nightly.
-        budget = _JOB_TIMEOUT - _LESSON_SESSION_TIMEOUT - 15
+        # finish inside the job's window, and (2) a per-session wait_for as
+        # hang insurance, so one wedged extraction can't run to the hard job
+        # kill (the 2026-09-04 timeout: budget alone was not enough). A
+        # timed-out session is simply skipped and retried the next run — the
+        # loop continues past it, so it can't block the rest of the backlog.
+        budget = _JOB_TIMEOUTS["backfill_lessons"] - _LESSON_SESSION_TIMEOUT - 15
         start = time.monotonic()
         stopped_early = False
         processed = 0
         failed = 0
         timed_out = 0
-        excluded: list[int] = []
         cloud_routed = 0
         for session in sessions:
             if time.monotonic() - start > budget:
@@ -769,29 +774,18 @@ class NightlyRunner:
                 processed += 1
             except asyncio.TimeoutError:
                 timed_out += 1
-                if await self._record_lesson_timeout_strike(sid):
-                    excluded.append(sid)
-                    logger.warning(
-                        "backfill_lessons: session %d exceeded %.0fs twice — "
-                        "EXCLUDED from future backfill (reversible: remove it "
-                        "from app_metadata key 'lesson_backfill_exclusions')",
-                        sid, _LESSON_SESSION_TIMEOUT)
-                else:
-                    logger.warning(
-                        "backfill_lessons: session %d exceeded %.0fs, skipping "
-                        "(strike 1 of %d; excluded on the next timeout)",
-                        sid, _LESSON_SESSION_TIMEOUT, _LESSON_TIMEOUT_MAX_STRIKES)
+                logger.warning(
+                    "backfill_lessons: session %d exceeded %.0fs (hang "
+                    "insurance), skipping — retried next run",
+                    sid, _LESSON_SESSION_TIMEOUT)
             except Exception as e:
                 logger.error("Lesson backfill failed for session %d: %s", sid, e)
                 failed += 1
 
-        result = {"processed": processed, "failed": failed,
-                  "timed_out": timed_out,
-                  "cloud_routed": cloud_routed, "total": len(sessions),
-                  "stopped_early": stopped_early}
-        if excluded:
-            result["excluded_after_repeat_timeouts"] = excluded
-        return result
+        return {"processed": processed, "failed": failed,
+                "timed_out": timed_out,
+                "cloud_routed": cloud_routed, "total": len(sessions),
+                "stopped_early": stopped_early}
 
     async def _backfill_one_session_lesson(self, sid: int,
                                            project: Optional[str]) -> bool:
@@ -813,26 +807,6 @@ class NightlyRunner:
             min_context_tokens=min_ctx,
         )
         return min_ctx is not None
-
-    async def _record_lesson_timeout_strike(self, sid: int) -> bool:
-        """Count a per-session backfill timeout; True when the strike limit is
-        hit and the session has been moved to the exclusion set."""
-        raw = await self.sqlite.get_metadata(_LESSON_TIMEOUT_STRIKES_KEY)
-        try:
-            strikes = json.loads(raw) if raw else {}
-        except (json.JSONDecodeError, TypeError):
-            strikes = {}
-        key = str(sid)
-        strikes[key] = strikes.get(key, 0) + 1
-        if strikes[key] >= _LESSON_TIMEOUT_MAX_STRIKES:
-            await self.sqlite.add_lesson_backfill_exclusions([sid])
-            strikes.pop(key, None)  # excluded — no need to keep counting
-            await self.sqlite.set_metadata(
-                _LESSON_TIMEOUT_STRIKES_KEY, json.dumps(strikes))
-            return True
-        await self.sqlite.set_metadata(
-            _LESSON_TIMEOUT_STRIKES_KEY, json.dumps(strikes))
-        return False
 
     async def _job_score_lessons(self, on_status) -> dict:
         """Score lessons that still have default rank=3/importance=0.5."""
