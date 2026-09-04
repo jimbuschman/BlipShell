@@ -210,3 +210,94 @@ async def test_nightly_fold_records_exclusions(sqlite_store, tmp_path):
     assert result["folded"] == 1
     # The deleted duplicate's session is now excluded from re-extraction.
     assert sid in await sqlite_store.get_lesson_backfill_exclusions()
+
+
+# --- backfill per-session timeout (2026-09-04 timeout follow-up) -----------------
+
+async def _seed_missing_session(sqlite_store) -> int:
+    from blipshell.models.memory import Memory
+
+    sid = await sqlite_store.create_session(title="pending extraction")
+    for i in range(6):
+        await sqlite_store.create_memory(Memory(
+            session_id=sid, role="user",
+            content=f"substantive message {i} long enough to count",
+            importance=0.5))
+    return sid
+
+
+def _backfill_runner(sqlite_store):
+    config = BlipShellConfig(memory=MemoryConfig())
+    processor = MagicMock()
+    runner = NightlyRunner(config, sqlite_store, vectors=MagicMock(),
+                           router=MagicMock(), processor=processor)
+    return runner, processor
+
+
+async def test_backfill_hung_session_is_cut_off_not_job_killed(
+        sqlite_store, monkeypatch):
+    """One hung extraction must trip the per-session cap, not run to the
+    _JOB_TIMEOUT hard kill (the 2026-09-04 nightly error). The budget check
+    alone can't see it — it only runs between sessions."""
+    import asyncio
+
+    from blipshell.core import nightly as nightly_mod
+
+    sid = await _seed_missing_session(sqlite_store)
+    runner, processor = _backfill_runner(sqlite_store)
+
+    async def hang(*a, **k):
+        await asyncio.sleep(30)
+    processor.process_lesson = hang
+    monkeypatch.setattr(nightly_mod, "_LESSON_SESSION_TIMEOUT", 0.05)
+
+    result = await runner._job_backfill_lessons(lambda m: None)
+    assert result["timed_out"] == 1 and result["processed"] == 0
+    # Strike 1: not yet excluded — a transient slow night isn't a monster.
+    assert sid not in await sqlite_store.get_lesson_backfill_exclusions()
+
+    # Strike 2 (next nightly): excluded so it can't poison the same slot
+    # forever (the missing list comes back in the same order every run).
+    result = await runner._job_backfill_lessons(lambda m: None)
+    assert result["excluded_after_repeat_timeouts"] == [sid]
+    assert sid in await sqlite_store.get_lesson_backfill_exclusions()
+    assert not any(s["id"] == sid for s in
+                   await sqlite_store.get_sessions_missing_lessons())
+
+
+async def test_backfill_timeout_does_not_block_later_sessions(
+        sqlite_store, monkeypatch):
+    import asyncio
+
+    from blipshell.core import nightly as nightly_mod
+
+    slow_sid = await _seed_missing_session(sqlite_store)
+    fast_sid = await _seed_missing_session(sqlite_store)
+    runner, processor = _backfill_runner(sqlite_store)
+
+    async def maybe_hang(text, sid, **k):
+        if sid == slow_sid:
+            await asyncio.sleep(30)
+    processor.process_lesson = maybe_hang
+    monkeypatch.setattr(nightly_mod, "_LESSON_SESSION_TIMEOUT", 0.1)
+
+    result = await runner._job_backfill_lessons(lambda m: None)
+    assert result["timed_out"] == 1 and result["processed"] == 1
+
+
+async def test_backfill_success_clears_no_strikes_for_others(sqlite_store):
+    """A clean run: processed counts, no timeout bookkeeping side effects."""
+    sid = await _seed_missing_session(sqlite_store)
+    runner, processor = _backfill_runner(sqlite_store)
+
+    seen = []
+
+    async def ok(text, s, **k):
+        seen.append(s)
+    processor.process_lesson = ok
+
+    result = await runner._job_backfill_lessons(lambda m: None)
+    assert result["processed"] == 1 and result["timed_out"] == 0
+    assert seen == [sid]
+    assert await sqlite_store.get_metadata(
+        "lesson_backfill_timeout_strikes") is None
