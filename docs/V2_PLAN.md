@@ -47,7 +47,7 @@ fixing — code moves.
 | # | Decision | Options | Blocks |
 |---|---|---|---|
 | D1 | ~~PII on interactive chat~~ **RESOLVED 2026-08-05** | Split by category, not by all-or-nothing: interactive chat strips **credentials only**; background calls keep full sanitization. Identity protection moves to the routing layer. | — |
-| D2 | ~~MCP: commit or archive~~ **RESOLVED 2026-08-05** | Archived (removed). Rationale: anything BlipShell actually needs can be coded directly; MCP is integration breadth, which isn't the moat. Reversible — `git checkout 063d06f -- blipshell/mcp` brings it back. | — |
+| D2 | ~~MCP: commit or archive~~ **RESOLVED 2026-08-05** | Archived (removed). Rationale: anything BlipShell actually needs can be coded directly; MCP is integration breadth, which isn't the moat. Reversible — `git checkout 5e411d9 -- blipshell/mcp` brings it back. | — |
 | D3 | Coding freeze confirmation | watch 2 weeks of real usage; if project mode earns its keep weekly, keep layer 2 "warm" instead of frozen | Phase 2 deletions of anything user-facing |
 
 ### D1 resolution + what it leaves open
@@ -89,14 +89,14 @@ tiers.
 
 ## Progress
 
-- **Phase 0 — DONE 2026-08-05** (`79c7384`, `bb10e81`). Suite 1021 → 1200.
+- **Phase 0 — DONE 2026-08-05** (`6dc840a`, `d3c0d94`). Suite 1021 → 1200.
   Bonus finds: two test files were silently skipped on Python 3.14 by stale
   ChromaDB guards (re-enabled); the FTS `fts_match` flag only landed on
   FTS-only hits, so keyword protection vanished when vector KNN also returned
   the id with low similarity (fixed); `dump_to_memory` now flushes pending
   persists first (a Phase 1 item, pulled forward by a re-enabled test).
-- **Phase 1 — DONE 2026-08-05** (`c9cd279`, `71685a1`, `66f4f2e`, `5f24532`,
-  `9d7c8f9`, `46525cc`, `e6bcc07`). Suite 1200 → 1270. All eight items landed
+- **Phase 1 — DONE 2026-08-05** (`390dc9b`, `12c99cb`, `08e48d6`, `93b4cb6`,
+  `545b9e6`, `d12a46f`, `7d404c8`). Suite 1200 → 1270. All eight items landed
   except the D1-gated half of 1.4 (interactive-chat sanitization), which is
   waiting on the decision above; every PII fix that is correct regardless of
   D1 shipped. Tracing the `end_session` swallow found it repeated at two more
@@ -212,8 +212,8 @@ enter the file cache; simulate leaves the production DB untouched.
    `classify_task_type`), dead config toggles (`pii.cloud_only`, score-floor keys,
    `min_rank_threshold`, unused `decay_rates` — either wire FadeMem or remove the
    config that implies it), `chroma_retry_queue` table.
-3. ~~**Executor/ChatLoop unification**~~ — **DONE 2026-08-05** (`78eee56`,
-   `885d1c9`). `_execute_step` (the `/workflow` path) now goes through the shared
+3. ~~**Executor/ChatLoop unification**~~ — **DONE 2026-08-05** (`1cb5c19`,
+   `7bd3a7d`). `_execute_step` (the `/workflow` path) now goes through the shared
    runner, so it finally has endpoint fallback, vision gating and PII scrubbing;
    `images` ride on the executor's task message instead of truncatable history;
    and each endpoint attempt snapshots `messages` and rewinds on failure, killing
@@ -230,8 +230,8 @@ enter the file cache; simulate leaves the production DB untouched.
      paths through the existing `chat_loop_runner` got the same result without
      moving the vision/fallback logic out of `ChatMixin`. Revisit only if a
      third non-Agent caller appears.
-4. ~~**`cli.py` split**~~ — **MOSTLY DONE 2026-08-05/06** (`3526969`,
-   `aca0e24`, `340c529`). 4,518 → 2,184 lines:
+4. ~~**`cli.py` split**~~ — **MOSTLY DONE 2026-08-05/06** (`b995528`,
+   `efbe048`, `3dab19b`). 4,518 → 2,184 lines:
    - renderers → `ui/views.py` (33 functions, moved verbatim)
    - slash dispatch → `ui/commands.py` registry + `ui/command_handlers.py`;
      `/help` is now DERIVED from it, and `simulate/slash_dispatcher.py` went
@@ -247,7 +247,7 @@ enter the file cache; simulate leaves the production DB untouched.
    were verified interactively on the Ollama PC — so a subtle break there
    would pass CI and only show up under your hands. Two functions in views.py
    and one in command_handlers.py import from it lazily to avoid a cycle.
-5. **Shared context assembly** — **LIGHT VERSION DONE 2026-08-06** (`b785754`).
+5. **Shared context assembly** — **LIGHT VERSION DONE 2026-08-06** (`88d4e96`).
    The executor now gets the scratchpad, session notes, follow-ups and time
    anchor via one shared `_build_continuity_block()`, so `!plan` no longer
    carries less continuity than ordinary chat.
@@ -263,7 +263,7 @@ enter the file cache; simulate leaves the production DB untouched.
    command and renderer, the simulate dispatcher entry and two scenario steps,
    and the `mcp>=1.0.0` dependency (~400 lines). It had never run — no
    `mcp_servers:` key ever existed in `config.yaml` and there were zero tests
-   — so there was no behavior to preserve. Restore from `063d06f`.
+   — so there was no behavior to preserve. Restore from `5e411d9`.
 7. **Tests for the riskiest untested code**: `MemoryWorker` (zero tests today; the
    only second-event-loop-in-a-thread in the codebase); ChatLoop's six untested
    terminal states (budget, nudge, stopped, empty, text + compaction-in-loop,
@@ -281,7 +281,7 @@ enter the file cache; simulate leaves the production DB untouched.
 
 ## Phase 3 — Throughput + benchmark realism (Ollama PC involved)
 
-1. ~~**Consolidation rewrite**~~ — **DONE 2026-08-06** (`e65714d`). Queries with
+1. ~~**Consolidation rewrite**~~ — **DONE 2026-08-06** (`d17e4d0`). Queries with
    each memory's stored vector (no Ollama round trip per check), batch default
    20 → 2000 bounded by a resumable time budget, losers ARCHIVED not deleted
    (deleting cascaded their entity edges away), plus a dry-run mode, a partial
@@ -328,7 +328,7 @@ enter the file cache; simulate leaves the production DB untouched.
    `scripts/audit_reflection_quality.py` into it. (This makes `JOB_OWNERS`'
    session_review claim honest — chunk+merge is the highest-variance prompt in the
    system and has never been scored.)
-3. ~~**Entity pipeline hardening**~~ — **DONE 2026-08-07** (`871d800`). All four:
+3. ~~**Entity pipeline hardening**~~ — **DONE 2026-08-07** (`55dfbab`). All four:
    `get_all_entity_names()` cached (invalidated on create/archive/revive/merge,
    and explicitly by `_job_entity_cleanup`, which writes through the raw
    connection); `get_entity_id_by_name` matches `(name, entity_type)` with a
@@ -399,7 +399,7 @@ implementation session inherits them instead of making them ad hoc. The
 escalation rule stands — one-way migrations, security-relevant code, and new
 design decisions come back for review BEFORE running against the live DB.
 
-### Phase 4.1 — thought store migration — DONE 2026-08-07 (`dbc4fb5`)
+### Phase 4.1 — thought store migration — DONE 2026-08-07 (`914a886`)
 
 Current state (verified 2026-08-07): all thoughts live in ONE app_metadata
 row (`self_thoughts`) as a JSON list; each item carries its 1024-float
@@ -457,10 +457,10 @@ the borderline content it exists to protect. Known edges to fold in when
 built (from the 2026-08-07 review): multimodal content parts and tool-call
 arguments are not secret-scrubbed — acceptable now, in scope for D1.
 
-### ~~MemoryWorker tests~~ — ALREADY EXISTED (`eb6a2e4`), + integration layer 2026-08-07
+### ~~MemoryWorker tests~~ — ALREADY EXISTED (`ecf8401`), + integration layer 2026-08-07
 
 **This note was written without checking `tests/` — 17 tests had landed two
-days earlier** (`eb6a2e4`: threading/dispatch/shutdown, processor faked).
+days earlier** (`ecf8401`: threading/dispatch/shutdown, processor faked).
 The design below got built anyway before the collision was noticed, and
 survives as `test_memory_worker_pipeline.py`: the REAL MemoryProcessor
 behind the real thread (canned router), pinning what a message becomes —

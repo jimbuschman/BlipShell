@@ -2,7 +2,7 @@
 
 Four primary-source research passes (papers, official docs, and source code read
 at file-path level — not blog roundups), synthesized against BlipShell's
-architecture as of commit ee49eb7. Companion to `SAPPHIRE_COMPARISON.md`: that
+architecture as of commit 051becb. Companion to `SAPPHIRE_COMPARISON.md`: that
 doc compared against one rival; this one compares against the field.
 
 Evidence tags used throughout, strongest first:
@@ -127,7 +127,7 @@ dense top-5 after ONE iteration and human content falls below 10% of top-50 by
 iteration ten (Spiral of Silence, ACL'24, arXiv:2404.10496). Zep's worst
 LongMemEval category (-17.7%) is retrieving its own assistant outputs.
 BlipShell stores both roles and the corpus share of assistant text only grows.
-**Run `scripts/retrieval_provenance.py` first** (shipped ee49eb7); if it shows
+**Run `scripts/retrieval_provenance.py` first** (shipped 051becb); if it shows
 over-representation, the measured fixes are a provenance-based score penalty
 (echo weighting) + overfetch-then-rank — Wisp measured that neither works
 alone. The `role` column already exists; this is config + a scoring term.

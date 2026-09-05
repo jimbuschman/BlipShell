@@ -4,7 +4,7 @@ Written 2026-08-20. Source: `github.com/ddxfish/sapphire` (282 stars, 73 forks,
 AGPL-3.0, created 2025-12-13, last push 2026-08-06, Python/FastAPI, ~16MB).
 
 Status: NOTES ONLY. Nothing below has been implemented. Every BlipShell claim
-was verified against code at `39f4fa6` and carries a file:line. Every Sapphire
+was verified against code at `0cb0781` and carries a file:line. Every Sapphire
 claim came from their README/docs and is marked accordingly.
 
 ---

@@ -2,7 +2,7 @@
 
 ## 2026-09-02 (night) — chat → deepseek/deepseek-v4-flash (OpenRouter)
 
-After the tool_calling parser fix (commit 86da755), the re-run put
+After the tool_calling parser fix (commit 73b01f3), the re-run put
 deepseek/deepseek-v4-flash at **0.973 tool_calling — the best score in the
 36-model corpus, on the exact stack routed to** (its prior 0.000 was entirely
 the parser). The advice engine said KEEP gemma on the every-job rule
@@ -194,12 +194,12 @@ that's already resident.
 ## Standing config facts worth knowing (not decisions)
 
 - `memory.auto_prune_days` — RESOLVED 2026-09-02: removed from config.yaml so
-  the code default 0 (disabled) rules. History: commit 570cba7 (2026-02-20)
+  the code default 0 (disabled) rules. History: commit 66e01ea (2026-02-20)
   disabled the default after 90-day pruning archived 1083 imported memories —
   but only changed config.py; config.yaml kept `90` and silently overrode the
   fix for six months of nightlies. The user did not recall choosing 90; the
   recorded decision was 0. Rows the prune archived since February remain
-  archived (reversible in principle, but 570cba7's blanket
+  archived (reversible in principle, but 66e01ea's blanket
   `UPDATE memories SET is_archived = 0` restore is NO LONGER SAFE — the
   consolidate/curation jobs also archive rows now, so a restore would need to
   target the prune's profile: old + importance <= 0.3 + rank <= 2. They were

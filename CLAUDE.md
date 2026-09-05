@@ -360,7 +360,7 @@ hard-delete — do not use them.
   real 491MB corpus sat untouched. Nothing raised — **an absent SQLite file is
   a creation, not a failure** — so the only symptom was an assistant that had
   quietly lost its history. `database.path` is anchored at the `ConfigManager`
-  chokepoint (d1e6ebf); absolute paths pass through, which is what keeps
+  chokepoint (1b2286e); absolute paths pass through, which is what keeps
   `simulate --db` working. A `dir /s /b` sweep found SEVEN live-shaped copies,
   and `data/data/` + `blipshell/blipshell/data/` can only come from a wrong-cwd
   launch — this had recurred for months. `benchmark/` had already solved it
@@ -391,7 +391,7 @@ is in progress. Remaining:
 - Shared context assembly: `!plan` silently drops scratchpad, session notes,
   follow-ups and the 5-pool budgeting that `_chat_simple` gets.
 - ~~MemoryWorker tests~~ — DONE, twice, by accident. 17 dispatch/threading
-  tests with a faked processor landed 2026-08-05 (`eb6a2e4`) while this line
+  tests with a faked processor landed 2026-08-05 (`ecf8401`) while this line
   still said "ZERO tests"; a second session trusted the line and rebuilt them
   on 2026-08-07 before checking `tests/` (recovered from git, merged as
   `test_memory_worker_pipeline.py` — real pipeline, canned router). The two
