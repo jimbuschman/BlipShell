@@ -60,8 +60,8 @@ for mod_name in _stub_modules:
 from blipshell.import_chatgpt import parse_conversations
 
 # Paths
-EXPORT_PATH = Path(r"C:\Users\[user]\Downloads\conversations.json")
-DB_PATH = Path(r"C:\Users\[user]\Downloads\blipshell.db")
+EXPORT_PATH = Path.home() / "Downloads" / "conversations.json"
+DB_PATH = Path.home() / "Downloads" / "blipshell.db"
 
 
 def main():

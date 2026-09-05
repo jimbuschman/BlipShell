@@ -9,7 +9,7 @@
       "system": "You rate messages on a 1-5 scale based on how valuable they are to remember.\n\n1 = Noise: greetings, filler, system prompts, boilerplate, 'hello', 'thanks'\n2 = Minor: short or vague messages with little substance\n3 = Useful: contains a clear topic, question, or piece of information\n4 = Important: meaningful insight, decision, preference, or technical detail\n5 = Critical: core fact about the user, key decision, or turning point\n\nRespond with ONLY a single digit (1-5). Nothing else.",
       "prompt": "Rate this message:\n\nhey",
       "response": null,
-      "error": "ResponseError: you ([user]) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: efd26eb8-4b61-4942-89a4-db9747385192) (status code: 429)",
+      "error": "ResponseError: you ([account]) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: efd26eb8-4b61-4942-89a4-db9747385192) (status code: 429)",
       "elapsed_s": 3.96,
       "est_tok_s": 0.0
     },
@@ -20,7 +20,7 @@
       "system": "You rate messages on a 1-5 scale based on how valuable they are to remember.\n\n1 = Noise: greetings, filler, system prompts, boilerplate, 'hello', 'thanks'\n2 = Minor: short or vague messages with little substance\n3 = Useful: contains a clear topic, question, or piece of information\n4 = Important: meaningful insight, decision, preference, or technical detail\n5 = Critical: core fact about the user, key decision, or turning point\n\nRespond with ONLY a single digit (1-5). Nothing else.",
       "prompt": "Rate this message:\n\nok thanks",
       "response": null,
-      "error": "ResponseError: you ([user]) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 438ded85-0284-4933-b5ad-b40c7f921b97) (status code: 429)",
+      "error": "ResponseError: you ([account]) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 438ded85-0284-4933-b5ad-b40c7f921b97) (status code: 429)",
       "elapsed_s": 3.49,
       "est_tok_s": 0.0
     },
@@ -31,7 +31,7 @@
       "system": "You rate messages on a 1-5 scale based on how valuable they are to remember.\n\n1 = Noise: greetings, filler, system prompts, boilerplate, 'hello', 'thanks'\n2 = Minor: short or vague messages with little substance\n3 = Useful: contains a clear topic, question, or piece of information\n4 = Important: meaningful insight, decision, preference, or technical detail\n5 = Critical: core fact about the user, key decision, or turning point\n\nRespond with ONLY a single digit (1-5). Nothing else.",
       "prompt": "Rate this message:\n\nlol yeah",
       "response": null,
-      "error": "ResponseError: you ([user]) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 343db907-9fe5-410b-a241-023255ff29c6) (status code: 429)",
+      "error": "ResponseError: you ([account]) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 343db907-9fe5-410b-a241-023255ff29c6) (status code: 429)",
       "elapsed_s": 3.5,
       "est_tok_s": 0.0
     },

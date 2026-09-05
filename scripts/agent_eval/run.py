@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-REPO = Path(r"C:\Users\[user]\source\repos\jimbuschman\BlipShell")
+REPO = HERE.parent.parent  # scripts/agent_eval/ -> repo root
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(REPO))
 

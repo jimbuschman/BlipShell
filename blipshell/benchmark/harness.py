@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 # (e.g. skip the slow, cloud-routed `coding` suite when comparing local
 # background models). "pipeline" covers ranking/importance/contradiction/entity/
 # summarization/lessons; realdata + embedding need a db_path.
+# Suites whose inputs come from the live blipshell.db rather than fixed
+# synthetic cases. Their prompt/response text must never be recorded.
+LIVE_CORPUS_SUITES = frozenset({"realdata", "embedding"})
+
 BENCHMARK_JOBS = (
     "pipeline", "reasoning", "session_review", "realdata", "embedding", "coding",
 )
@@ -1023,10 +1027,13 @@ class BenchmarkHarness:
         def _label(suite: str):
             # RecordingRouter tags each call with the current suite; a plain
             # router (or a stubbed test harness with no router at all) is
-            # simply left alone.
+            # simply left alone. Suites in LIVE_CORPUS_SUITES sample the real
+            # database, so the recorder swaps their text for a marker — the
+            # transcripts file is committed to a public repo.
             r = getattr(self, "router", None)
             if r is not None and hasattr(r, "suite"):
                 r.suite = suite
+                r.live_corpus = suite in LIVE_CORPUS_SUITES
 
         rows: list[dict] = []
         if "pipeline" in jobs:

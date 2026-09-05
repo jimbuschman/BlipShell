@@ -19,7 +19,7 @@ from pathlib import Path
 
 # Locate the BlipShell repo for the themes import: cwd first, then known spots.
 for candidate in [Path.cwd(),
-                  Path(r"C:\Users\[user]\source\repos\jimbuschman\BlipShell"),
+                  Path(__file__).resolve().parent.parent,
                   Path(r"C:\Users\JimBu\source\repos\blipshell")]:
     if (candidate / "blipshell" / "memory" / "themes.py").exists():
         sys.path.insert(0, str(candidate))

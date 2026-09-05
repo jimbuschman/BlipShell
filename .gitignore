@@ -57,3 +57,7 @@ canned_test_scratch.py
 graph.json
 graph.html
 reasoning_spike.txt
+
+# Claude Code per-machine permission allowlist. It once carried the Tailscale
+# endpoint; it is local by name and by nature.
+.claude/settings.local.json

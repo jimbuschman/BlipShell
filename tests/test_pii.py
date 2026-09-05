@@ -352,7 +352,7 @@ class TestSecretsOnlySanitization:
         assert pii_mod.sanitize_secrets(text) == text
 
     def test_urls_and_paths_preserved(self):
-        text = r"see https://docs.example.com and C:\Users\[user]\app.py"
+        text = r"see https://docs.example.com and C:\Users\someone\app.py"
         assert pii_mod.sanitize_secrets(text) == text
 
     def test_empty_and_none_safe(self):

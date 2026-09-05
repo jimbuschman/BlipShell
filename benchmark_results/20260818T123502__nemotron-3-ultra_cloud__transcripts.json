@@ -1384,7 +1384,7 @@
       "system": null,
       "prompt": "You are reviewing an AI assistant's response for quality.\n\nCheck for:\n- Factual errors or incorrect statements\n- Missing information that would meaningfully improve the answer\n- Unclear or confusing explanations\n- Whether the response actually answers what was asked\n\nIf you find issues, return an improved version of the response.\nIf the response is already good, return exactly: NO_CHANGES\n\nDo NOT add pleasantries, disclaimers, or meta-commentary.\nDo NOT mention that you are reviewing or improving anything.\nJust return the improved response or NO_CHANGES.\n\nUser question: What's the default I2C address of most SSD1306 OLED displays?\n\nResponse to review:\nThe default I2C address for most SSD1306 OLED displays is 0x3C.",
       "response": null,
-      "error": "ResponseError: you ([user]) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: e0e649d3-c1a8-4439-b622-9c147d874860) (status code: 429)",
+      "error": "ResponseError: you ([account]) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: e0e649d3-c1a8-4439-b622-9c147d874860) (status code: 429)",
       "elapsed_s": 3.57,
       "est_tok_s": 0.0
     },
@@ -1395,7 +1395,7 @@
       "system": "You are a code reviewer. Find bugs in the following code. List each bug concisely.",
       "prompt": "Find the bugs in this Python function:\n\ndef retry_with_backoff(func, max_retries=3, base_delay=1.0):\n    for attempt in range(max_retries):\n        try:\n            return func()\n        except Exception as e:\n            if attempt == max_retries:\n                raise\n            delay = base_delay * (2 ** attempt)\n            time.sleep(delay)\n",
       "response": null,
-      "error": "ResponseError: you ([user]) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 678bff5f-a0c4-47a9-9f9b-559ee2d17d12) (status code: 429)",
+      "error": "ResponseError: you ([account]) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 678bff5f-a0c4-47a9-9f9b-559ee2d17d12) (status code: 429)",
       "elapsed_s": 3.62,
       "est_tok_s": 0.0
     },
@@ -1406,7 +1406,7 @@
       "system": "Write only the function code. No explanation, no markdown fences.",
       "prompt": "Write a Python function `parse_rank(text: str) -> int` that extracts a rank (1-5) from LLM output text. It should find the first digit 1-5 in the text and return it, defaulting to 3 if none found.",
       "response": null,
-      "error": "ResponseError: you ([user]) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 93ea98ab-f251-432d-b235-5e217b68e0bd) (status code: 429)",
+      "error": "ResponseError: you ([account]) have reached your session usage limit, upgrade for higher limits: https://ollama.com/upgrade (ref: 93ea98ab-f251-432d-b235-5e217b68e0bd) (status code: 429)",
       "elapsed_s": 3.67,
       "est_tok_s": 0.0
     },

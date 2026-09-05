@@ -12,7 +12,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from blipshell.benchmark.recording import (
-    MAX_RESPONSE_CHARS, RecordingRouter,
+    LIVE_CORPUS_MARKER, MAX_RESPONSE_CHARS, RecordingClient, RecordingRouter,
 )
 from blipshell.benchmark.results import ResultsStore
 from blipshell.benchmark.runner import merge_repeat_rows
@@ -175,3 +175,80 @@ class TestRecordingClient:
 
         eps = router._endpoint_manager._endpoints
         assert eps and all(isinstance(ep.client, RecordingClient) for ep in eps)
+
+
+class TestLiveCorpusRedaction:
+    """Suites that sample the real database must not write its text into the
+    committed transcripts file (2026-09-02: 732 real messages reached GitHub).
+    """
+
+    def _wrapped(self, response="a summary of the message"):
+        inner = MagicMock()
+        inner.generate = AsyncMock(return_value=response)
+        return RecordingRouter(inner), inner
+
+    async def test_live_corpus_calls_keep_shape_but_not_text(self):
+        r, _ = self._wrapped()
+        r.suite = "realdata"
+        r.live_corpus = True
+
+        out = await r.generate("ranking", "Rate this message:\n\nmy real message",
+                               system="be terse")
+
+        assert out == "a summary of the message"  # caller still gets the answer
+        call = r.calls[0]
+        assert call["suite"] == "realdata"
+        assert call["prompt"] == LIVE_CORPUS_MARKER
+        assert call["system"] == LIVE_CORPUS_MARKER
+        assert call["response"] == LIVE_CORPUS_MARKER
+        assert "my real message" not in json.dumps(call)
+        assert call["elapsed_s"] >= 0
+
+    async def test_flag_off_records_text_as_before(self):
+        r, _ = self._wrapped()
+        r.suite = "pipeline"
+        await r.generate("ranking", "synthetic case")
+        assert r.calls[0]["prompt"] == "synthetic case"
+
+    async def test_live_corpus_failure_keeps_error_without_text(self):
+        inner = MagicMock()
+        inner.generate = AsyncMock(side_effect=RuntimeError("wedged"))
+        r = RecordingRouter(inner)
+        r.live_corpus = True
+        with pytest.raises(RuntimeError):
+            await r.generate("ranking", "real text")
+        call = r.calls[0]
+        assert "wedged" in call["error"]
+        assert call["prompt"] == LIVE_CORPUS_MARKER
+        assert call["response"] is None
+
+    async def test_client_layer_honours_the_flag(self):
+        inner = MagicMock()
+        inner.chat = AsyncMock(return_value={"message": {"content": "reply text"}})
+        rec = RecordingRouter(MagicMock())
+        rec.live_corpus = True
+        client = RecordingClient(inner, rec)
+
+        await client.chat(messages=[{"role": "user", "content": "real user text"}])
+
+        call = rec.calls[0]
+        assert call["prompt"] == LIVE_CORPUS_MARKER
+        assert call["response"] == LIVE_CORPUS_MARKER
+        assert "real user text" not in json.dumps(call)
+
+    async def test_account_name_is_scrubbed_from_quota_errors(self):
+        """Ollama cloud's 429 text names the account; keep the error, drop the name."""
+        inner = MagicMock()
+        inner.generate = AsyncMock(side_effect=RuntimeError(
+            "ResponseError: you (somebody) have reached your session usage limit"))
+        r = RecordingRouter(inner)
+        with pytest.raises(RuntimeError):
+            await r.generate("ranking", "p")
+        err = r.calls[0]["error"]
+        assert "somebody" not in err
+        assert "you ([account]) have reached your session usage limit" in err
+
+    def test_harness_label_sets_the_flag_for_live_suites(self):
+        from blipshell.benchmark.harness import LIVE_CORPUS_SUITES
+        assert "realdata" in LIVE_CORPUS_SUITES
+        assert "pipeline" not in LIVE_CORPUS_SUITES

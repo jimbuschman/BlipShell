@@ -228,7 +228,7 @@ def _discover_memory_dirs(path: Path) -> list[tuple[Path, Optional[str]]]:
 def _project_name_from_dir(project_dir: Path) -> Optional[str]:
     """Extract a human-readable project name from a Claude Code project directory.
 
-    Directory names look like: C--Users-[user]-source-repos-jimbuschman-BlipShell
+    Directory names look like: C--Users-someone-source-repos-someone-BlipShell
     We want the last meaningful component: "BlipShell"
     """
     name = project_dir.name
