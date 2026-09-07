@@ -142,7 +142,11 @@ class MemoryWorker:
             endpoint_mgr = EndpointManager(
                 self._config.endpoints, self._config.llm,
             )
-            router = LLMRouter(self._config.models, endpoint_mgr, pii_enabled=self._config.pii.enabled)
+            router = LLMRouter(
+                self._config.models, endpoint_mgr,
+                pii_enabled=self._config.pii.enabled,
+                require_ner=self._config.pii.require_ner,
+            )
 
         # Own MemoryProcessor — uses worker's sqlite + router, shared chroma
         processor = MemoryProcessor(

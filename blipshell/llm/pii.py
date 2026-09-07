@@ -338,5 +338,31 @@ def has_pii(text: str) -> bool:
 
 
 def is_presidio_available() -> bool:
-    """Check if Presidio is installed and working."""
+    """Check if Presidio is installed and working (loads it on first call)."""
     return _get_presidio_analyzer() is not None
+
+
+REGEX_ONLY_DESCRIPTION = "regex-only (credentials, keys and IPs redacted; names and places are NOT)"
+PRESIDIO_DESCRIPTION = "presidio (spaCy NER + regex)"
+
+
+def engine_status() -> str:
+    """Which engine is active, WITHOUT triggering the Presidio load.
+
+    For UI surfaces (/status) that must not block on a multi-second spaCy
+    import. Before the first sanitizing call the answer is genuinely unknown.
+    """
+    if _presidio_available is None:
+        return "not yet checked (loads on first cloud call)"
+    return PRESIDIO_DESCRIPTION if _presidio_available else REGEX_ONLY_DESCRIPTION
+
+
+def engine_description() -> str:
+    """Which engine is active, loading Presidio if that has not happened yet.
+
+    The silent downgrade this makes visible: any exception loading Presidio
+    (not installed, spaCy model missing) logged ONE info line and every
+    later cloud call went out with regex-only redaction — names and places
+    intact — for as long as the process lived.
+    """
+    return PRESIDIO_DESCRIPTION if is_presidio_available() else REGEX_ONLY_DESCRIPTION

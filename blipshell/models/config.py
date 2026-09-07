@@ -351,6 +351,13 @@ class PIIConfig(BaseModel):
     # cloud chat model is the reason it's configured; local mode is the
     # explicit per-conversation privacy choice (V2_PLAN D1).
     local_mode_default: bool = False
+    # Refuse to send FULLY-sanitized text (background jobs: session review,
+    # lessons, summaries — whole transcripts) to a sanitizing endpoint when the
+    # NER engine (Presidio + spaCy) is not loadable; the call falls back to a
+    # local endpoint instead. Off by default because Presidio is an optional
+    # extra (pip install -e .[pii]). Interactive chat is NOT gated by this: it
+    # sends credentials-only scrubbing by design and is governed by local mode.
+    require_ner: bool = False
 
 
 class RoboticsConfig(BaseModel):

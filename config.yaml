@@ -103,6 +103,17 @@ database:
   # set this false.
   require_existing: true
 
+pii:
+  enabled: true              # sanitize before any text leaves the machine (per-endpoint pii_sanitize)
+  # Presidio + spaCy (pip install -e .[pii]; python -m spacy download en_core_web_lg)
+  # give NER-grade redaction. Without them the engine is regex-only: credentials,
+  # keys and IPs are redacted, names and places are NOT. Startup and /status say
+  # which engine is live. require_ner keeps FULLY-sanitized background text
+  # (session review, lessons, summaries) off sanitizing endpoints while Presidio
+  # is not loadable — it falls back to local or fails loudly. Chat is not gated
+  # (credentials-only scrubbing by design; use /local for privacy there).
+  require_ner: false
+
 telegram:
   bot_token: "${BLIPSHELL_TELEGRAM_TOKEN}"   # integration stays disabled (default)
 

@@ -214,7 +214,18 @@ class Agent(
         self.endpoint_manager.local_only = self.config.pii.local_mode_default
 
         # Router
-        self.router = LLMRouter(self.config.models, self.endpoint_manager, pii_enabled=self.config.pii.enabled)
+        self.router = LLMRouter(
+            self.config.models, self.endpoint_manager,
+            pii_enabled=self.config.pii.enabled,
+            require_ner=self.config.pii.require_ner,
+        )
+        # Which PII engine will cloud-bound text actually get? Presidio's load
+        # failure used to be one INFO line and a silent downgrade to regex.
+        # Resolve it off-thread (spaCy import is seconds) and log at WARNING
+        # when it matters: regex-only AND some endpoint relays offsite.
+        self._pii_engine_task = asyncio.create_task(
+            asyncio.to_thread(self._report_pii_engine),
+        )
 
         # Memory manager — use endpoint context_tokens for pool sizing
         endpoint_ctx = self.endpoint_manager.get_context_tokens_for_role(
@@ -1127,6 +1138,24 @@ class Agent(
     def last_endpoint_used(self) -> Optional[str]:
         """Name of the endpoint that handled the last chat request."""
         return self._last_endpoint_used
+
+    def _report_pii_engine(self) -> None:
+        """Log the active PII engine (runs in a worker thread at startup)."""
+        from blipshell.llm.pii import PRESIDIO_DESCRIPTION, engine_description
+        try:
+            desc = engine_description()
+        except Exception as e:  # a diagnostic must never take the agent down
+            logger.warning("PII engine check failed: %s", e)
+            return
+        relays = [ep.name for ep in self.endpoint_manager.endpoints if ep.should_sanitize_pii]
+        if desc != PRESIDIO_DESCRIPTION and relays and self.config.pii.enabled:
+            logger.warning(
+                "PII engine: %s — endpoints %s relay text offsite with names and "
+                "places intact (install the [pii] extra + spaCy model, or set "
+                "pii.require_ner to keep background jobs local)", desc, relays,
+            )
+        else:
+            logger.info("PII engine: %s", desc)
 
     def get_status(self) -> dict:
         """Get agent status for display."""

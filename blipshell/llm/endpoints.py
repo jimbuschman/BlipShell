@@ -8,7 +8,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Collection
 
 from blipshell.llm.client import LLMClient
 from blipshell.models.config import EndpointConfig, LLMConfig, resolve_env_vars
@@ -182,7 +182,12 @@ class EndpointManager:
             timeout=llm_cfg.timeout,
         )
 
-    async def get_endpoint_for_role(self, role: str, exclude: str | None = None, min_context_tokens: int | None = None) -> Optional[Endpoint]:
+    @property
+    def endpoints(self) -> list[Endpoint]:
+        """All configured endpoints (a copy; mutate through the manager)."""
+        return list(self._endpoints)
+
+    async def get_endpoint_for_role(self, role: str, exclude: "str | Collection[str] | None" = None, min_context_tokens: int | None = None) -> Optional[Endpoint]:
         """Get the best available endpoint that supports the given role.
 
         Selection priority:
@@ -193,15 +198,18 @@ class EndpointManager:
         5. Fewest active requests (load balancing)
 
         Args:
-            exclude: Endpoint name to skip (used for fallback to avoid retrying the same endpoint).
+            exclude: Endpoint name, or collection of names, to skip (fallback
+                avoids retrying the same endpoint; the router adds endpoints
+                the PII gate has ruled out for this call).
             min_context_tokens: Minimum context window required. Endpoints with smaller
                 context are filtered out, preferring endpoints that can handle the request
                 without chunking.
         """
+        excluded = {exclude} if isinstance(exclude, str) else set(exclude or ())
         async with self._lock:
             candidates = [
                 ep for ep in self._endpoints
-                if role in ep.roles and ep.can_accept_request and ep.name != exclude
+                if role in ep.roles and ep.can_accept_request and ep.name not in excluded
                 and self._allowed(ep)
             ]
             # Filter by minimum context window if specified
@@ -222,7 +230,7 @@ class EndpointManager:
                 # would silently defeat the whole mode.
                 candidates = [
                     ep for ep in self._endpoints
-                    if ep.can_accept_request and ep.name != exclude
+                    if ep.can_accept_request and ep.name not in excluded
                     and self._allowed(ep)
                 ]
                 is_fallback = True

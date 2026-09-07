@@ -47,12 +47,46 @@ class LLMRouter:
     and EndpointManager to select the best endpoint for the role.
     """
 
-    def __init__(self, models_config: ModelsConfig, endpoint_manager: EndpointManager, *, pii_enabled: bool = True, disable_fallback: bool = False):
+    def __init__(self, models_config: ModelsConfig, endpoint_manager: EndpointManager, *, pii_enabled: bool = True, disable_fallback: bool = False, require_ner: bool = False):
         self._models = models_config
         self._endpoint_manager = endpoint_manager
         self._failed_models: dict[str, float] = {}  # model_name → failure timestamp
         self._pii_enabled = pii_enabled
         self._disable_fallback = disable_fallback
+        self._require_ner = require_ner
+        self._ner_gate_logged = False
+
+    def _ner_blocked_endpoints(self) -> set[str]:
+        """Endpoints this router must not send fully-sanitized text to.
+
+        generate() is the FULL-sanitization path: every prompt to a
+        `should_sanitize_pii` endpoint goes through sanitize_text, which is
+        NER + regex when Presidio loads and regex-only when it does not —
+        names and places pass through untouched, and the downgrade used to be
+        one INFO line. With pii.require_ner set, a sanitizing endpoint is
+        excluded from routing for the whole call (primary and every fallback
+        hop) while Presidio is unavailable, so the call lands on a local
+        endpoint or fails loudly. Interactive chat bypasses generate() and is
+        governed by local mode, not this.
+        """
+        if not (self._pii_enabled and self._require_ner):
+            return set()
+        sanitizing = [ep for ep in self._endpoint_manager.endpoints if ep.should_sanitize_pii]
+        if not sanitizing:
+            return set()
+        from blipshell.llm.pii import is_presidio_available
+        if is_presidio_available():
+            return set()
+        names = {ep.name for ep in sanitizing}
+        if not self._ner_gate_logged:
+            logger.warning(
+                "pii.require_ner is set but Presidio is not loadable: sanitizing "
+                "endpoints %s are excluded from background routing (regex-only "
+                "redaction would leave names and places intact)",
+                sorted(names),
+            )
+            self._ner_gate_logged = True
+        return names
 
     def get_model(self, task_type: str) -> str:
         """Get the configured model name for a task type."""
@@ -173,8 +207,16 @@ class LLMRouter:
                 context tokens. Used by session_review to route large sessions to
                 cloud endpoints with bigger context windows.
         """
-        endpoint = await self._endpoint_manager.get_endpoint_for_role(task_type, min_context_tokens=min_context_tokens)
+        ner_blocked = self._ner_blocked_endpoints()
+        endpoint = await self._endpoint_manager.get_endpoint_for_role(
+            task_type, exclude=ner_blocked, min_context_tokens=min_context_tokens,
+        )
         if not endpoint:
+            if ner_blocked:
+                raise RuntimeError(
+                    f"No available endpoint for task type: {task_type} "
+                    f"(pii.require_ner excludes {sorted(ner_blocked)} while Presidio is unavailable)"
+                )
             raise RuntimeError(f"No available endpoint for task type: {task_type}")
 
         # Use per-endpoint model override if configured
@@ -189,7 +231,7 @@ class LLMRouter:
             # session review that lands on a 32K endpoint is silently truncated
             # by num_ctx rather than failing.
             fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
-                task_type, exclude=endpoint.name,
+                task_type, exclude={endpoint.name, *ner_blocked},
                 min_context_tokens=min_context_tokens,
             )
             if fallback_ep:
@@ -208,7 +250,7 @@ class LLMRouter:
         if not self._disable_fallback and self.is_model_failed(model):
             # Must also switch endpoint — can't send a local model name to a cloud API
             fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
-                task_type, exclude=endpoint.name,
+                task_type, exclude={endpoint.name, *ner_blocked},
                 min_context_tokens=min_context_tokens,
             )
             if fallback_ep:
@@ -280,7 +322,7 @@ class LLMRouter:
             if not use_fallback and not self._disable_fallback:
                 try:
                     fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
-                        task_type, exclude=endpoint.name,
+                        task_type, exclude={endpoint.name, *ner_blocked},
                         min_context_tokens=min_context_tokens,
                     )
                     fb_model = None
