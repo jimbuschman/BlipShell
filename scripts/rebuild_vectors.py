@@ -202,7 +202,14 @@ async def _rebuild_from_scratch(vectors, sqlite, args):
 
     # Entities
     console.print("[bold]Embedding entities...[/bold]")
-    cursor = await sqlite._db.execute("SELECT id, name FROM entities")
+    # Husks (merged-away, name in entity_aliases) are excluded on purpose:
+    # cleanup_orphan_vectors deletes their vectors and a full rebuild must
+    # not put them back. Dormant (pruned) entities are embedded — re-mention
+    # revives them. See blipshell.memory.entity_names.husk_sql.
+    from blipshell.memory.entity_names import husk_sql
+    cursor = await sqlite._db.execute(
+        f"SELECT e.id, e.name FROM entities e WHERE NOT {husk_sql('e')}"
+    )
     rows = await cursor.fetchall()
     _embed_batch(vectors, rows, "vec_entities", args.batch_size, "entities")
 

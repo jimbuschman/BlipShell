@@ -323,8 +323,11 @@ def check_vector_sync(db_path: str, result: AuditResult):
              "SELECT COUNT(*) FROM core_memories WHERE is_active = 1"),
             ("lessons", "vec_lessons",
              "SELECT COUNT(*) FROM lessons"),
+            # Husk vectors are swept by cleanup_orphan_vectors; counting them
+            # here would report every sweep as drift.
             ("entities", "vec_entities",
-             "SELECT COUNT(*) FROM entities"),
+             "SELECT COUNT(*) FROM entities e WHERE NOT "
+             "(e.is_archived = 1 AND e.name IN (SELECT alias_name FROM entity_aliases))"),
         ]
 
         for name, vec_table, sql_query in checks:

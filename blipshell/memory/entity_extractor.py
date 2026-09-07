@@ -310,6 +310,25 @@ class EntityExtractor:
                     pass
                 continue
 
+            # A merged-away husk can still be a KNN hit — its vector survives
+            # a failed delete, and the vector-store filter is a backstop, not
+            # the contract. Route the candidate to its canonical the way
+            # Stage 0 routes a same-NAME mention; otherwise this mention is
+            # recorded on a dead entity the graph can never reach. Dormant
+            # (pruned) entities come back as None and are used as-is: their
+            # re-mention is what revives them.
+            husk_target = await self.sqlite.resolve_husk(candidate["id"])
+            if husk_target is not None:
+                canonical_id, canonical_name = husk_target
+                logger.info(
+                    "Entity candidate '%s' (id=%d) is a merged husk — routing "
+                    "to canonical '%s' (id=%d)",
+                    candidate["name"], candidate["id"], canonical_name, canonical_id,
+                )
+                candidate = {
+                    **candidate, "id": canonical_id, "name": canonical_name,
+                }
+
             # Never merge names that differ only by a version or instance
             # number. Embeddings score projectecho_v1 vs _v2 at 0.996, so they
             # sail past any threshold and collapse two distinct entities with

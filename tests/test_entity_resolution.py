@@ -361,3 +361,84 @@ class TestAliasRouting:
         """Unknown names still create a new entity."""
         eid = await resolution_extractor._resolve_entity("brand-new-thing")
         assert eid == await sqlite_store.get_entity_id_by_name("brand-new-thing")
+
+
+# --- Stage 2 hits a merged husk ------------------------------------------------
+
+
+class TestHuskRouting:
+    """A husk's vector can outlive the merge (the delete fails silently). When
+    it comes back as a Stage 2 candidate the mention must go to the canonical,
+    never onto the dead entity — 46 did after the June 2026 merge."""
+
+    async def _graph(self, sqlite_store):
+        canonical = await sqlite_store.get_or_create_entity("emotion engine", "concept")
+        husk = await sqlite_store.get_or_create_entity("emotionengine", "concept")
+        await sqlite_store.merge_entity(husk, canonical)
+        await sqlite_store.record_entity_alias("emotionengine", canonical, "retroactive_embedding")
+        await sqlite_store.archive_entities([husk])
+        return canonical, husk
+
+    async def test_auto_merge_into_husk_lands_on_canonical(
+        self, resolution_extractor, sqlite_store,
+    ):
+        canonical, husk = await self._graph(sqlite_store)
+        resolution_extractor.vectors.search_similar_entities.return_value = [
+            {"id": husk, "name": "emotionengine", "similarity": 0.97, "entity_type": "concept"},
+        ]
+        resolved = await resolution_extractor._resolve_entity("the emotion engine", "concept")
+        assert resolved == canonical
+
+        cursor = await sqlite_store._db.execute(
+            "SELECT canonical_entity_id FROM entity_aliases WHERE alias_name = 'the emotion engine'"
+        )
+        row = await cursor.fetchone()
+        assert row is not None and row["canonical_entity_id"] == canonical
+
+    async def test_llm_merge_into_husk_lands_on_canonical(
+        self, resolution_extractor, sqlite_store, canned_router,
+    ):
+        canonical, husk = await self._graph(sqlite_store)
+        resolution_extractor.vectors.search_similar_entities.return_value = [
+            {"id": husk, "name": "emotionengine", "similarity": 0.78, "entity_type": "concept"},
+        ]
+        canned_router.generate = AsyncMock(return_value="YES")
+        resolved = await resolution_extractor._resolve_entity("feelings engine", "concept")
+        assert resolved == canonical
+
+    async def test_dormant_candidate_is_used_as_is(
+        self, resolution_extractor, sqlite_store,
+    ):
+        """Pruned (no alias) entities are meant to be revived by re-mention;
+        routing must leave them alone."""
+        dormant = await sqlite_store.get_or_create_entity("mood states", "concept")
+        await sqlite_store.archive_entities([dormant])
+        resolution_extractor.vectors.search_similar_entities.return_value = [
+            {"id": dormant, "name": "mood states", "similarity": 0.95, "entity_type": "concept"},
+        ]
+        resolved = await resolution_extractor._resolve_entity("mood state", "concept")
+        assert resolved == dormant
+        # and the designed revive path still fires on first mention
+        from blipshell.models.memory import Memory
+        mid = await sqlite_store.create_memory(Memory(role="user", content="my mood state today"))
+        await sqlite_store.create_entity_mention(dormant, memory_id=mid)
+        cursor = await sqlite_store._db.execute(
+            "SELECT is_archived FROM entities WHERE id = ?", (dormant,),
+        )
+        assert (await cursor.fetchone())["is_archived"] == 0
+
+    async def test_version_guard_applies_to_the_canonical_name(
+        self, resolution_extractor, sqlite_store,
+    ):
+        """Routing swaps the candidate's name too, so the version guard judges
+        the entity the mention would actually land on."""
+        canonical = await sqlite_store.get_or_create_entity("projectecho_v2", "project")
+        husk = await sqlite_store.get_or_create_entity("project echo v2", "project")
+        await sqlite_store.merge_entity(husk, canonical)
+        await sqlite_store.record_entity_alias("project echo v2", canonical, "retroactive_embedding")
+        await sqlite_store.archive_entities([husk])
+        resolution_extractor.vectors.search_similar_entities.return_value = [
+            {"id": husk, "name": "project echo v2", "similarity": 0.99, "entity_type": "project"},
+        ]
+        resolved = await resolution_extractor._resolve_entity("projectecho_v1", "project")
+        assert resolved not in (canonical, husk)

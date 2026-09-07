@@ -3186,6 +3186,112 @@ class SQLiteStore:
         )
         return await cursor.fetchone() is not None
 
+    async def resolve_husk(self, entity_id: int) -> tuple[int, str] | None:
+        """If `entity_id` is a merged-away husk, return its terminal canonical.
+
+        A husk is an ARCHIVED entity whose name is recorded in entity_aliases
+        (see entity_names.husk_sql). Returns ``(canonical_id, canonical_name)``
+        when the alias chain resolves to a different, existing entity; None
+        for active entities, for dormant (pruned, no alias) ones — which are
+        legitimate resolution targets, re-mention revives them — and for a
+        husk whose chain dead-ends.
+
+        Exists because creation-time resolution Stage 2 matches by MEANING:
+        a new mention can land on a husk's vector, and Stage 0 alias routing
+        (by NAME) never sees it. 46 such mentions were measured after the
+        June 2026 merge, all on husks.
+        """
+        cursor = await self._db.execute(
+            "SELECT name, is_archived FROM entities WHERE id = ?", (entity_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None or not row["is_archived"]:
+            return None
+        canonical_id = await self.resolve_alias(row["name"])
+        if canonical_id is None or canonical_id == entity_id:
+            return None
+        cursor = await self._db.execute(
+            "SELECT name FROM entities WHERE id = ?", (canonical_id,),
+        )
+        canon = await cursor.fetchone()
+        if canon is None:
+            return None
+        return canonical_id, canon["name"]
+
+    async def find_husks_with_references(self) -> list[int]:
+        """Merged-away husks that still own mentions, relationships, or are the
+        canonical of an alias row — references that should be on the canonical.
+
+        Dormant (pruned) entities are NOT included: each legitimately keeps
+        the mention(s) it had when pruned (14,643 of them hold exactly one).
+        """
+        from blipshell.memory.entity_names import husk_sql
+        cursor = await self._db.execute(
+            f"""
+            SELECT DISTINCT e.id FROM entities e
+             WHERE {husk_sql('e')}
+               AND (
+                    EXISTS (SELECT 1 FROM entity_mentions em WHERE em.entity_id = e.id)
+                 OR EXISTS (SELECT 1 FROM entity_relationships r
+                             WHERE r.subject_id = e.id OR r.object_id = e.id)
+                 OR EXISTS (SELECT 1 FROM entity_aliases a WHERE a.canonical_entity_id = e.id)
+               )
+             ORDER BY e.id
+            """
+        )
+        return [row["id"] for row in await cursor.fetchall()]
+
+    async def repair_husk_references(self, *, dry_run: bool = False) -> dict:
+        """Move every reference still hanging off a merged husk to its canonical.
+
+        Before the Stage 2 husk routing (entity_extractor) and the vector
+        sweep, creation-time resolution could match a husk's leftover vector
+        and record the mention, alias and relationships on the dead entity —
+        46 cases after the June 2026 merge. Search excludes archived
+        entities, so those references were invisible. This drains them:
+        for each husk, ``merge_entity`` moves mentions + relationships to the
+        terminal canonical (following the alias chain) and alias rows that
+        named the husk as canonical are repointed. A husk whose chain
+        dead-ends is counted under ``unresolved`` and left alone.
+
+        Idempotent. ``dry_run`` reports the same counts without writing.
+        """
+        husks = await self.find_husks_with_references()
+        counts = {
+            "husks": len(husks), "repointed": 0, "unresolved": 0,
+            "mentions_moved": 0, "relationships_moved": 0, "aliases_repointed": 0,
+            "dry_run": dry_run,
+        }
+        for husk_id in husks:
+            target = await self.resolve_husk(husk_id)
+            if target is None:
+                counts["unresolved"] += 1
+                continue
+            canonical_id, _ = target
+            cursor = await self._db.execute(
+                "SELECT COUNT(*) FROM entity_mentions WHERE entity_id = ?", (husk_id,),
+            )
+            counts["mentions_moved"] += (await cursor.fetchone())[0]
+            cursor = await self._db.execute(
+                "SELECT COUNT(*) FROM entity_relationships WHERE subject_id = ? OR object_id = ?",
+                (husk_id, husk_id),
+            )
+            counts["relationships_moved"] += (await cursor.fetchone())[0]
+            cursor = await self._db.execute(
+                "SELECT COUNT(*) FROM entity_aliases WHERE canonical_entity_id = ?", (husk_id,),
+            )
+            counts["aliases_repointed"] += (await cursor.fetchone())[0]
+            counts["repointed"] += 1
+            if dry_run:
+                continue
+            await self.merge_entity(husk_id, canonical_id)
+            await self._db.execute(
+                "UPDATE entity_aliases SET canonical_entity_id = ? WHERE canonical_entity_id = ?",
+                (canonical_id, husk_id),
+            )
+            await self._db.commit()
+        return counts
+
     async def get_entity_id_by_name(
         self, name: str, entity_type: str | None = None,
     ) -> int | None:

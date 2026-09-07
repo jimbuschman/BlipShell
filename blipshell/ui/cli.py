@@ -1442,26 +1442,31 @@ def review_cmd(ctx, lessons, reflections, limit, quiet):
               help="Fix sessions with message_count=0 and title='New Session' that have memories.")
 @click.option("--fix-pii-embeds", is_flag=True,
               help="Re-embed memories whose summaries were PII-sanitized ([PERSON]/[PII]).")
+@click.option("--repoint-husks", is_flag=True,
+              help="Move mentions/aliases/relationships left on merged-away entities to their canonical.")
 @click.option("--dry-run", is_flag=True, help="Show counts without making changes.")
 @click.option("--all", "do_all", is_flag=True,
               help="Run all repairs.")
 @click.pass_context
-def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds, dry_run, do_all):
+def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds, repoint_husks, dry_run, do_all):
     """Repair common DB issues.
 
     --restore-imports unarchives memories from imported sessions.
     --sweep-orphans removes orphan vector rows.
     --fix-sessions fixes sessions where end_session() failed (count=0, no title).
     --fix-pii-embeds re-embeds memories with PII-sanitized summaries.
+    --repoint-husks moves references stranded on merged-away entities to their canonical.
     """
-    if not (restore_imports or sweep_orphans or fix_sessions or fix_pii_embeds or do_all):
-        console.print("[yellow]Nothing to do. Pass --restore-imports, --sweep-orphans, --fix-sessions, --fix-pii-embeds, or --all.[/yellow]")
+    if not (restore_imports or sweep_orphans or fix_sessions or fix_pii_embeds
+            or repoint_husks or do_all):
+        console.print("[yellow]Nothing to do. Pass --restore-imports, --sweep-orphans, --fix-sessions, --fix-pii-embeds, --repoint-husks, or --all.[/yellow]")
         return
     if do_all:
         restore_imports = True
         sweep_orphans = True
         fix_sessions = True
         fix_pii_embeds = True
+        repoint_husks = True
 
     from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
@@ -1554,33 +1559,38 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
 
             if sweep_orphans:
                 if dry_run:
-                    # Inspect counts without deleting
-                    cur = vectors._conn.execute(
-                        """
-                        SELECT COUNT(*) FROM vec_memories vm
-                         JOIN memories m ON m.id = vm.rowid
-                         WHERE m.is_archived = 1
-                        """
-                    )
-                    arch = cur.fetchone()[0]
-                    cur = vectors._conn.execute(
-                        """
-                        SELECT COUNT(*) FROM vec_memories vm
-                         WHERE vm.rowid NOT IN (SELECT id FROM memories)
-                        """
-                    )
-                    miss = cur.fetchone()[0]
+                    result = vectors.count_orphan_vectors()
                     console.print(
                         f"[cyan]Orphan vectors:[/cyan] "
-                        f"archived=[bold]{arch}[/bold] missing=[bold]{miss}[/bold] "
+                        f"memories archived=[bold]{result['archived']}[/bold] "
+                        f"missing=[bold]{result['missing']}[/bold]; "
+                        f"entity husks=[bold]{result['entities_husks']}[/bold] "
+                        f"missing=[bold]{result['entities_missing']}[/bold] "
                         "[dim](dry-run; no changes)[/dim]"
                     )
                 else:
                     result = vectors.cleanup_orphan_vectors()
                     console.print(
                         f"[green]Orphan vectors swept:[/green] "
-                        f"archived={result['archived']} missing={result['missing']}"
+                        f"memories archived={result['archived']} "
+                        f"missing={result['missing']}; "
+                        f"entity husks={result['entities_husks']} "
+                        f"missing={result['entities_missing']}"
                     )
+
+            if repoint_husks:
+                # Reads entities/aliases only, never vectors, so it is safe in
+                # either order relative to the sweep above.
+                result = await sqlite.repair_husk_references(dry_run=dry_run)
+                verb = "would move" if dry_run else "moved"
+                console.print(
+                    f"[cyan]Husk references:[/cyan] {result['husks']} husks still referenced; "
+                    f"{verb} mentions={result['mentions_moved']} "
+                    f"relationships={result['relationships_moved']} "
+                    f"aliases={result['aliases_repointed']} "
+                    f"(unresolved chains: {result['unresolved']})"
+                    + (" [dim](dry-run; no changes)[/dim]" if dry_run else "")
+                )
 
             if fix_pii_embeds:
                 # Count affected

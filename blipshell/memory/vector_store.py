@@ -20,6 +20,8 @@ import httpx
 import ollama
 import sqlite_vec
 
+from blipshell.memory.entity_names import husk_sql
+
 logger = logging.getLogger(__name__)
 
 # Max chars sent to embedding model. qwen3-embedding:0.6b has 32K token context.
@@ -75,7 +77,11 @@ _SOURCE_TABLES = {
         "table": "entities",
         "text_col": "name",
         "meta_cols": ["entity_type"],
-        "active_filter": None,
+        # Never re-embed a merged-away husk: cleanup_orphan_vectors deletes
+        # those vectors, and with no filter here the nightly backfill put
+        # every one of them straight back. Dormant (pruned) entities ARE
+        # backfilled — they stay resolution candidates so re-mention revives.
+        "active_filter": "NOT " + husk_sql("s"),
     },
     REFLECTIONS_COLLECTION: {
         "table": "session_reflections",
@@ -753,12 +759,24 @@ class VectorStore:
         vec = self._embed(name)
         blob = _serialize_f32(vec)
 
+        # Over-fetch, then drop merged-away HUSKS in the enrich step. vec0
+        # cannot filter during KNN, and husks can be a large share of the
+        # table (the June 2026 merge left 7,557 with vectors when the per-ID
+        # delete failed silently). Without this filter, creation-time
+        # resolution auto-merged new mentions INTO dead entities
+        # ('emotionengine' -> archived 'emotionengine' at sim ~1.0,
+        # 2026-09-02; 46 cases measured). Stage 0 alias routing only
+        # protects same-NAME mentions; this protects same-MEANING ones.
+        # DORMANT (pruned) entities are deliberately still returned: their
+        # re-mention is supposed to revive them (see entity_names.husk_sql).
+        fetch_k = n_results * 3
+
         with self._lock:
             rows = self._conn.execute(
                 "SELECT rowid, distance FROM vec_entities "
                 "WHERE embedding MATCH ? AND k = ? "
                 "ORDER BY distance",
-                [blob, n_results],
+                [blob, fetch_k],
             ).fetchall()
 
         if not rows:
@@ -770,7 +788,8 @@ class VectorStore:
         with self._lock:
             placeholders = ",".join("?" * len(row_ids))
             enriched = self._conn.execute(
-                f"SELECT id, name, entity_type FROM entities WHERE id IN ({placeholders})",
+                f"SELECT e.id, e.name, e.entity_type FROM entities e "
+                f"WHERE e.id IN ({placeholders}) AND NOT {husk_sql('e')}",
                 row_ids,
             ).fetchall()
 
@@ -787,7 +806,7 @@ class VectorStore:
             })
 
         results.sort(key=lambda r: r["similarity"], reverse=True)
-        return results
+        return results[:n_results]
 
     # --- Delete methods ---
 
@@ -820,13 +839,26 @@ class VectorStore:
             self._conn.commit()
 
     def cleanup_orphan_vectors(self) -> dict:
-        """Remove vec_memories rows whose memories are archived or missing.
+        """Remove vector rows whose source row is dead or missing.
 
-        These accumulate when the prune job archives memories but the
-        accompanying vector delete fails (e.g. lock contention). Run
-        after a known race or as part of nightly maintenance.
+        Covers vec_memories AND vec_entities. Both accumulate the same way:
+        the archive path's per-ID vector delete fails (lock contention
+        between the aiosqlite and sync sqlite3 connections) and the
+        exception is swallowed as "orphan, swept later". For memories this
+        sweep was the "later"; for entities there was none, so the June 2026
+        merge left 7,557 husk vectors in the KNN candidate set (see
+        search_similar_entities). Run after a known race or as part of
+        nightly maintenance.
 
-        Returns dict with counts of deleted orphan vectors.
+        For entities only merged-away HUSKS are swept. Pruned (dormant)
+        entities keep their vectors on purpose: re-mention revives them, and
+        that needs them to remain resolution candidates
+        (entity_names.husk_sql explains the split).
+
+        Returns dict with counts of deleted orphan vectors. ``archived`` and
+        ``missing`` are the memory counts (kept under those names — the
+        repair CLI prints them); entity counts are ``entities_husks`` and
+        ``entities_missing``.
         """
         with self._lock:
             # Vectors whose memory was archived
@@ -848,8 +880,69 @@ class VectorStore:
                  WHERE rowid NOT IN (SELECT id FROM memories)
                 """
             ).rowcount or 0
+            # Vectors whose entity is a merged-away husk (NOT pruned/dormant)
+            entities_husks = self._conn.execute(
+                f"""
+                DELETE FROM vec_entities
+                 WHERE rowid IN (
+                       SELECT ve.rowid
+                         FROM vec_entities ve
+                         JOIN entities e ON e.id = ve.rowid
+                        WHERE {husk_sql('e')}
+                )
+                """
+            ).rowcount or 0
+            # Vectors whose entity row no longer exists
+            entities_missing = self._conn.execute(
+                """
+                DELETE FROM vec_entities
+                 WHERE rowid NOT IN (SELECT id FROM entities)
+                """
+            ).rowcount or 0
             self._conn.commit()
-        return {"archived": archived, "missing": missing}
+        return {
+            "archived": archived,
+            "missing": missing,
+            "entities_husks": entities_husks,
+            "entities_missing": entities_missing,
+        }
+
+    def count_orphan_vectors(self) -> dict:
+        """Dry-run counterpart of cleanup_orphan_vectors: same keys, no writes.
+
+        The repair CLI used to carry its own copy of the memory SQL for
+        --dry-run; a second copy is how the entity clause went missing from
+        one of them. Both paths now read the same predicates.
+        """
+        with self._lock:
+            archived = self._conn.execute(
+                """
+                SELECT COUNT(*) FROM vec_memories vm
+                  JOIN memories m ON m.id = vm.rowid
+                 WHERE m.is_archived = 1
+                """
+            ).fetchone()[0]
+            missing = self._conn.execute(
+                "SELECT COUNT(*) FROM vec_memories "
+                " WHERE rowid NOT IN (SELECT id FROM memories)"
+            ).fetchone()[0]
+            entities_husks = self._conn.execute(
+                f"""
+                SELECT COUNT(*) FROM vec_entities ve
+                  JOIN entities e ON e.id = ve.rowid
+                 WHERE {husk_sql('e')}
+                """
+            ).fetchone()[0]
+            entities_missing = self._conn.execute(
+                "SELECT COUNT(*) FROM vec_entities "
+                " WHERE rowid NOT IN (SELECT id FROM entities)"
+            ).fetchone()[0]
+        return {
+            "archived": archived,
+            "missing": missing,
+            "entities_husks": entities_husks,
+            "entities_missing": entities_missing,
+        }
 
     # --- Utility methods ---
 

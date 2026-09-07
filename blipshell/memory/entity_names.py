@@ -49,3 +49,31 @@ def version_distinguished(a_name: str, b_name: str) -> bool:
     deepseek-r1-7b vs deepseek-r1:7b) are unaffected.
     """
     return numeric_tokens(a_name) != numeric_tokens(b_name)
+
+
+# ---------------------------------------------------------------------------
+# Husk vs dormant
+# ---------------------------------------------------------------------------
+# An archived entity is one of two very different things:
+#
+#   * a HUSK — merged away by EntityMerger or creation-time resolution. Its
+#     name is recorded in entity_aliases and routes to a canonical. It must
+#     never receive a mention again; anything that lands on it is invisible
+#     to the graph (search excludes archived entities) and to the canonical.
+#   * a DORMANT entity — archived by the prune job for low value, name NOT in
+#     entity_aliases. Re-mention is supposed to revive it (revive_entities),
+#     so it MUST stay a resolution candidate and keep its vector.
+#
+# The June 2026 merge left 7,557 husks and 15,218 dormant entities, all with
+# vectors. Treating "archived" as one category broke either the husk case
+# (mentions merged into dead entities, 46 measured post-merge) or the dormant
+# case (a blanket archived filter would have ended revive-by-meaning). Every
+# query that separates the two uses this predicate so they cannot drift.
+
+
+def husk_sql(alias: str = "e") -> str:
+    """SQL predicate: the entity row aliased `alias` is a merged-away husk."""
+    return (
+        f"({alias}.is_archived = 1 AND {alias}.name IN "
+        f"(SELECT alias_name FROM entity_aliases))"
+    )
