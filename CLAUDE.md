@@ -94,6 +94,19 @@ blipshell/
   message is the correction). Completion audit + review gate need a completion
   tool, so they remain executor-only.
 - Plan mode: LLM self-restricts to read-only tools via enter/exit_plan_mode.
+- **Tool failure is a TYPE, not a wording** (2026-09-06): tools return
+  `ToolFailure("...")` (a `str` subclass, `tools/base.py`); the chokepoint
+  `execute_tool_call` sets `success=False` on the type. The two-prefix string
+  match (`Error:` / `Error executing`) is only a backstop — "Search error:",
+  "Fetch error:", "Workflow 'x' failed:" and "saved in memory but failed to
+  persist" all counted as SUCCESS under it. Not an exception on purpose:
+  ~100 direct `tool.execute()` callers read the string. Wrap at the point of
+  return; an f-string over a ToolFailure yields a plain str.
+- **Guardrail internals fail OPEN, and say so at WARNING** (2026-09-06). The
+  doom-loop, review-gate, pause and trajectory checks used to log their own
+  exceptions at DEBUG, so a guardrail that threw on every turn was invisible.
+  The fail-open decision stands (a broken check must not block the turn);
+  only the log level changed. `test_broken_guardrail_is_fail_open_but_logged_at_warning`.
 
 ## Memory
 
@@ -134,6 +147,18 @@ blipshell/
   2026-08-07, i.e. on the path that ships disabled, while creation-time
   resolution — the enabled one — had no guard. If you add a third merge site,
   it uses this module.
+  **Archived entities are two populations** (2026-09-06, `entity_names.husk_sql`):
+  a HUSK (merged away; name in `entity_aliases`) is dead and must never take a
+  mention; a DORMANT entity (pruned; no alias) revives on re-mention and must
+  stay a resolution candidate WITH its vector. The June 2026 merge left 7,557
+  husk vectors in `vec_entities`; Stage 2 matched them by MEANING (Stage 0
+  alias routing only covers same-NAME) and merged 46 new mentions into dead
+  entities. Now: `search_similar_entities` filters husks, Stage 2 routes a
+  husk candidate to its canonical (`resolve_husk`), the orphan sweep and
+  entity backfill agree on the predicate, and `blipshell repair
+  --repoint-husks` drains stranded references. A blanket `is_archived = 0`
+  filter would have killed revive-by-meaning for 15,218 dormant entities —
+  use `husk_sql`, not the flag. Plan + numbers: `docs/HYGIENE_2026_09.md`.
   `get_all_entity_names()` is cached; anything writing entity rows outside the
   store's own methods must call `_invalidate_entity_name_cache()`.
   Failed extractions are left unmarked and counted as `retryable` — never mark
@@ -153,7 +178,18 @@ blipshell/
   `async_gate` accept an optional `timeout` (raises `GateTimeout`). Cloud bypasses
   the gate.
 - PII sanitization (Presidio → regex fallback) fires only on cloud paths;
-  local calls keep raw text for search quality.
+  local calls keep raw text for search quality. **Presidio + spaCy are an
+  optional extra since 2026-09-06** (`pip install -e .[pii]`, then
+  `python -m spacy download en_core_web_lg`; no spaCy wheel for Python 3.14,
+  which is why the dev box runs regex-only and its 3 NER tests SKIP, never
+  fail). Regex-only redacts credentials/keys/IPs, NOT names or places. The
+  engine is reported at startup (WARNING when regex-only and an endpoint
+  relays offsite) and in `/status`. `pii.require_ner: true` keeps
+  `router.generate()` traffic — the FULL-sanitize background path — off
+  sanitizing endpoints while Presidio is unavailable (falls back to local or
+  raises); chat bypasses `generate()` and is governed by `/local`, not this.
+  Check what production actually loads on the Ollama PC:
+  `python -c "from blipshell.llm.pii import engine_description; print(engine_description())"`.
 - Current assignments (see config.yaml `models:` + per-endpoint overrides):
 
 | Task | Primary | Fallback (local) |
