@@ -6,7 +6,7 @@ import logging
 import os
 from pathlib import Path
 
-from blipshell.core.tools.base import Tool, result_reports_failure
+from blipshell.core.tools.base import Tool, result_reports_failure, ToolFailure
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ def _validate_within_root(resolved: Path, root_path: str | None) -> str | None:
         resolved.relative_to(Path(root_path).resolve())
         return None
     except ValueError:
-        return f"Error: Path escapes the project root ({root_path}). Access denied."
+        return ToolFailure(f"Error: Path escapes the project root ({root_path}). Access denied.")
 
 
 def _check_symlink(original: Path) -> str | None:
@@ -34,7 +34,7 @@ def _check_symlink(original: Path) -> str | None:
     symlinks, so is_symlink() on a resolved path always returns False.
     """
     if original.is_symlink():
-        return f"Error: '{original.name}' is a symlink. Refusing to write through symlinks for safety."
+        return ToolFailure(f"Error: '{original.name}' is a symlink. Refusing to write through symlinks for safety.")
     return None
 
 
@@ -116,14 +116,14 @@ class ReadFileTool(Tool):
                 logger.debug("Re-reading stale file %s (modified since last read)", path)
 
         if self._is_blocked(str(resolved)):
-            return f"Error: Access to '{path}' is blocked."
+            return ToolFailure(f"Error: Access to '{path}' is blocked.")
         if not resolved.is_file():
-            return (
+            return ToolFailure(
                 f"Error: File '{path}' not found. "
                 "Use list_directory to see what files exist, or glob_files to search."
             )
         if resolved.stat().st_size > self.max_file_size:
-            return f"Error: File '{path}' exceeds max size ({self.max_file_size} bytes)."
+            return ToolFailure(f"Error: File '{path}' exceeds max size ({self.max_file_size} bytes).")
 
         # Images and other binary files can't be read as text — return guidance,
         # not replacement-char gibberish. Images reach the model via vision input.
@@ -139,7 +139,7 @@ class ReadFileTool(Tool):
             with open(resolved, "rb") as fh:
                 head = fh.read(8192)
         except OSError as e:
-            return f"Error: could not read '{path}': {e}"
+            return ToolFailure(f"Error: could not read '{path}': {e}")
         if b"\x00" in head:
             return (
                 f"'{path}' appears to be a binary file (contains null bytes) and cannot "
@@ -244,9 +244,9 @@ class WriteFileTool(Tool):
 
     async def execute(self, path: str = "", content: str = "", **kwargs) -> str:
         if not path:
-            return "Error: 'path' argument is required."
+            return ToolFailure("Error: 'path' argument is required.")
         if content is None:
-            return "Error: 'content' argument is required — provide the file content to write."
+            return ToolFailure("Error: 'content' argument is required — provide the file content to write.")
         original = Path(path) if not Path(path).is_absolute() and self.root_path else Path(path)
         if not original.is_absolute() and self.root_path:
             original = Path(self.root_path) / original
@@ -256,7 +256,7 @@ class WriteFileTool(Tool):
         if err:
             return err
         if any(blocked in str(resolved) for blocked in self.blocked_paths):
-            return f"Error: Access to '{path}' is blocked."
+            return ToolFailure(f"Error: Access to '{path}' is blocked.")
         err = _check_symlink(original)
         if err:
             return err
@@ -309,9 +309,9 @@ class EditFileTool(Tool):
 
     async def execute(self, path: str = "", old_text: str = "", new_text: str = "", **kwargs) -> str:
         if not path:
-            return "Error: 'path' argument is required."
+            return ToolFailure("Error: 'path' argument is required.")
         if not old_text:
-            return "Error: 'old_text' argument is required — specify the text to find and replace."
+            return ToolFailure("Error: 'old_text' argument is required — specify the text to find and replace.")
         original = Path(path)
         if not original.is_absolute() and self.root_path:
             original = Path(self.root_path) / original
@@ -325,11 +325,11 @@ class EditFileTool(Tool):
             return err
         if not resolved.is_file():
             if resolved.is_dir():
-                return (
+                return ToolFailure(
                     f"Error: '{path}' is a directory, not a file. "
                     "Use list_directory to see files in it."
                 )
-            return (
+            return ToolFailure(
                 f"Error: File '{path}' not found. "
                 "Check the path with list_directory or glob_files."
             )
@@ -403,7 +403,7 @@ class EditFileTool(Tool):
             ast.parse(content, filename=str(file_path))
             return None
         except SyntaxError as e:
-            return (
+            return ToolFailure(
                 f"Error: Edit would create a syntax error in {file_path.name} "
                 f"at line {e.lineno}: {e.msg}. "
                 "The file was NOT modified. Fix the new_text and retry."
@@ -630,8 +630,8 @@ class ListDirectoryTool(Tool):
             return err
         if not resolved.is_dir():
             if resolved.is_file():
-                return f"Error: '{path}' is a file, not a directory. Use read_file to read it."
-            return f"Error: '{path}' does not exist. Try list_directory on the parent path."
+                return ToolFailure(f"Error: '{path}' is a file, not a directory. Use read_file to read it.")
+            return ToolFailure(f"Error: '{path}' does not exist. Try list_directory on the parent path.")
 
         entries = []
         try:
@@ -639,7 +639,7 @@ class ListDirectoryTool(Tool):
                 prefix = "[DIR] " if entry.is_dir() else "      "
                 entries.append(f"{prefix}{entry.name}")
         except PermissionError:
-            return f"Error: Permission denied for '{path}'."
+            return ToolFailure(f"Error: Permission denied for '{path}'.")
 
         if not entries:
             return f"Directory '{path}' is empty."

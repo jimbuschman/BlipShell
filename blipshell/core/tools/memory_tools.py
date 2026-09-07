@@ -3,7 +3,7 @@
 import json
 from typing import Optional
 
-from blipshell.core.tools.base import Tool
+from blipshell.core.tools.base import Tool, ToolFailure
 from blipshell.memory.processor import MemoryProcessor
 from blipshell.memory.search import MemorySearch
 from blipshell.memory.sqlite_store import SQLiteStore
@@ -190,7 +190,7 @@ class PromoteToCoreMemoryTool(Tool):
                 return f"Lesson {source_id} not found."
             content = lesson.content
         else:
-            return f"Invalid source_type: {source_type}. Use 'memory' or 'lesson'."
+            return ToolFailure(f"Invalid source_type: {source_type}. Use 'memory' or 'lesson'.")
 
         mem_id = await self.processor.process_core_memory(
             text=content,

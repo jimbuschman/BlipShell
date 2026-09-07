@@ -3,7 +3,7 @@
 import logging
 from typing import Callable, Awaitable, Optional
 
-from blipshell.core.tools.base import Tool
+from blipshell.core.tools.base import Tool, ToolFailure
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
 
 logger = logging.getLogger(__name__)
@@ -124,7 +124,7 @@ class ConfirmPlanTool(Tool):
         **kwargs,
     ) -> str:
         if not plan:
-            return "Error: 'plan' argument is required."
+            return ToolFailure("Error: 'plan' argument is required.")
 
         # Format for display
         formatted = f"Proposed plan:\n{plan}"
@@ -221,7 +221,7 @@ class AskUserTool(Tool):
     async def execute(self, question: str = "", options: str = "",
                       allow_free_text: bool = True, **kwargs) -> str:
         if not question:
-            return "Error: 'question' argument is required."
+            return ToolFailure("Error: 'question' argument is required.")
 
         # Format the question with options if provided
         formatted = self._format_question(question, options, allow_free_text)

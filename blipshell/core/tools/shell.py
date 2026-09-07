@@ -7,7 +7,7 @@ import re
 import shlex
 import sys
 
-from blipshell.core.tools.base import Tool, result_reports_failure
+from blipshell.core.tools.base import Tool, result_reports_failure, ToolFailure
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
 
 logger = logging.getLogger(__name__)
@@ -162,7 +162,7 @@ class ShellTool(Tool):
                 )
             except asyncio.TimeoutError:
                 process.kill()
-                return (
+                return ToolFailure(
                     f"Error: Command timed out after {timeout} seconds. "
                     "The command likely started an interactive process or server. "
                     "Consider using run_in_background=true for long-running commands."
@@ -206,7 +206,7 @@ class ShellTool(Tool):
             return result
 
         except Exception as e:
-            return f"Error executing command: {e}"
+            return ToolFailure(f"Error executing command: {e}")
 
     @staticmethod
     def _save_full_output(output: str) -> str | None:
@@ -231,7 +231,7 @@ class ShellTool(Tool):
         """
         # Block command substitution — $(cmd) and `cmd` can hide arbitrary commands
         if _SUBSHELL_RE.search(command):
-            return (
+            return ToolFailure(
                 "Error: Command substitution ($(...) or backticks) is not allowed. "
                 "Run each command separately."
             )
@@ -264,7 +264,7 @@ class ShellTool(Tool):
                 base_cmd = self._extract_base_command(part)
                 if base_cmd and base_cmd not in self.allowed_commands:
                     hint = alt.get(base_cmd, f"Allowed: {', '.join(sorted(self.allowed_commands))}")
-                    return f"Error: '{base_cmd}' is not allowed. {hint}"
+                    return ToolFailure(f"Error: '{base_cmd}' is not allowed. {hint}")
         return None
 
     @staticmethod
@@ -307,8 +307,8 @@ class CheckProcessTool(Tool):
         if process is None:
             active = list(_background_processes.keys())
             if active:
-                return f"Error: No background process with PID {pid}. Active PIDs: {active}"
-            return f"Error: No background process with PID {pid}. No background processes are running."
+                return ToolFailure(f"Error: No background process with PID {pid}. Active PIDs: {active}")
+            return ToolFailure(f"Error: No background process with PID {pid}. No background processes are running.")
 
         if process.returncode is None:
             # Still running — try to read available output without blocking

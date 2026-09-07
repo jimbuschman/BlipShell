@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from blipshell.core.tools.base import Tool
+from blipshell.core.tools.base import Tool, ToolFailure
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
 
 logger = logging.getLogger(__name__)
@@ -55,8 +55,8 @@ class GitStatusTool(Tool):
         )
         if rc != 0:
             if "not a git repository" in stderr.lower():
-                return "Error: Not a git repository."
-            return f"Error: {stderr}"
+                return ToolFailure("Error: Not a git repository.")
+            return ToolFailure(f"Error: {stderr}")
         if not stdout:
             return "Working tree clean — nothing to commit."
 
@@ -117,7 +117,7 @@ class GitDiffTool(Tool):
 
         stdout, stderr, rc = await _run_git(args, cwd=self.root_path)
         if rc != 0:
-            return f"Error: {stderr}"
+            return ToolFailure(f"Error: {stderr}")
         if not stdout:
             return "No differences found."
         # Truncate very long diffs
@@ -145,11 +145,11 @@ class GitAddTool(Tool):
     async def execute(self, paths: str, **kwargs) -> str:
         path_list = paths.strip().split()
         if not path_list:
-            return "Error: No paths specified."
+            return ToolFailure("Error: No paths specified.")
 
         stdout, stderr, rc = await _run_git(["add"] + path_list, cwd=self.root_path)
         if rc != 0:
-            return f"Error: {stderr}"
+            return ToolFailure(f"Error: {stderr}")
         return f"Staged: {paths}"
 
 
@@ -171,7 +171,7 @@ class GitCommitTool(Tool):
 
     async def execute(self, message: str, **kwargs) -> str:
         if not message.strip():
-            return "Error: Commit message cannot be empty."
+            return ToolFailure("Error: Commit message cannot be empty.")
 
         stdout, stderr, rc = await _run_git(
             ["commit", "-m", message], cwd=self.root_path,
@@ -179,5 +179,5 @@ class GitCommitTool(Tool):
         if rc != 0:
             if "nothing to commit" in stderr.lower() or "nothing to commit" in stdout.lower():
                 return "Nothing to commit — working tree clean."
-            return f"Error: {stderr or stdout}"
+            return ToolFailure(f"Error: {stderr or stdout}")
         return stdout or "Commit created."

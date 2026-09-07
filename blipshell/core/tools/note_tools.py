@@ -8,7 +8,7 @@ lost to compaction.
 
 import logging
 
-from blipshell.core.tools.base import Tool
+from blipshell.core.tools.base import Tool, ToolFailure
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
 
 logger = logging.getLogger(__name__)
@@ -58,14 +58,14 @@ class SaveNoteTool(Tool):
         content = content.strip()
 
         if not name:
-            return "Error: note name cannot be empty."
+            return ToolFailure("Error: note name cannot be empty.")
         if not content:
-            return "Error: note content cannot be empty."
+            return ToolFailure("Error: note content cannot be empty.")
 
         # Per-note token limit
         content_tokens = estimate_tokens(content)
         if content_tokens > self._config.max_note_tokens:
-            return (
+            return ToolFailure(
                 f"Error: note '{name}' is {content_tokens} tokens, "
                 f"max is {self._config.max_note_tokens}."
             )
@@ -73,7 +73,7 @@ class SaveNoteTool(Tool):
         # Check note count (only for new notes, not updates)
         is_update = name in self._notes
         if not is_update and len(self._notes) >= self._config.max_notes:
-            return (
+            return ToolFailure(
                 f"Error: max notes ({self._config.max_notes}) reached. "
                 "Delete or update an existing note."
             )
@@ -82,7 +82,7 @@ class SaveNoteTool(Tool):
         total_tokens = sum(estimate_tokens(v) for k, v in self._notes.items() if k != name)
         total_tokens += content_tokens
         if total_tokens > self._config.max_total_tokens:
-            return (
+            return ToolFailure(
                 f"Error: total notes would be {total_tokens} tokens, "
                 f"max is {self._config.max_total_tokens}. Shorten this note or remove others."
             )
@@ -95,7 +95,7 @@ class SaveNoteTool(Tool):
             await self._sqlite.save_session_notes(self._session_id, self._notes)
         except Exception as e:
             logger.warning("Failed to persist note '%s': %s", name, e)
-            return f"Note '{name}' saved in memory but failed to persist: {e}"
+            return ToolFailure(f"Note '{name}' saved in memory but failed to persist: {e}")
 
         action = "updated" if is_update else "saved"
         return f"Note '{name}' {action} ({content_tokens} tokens)."
@@ -180,6 +180,6 @@ class DeleteNoteTool(Tool):
             await self._sqlite.save_session_notes(self._session_id, self._notes)
         except Exception as e:
             logger.warning("Failed to persist note deletion '%s': %s", name, e)
-            return f"Note '{name}' deleted from memory but failed to persist: {e}"
+            return ToolFailure(f"Note '{name}' deleted from memory but failed to persist: {e}")
 
         return f"Note '{name}' deleted."

@@ -3,7 +3,7 @@
 import json
 from typing import Optional
 
-from blipshell.core.tools.base import Tool
+from blipshell.core.tools.base import Tool, ToolFailure
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
 
 
@@ -164,7 +164,7 @@ class RunWorkflowTool(Tool):
         try:
             param_dict = json.loads(params)
         except json.JSONDecodeError:
-            return f"Invalid params JSON: {params}"
+            return ToolFailure(f"Invalid params JSON: {params}")
 
         try:
             result = await self.workflow_executor.run_workflow(
@@ -172,6 +172,6 @@ class RunWorkflowTool(Tool):
             )
             return result
         except KeyError:
-            return f"Workflow '{workflow_name}' not found."
+            return ToolFailure(f"Workflow '{workflow_name}' not found.")
         except Exception as e:
-            return f"Workflow '{workflow_name}' failed: {e}"
+            return ToolFailure(f"Workflow '{workflow_name}' failed: {e}")

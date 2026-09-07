@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
-from blipshell.core.tools.base import Tool
+from blipshell.core.tools.base import Tool, ToolFailure
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
 
@@ -42,11 +42,11 @@ class CreateProjectTool(Tool):
     async def execute(self, name: str, path: str, description: str = "", **kwargs) -> str:
         resolved = Path(path).resolve()
         if not resolved.is_dir():
-            return f"Error: Directory not found: {path}"
+            return ToolFailure(f"Error: Directory not found: {path}")
 
         existing = await self.sqlite.get_project(name)
         if existing:
-            return f"Error: Project '{name}' already exists."
+            return ToolFailure(f"Error: Project '{name}' already exists.")
 
         # Auto-detect language
         language = _detect_language(resolved)
@@ -165,12 +165,12 @@ class ActivateProjectTool(Tool):
 
     async def execute(self, name: str, **kwargs) -> str:
         if not self._callback:
-            return "Error: Project activation not available in this context."
+            return ToolFailure("Error: Project activation not available in this context.")
 
         try:
             project = await self._callback(name)
         except KeyError:
-            return (
+            return ToolFailure(
                 f"Error: Project '{name}' not found. "
                 "Use list_projects to see available projects."
             )
@@ -225,7 +225,7 @@ class DeactivateProjectTool(Tool):
 
     async def execute(self, **kwargs) -> str:
         if not self._callback:
-            return "Error: Project deactivation not available in this context."
+            return ToolFailure("Error: Project deactivation not available in this context.")
 
         name = await self._callback()
         if name:

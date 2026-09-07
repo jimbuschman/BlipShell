@@ -15,22 +15,42 @@ AuditCallback = Callable[[str, dict[str, Any], bool], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
-# Tools signal failure by RETURNING an error string rather than raising —
-# ~44 sites across the tool modules do this. Without translating that into
-# ToolResult.success, a failed write still looked successful to every
-# consumer: the executor cached content that was never written (so later
-# reads were served phantom text), the completion audit accepted a turn
-# whose only edit had failed, and the red-✘ display branch never fired.
-#
-# Matching is PREFIX-only and deliberately narrow. Tool output that merely
-# *contains* the word error — run_command relaying stderr, read_file
-# returning a log file — must stay a success. A tool whose whole result
-# starts with one of these markers is reporting its own failure.
+class ToolFailure(str):
+    """A tool result that IS a failure report. Return it, don't raise it.
+
+    Tools signal failure by returning the text the model should read
+    ("Error: 'x.py' does not exist. Use list_directory ..."). For months the
+    chokepoint below GUESSED failure from a two-prefix string match, and
+    every tool whose wording drifted — "Search error:", "Fetch error:",
+    "Workflow 'x' failed:", "saved in memory but failed to persist" —
+    counted as success: the completion audit accepted a turn whose only
+    action had failed, and the red-✘ display never fired (the phantom-write
+    class the prefix check was added to stop, 2026-08-04).
+
+    A str subclass rather than an exception on purpose: ~100 call sites in
+    tests and harnesses call ``tool.execute()`` directly and read the string;
+    they keep working unchanged, while ``execute_tool_call`` sees the type
+    and sets ``success=False`` without inspecting the text. Anything that
+    rebuilds the string (f-string, concatenation) yields a plain str, so
+    wrap at the point of return, not upstream.
+    """
+
+
+# Backstop for tools not yet returning ToolFailure (third-party, or a site
+# this sweep missed). Matching is PREFIX-only and deliberately narrow. Tool
+# output that merely *contains* the word error — run_command relaying stderr,
+# read_file returning a log file — must stay a success. A tool whose whole
+# result starts with one of these markers is reporting its own failure.
 _FAILURE_PREFIXES = ("Error:", "Error executing")
 
 
 def result_reports_failure(result_str: str) -> bool:
-    """True if a tool's returned string is itself an error report."""
+    """True if a tool's returned string is itself an error report.
+
+    Explicit ``ToolFailure`` first; the prefix match is the legacy backstop.
+    """
+    if isinstance(result_str, ToolFailure):
+        return True
     return bool(result_str) and result_str.lstrip().startswith(_FAILURE_PREFIXES)
 
 
@@ -229,9 +249,9 @@ class ToolRegistry:
             result_str = await tool.execute(**coerced_args)
             elapsed = (time.monotonic() - start) * 1000
 
-            # No tool raises to signal failure — they return "Error: ...".
-            # Honor that convention here, at the one chokepoint every tool
-            # call passes through, instead of at 44 call sites.
+            # No tool raises to signal failure — they return a ToolFailure
+            # (or, legacy, an "Error: ..." string). Honor that here, at the one
+            # chokepoint every tool call passes through, not at 65 call sites.
             failed = result_reports_failure(result_str)
             if failed:
                 logger.info("Tool %s reported failure: %s", tool_call.name, result_str[:200])

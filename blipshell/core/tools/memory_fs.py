@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable, Optional
 
-from blipshell.core.tools.base import Tool
+from blipshell.core.tools.base import Tool, ToolFailure
 from blipshell.memory.fs_backend import FSEntry, FSError, MemoryFSBackend
 from blipshell.memory.fs_notes import NotesBackend
 from blipshell.memory.fs_paths import (
@@ -126,7 +126,7 @@ class MemoryViewTool(_MemoryFSToolBase):
         try:
             parsed = parse(path)
         except PathError as e:
-            return f"Error: invalid path: {e}"
+            return ToolFailure(f"Error: invalid path: {e}")
 
         try:
             if parsed.is_root:
@@ -184,7 +184,7 @@ class MemoryCreateTool(_MemoryFSToolBase):
         try:
             parsed = parse(path)
         except PathError as e:
-            return f"Error: invalid path: {e}"
+            return ToolFailure(f"Error: invalid path: {e}")
 
         # Notes — free write, no DB-vector concerns.
         if parsed.tier == Tier.NOTES:
@@ -215,7 +215,7 @@ class MemoryCreateTool(_MemoryFSToolBase):
             await self.backend.create(parsed, content)  # raises FSError with guidance
         except FSError as e:
             return str(e)
-        return f"Cannot create at {path}"
+        return ToolFailure(f"Cannot create at {path}")
 
 
 class MemoryStrReplaceTool(_MemoryFSToolBase):
@@ -248,10 +248,10 @@ class MemoryStrReplaceTool(_MemoryFSToolBase):
         try:
             parsed = parse(path)
         except PathError as e:
-            return f"Error: invalid path: {e}"
+            return ToolFailure(f"Error: invalid path: {e}")
 
         if parsed.is_root or parsed.is_directory:
-            return f"Cannot edit a directory: {path}"
+            return ToolFailure(f"Cannot edit a directory: {path}")
 
         if parsed.tier == Tier.NOTES:
             try:
@@ -304,10 +304,10 @@ class MemoryDeleteTool(_MemoryFSToolBase):
         try:
             parsed = parse(path)
         except PathError as e:
-            return f"Error: invalid path: {e}"
+            return ToolFailure(f"Error: invalid path: {e}")
 
         if parsed.is_root or parsed.is_directory:
-            return f"Cannot delete a directory: {path}"
+            return ToolFailure(f"Cannot delete a directory: {path}")
 
         if parsed.tier == Tier.NOTES:
             try:

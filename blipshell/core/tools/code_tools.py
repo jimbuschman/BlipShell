@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from blipshell.core.tools.base import Tool
+from blipshell.core.tools.base import Tool, ToolFailure
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
 
 if TYPE_CHECKING:
@@ -123,15 +123,15 @@ class GrepTool(Tool):
         search_root = self._resolve(path)
         if not search_root.is_dir():
             if search_root.is_file():
-                return (
+                return ToolFailure(
                     f"Error: '{path}' is a file, not a directory. "
                     f"Use read_file to read this file, or search its parent directory: "
                     f"grep_files(pattern='{pattern}', path='{search_root.parent}')"
                 )
-            return f"Error: '{path}' does not exist. Use list_directory to see available paths."
+            return ToolFailure(f"Error: '{path}' does not exist. Use list_directory to see available paths.")
 
         if output_mode not in ("content", "files_with_matches", "count"):
-            return f"Error: output_mode must be 'content', 'files_with_matches', or 'count'. Got '{output_mode}'."
+            return ToolFailure(f"Error: output_mode must be 'content', 'files_with_matches', or 'count'. Got '{output_mode}'.")
 
         # Resolve type_filter to include glob
         effective_include = include
@@ -140,7 +140,7 @@ class GrepTool(Tool):
             if mapped:
                 effective_include = mapped
             else:
-                return f"Error: Unknown type_filter '{type_filter}'. Known types: {', '.join(sorted(set(self.TYPE_MAP.keys())))}"
+                return ToolFailure(f"Error: Unknown type_filter '{type_filter}'. Known types: {', '.join(sorted(set(self.TYPE_MAP.keys())))}")
 
         # Compile regex
         flags = re.IGNORECASE if case_insensitive else 0
@@ -149,7 +149,7 @@ class GrepTool(Tool):
         try:
             regex = re.compile(pattern, flags)
         except re.error as e:
-            return f"Error: Invalid regex '{pattern}': {e}. Use a valid Python regex."
+            return ToolFailure(f"Error: Invalid regex '{pattern}': {e}. Use a valid Python regex.")
 
         # Compute effective before/after context
         ctx_before = before_context if before_context else context_lines
@@ -382,7 +382,7 @@ class GlobTool(Tool):
     ) -> str:
         search_root = self._resolve(path)
         if not search_root.is_dir():
-            return f"Error: '{path}' is not a directory."
+            return ToolFailure(f"Error: '{path}' is not a directory.")
 
         results = []
         try:
@@ -394,7 +394,7 @@ class GlobTool(Tool):
                     continue
                 results.append(fpath)
         except (OSError, ValueError) as e:
-            return f"Error: {e}"
+            return ToolFailure(f"Error: {e}")
 
         if not results:
             return f"No files found matching '{pattern}' in {path}"

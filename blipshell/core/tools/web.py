@@ -4,7 +4,7 @@ import ipaddress
 import logging
 from urllib.parse import urlparse
 
-from blipshell.core.tools.base import Tool
+from blipshell.core.tools.base import Tool, ToolFailure
 from blipshell.models.tools import ToolDefinition, ToolParameter, ToolParameterType
 
 logger = logging.getLogger(__name__)
@@ -16,23 +16,23 @@ def _is_ssrf_target(url: str) -> str | None:
 
     # Block non-HTTP schemes
     if parsed.scheme not in ("http", "https"):
-        return f"Error: Only http/https URLs are allowed (got '{parsed.scheme}')."
+        return ToolFailure(f"Error: Only http/https URLs are allowed (got '{parsed.scheme}').")
 
     hostname = parsed.hostname or ""
 
     # Block cloud metadata endpoints
     if hostname in ("169.254.169.254", "metadata.google.internal"):
-        return "Error: Access to cloud metadata endpoints is blocked."
+        return ToolFailure("Error: Access to cloud metadata endpoints is blocked.")
 
     # Block localhost variants
     if hostname in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
-        return "Error: Access to localhost is blocked."
+        return ToolFailure("Error: Access to localhost is blocked.")
 
     # Block private IP ranges
     try:
         addr = ipaddress.ip_address(hostname)
         if addr.is_private or addr.is_loopback or addr.is_link_local:
-            return f"Error: Access to private/internal IP {hostname} is blocked."
+            return ToolFailure(f"Error: Access to private/internal IP {hostname} is blocked.")
     except ValueError:
         pass  # hostname is a domain name, not an IP — that's fine
 
@@ -124,9 +124,9 @@ class WebSearchTool(Tool):
                 return f"No results found for: {query}"
             return "\n---\n".join(results)
         except ImportError:
-            return "Error: No search backend available. Install tavily-python or ddgs."
+            return ToolFailure("Error: No search backend available. Install tavily-python or ddgs.")
         except Exception as e:
-            return f"Search error: {e}"
+            return ToolFailure(f"Search error: {e}")
 
 
 class WebFetchTool(Tool):
@@ -205,9 +205,9 @@ class WebFetchTool(Tool):
                 return text
 
         except ImportError:
-            return "Error: httpx and/or beautifulsoup4 packages not installed."
+            return ToolFailure("Error: httpx and/or beautifulsoup4 packages not installed.")
         except Exception as e:
-            return f"Fetch error: {e}"
+            return ToolFailure(f"Fetch error: {e}")
 
     async def _extract_with_llm(self, text: str, prompt: str, url: str) -> str:
         """Process fetched content through an LLM with the given prompt."""
