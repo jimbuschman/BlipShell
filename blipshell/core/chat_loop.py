@@ -1015,7 +1015,7 @@ class ChatLoop:
                                     "\x1b[33m  [Doom-loop pattern detected]\x1b[0m\n"
                                 )
                     except Exception as e:
-                        logger.debug("Doom-loop check error: %s", e)
+                        logger.warning("Doom-loop check error (guardrail skipped this turn): %s", e)  # fail-open by design: a broken guardrail must not block the turn, but it must be SEEN
 
                 if completion_tool_result is not None:
                     # Guardrails: look-before-review gate — cheap, deterministic,
@@ -1037,7 +1037,7 @@ class ChatLoop:
                                 completion_tool_result = None
                                 continue  # Model should read/grep, then complete
                         except Exception as e:
-                            logger.debug("Review grounding gate error: %s", e)
+                            logger.warning("Review grounding gate error (gate skipped): %s", e)  # fail-open by design: a broken guardrail must not block the turn, but it must be SEEN
 
                     # Guardrails: completion audit — the ONE grounded,
                     # difficulty-gated check (deterministic first, LLM-judge
@@ -1096,7 +1096,7 @@ class ChatLoop:
                                 "content": pause_result.message,
                             })
                     except Exception as e:
-                        logger.debug("Pause check error: %s", e)
+                        logger.warning("Pause check error (check skipped): %s", e)  # fail-open by design: a broken guardrail must not block the turn, but it must be SEEN
 
                 # ── Guardrails: trajectory monitor injection ──
                 if config.guardrails and hasattr(config.guardrails, 'build_trajectory_injection'):
@@ -1114,7 +1114,7 @@ class ChatLoop:
                                     "\x1b[2m  [Trajectory checkpoint injected]\x1b[0m\n"
                                 )
                     except Exception as e:
-                        logger.debug("Trajectory injection error: %s", e)
+                        logger.warning("Trajectory injection error (checkpoint skipped): %s", e)  # fail-open by design: a broken guardrail must not block the turn, but it must be SEEN
 
                 continue
 

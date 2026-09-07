@@ -309,3 +309,36 @@ async def test_transform_applies_to_every_turn_including_tool_results():
         m.get("content") or "" for m in client.sent_messages[1]
     )
     assert secret not in second_turn
+
+
+@pytest.mark.asyncio
+async def test_broken_guardrail_is_fail_open_but_logged_at_warning(caplog):
+    """Guardrail internals fail OPEN by design — a broken check must not block
+    the turn. But it used to log at DEBUG, so a guardrail that had been
+    throwing on every turn for weeks was invisible. The decision is fail-open
+    AND visible: WARNING, naming the guardrail."""
+    import logging
+
+    engine = GuardrailsEngine(GuardrailsConfig(enabled=True), router=RecordingRouter(result="PASS"))
+    engine.original_request = "rename a variable"
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("doom detector exploded")
+    engine.check_doom_loop = _boom
+
+    reg = make_registry(
+        FakeTool("edit_file", result="edited"),
+        FakeTool("task_complete", result="renamed it"),
+    )
+    with caplog.at_level(logging.WARNING, logger="blipshell.core.chat_loop"):
+        result, _ = await _run(
+            [
+                {"tools": [("edit_file", {"path": "a.py"})]},
+                {"tools": [("task_complete", {"summary": "renamed it", "files_modified": "a.py"})]},
+            ],
+            reg, guardrails=engine,
+        )
+    assert result.completion_method == "tool"  # the turn still completed
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("Doom-loop check error" in r.getMessage() and "exploded" in r.getMessage()
+               for r in warnings), [r.getMessage() for r in caplog.records]

@@ -139,7 +139,7 @@ async def confirm_correction(router, user_message: str,
         )
         return reply.strip().upper().startswith("YES")
     except Exception as e:
-        logger.debug("Correction judge failed (fail-closed, no lesson): %s", e)
+        logger.warning("Correction judge failed (fail-closed, no lesson written): %s", e)
         return False
 
 
