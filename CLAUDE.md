@@ -366,6 +366,17 @@ isolated, 300s/job timeout, Ollama-dependent jobs skipped when it's down.
 lessons, self-thoughts) to `data/mirror/*.md` — EXPORT-ONLY transparency
 (hand-edits are not read back; regenerated wholesale), gitignored because it
 is the distilled personal layer. `/nightly` command or `blipshell nightly --quiet`.
+**`batch_tag` progress is monotonic since 2026-09-08**: every memory a batch
+examines leaves the pool, either with >1 tags or with the `_skip` marker
+(`sqlite_store.BATCH_TAG_SKIP_MARKER`, excluded from the pool by NAME — counted
+as a tag it never lifted a memory out of a "<=1" pool). Before that the
+pool was re-read newest-first with no cursor and the marker was gated on
+`allow_new_tags` (never on in the nightly), so the Sep 2 run re-sent the same
+ten memories until the 270s budget ran out: 11 touched, 17,080 in the pool.
+"Stopped early" now carries `remaining_pool` + `est_hours_to_drain`; the job
+returns `checked`, which is what `blipshell nightly --job batch_tag --loop`
+keys on, so that command is the drain (ask before tying up the GPU).
+Junk vocabulary (`nnone`, from the model writing NONE) is purged each run.
 Entity merge/prune are config-gated with dry-run defaults (see the ARCHIVE
 mandate above); `cleanup_entities.py --apply` and the old `entity_cleanup` job
 hard-delete — do not use them.

@@ -181,6 +181,53 @@ API key still redacted); no-op when Presidio loads; refuses when only cloud
 exists; holds on the error-fallback hop; `pii.enabled=false` disables it;
 `exclude` accepts str and set.
 
+## Part F — batch_tag re-sent the same memories every batch  (code) — DONE 2026-09-08
+
+**Symptom.** Nightly `batch_tag` "hit its time budget and stopped early".
+Stopping early is by design (270s of a 300s job); the defect is that it
+made no progress. Sep 2 nightly (from `memory_tags` timestamps): 11
+memories touched, 6 of them given exactly one vague tag ("neutral",
+"cold") and still at the FRONT of the pool. Pool: 17,080 active memories
+with <=1 tag (11,097 with none). Tag activity per nightly: ~20 rows.
+
+**Cause.** `get_poorly_tagged_memory_ids` returned the 10 newest <=1-tag
+memories, every batch, with no cursor. A memory only left the pool with
+>=2 valid tags. The `_skip` escape hatch was written only when
+`allow_new_tags` was on (the nightly never sets it), and `_skip` counted as
+a tag, so even when written it left a memory at one tag inside a "<=1"
+pool. With `allow_new_tags` off, model tags outside the 155-name vocabulary
+were dropped silently — a memory about TV shopping had nowhere to go. The
+vocabulary also held a junk tag, `nnone`, that had been handed out.
+
+**Changes.** Every examined memory leaves the pool: >1 real tags, or the
+skip marker, regardless of `allow_new_tags`; the pool query excludes the
+marker by NAME and accepts `exclude_ids` so a run never re-sends what it
+has already examined even if a marker write fails. An LLM error marks
+nothing (it says nothing about the memories). Junk names are never
+offered, never stored, and `purge_tags` removes them each nightly run.
+`tag_all` reports `checked` (the key `nightly --loop` reads, so
+`blipshell nightly --job batch_tag --loop` is the drain), `remaining_pool`,
+`avg_batch_seconds`, `est_hours_to_drain`, and the nightly warning carries
+the job's `stop_reason` instead of a bare "work remains". Stale comment
+claiming RANKING routes to qwen2.5:14b removed (config: qwen3:14b).
+
+Validated on the Sep 2 corpus copy: pool count 17,080 in 0.11s; second
+batch disjoint from the first; purge would remove 1 tag (`nnone`).
+
+**Tests.** `tests/test_batch_tagger_pool.py` (real SQLite): every examined
+memory leaves the pool; one vague tag is kept but the memory is marked; LLM
+failure marks nothing; consecutive batches are new work and the run ends
+with `remaining_pool == 0`; junk never offered/stored; purge is idempotent;
+`_skip` alone is not a tag for the pool. `test_batch_tagger_budget.py`: stop
+reason carries remaining + ETA. `test_nightly_reporting.py`: the reason
+reaches the report warning.
+
+**Not decided here.** Throughput: batches of 10 through qwen3:14b with
+thinking on is at best 50-90 memories per 270s night; 17,080 is months.
+`batch_tag_batch_size: 25` (summaries average 212 chars) would be 2.5x, or
+one `--loop` drain when the GPU is free. Per-batch seconds will show in the
+next nightly report, which is the number to size from.
+
 ## Ollama PC follow-up (NOT done — needs that machine)
 
 1. `git pull` (after commit).

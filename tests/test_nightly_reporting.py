@@ -183,6 +183,24 @@ class TestReportHonesty:
         report = _report(sqlite)
         assert any("stopped early" in w for w in report["warnings"])
 
+    async def test_stop_reason_is_carried_into_the_warning(self, monkeypatch, db_path):
+        """A bare "work remains" could not distinguish one slow night from a
+        pool that never shrinks (batch_tag re-sent the same ten memories for
+        weeks). The job's own account of what is left must reach the report."""
+        async def stopped():
+            return {"checked": 40, "stopped_early": True,
+                    "stop_reason": "time budget reached after 4 batches; 17040 memories remain, ~48.2h of tagging at this rate"}
+
+        sqlite = FakeMeta()
+        runner = _runner(db_path, sqlite)
+        _install_jobs(runner, monkeypatch, {"batch_tag": stopped})
+
+        await runner.run()
+
+        report = _report(sqlite)
+        matching = [w for w in report["warnings"] if w.startswith("batch_tag: stopped early")]
+        assert matching and "17040 memories remain" in matching[0] and "48.2h" in matching[0]
+
     async def test_per_item_timeouts_reach_warnings(self, monkeypatch, db_path):
         """friction_analysis reports these as `timed_out`, not `failed`."""
         async def partial():

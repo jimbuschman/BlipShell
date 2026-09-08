@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -35,6 +35,9 @@ class _StubBatchTagger(BatchTagger):
     def __init__(self, per_batch_seconds: float, *, total_available: int = 1000):
         # Bypass parent __init__ — we don't need sqlite/router/config wired
         self.sqlite = MagicMock()
+        self.sqlite.count_poorly_tagged_memories = AsyncMock(
+            side_effect=lambda max_tags=1: self._remaining,
+        )
         self.router = MagicMock()
         self.config = _FakeMemoryConfig()
         self.allow_new_tags = False
@@ -42,17 +45,21 @@ class _StubBatchTagger(BatchTagger):
         self._remaining = total_available
         self.batches_called = 0
 
-    async def tag_batch(self) -> dict:
+    async def tag_batch(self, exclude_ids=None) -> dict:
         await asyncio.sleep(self._per_batch_seconds)
         self.batches_called += 1
         if self._remaining <= 0:
-            return {"memories_in_batch": 0, "memories_tagged": 0, "tags_assigned": 0, "error": None}
+            return {"memories_in_batch": 0, "memory_ids": [], "memories_tagged": 0,
+                    "tags_assigned": 0, "memories_marked_skip": 0, "error": None}
         consumed = min(self.config.batch_tag_batch_size, self._remaining)
+        start = self._remaining
         self._remaining -= consumed
         return {
             "memories_in_batch": consumed,
+            "memory_ids": list(range(start, start - consumed, -1)),
             "memories_tagged": consumed,
             "tags_assigned": consumed * 2,
+            "memories_marked_skip": 0,
             "error": None,
         }
 
@@ -101,3 +108,18 @@ async def test_tag_all_budget_with_quick_drain():
     # Pool drained naturally — stopped_early should remain False.
     assert result["stopped_early"] is False
     assert result["memories_tagged"] == 20
+
+
+@pytest.mark.asyncio
+async def test_stop_reason_reports_remaining_and_eta():
+    """'Stopped early' must come with how much is left and how long it takes
+    at the measured rate — a bare 'work remains' hid a pool that never shrank."""
+    tagger = _StubBatchTagger(per_batch_seconds=0.1, total_available=10_000)
+    result = await tagger.tag_all(time_budget_seconds=0.5)
+    assert result["stopped_early"] is True
+    assert result["remaining_pool"] == tagger._remaining
+    assert result["avg_batch_seconds"] and result["avg_batch_seconds"] > 0
+    assert result["est_hours_to_drain"] is not None
+    assert f"{result['remaining_pool']} memories remain" in result["stop_reason"]
+    # and the key `blipshell nightly --loop` reads is populated
+    assert result["checked"] == 10_000 - tagger._remaining

@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 # CLEAR the embedding" — None is a meaningful value on that column.
 _UNSET = object()
 
+# Marker the batch tagger leaves on a memory it has examined and could not
+# bring above the pool threshold (see SQLiteStore.get_poorly_tagged_memory_ids).
+BATCH_TAG_SKIP_MARKER = "_skip"
+
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2711,22 +2715,90 @@ class SQLiteStore:
         rows = await cursor.fetchall()
         return [r["memory_id"] for r in rows]
 
+    # Marker the batch tagger leaves on a memory it has already examined and
+    # could not bring above max_tags. Excluded from the pool by NAME, not by
+    # counting it as a tag: counted, a memory carrying only `_skip` still has
+    # one tag and sits in a "<= 1 tag" pool forever. That, plus the marker
+    # only being written when allow_new_tags was on (never, in the nightly),
+    # is how the Sep 2026 nightly re-sent the same ten newest memories every
+    # batch until its budget ran out — 11 memories touched, 17,080 in the pool.
+    BATCH_TAG_SKIP_MARKER = BATCH_TAG_SKIP_MARKER
+
+    def _poorly_tagged_where(self, exclude_ids) -> tuple[str, list]:
+        params: list = []
+        sql = (
+            "m.is_archived = 0 AND m.summary IS NOT NULL "
+            "AND m.id NOT IN (SELECT mt2.memory_id FROM memory_tags mt2 "
+            "                 JOIN tags t2 ON t2.id = mt2.tag_id WHERE t2.name = ?)"
+        )
+        params.append(self.BATCH_TAG_SKIP_MARKER)
+        ids = [int(i) for i in (exclude_ids or ())]
+        if ids:
+            sql += f" AND m.id NOT IN ({','.join('?' * len(ids))})"
+            params.extend(ids)
+        return sql, params
+
     async def get_poorly_tagged_memory_ids(
-        self, max_tags: int = 1, limit: int = 500,
+        self, max_tags: int = 1, limit: int = 500, exclude_ids=None,
     ) -> list[int]:
-        """Get IDs of non-archived memories with few tags."""
+        """IDs of active memories with at most `max_tags` tags, newest first.
+
+        Memories carrying the batch-tag skip marker are excluded by name (see
+        BATCH_TAG_SKIP_MARKER). `exclude_ids` lets a caller skip memories it
+        has already examined this run, so consecutive batches are new work.
+        """
+        where, params = self._poorly_tagged_where(exclude_ids)
         cursor = await self._db.execute(
-            """SELECT m.id FROM memories m
-               LEFT JOIN memory_tags mt ON mt.memory_id = m.id
-               WHERE m.is_archived = 0 AND m.summary IS NOT NULL
-               GROUP BY m.id
-               HAVING COUNT(mt.id) <= ?
-               ORDER BY m.timestamp DESC
-               LIMIT ?""",
-            (max_tags, limit),
+            f"""SELECT m.id FROM memories m
+                LEFT JOIN memory_tags mt ON mt.memory_id = m.id
+                WHERE {where}
+                GROUP BY m.id
+                HAVING COUNT(mt.id) <= ?
+                ORDER BY m.timestamp DESC
+                LIMIT ?""",
+            (*params, max_tags, limit),
         )
         rows = await cursor.fetchall()
         return [r["id"] for r in rows]
+
+    async def count_poorly_tagged_memories(self, max_tags: int = 1) -> int:
+        """Size of the batch-tag pool (same predicate as the id query)."""
+        where, params = self._poorly_tagged_where(None)
+        cursor = await self._db.execute(
+            f"""SELECT COUNT(*) FROM (
+                    SELECT m.id FROM memories m
+                    LEFT JOIN memory_tags mt ON mt.memory_id = m.id
+                    WHERE {where}
+                    GROUP BY m.id
+                    HAVING COUNT(mt.id) <= ?
+                )""",
+            (*params, max_tags),
+        )
+        return (await cursor.fetchone())[0]
+
+    async def purge_tags(self, names: list[str]) -> int:
+        """Remove junk tag names from the vocabulary and every link to them.
+
+        For tags that should never have existed (the model wrote "NONE" and a
+        lenient sanitiser stored "nnone"). Tag rows are vocabulary, not
+        memories or entities — the ARCHIVE mandate does not apply. Returns
+        the number of tag rows removed.
+        """
+        if not names:
+            return 0
+        placeholders = ",".join("?" * len(names))
+        cursor = await self._db.execute(
+            f"SELECT id FROM tags WHERE name IN ({placeholders})", names,
+        )
+        tag_ids = [r["id"] for r in await cursor.fetchall()]
+        if not tag_ids:
+            return 0
+        ph = ",".join("?" * len(tag_ids))
+        for table in ("memory_tags", "core_memory_tags", "lesson_tags"):
+            await self._db.execute(f"DELETE FROM {table} WHERE tag_id IN ({ph})", tag_ids)
+        await self._db.execute(f"DELETE FROM tags WHERE id IN ({ph})", tag_ids)
+        await self._db.commit()
+        return len(tag_ids)
 
     async def get_well_tagged_memory_sample(
         self, min_tags: int = 3, limit: int = 30,

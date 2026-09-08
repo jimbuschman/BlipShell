@@ -2,6 +2,15 @@
 
 Sends batches of poorly-tagged memories to an LLM for direct tag assignment.
 Designed for overnight/nightly runs when the GPU is free.
+
+Progress is monotonic: every memory a batch examines LEAVES the pool — either
+it now carries more than `max_tags` tags, or it is marked with the skip
+marker (SQLiteStore.BATCH_TAG_SKIP_MARKER) so it is never re-sent. Before
+2026-09-08 the pool was re-read newest-first with no cursor and the marker
+was only written when `allow_new_tags` was on (never, in the nightly), so a
+memory the model gave one vague tag — "neutral", "cold" — was re-sent on
+every batch until the time budget ran out. The Sep 2 nightly touched 11
+memories against a pool of 17,080.
 """
 
 from __future__ import annotations
@@ -18,8 +27,18 @@ if TYPE_CHECKING:
 
 from blipshell.llm.prompts import batch_assign_tags
 from blipshell.llm.router import TaskType
+from blipshell.memory.sqlite_store import BATCH_TAG_SKIP_MARKER
 
 logger = logging.getLogger(__name__)
+
+# The pool predicate: a memory with this many tags or fewer needs tagging.
+POOL_MAX_TAGS = 1
+
+# Names that are the model saying "nothing fits", not tags. They must never
+# be offered in the prompt, never be stored, and be purged if already there:
+# "nnone" reached the vocabulary through the lenient sanitiser and was then
+# assigned to memories as if it meant something.
+JUNK_TAG_NAMES = frozenset({"none", "nnone", "n/a", "na", "null", "nil"})
 
 
 class BatchTagger:
@@ -38,13 +57,16 @@ class BatchTagger:
         self.allow_new_tags = allow_new_tags
 
     async def _get_available_tags(self) -> list[str]:
-        """Get all known tag names for the prompt."""
-        return await self.sqlite.get_all_tag_names()
+        """Known tag names offered to the model — minus markers and junk."""
+        names = await self.sqlite.get_all_tag_names()
+        return [n for n in names if n != BATCH_TAG_SKIP_MARKER and n not in JUNK_TAG_NAMES]
 
-    async def _load_batch(self, batch_size: int) -> list[tuple[int, str]]:
+    async def _load_batch(
+        self, batch_size: int, exclude_ids: Optional[set[int]] = None,
+    ) -> list[tuple[int, str]]:
         """Load a batch of poorly-tagged memories (id, summary)."""
         memory_ids = await self.sqlite.get_poorly_tagged_memory_ids(
-            max_tags=1, limit=batch_size,
+            max_tags=POOL_MAX_TAGS, limit=batch_size, exclude_ids=exclude_ids,
         )
         if not memory_ids:
             return []
@@ -74,6 +96,7 @@ class BatchTagger:
 
         When allow_new_tags is False (default), only tags in valid_tags are kept.
         When True, any well-formed tag is accepted (enables vocabulary growth).
+        Junk names (JUNK_TAG_NAMES) are dropped in both modes.
         """
         assignments: dict[int, list[str]] = {}
         # Strip thinking tokens if present (qwen3 and some cloud models)
@@ -109,6 +132,8 @@ class BatchTagger:
                 tag = re.sub(r"[^a-z0-9\-_]", "", tag)
                 if not tag or len(tag) < 2 or len(tag) > 40:
                     continue
+                if tag in JUNK_TAG_NAMES or tag == BATCH_TAG_SKIP_MARKER:
+                    continue
                 if allow_new_tags or tag in valid_tags:
                     tags.append(tag)
 
@@ -117,17 +142,23 @@ class BatchTagger:
 
         return assignments
 
-    async def tag_batch(self) -> dict:
+    async def tag_batch(self, exclude_ids: Optional[set[int]] = None) -> dict:
         """Process one batch of poorly-tagged memories via LLM.
 
-        Returns stats: {memories_in_batch, memories_tagged, tags_assigned, error}.
+        Every memory in the batch leaves the pool afterwards: it either has
+        more than POOL_MAX_TAGS tags now, or it is marked with the skip
+        marker. Returns stats: {memories_in_batch, memory_ids,
+        memories_tagged, tags_assigned, memories_marked_skip, error}.
         """
         batch_size = self.config.batch_tag_batch_size
-        summaries = await self._load_batch(batch_size)
+        summaries = await self._load_batch(batch_size, exclude_ids)
+        batch_ids = [mid for mid, _ in summaries]
         stats = {
             "memories_in_batch": len(summaries),
+            "memory_ids": batch_ids,
             "memories_tagged": 0,
             "tags_assigned": 0,
+            "memories_marked_skip": 0,
             "error": None,
         }
 
@@ -144,37 +175,43 @@ class BatchTagger:
 
         try:
             response = await self.router.generate(
-                TaskType.RANKING,  # routes to qwen2.5:14b — 20x faster, similar quality
+                TaskType.RANKING,  # see config.yaml models.ranking for the model
                 user_prompt,
                 system=system_prompt,
             )
         except Exception as e:
+            # The batch is NOT marked: an LLM failure says nothing about the
+            # memories, and marking them would hide them from the next run.
             logger.error("Batch tagger LLM call failed: %s", e)
             stats["error"] = str(e)
             return stats
 
-        assignments = self._parse_response(response, summaries, valid_tags, allow_new_tags=self.allow_new_tags)
+        assignments = self._parse_response(
+            response, summaries, valid_tags, allow_new_tags=self.allow_new_tags,
+        )
 
-        tagged_ids = set()
         for memory_id, tags in assignments.items():
             try:
                 await self.sqlite.tag_memory(memory_id, tags)
                 stats["memories_tagged"] += 1
                 stats["tags_assigned"] += len(tags)
-                tagged_ids.add(memory_id)
             except Exception as e:
                 logger.error("Failed to tag memory %d: %s", memory_id, e)
 
-        # Mark untagged memories with _skip so they leave the poorly-tagged
-        # pool and don't cycle through every batch forever. These are either
-        # too short/generic to tag or the model returned NONE for them.
-        if self.allow_new_tags:
-            for mid, _ in summaries:
-                if mid not in tagged_ids:
-                    try:
-                        await self.sqlite.tag_memory(mid, ["_skip"])
-                    except Exception:
-                        pass
+        # Whatever is still at or under the pool threshold has had its turn:
+        # the model returned NONE, invented names outside the vocabulary, or
+        # offered a single tag. Mark it so it leaves the pool and the next
+        # batch is new work. (Was gated on allow_new_tags — i.e. never ran in
+        # the nightly — and did not remove the memory from a <=1 pool anyway.)
+        counts = await self.sqlite.get_tags_for_memories(batch_ids)
+        for mid in batch_ids:
+            real = [t for t in counts.get(mid, []) if t != BATCH_TAG_SKIP_MARKER]
+            if len(real) <= POOL_MAX_TAGS:
+                try:
+                    await self.sqlite.tag_memory(mid, [BATCH_TAG_SKIP_MARKER])
+                    stats["memories_marked_skip"] += 1
+                except Exception as e:
+                    logger.warning("Failed to mark memory %d as skipped: %s", mid, e)
 
         return stats
 
@@ -194,18 +231,27 @@ class BatchTagger:
                 don't get killed by an outer wait_for. Stats include
                 ``stopped_early`` and ``stop_reason`` when triggered.
 
-        Returns combined stats.
+        Returns combined stats. ``checked`` is the number of memories examined
+        (the key `blipshell nightly --loop` uses to decide whether a pass did
+        work); ``remaining_pool``, ``avg_batch_seconds`` and
+        ``est_hours_to_drain`` say how far from done the pool is, so a
+        "stopped early" is a number rather than a shrug.
         """
         if max_batches is None:
             max_batches = self.config.batch_tag_max_batches
 
         total_stats = {
             "batches": 0,
+            "checked": 0,
             "memories_tagged": 0,
             "tags_assigned": 0,
+            "memories_marked_skip": 0,
             "errors": 0,
             "stopped_early": False,
             "stop_reason": None,
+            "remaining_pool": None,
+            "avg_batch_seconds": None,
+            "est_hours_to_drain": None,
         }
 
         deadline: Optional[float] = None
@@ -216,6 +262,9 @@ class BatchTagger:
         # budget check adapts to whichever endpoint actually serves the job.
         avg_batch_seconds = 0.0  # unset until first real measurement
         safety_margin_seconds = 5.0
+        # Belt and braces with the skip marker: even if a marker write fails,
+        # this run never re-sends a memory it has already examined.
+        attempted: set[int] = set()
 
         for batch_num in range(max_batches):
             # Time-budget gate: leave room for ~one more batch + safety.
@@ -231,8 +280,6 @@ class BatchTagger:
                         f"batches ({remaining:.1f}s remaining < "
                         f"{avg_batch_seconds:.1f}s avg + {safety_margin_seconds:.1f}s margin)"
                     )
-                    if on_status:
-                        on_status(total_stats["stop_reason"])
                     break
 
             if on_status and batch_num % 10 == 0:
@@ -242,7 +289,7 @@ class BatchTagger:
                 )
 
             batch_start = time.monotonic()
-            batch_stats = await self.tag_batch()
+            batch_stats = await self.tag_batch(exclude_ids=attempted)
             batch_elapsed = time.monotonic() - batch_start
             total_stats["batches"] += 1
 
@@ -251,8 +298,11 @@ class BatchTagger:
                     on_status("No more poorly-tagged memories.")
                 break
 
+            attempted.update(batch_stats.get("memory_ids", ()))
+            total_stats["checked"] += batch_stats["memories_in_batch"]
             total_stats["memories_tagged"] += batch_stats["memories_tagged"]
             total_stats["tags_assigned"] += batch_stats["tags_assigned"]
+            total_stats["memories_marked_skip"] += batch_stats.get("memories_marked_skip", 0)
             if batch_stats["error"]:
                 total_stats["errors"] += 1
 
@@ -263,11 +313,34 @@ class BatchTagger:
             else:
                 avg_batch_seconds = 0.5 * avg_batch_seconds + 0.5 * batch_elapsed
 
+        # How far from done — measured, not guessed.
+        try:
+            remaining = await self.sqlite.count_poorly_tagged_memories(max_tags=POOL_MAX_TAGS)
+        except Exception as e:  # a readout must never fail the job
+            logger.warning("Could not count remaining pool: %s", e)
+            remaining = None
+        total_stats["remaining_pool"] = remaining
+        if avg_batch_seconds > 0.0:
+            total_stats["avg_batch_seconds"] = round(avg_batch_seconds, 1)
+            if remaining is not None:
+                batch_size = max(1, self.config.batch_tag_batch_size)
+                total_stats["est_hours_to_drain"] = round(
+                    remaining / batch_size * avg_batch_seconds / 3600.0, 1,
+                )
+        if total_stats["stopped_early"] and remaining is not None:
+            total_stats["stop_reason"] += (
+                f"; {remaining} memories remain"
+                + (f", ~{total_stats['est_hours_to_drain']}h of tagging at this rate"
+                   if total_stats["est_hours_to_drain"] is not None else "")
+            )
+
         if on_status:
             on_status(
                 f"Batch tagging complete: {total_stats['batches']} batches, "
+                f"{total_stats['checked']} examined, "
                 f"{total_stats['memories_tagged']} memories tagged, "
                 f"{total_stats['tags_assigned']} tags assigned, "
+                f"{total_stats['memories_marked_skip']} marked skip, "
                 f"{total_stats['errors']} errors."
                 + (f" (stopped early: {total_stats['stop_reason']})"
                    if total_stats["stopped_early"] else "")

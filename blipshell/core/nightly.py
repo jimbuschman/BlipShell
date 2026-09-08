@@ -501,11 +501,17 @@ class NightlyRunner:
         killed mid-batch by the outer ``wait_for``. Remaining work resumes
         the next nightly run.
         """
+        from blipshell.memory.batch_tagger import JUNK_TAG_NAMES
+        # "nnone" et al. reached the vocabulary via a lenient sanitiser and
+        # were then handed out as tags. Idempotent; usually removes nothing.
+        purged = await self.sqlite.purge_tags(sorted(JUNK_TAG_NAMES))
         tagger = BatchTagger(self.sqlite, self.router, self.config.memory)
-        return await tagger.tag_all(
+        result = await tagger.tag_all(
             on_status=on_status,
             time_budget_seconds=_JOB_TIMEOUT - 30,
         )
+        result["junk_tags_purged"] = purged
+        return result
 
     async def _job_prune(self, on_status) -> dict:
         """Archive old low-value memories, then sweep their vectors.
@@ -1569,9 +1575,11 @@ class NightlyRunner:
             # Partial progress — the job ran out of budget and will resume
             # next night. Not an error, but the work is not done.
             if job_result.get("stopped_early"):
-                warnings.append(
-                    f"{job_name}: stopped early (time budget) — work remains"
-                )
+                # Carry the job's own account of how much remains — a bare
+                # "work remains" gave no way to tell a one-night overrun from
+                # a pool that never shrinks (batch_tag, Sep 2026).
+                reason = job_result.get("stop_reason") or "time budget"
+                warnings.append(f"{job_name}: stopped early — {reason}")
             # A handler that swallowed its own exception and reported it as a
             # soft warning (e.g. _job_backup returning backup_path=None).
             if job_result.get("warning"):
