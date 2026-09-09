@@ -102,7 +102,8 @@ class TestRevision:
 
         stats = await um.revise_from_reflections()
 
-        assert stats == {"revised": False, "reason": "no new evidence"}
+        assert stats == {"revised": False, "reason": "no new evidence",
+                         "commits": 0, "commits_pending": 0}
         assert router.generate.await_count == 1
 
     async def test_backlog_beyond_limit_is_not_lost(self, sqlite_store):

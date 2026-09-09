@@ -134,15 +134,34 @@ class UserModel:
         # about its own conversations; commit history is external ground
         # truth about what the user actually did. Best-effort — git problems
         # never block the revision.
+        # Commits come off a durable queue and are acknowledged only once the
+        # revision they fed has been persisted (or honestly judged empty);
+        # a revision that fails leaves them pending for the next night.
+        from blipshell.memory.commit_ingest import (
+            CommitEvidence,
+            acknowledge_commit_evidence,
+            collect_commit_evidence,
+        )
         try:
-            from blipshell.memory.commit_ingest import collect_commit_evidence
-            commit_lines = await collect_commit_evidence(self._sqlite)
+            commit_ev = await collect_commit_evidence(self._sqlite)
         except Exception as e:
             logger.warning("Commit evidence collection failed: %s", e)
-            commit_lines = []
+            commit_ev = CommitEvidence()
+        commit_lines = commit_ev.lines
+
+        async def _ack_commits():
+            if not commit_ev.ids:
+                return
+            try:
+                await acknowledge_commit_evidence(self._sqlite, commit_ev.ids)
+            except Exception as e:
+                logger.warning("Could not acknowledge commit evidence (will be re-fed): %s", e)
+
+        commit_stats = {"commits": len(commit_ev.ids),
+                        "commits_pending": commit_ev.pending_after}
 
         if not rows and not commit_lines:
-            return {"revised": False, "reason": "no new evidence"}
+            return {"revised": False, "reason": "no new evidence", **commit_stats}
         evidence = [text for text, _ in rows] + commit_lines
         # Reflection watermark only moves past reflections actually read; a
         # commits-only night leaves it where it was.
@@ -162,19 +181,23 @@ class UserModel:
             # is no reflection position to record, so leave the key unset.)
             if watermark:
                 await self._sqlite.set_metadata(UPDATED_KEY, watermark)
+            await _ack_commits()  # judged, not lost
             return {"revised": False, "reason": "model concluded nothing",
-                    "evidence": len(evidence)}
+                    "evidence": len(evidence), **commit_stats}
 
         doc = enforce_cap(response)
         if not doc:
-            return {"revised": False, "reason": "empty after cap"}
+            # Nothing persisted, so nothing acknowledged: the evidence is re-fed.
+            return {"revised": False, "reason": "empty after cap", **commit_stats}
 
         await self._sqlite.set_metadata(DOC_KEY, doc)
         if watermark:
             await self._sqlite.set_metadata(UPDATED_KEY, watermark)
+        await _ack_commits()
         logger.info(
             "User model revised: %d lines from %d reflections",
             len(doc.splitlines()), len(evidence),
         )
         return {"revised": True, "lines": len(doc.splitlines()),
-                "evidence": len(evidence), "tokens": estimate_tokens(doc)}
+                "evidence": len(evidence), "tokens": estimate_tokens(doc),
+                **commit_stats}

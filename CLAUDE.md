@@ -423,6 +423,15 @@ ten memories until the 270s budget ran out: 11 touched, 17,080 in the pool.
 returns `checked`, which is what `blipshell nightly --job batch_tag --loop`
 keys on, so that command is the drain (ask before tying up the GPU).
 Junk vocabulary (`nnone`, from the model writing NONE) is purged each run.
+**Commit evidence for the user model is a durable queue** (2026-09-09, V3 A4,
+`memory/commit_ingest.py`, table `commit_evidence` unique on repo+sha):
+acquisition cursor (newest acquired epoch, no +1) is separate from
+consumption; rows are drained oldest-first, 10 per project per night, and
+marked consumed only after `revise_from_reflections` persisted the doc (or
+honestly concluded nothing). Before this, `--max-count=10` newest-first plus a
+watermark past the newest collected commit dropped anything older forever,
+and the watermark was stamped before the model ran. `update_user_model`
+stats show `commits_pending`; a growing number means revisions keep failing.
 Entity merge/prune are config-gated with dry-run defaults (see the ARCHIVE
 mandate above); `cleanup_entities.py --apply` and the old `entity_cleanup` job
 hard-delete — do not use them.

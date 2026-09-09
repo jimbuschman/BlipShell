@@ -232,6 +232,21 @@ Fix: a durable evidence queue keyed by `(repo identity, commit hash)`; drain in
 bounded batches oldest-first; acknowledge only after the derived update is
 stored; acquisition cursor separate from revision cursor. `tests/test_commit_ingest.py`
 covers the watermark but not the >10 case - add it with a real temp repo.
+**As built (2026-09-09):** table `commit_evidence` (unique on
+`(repo_root, sha)`, status pending/consumed). `acquire_commits` runs
+`git log --since=@cursor` with NO count cap into the queue; the cursor is
+the newest acquired epoch with no +1, because the hash is the identity and
+a same-second re-read is an ignored insert. A never-seen project takes its
+newest `MAX_INITIAL_COMMITS` (50) only - older history predates tracking.
+`collect_commit_evidence` acquires then drains oldest-first, 10 per project,
+returning `CommitEvidence(lines, ids, acquired, pending_after)`;
+`acknowledge_commit_evidence(ids)` is called by `UserModel.revise_from_reflections`
+only after the doc is persisted or the model honestly concluded nothing. A
+raised revision leaves the rows pending. The legacy watermark key seeds the
+cursor once so an upgraded install does not re-queue judged commits. The
+nightly `update_user_model` stats now carry `commits` and `commits_pending`.
+Test-writing lesson: git's `--since` matches NOTHING for tiny epochs
+(`@1000`), so pinned test dates must sit in a realistic range.
 
 ### A5. Parallel partition ignores read/write (MEDIUM)
 

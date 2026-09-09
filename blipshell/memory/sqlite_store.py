@@ -345,6 +345,26 @@ CREATE TABLE IF NOT EXISTS follow_ups (
 
 CREATE INDEX IF NOT EXISTS idx_follow_ups_status ON follow_ups(status);
 
+-- Durable queue of commits awaiting use as user-model evidence (V3 A4).
+-- Unique on (repo_root, sha): the hash is the identity, not the timestamp.
+-- Rows are 'pending' until the revision that used them has persisted, then
+-- 'consumed'. Owned by memory/commit_ingest.py.
+CREATE TABLE IF NOT EXISTS commit_evidence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project TEXT NOT NULL,
+    repo_root TEXT NOT NULL,
+    sha TEXT NOT NULL,
+    epoch INTEGER NOT NULL,
+    subject TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    consumed_at DATETIME,
+    UNIQUE(repo_root, sha)
+);
+
+CREATE INDEX IF NOT EXISTS idx_commit_evidence_pending
+    ON commit_evidence(status, project, epoch);
+
 CREATE TABLE IF NOT EXISTS friction_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER,
