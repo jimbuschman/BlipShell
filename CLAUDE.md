@@ -183,8 +183,20 @@ blipshell/
   `memory.time_aware_search` toggles it. Evidence: temporal is every memory
   system's worst benchmark category and time-range filtering its best-attested
   fix (FIELD_SURVEY_2026_09.md 3.1).
-- **Context assembly** (memory/manager.py): 5 token-budget pools — core 5%,
-  lessons 5%, active_session 30%, recent_history 20%, recall 40% — with rollover.
+- **Context assembly** (memory/manager.py + agent_chat `_build_messages`):
+  4 item pools — core 5%, lessons 5%, recent_history 20%, recall 40% — plus
+  the conversation window (the active_session 30% share, spent on ROLE
+  MESSAGES, never pool items). **Since 2026-09-09 (V3 B1-B3)** the
+  conversation appears exactly once (it used to be mirrored into the system
+  message AND appended as role messages); turns that fall out of the window
+  are summarised into RecentHistory once (`history_summarized_upto`); the
+  request is budgeted as a whole (measured prefix + tool schemas + reply
+  reserve, then pools); Recall packs first and RecentHistory skips memory
+  ids Recall already sent; packing SKIPS an oversized item instead of
+  stopping, recording the reason; recalled memories render a QUERY-RELEVANT
+  excerpt (`memory/excerpt.py`) with their speaker instead of the first
+  1,200 chars; and the trace has retrieved / sent / omitted stages, which
+  `/why` prints. The continuity set is the gate for all of it.
 - **Entity graph** (memory/entity_extractor.py): LLM triple extraction; 4-stage
   resolution — alias routing (merged names → canonical, follows chains) → exact
   match, typed on `(name, entity_type)` → embedding (≥0.85 auto-merge,

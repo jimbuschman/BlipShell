@@ -75,6 +75,10 @@ class Pool:
         self.hard_cap = hard_cap
         self.max_items = max_items  # Hard cap on number of items
         self._items: list[PoolItem] = []
+        # (item, reason) for everything the last get_top_entries left out -
+        # "over budget" | "item cap" | "already sent via Recall". Read by the
+        # /why trace so an omission is explained, not silent (V3 B2).
+        self.last_omitted: list[tuple[PoolItem, str]] = []
 
     @property
     def used_tokens(self) -> int:
@@ -100,19 +104,26 @@ class Pool:
         the request through another pool (V3 B1: Recall beats RecentHistory).
         """
         selected = []
+        omitted: list[tuple[PoolItem, str]] = []
         used = 0
         effective_cap = min(available_tokens, max_override or self.hard_cap or self.max_tokens)
 
         for item in self._items:
             if self.max_items and len(selected) >= self.max_items:
-                break
+                omitted.append((item, "item cap"))
+                continue
             if exclude_memory_ids and item.memory_id and item.memory_id in exclude_memory_ids:
+                omitted.append((item, "already sent via Recall"))
                 continue
             if used + item.estimated_tokens <= effective_cap:
                 selected.append(item)
                 used += item.estimated_tokens
             else:
-                break
+                # SKIP and keep packing. This used to `break`: one long
+                # top-priority item emptied the whole pool (101-token first
+                # item under a 100-token cap selected nothing - review F5).
+                omitted.append((item, "over budget"))
+        self.last_omitted = omitted
         return selected
 
     def get_oldest_items(self, count: int) -> list[PoolItem]:
@@ -295,6 +306,14 @@ class MemoryManager:
 
     def get_pool(self, name: str) -> Pool | None:
         return self._pools.get(name)
+
+    def last_omitted(self) -> list[tuple[str, int, str]]:
+        """(pool, memory_id, reason) for everything the last gather left out."""
+        out = []
+        for pool in self._pools.values():
+            for item, reason in pool.last_omitted:
+                out.append((pool.name, item.memory_id, reason))
+        return out
 
     def get_usage(self) -> dict[str, dict]:
         """Get usage stats for all pools."""

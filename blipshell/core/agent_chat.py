@@ -1024,10 +1024,16 @@ class ChatMixin:
         search_stats = self.search.last_search_stats or {}
         # Held on the agent for /why (instant), and persisted in the
         # search_complete event below (survives the session).
+        # Stages (V3 B3): "retrieved" is what search produced; "sent" and
+        # "omitted" are stamped by _build_messages once the budget has decided.
+        # "injected" is kept as an alias of "retrieved" for older readers.
         self._last_retrieval_trace = {
             "query": query[:200],
             "stats": search_stats,
+            "retrieved": trace_items,
             "injected": trace_items,
+            "sent": [],
+            "omitted": [],
         }
         await self._log_event("search_complete", {
             "injected": trace_items,
@@ -1356,6 +1362,7 @@ class ChatMixin:
         # self-thought fatigue at the real render boundary (_build_messages is
         # sync; the charge is an async store write).
         self._last_rendered_pool_texts = {i.text for i in memory_items}
+        self._stamp_trace_stages(memory_items)
 
         # Build memory context string organized by pool.
         # Order: Core (stable facts) → Recall (most relevant search results) first.
@@ -1441,6 +1448,46 @@ class ChatMixin:
             messages.append(om)
 
         return messages
+
+    def _stamp_trace_stages(self, memory_items) -> None:
+        """Split the turn's retrieval trace into sent vs omitted (V3 B3).
+
+        The trace used to be recorded before gather_memory decided what fit,
+        under "injected", and /why printed it as if the model had seen it.
+        Memory items are matched by id; core/lesson items (no memory id) by
+        their preview appearing in a rendered Recall text. Omissions carry
+        the pool's reason ("over budget", "item cap", "already sent via
+        Recall") or "not selected".
+        """
+        trace = getattr(self, "_last_retrieval_trace", None)
+        if not isinstance(trace, dict):
+            return
+        retrieved = trace.get("retrieved") or trace.get("injected") or []
+        recall_items = [i for i in memory_items if getattr(i, "pool_name", "") == "Recall"]
+        sent_ids = {i.memory_id for i in recall_items if getattr(i, "memory_id", 0)}
+        sent_texts = [i.text for i in recall_items]
+        try:
+            reasons = {
+                mid: why for pool, mid, why in self.memory_manager.last_omitted()
+                if pool == "Recall" and mid
+            }
+        except Exception:
+            reasons = {}
+        sent, omitted = [], []
+        for it in retrieved:
+            if it.get("source") == "memory":
+                if it.get("id") in sent_ids:
+                    sent.append(it)
+                else:
+                    omitted.append({**it, "reason": reasons.get(it.get("id"), "not selected")})
+            else:
+                probe = (it.get("preview") or "")[:40]
+                if probe and any(probe in t for t in sent_texts):
+                    sent.append(it)
+                else:
+                    omitted.append({**it, "reason": "not selected"})
+        trace["sent"] = sent
+        trace["omitted"] = omitted
 
     @staticmethod
     def _render_time_anchor() -> str:

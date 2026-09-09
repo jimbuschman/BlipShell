@@ -66,7 +66,7 @@ fixing - code moves.
 | Stage | Status |
 |---|---|
 | A - Correctness | **DONE 2026-09-09.** A1 (2026-09-08), A2+A3, A4, A5, A6 all built, tested, merged to main; structured-dedup measured (A1 "Measured"). Gate below met |
-| B - Context contract | not started |
+| B - Context contract | B1, B2, B3 BUILT 2026-09-09; B4 (provenance fields) next. Gate so far: survival 0.833 -> 1.0, exclusion 0.429 -> 0.571, duplicated renders 16 -> 0 |
 | C - Continuity set | deterministic half BUILT 2026-09-09, baseline taken (survival 0.833, exclusion 0.429, 16 duplicated renders); model half not started |
 | D - Accountable lessons | not started |
 | E - Project dossier + decisions | not started |
@@ -338,6 +338,22 @@ move to the role-message history (by token count of the appended window), or
 prefix, tools, history, recall, response reserve) is budgeted against the
 selected endpoint's `context_tokens`; on fallback to a smaller window, rebuild
 from the same evidence records instead of only changing `context_limit`.
+**As built (2026-09-09):** `SessionManager.add_message` no longer feeds the
+pool; `_build_messages` selects the newest turns that fit the ActiveSession
+token share (the current turn always), and turns that fall out are summarised
+into RecentHistory once via `SessionManager.history_summarized_upto` +
+`MemoryManager.schedule_overflow_summary` (the coupling above, re-homed).
+`_build_system_prefix()` builds and MEASURES the fixed prefix first; tool
+schemas are counted; the reply gets `min(2048, window/8)`; a 512-token floor
+for conversation+memory is logged at WARNING when hit. Unused history share
+rolls into Recall. `_last_context_stats` reports every part. The
+second duplication - recent-session content via Recall AND RecentHistory -
+is closed by Recall-first packing with `exclude_memory_ids` and by giving
+unsummarised sessions per-memory items with ids. **Not built:** rebuilding
+the request on fallback to a smaller window; the endpoint switch re-sends the
+same messages and compaction (`config.context_limit` follows the endpoint) is
+the safety net. Revisit only if a real fallback overflows.
+`tests/test_context_contract.py`.
 
 ### B2. Pool packing that skips instead of stopping
 
@@ -347,6 +363,12 @@ Fix: per-pool rule. Recall and Lessons **skip** an oversized item and keep
 packing (record why it was omitted). Core may reserve slots. Conversation is
 chronological, never independently packed. Every rejected item leaves a
 reason in the trace.
+**As built (2026-09-09):** `Pool.get_top_entries` skips and keeps packing
+for every pool (items are independent evidence; "Core reserves slots" was
+not needed - Core items are short), and records `last_omitted` as
+`(item, reason)` with reason in {over budget, item cap, already sent via
+Recall}; `MemoryManager.last_omitted()` flattens it per pool. The
+conversation is never packed as items any more (B1). `tests/test_pool_packing.py`.
 
 ### B3. Query-relevant passages, and a `/why` that tells the truth
 
@@ -364,6 +386,21 @@ and passage offsets. The trace records four stages separately: **retrieved,
 selected, serialized, sent** (per request attempt, so a fallback shows which
 endpoint saw what). `/why` reports *sent*, labelled honestly: transmission is
 not proof the model relied on it. Recall rendering shows the speaker.
+**As built (2026-09-09):** `memory/excerpt.py` - sentence window around the
+lexical matches of the query, neighbours added while they fit, ellipses at
+the cuts, prefix fallback when nothing matches lexically (a vector-only hit
+still gets the opening). Used by Recall and by `search_memories`. Recall
+items render `[time] speaker: text`; `PoolItem` carries `memory_id`,
+`source`, `speaker`, `session_id`; `SearchResult` carries `role`,
+`session_id`. Trace stages built are **retrieved / sent / omitted** (with the
+pool's reason) - "selected" and "serialized" collapsed into "sent" because
+in chat the selected set IS the serialized set IS the request; per-attempt
+tracking across an endpoint switch was not built (the switch re-sends the
+same messages, so the answer would be identical). `/why` prints what was
+sent, the omitted count by reason, and the transmission-is-not-reliance
+caveat. Passage offsets and "expand by memory id" were not built - the
+excerpt text plus `memory_id` on the item is enough for `search_memories`
+to fetch the whole memory. `tests/test_excerpt.py`, `tests/test_trace_stages.py`.
 
 ### B4. Minimal provenance, now (not the full graph)
 

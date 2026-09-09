@@ -175,27 +175,47 @@ def _guardrails(ctx: CommandContext):
 @cmd("why", help="Why did it bring that up? The last turn's retrieval trace",
      section="Memory")
 async def _why(ctx: CommandContext):
-    """Anti-confabulation: the ACTUAL trace of what memory search injected
-    last turn — not the model's guess about its own attention."""
+    """Anti-confabulation: what memory search actually SENT last turn - not
+    the model's guess about its own attention, and (since V3 B3) not what was
+    merely retrieved: the budget decides what reaches the request, and this
+    prints that decision. Transmission is still not proof of reliance."""
     trace = getattr(ctx.agent, "_last_retrieval_trace", None)
     if not trace:
         ctx.console.print("[dim]No retrieval trace yet — ask something first.[/dim]")
         return
 
     ctx.console.print(f"[bold]Retrieval trace[/bold] [dim]for:[/dim] {trace['query']}")
-    injected = trace.get("injected") or []
-    if not injected:
+    sent = trace.get("sent")
+    omitted = trace.get("omitted") or []
+    retrieved = trace.get("retrieved") or trace.get("injected") or []
+    if sent is None:  # trace recorded before the budget stage ran
+        sent = retrieved
+    if not sent:
         ctx.console.print(
-            "[dim]Nothing was injected — the model answered from "
-            "conversation context alone (or confabulated; now you know).[/dim]"
+            "[dim]Nothing was sent — the model answered from conversation "
+            "context alone (or confabulated; now you know).[/dim]"
         )
-    for item in injected:
+    else:
+        ctx.console.print(f"[dim]sent to the model ({len(sent)}):[/dim]")
+    for item in sent:
         label = {"memory": "mem", "core": "CORE", "lesson": "lesson"}.get(
             item["source"], item["source"])
+        who = f" {item['speaker']}:" if item.get("speaker") else ""
         ctx.console.print(
-            f"  [cyan]{item['score']:<6}[/cyan] [dim]{label:<7}[/dim] "
+            f"  [cyan]{item['score']:<6}[/cyan] [dim]{label:<7}[/dim]{who} "
             f"{item['preview']}"
         )
+    if omitted:
+        reasons: dict[str, int] = {}
+        for o in omitted:
+            reasons[o.get("reason", "?")] = reasons.get(o.get("reason", "?"), 0) + 1
+        detail = ", ".join(f"{k} x{v}" for k, v in sorted(reasons.items()))
+        ctx.console.print(
+            f"[dim]retrieved but not sent: {len(omitted)} ({detail})[/dim]"
+        )
+    ctx.console.print(
+        "[dim]  'sent' = it was in the request; that does not prove the model relied on it.[/dim]"
+    )
 
     stats = trace.get("stats") or {}
     parts = []
