@@ -1410,9 +1410,19 @@ class ChatMixin:
         Returns combined scratchpad content, or empty string if none exist.
         """
         parts = []
+        # Anchored to the CONFIG FILE, never the cwd - the same class of bug as
+        # the split-database incident (CLAUDE.md Conventions): `blipshell` is an
+        # installed console script, so a cwd-relative "data/" is wherever the
+        # user happened to be standing.
+        from blipshell.core.config import resolve_config_relative
+        config_path = getattr(getattr(self, "config_manager", None), "config_path", None)
+
+        def _anchored(*rel: str) -> str:
+            return resolve_config_relative(os.path.join(*rel), config_path)
+
         # Project-specific scratchpad
         if self.active_project:
-            proj_path = os.path.join("data", f"scratchpad_{self.active_project['name']}.md")
+            proj_path = _anchored("data", f"scratchpad_{self.active_project['name']}.md")
             if os.path.exists(proj_path):
                 try:
                     with open(proj_path, "r", encoding="utf-8") as f:
@@ -1422,7 +1432,7 @@ class ChatMixin:
                 except Exception as e:
                     logger.warning("Failed to load project scratchpad %s: %s", proj_path, e)
         # General scratchpad
-        general_path = os.path.join("data", "scratchpad.md")
+        general_path = _anchored("data", "scratchpad.md")
         if os.path.exists(general_path):
             try:
                 with open(general_path, "r", encoding="utf-8") as f:

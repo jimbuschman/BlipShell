@@ -56,7 +56,7 @@ fixing - code moves.
 
 | Stage | Status |
 |---|---|
-| A - Correctness | A1 BUILT 2026-09-08 (`v3/a1-dedup-parser`, merged). A2 + A3 BUILT 2026-09-09 (`v3/a2-a3-loop-recovery`, two commits). Structured-dedup measurement: see A1 "Measured". A4-A6 not started |
+| A - Correctness | **DONE 2026-09-09.** A1 (2026-09-08), A2+A3, A4, A5, A6 all built, tested, merged to main; structured-dedup measured (A1 "Measured"). Gate below met |
 | B - Context contract | not started |
 | C - Continuity set | not started |
 | D - Accountable lessons | not started |
@@ -258,6 +258,13 @@ reads parallelize; writes run sequentially in declared order. Extend to
 `pure_read | external_read | idempotent_write | mutating_write | exclusive`
 only when a real conflict shows up - the two-class split is the right first
 version.
+**As built (2026-09-09):** no new field - tools already declare
+`read_only` for plan mode, and that is the effect flag. `_partition_for_parallel`
+now sequences anything not `read_only`, anything unknown to the registry,
+approval-gated tools when a callback exists, and `ask_user`; only read-only
+tools parallelize. `tests/test_parallel_partition.py` drives the real loop
+with timeline-recording tools: writes never overlap and keep announced
+order, reads still overlap, results stay in announced order.
 
 ### A6. Small ones, same change set
 
@@ -271,10 +278,32 @@ version.
 - **Test count drift**: the review counted 2,001 passing on Python 3.12;
   CLAUDE.md says 1,620. Recount and fix the doc.
 
+**As built (2026-09-09):** numpy declared; `tests/test_declared_dependencies.py`
+walks `blipshell/` with `ast`, keeps unguarded imports (not inside
+try/except or TYPE_CHECKING), maps roots to distributions and requires each
+to be declared - the clean-install check that runs on every dev-box suite
+run instead of only in a fresh venv. `_read_scratchpad` anchors through
+`resolve_config_relative(..., config_manager.config_path)`;
+`tests/test_scratchpad_anchor.py` reads from a different cwd with a decoy
+`data/scratchpad.md` in it. Count fixed in the docs commit on 2026-09-08.
+**Surfaced, not fixed:** `core/nightly.py` imports `scripts.backup_db` and
+`scripts.backfill_session_summaries` - repo-root modules outside the
+package. They resolve under an editable install (the .pth puts the repo root
+on `sys.path`) and would fail under a wheel install regardless of cwd. Both
+machines run editable installs today; the dependency test exempts `scripts`
+explicitly rather than passing silently. Moving those two modules into the
+package is a small, separate change.
+
 **Stage A gate:** failure injection preserves completed actions; every
 announced tool id pairs with a result before every outbound request; the two
 quoted dedup replies archive nothing; twelve commits ingest as twelve; a
 clean venv imports `blipshell.core.nightly`. All deterministic, all here.
+**Gate status 2026-09-09:** met, with one substitution - the clean-venv
+import check is the AST dependency test above (runs every suite run) rather
+than an actual fresh venv, which the two-PC setup has no CI to provide.
+Tests: `test_endpoint_retry`, `test_tool_budget_pairing`,
+`test_dedup_decision`, `test_commit_ingest`, `test_parallel_partition`,
+`test_declared_dependencies`, `test_scratchpad_anchor`.
 
 ---
 

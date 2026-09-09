@@ -93,6 +93,12 @@ blipshell/
   every send as a backstop and logs at WARNING when it had to act; a raising
   tool becomes a failure result on both the sequential and parallel paths.
   `tests/test_tool_budget_pairing.py`.
+- **Only `read_only` tools run in parallel** (2026-09-09, V3 A5). The
+  partition used to sequence only approval-gated tools (when a callback
+  existed) and `ask_user`, so in normal chat every mutating tool in a batch
+  ran concurrently. `read_only` - the flag plan mode already trusts - is the
+  effect class; writes run sequentially in announced order, unknown tools
+  are sequential. `tests/test_parallel_partition.py`.
 - Executor extras: file cache + stale-file detection, context compaction
   (mechanical first, LLM summarization when needed, recent messages preserved).
   (A `[STATE]` block and an 80%/95% budget wind-down were documented here for
@@ -473,6 +479,16 @@ hard-delete — do not use them.
   anchoring fixed the known cause, the guard catches the class ("an absent
   SQLite file is a creation, not a failure"). Fresh installs set it false;
   post-load overrides (`simulate --db`, benchmark temp DBs) are untouched.
+- **Every unguarded third-party import must be a declared dependency**
+  (2026-09-09, V3 A6): `tests/test_declared_dependencies.py` walks the
+  package with `ast` and maps imports to distributions, because the dev box
+  never sees a clean install (numpy was undeclared for months; the external
+  review's fresh venv failed collection in five files). Optional extras go
+  inside `try/except` - that is what the walker treats as guarded. The
+  scratchpad read is anchored through `resolve_config_relative` like the
+  database (`tests/test_scratchpad_anchor.py`). Known and exempted:
+  `nightly.py` imports repo-root `scripts.*` modules, which only resolve
+  under an editable install.
 - **A test that compares the config VALUE instead of the resolved TARGET is
   vacuous.** `test_same_path_from_any_working_directory` passed with anchoring
   disabled, because unanchored the string stays `"data/blipshell.db"` from
