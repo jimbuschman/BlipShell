@@ -61,3 +61,7 @@ reasoning_spike.txt
 # Claude Code per-machine permission allowlist. It once carried the Tailscale
 # endpoint; it is local by name and by nature.
 .claude/settings.local.json
+
+# D2a attribution evaluation sets: personal correction text, never committed
+# (summaries with numbers only go to benchmark_results/).
+data/attribution_eval/

@@ -674,11 +674,37 @@ explicitly approves phase 2.
   `lesson_wrong` false-positive rate, flagging when positives < 10;
   `--label ID ATTRIBUTION [LESSON_ID]` records a human label.
 
-**Evaluation plan (next, on the Ollama PC):** let corrections accumulate;
-seed the labelled set from the live DB's existing correction-detector
-lessons (their text IS the correction), re-judged through the same path;
-label 30-50 including >= 10-15 `lesson_wrong`; run the judge 3 times;
-readout prints the gate. Nothing else moves until then.
+**Evaluation boundary, as built (2026-09-09, `memory/attribution_eval.py`,
+`python -m scripts.attribution_eval`):** the user's rules, enforced in code -
+- `build --generation pre-D1` collects items from the `corrections` table
+  (exact `lessons_present`) and from the historical correction-detector
+  lessons (their content carries the user's words and the previous reply;
+  the lesson set in context is RECONSTRUCTED as the top-30-by-importance
+  lessons that existed at the time, flagged `reconstructed_top30` because
+  per-query Recall hits cannot be recovered). The set records the
+  `selection_behavior` it was built under. Building refuses to overwrite a
+  frozen set.
+- `label` writes a human label per item (the lesson must have been present);
+  `freeze` requires every item labelled, then makes the set read-only and
+  reports the census with a warning below 10 `lesson_wrong` positives.
+- `run --url --model --repeats 3` refuses an unfrozen set, never writes to
+  the store, and scores per-class agreement, `lesson_wrong` false-positive
+  rate, unattributed rate, and repeat spread; the gate is printed
+  (agreement >= 0.8, FP <= 0.1, spread < 0.1, positives >= 10) with the
+  reminder that passing still needs explicit approval.
+- Every run records `judge_hash` (system prompt + prompt template). The
+  first run on a generation is the **baseline**; a later run with a
+  different hash is reported as `changed-from-<hash>` - a new judge version,
+  never merged into the baseline. A run after D1 goes in a NEW generation
+  (`post-D1`); populations are never combined.
+- Texts stay in `data/attribution_eval/` (added to .gitignore); the
+  committed summary in `benchmark_results/` is numbers-only
+  (`kind: attribution_eval`).
+
+**Sequence (unchanged):** build + label + freeze against the CURRENT
+selection behaviour -> run the baseline (Ollama PC) -> D1 may proceed ->
+any later evaluation is `post-D1`, a separate generation. No tuning of the
+judge against the held labels after seeing a result.
 
 ### D3. Two creation paths, two promotion rules
 

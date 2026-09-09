@@ -236,6 +236,13 @@ blipshell/
   evaluation (`python -m scripts.attribution_readout`, >= 10-15 genuine
   lesson_wrong positives, agreement >= 0.8, FP <= 0.1) passes and the user
   approves phase 2. Do not add that authority as a side effect of anything.
+  The evaluation itself is `python -m scripts.attribution_eval` (build /
+  label / freeze / run, `memory/attribution_eval.py`): the set is frozen
+  against the CURRENT lesson-selection behaviour and tagged by generation
+  (`pre-D1`); runs record a judge hash and the first run is the baseline;
+  a changed judge is a new version, a post-D1 set is a new generation, and
+  the two are never merged. **D1 (per-turn lesson selection) waits for the
+  pre-D1 baseline.** Set texts live in `data/attribution_eval/` (gitignored).
 - **Entity graph** (memory/entity_extractor.py): LLM triple extraction; 4-stage
   resolution — alias routing (merged names → canonical, follows chains) → exact
   match, typed on `(name, entity_type)` → embedding (≥0.85 auto-merge,
