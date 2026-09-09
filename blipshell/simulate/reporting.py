@@ -106,8 +106,49 @@ def print_suite_summary(con: Console, suite: SimSuiteResult):
     )
 
 
-def export_json(suite: SimSuiteResult, file: IO[str] | None = None) -> str:
-    """Export suite result as JSON. Returns JSON string."""
+RESPONSE_EXCERPT_CHARS = 4000
+
+
+def run_provenance(config=None) -> dict:
+    """What a preserved run needs to be comparable later: commit, host, time,
+    and WHICH models were routed (by endpoint name and role - never a URL, the
+    Tailscale endpoint must not land in a committed file). Scores from
+    different commits or different chat models are different populations."""
+    import platform
+    import subprocess
+    from datetime import datetime, timezone
+
+    try:
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
+                             timeout=10).stdout.strip() or "unknown"
+    except Exception:
+        sha = "unknown"
+    prov = {
+        "kind": "behavioural",
+        "git_sha": sha,
+        "host": platform.node(),
+        "run_ts": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S"),
+    }
+    if config is not None:
+        try:
+            prov["endpoints"] = [
+                {"name": ep.name, "enabled": bool(ep.enabled), "roles": list(ep.roles or []),
+                 "models": dict(getattr(ep, "models", None) or {})}
+                for ep in config.endpoints
+            ]
+            m = config.models
+            prov["models"] = (m.model_dump() if hasattr(m, "model_dump") else
+                              {k: getattr(m, k) for k in ("tool_calling", "coding", "reasoning", "summarization",
+                                                         "session_review") if hasattr(m, k)})
+        except Exception as e:  # provenance must never break a run report
+            prov["endpoints_error"] = str(e)
+    return prov
+
+
+def export_json(suite: SimSuiteResult, file: IO[str] | None = None, provenance: dict | None = None) -> str:
+    """Export suite result as JSON. Returns JSON string. `provenance` (see
+    run_provenance) is stored verbatim; step results carry the reply text so a
+    preserved run can be re-read for miss patterns without re-running it."""
 
     def _serialize(obj):
         """Custom serializer for non-serializable types."""
@@ -116,6 +157,7 @@ def export_json(suite: SimSuiteResult, file: IO[str] | None = None) -> str:
         raise TypeError(f"Not serializable: {type(obj)}")
 
     data = {
+        **(provenance or {}),
         "elapsed_seconds": suite.elapsed_seconds,
         "summary": {
             "total": suite.total,
@@ -147,6 +189,8 @@ def export_json(suite: SimSuiteResult, file: IO[str] | None = None) -> str:
                 "hard_failures": sr.hard_failures,
                 "soft_failures": sr.soft_failures,
                 "error": sr.error,
+                "model_used": sr.model_used,
+                "response": (sr.response or "")[:RESPONSE_EXCERPT_CHARS],
             })
         data["scenarios"].append(scenario_data)
 

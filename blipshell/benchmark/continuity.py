@@ -239,7 +239,7 @@ async def seed_case(agent, case, now: Optional[datetime] = None) -> None:
         # A real project row with a real (empty) root, and the project context
         # the activation path builds - so the dossier reaches the request the
         # way it does in production (E2).
-        root = Path(tempfile.mkdtemp(prefix="blipshell_proj_"))
+        root = Path(tempfile.mkdtemp(prefix="proj_root_", dir=str(Path(agent.config.database.path).parent)))
         if not await agent.sqlite.get_project(case.active_project):
             await agent.sqlite.create_project(case.active_project, root_path=str(root))
         else:

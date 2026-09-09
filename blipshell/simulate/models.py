@@ -110,6 +110,7 @@ class SimStepResult:
     response: str = ""
     tools_called: list[str] = field(default_factory=list)
     tool_call_count: int = 0
+    model_used: dict | None = None  # {endpoint, model, fallback} that produced the reply (chat steps)
     hard_failures: list[str] = field(default_factory=list)
     soft_failures: list[str] = field(default_factory=list)
     error: str | None = None

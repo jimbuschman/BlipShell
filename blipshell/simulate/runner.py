@@ -79,6 +79,7 @@ class SimRunner:
         self.db_path = db_path
         self.use_real_db = use_real_db
         self._temp_db_dir: str | None = None
+        self.last_config = None  # the config the agents booted with (for run provenance)
 
     async def run_suite(
         self,
@@ -306,6 +307,7 @@ class SimRunner:
                 self.on_status(f"  [db] isolated: {db_path}")
 
         agent = Agent(config, config_manager)
+        self.last_config = config
 
         def _on_status(msg: str):
             if not self.quiet:

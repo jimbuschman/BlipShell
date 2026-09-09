@@ -72,7 +72,8 @@ async def seed_return_after_gap(ctx, now: datetime | None = None) -> None:
     then = now - timedelta(days=GAP_DAYS)
     earlier = now - timedelta(days=GAP_DAYS + 6)
 
-    root = Path(tempfile.mkdtemp(prefix="blipshell_gap_"))
+    # under the run's throwaway DB directory, so `_discard_temp_db` removes it
+    root = Path(tempfile.mkdtemp(prefix="gap_root_", dir=str(Path(agent.config.database.path).parent)))
     (root / "README.md").write_text("# notes app\n\nNightly digest export lives in export.py.\n", encoding="utf-8")
     (root / "export.py").write_text("def write_digest(path):\n    ...\n", encoding="utf-8")
     if await sqlite.get_project(PROJECT):

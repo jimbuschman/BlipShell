@@ -37,6 +37,7 @@ class SimStepExecutor:
         response = ""
         tools_called: list[str] = []
         tool_call_count = 0
+        model_used = None
         error: str | None = None
 
         try:
@@ -47,6 +48,7 @@ class SimStepExecutor:
             response = result.get("response", "")
             tools_called = result.get("tools_called", [])
             tool_call_count = result.get("tool_call_count", 0)
+            model_used = result.get("model_used")
         except asyncio.TimeoutError:
             error = f"Step timed out after {step.timeout_seconds}s"
         except Exception as e:
@@ -64,6 +66,7 @@ class SimStepExecutor:
             response=response,
             tools_called=tools_called,
             tool_call_count=tool_call_count,
+            model_used=model_used,
             error=error,
             elapsed_seconds=round(elapsed, 2),
         )
@@ -148,6 +151,7 @@ class SimStepExecutor:
             "response": response,
             "tools_called": tools_called,
             "tool_call_count": tool_call_count,
+            "model_used": dict(getattr(ctx.agent, "_last_model_used", None) or {}) or None,
         }
 
     async def _exec_slash(self, step: SimStep, ctx: "SimContext") -> dict:

@@ -167,6 +167,7 @@ class Agent(
 
         # Set by start_session / chat — initialize here to prevent AttributeError
         self._pending_follow_ups: str = ""
+        self._last_model_used: dict = {}  # {endpoint, model, fallback} of the last chat reply
         self._nightly_notification: str = ""
         self._last_tool_calls: list[dict] = []
 

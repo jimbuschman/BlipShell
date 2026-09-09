@@ -746,6 +746,10 @@ class ChatMixin:
         self._last_tool_calls = [
             {"name": n} for n in (result.tool_call_names if result else [])
         ]
+        # Which endpoint/model actually produced this reply. A behavioural
+        # result is a different population per model, so the runner records
+        # it per step (the configured primary may have been unreachable).
+        self._last_model_used = {"endpoint": endpoint_name, "model": model, "fallback": bool(using_fallback)}
 
         # Event: llm_complete
         await self._log_event("llm_complete", {

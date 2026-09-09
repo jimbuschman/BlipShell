@@ -1116,6 +1116,7 @@ def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios, db_path
         export_json,
         print_scenario_result,
         print_suite_summary,
+        run_provenance,
     )
 
     all_scenarios = collect_all_scenarios()
@@ -1176,7 +1177,7 @@ def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios, db_path
             print_suite_summary(console, suite_result)
 
         if output or quiet:
-            json_str = export_json(suite_result)
+            json_str = export_json(suite_result, provenance=run_provenance(runner.last_config))
             if output:
                 with open(output, "w") as f:
                     f.write(json_str)
