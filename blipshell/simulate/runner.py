@@ -155,6 +155,10 @@ class SimRunner:
         ctx = SimContext(agent, config, config_manager, slash_dispatcher)
 
         try:
+            # Seed the world before the session starts (V3 Stage E scenarios)
+            if scenario.setup:
+                await scenario.setup(ctx)
+
             # Start session
             if scenario.fresh_session:
                 await agent.start_session()

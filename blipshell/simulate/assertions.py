@@ -122,6 +122,13 @@ class AssertionChecker:
                 if Path(fpath).exists():
                     hard.append(f"File should not exist: {fpath}")
 
+        # --- Response scorer (soft: the reply is the model's) ---
+        if step.response_validator:
+            try:
+                soft.extend(step.response_validator(result.response))
+            except Exception as e:
+                hard.append(f"Response validator raised: {e}")
+
         # --- Custom validator ---
         if step.custom_validator:
             try:

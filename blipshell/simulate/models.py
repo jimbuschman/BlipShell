@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 
 class ResultStatus(str, Enum):
@@ -65,8 +65,13 @@ class SimStep:
     expect_files_exist: list[str] | None = None
     expect_files_not_exist: list[str] | None = None
 
-    # Custom validator: (SimContext) -> list[str] (failure messages, empty = pass)
+    # Custom validator: (agent) -> list[str] (HARD failure messages, empty = pass)
     custom_validator: Optional[Callable] = None
+
+    # Response scorer: (response_text) -> list[str] of named misses. SOFT, like
+    # expect_response_contains - the reply is model-dependent - but expressive
+    # enough for sentence-level rules (V3 Stage E: "claims nothing unverified").
+    response_validator: Optional[Callable[[str], list[str]]] = None
 
     # Timeout
     timeout_seconds: float = 120.0
@@ -82,6 +87,10 @@ class SimScenario:
     steps: list[SimStep]
 
     # Setup
+    # Async hook run after the agent boots and BEFORE the session starts, so
+    # seeded state (follow-ups, dossier, memories) loads the way a real return
+    # would. Receives the SimContext. A raising setup fails the scenario.
+    setup: Optional[Callable[[Any], Awaitable[None]]] = None
     requires_project: str | None = None
     requires_project_path: str | None = None
     fresh_session: bool = True
