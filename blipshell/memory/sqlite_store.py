@@ -410,6 +410,24 @@ CREATE TABLE IF NOT EXISTS lesson_uses (
 CREATE INDEX IF NOT EXISTS idx_lesson_uses_lesson ON lesson_uses(lesson_id);
 CREATE INDEX IF NOT EXISTS idx_lesson_uses_session ON lesson_uses(session_id, turn_index);
 
+-- Project events: the deterministic record the dossier is assembled from
+-- (V3 E2). Appended by decisions, task_complete, follow-up tools and session
+-- close; folded into the prose digest by the nightly reconcile. Owned by
+-- memory/project_events.py.
+CREATE TABLE IF NOT EXISTS project_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    ref_kind TEXT,
+    ref_id INTEGER,
+    summary TEXT,
+    source_type TEXT DEFAULT 'assistant_inference',
+    session_id INTEGER,
+    at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_events_project ON project_events(project, at);
+
 CREATE TABLE IF NOT EXISTS corrections (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER,
