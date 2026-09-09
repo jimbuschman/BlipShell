@@ -101,3 +101,56 @@ class TestShouldSkipMemory:
         )
 
 
+
+
+class TestCorrectionSignals:
+    """V3 E1 finding: short corrections were dropped as noise. The added
+    markers are narrow and word-bounded; nothing else about the filter moved."""
+
+    @pytest.mark.parametrize("text", [
+        "Correction: I switched to spaces, four wide, for indentation. Forget tabs.",
+        "Correction: my cat is Luna, not Lunar.",
+        "I no longer use Neovim.",
+        "Not anymore - I moved off Chroma.",
+        "Actually, the Pi is on 192.168.4.78 now.",
+        "Scratch that, it is 4 ohm.",
+        "I prefer spaces now.",
+        "Switched to sqlite-vec last week.",
+        "Use Groq instead of Gemini.",
+        "We changed the threshold to 0.92.",
+        "Revised: nightly runs at 3am.",
+        "Rather than tabs, spaces.",
+        "Forget what I said about Rust.",
+        "I now use Neovim for everything.",
+    ])
+    def test_short_corrections_are_kept(self, text):
+        assert len(text) < 80, "these must be SHORT to test the filter"
+        assert contains_signal_words(text)
+        assert not should_skip_memory(text)
+
+    @pytest.mark.parametrize("text", [
+        "cool, sounds good",
+        "haha nice one",
+        "that was a fun weekend",
+        "the weather is cold today",
+        "great job on that",
+        "actually",              # opener with no clause is still filler
+        "actually lol",
+        "no",
+        "the switch is in the hall",   # 'switch' as a noun, not 'switched to'
+        "a correctional facility",     # not the word 'correction'
+        "instead",                     # bare, no 'of'
+        "preferences page loads slowly",  # 'prefer' as a substring only
+    ])
+    def test_short_non_corrections_are_still_dropped(self, text):
+        assert len(text) < 80
+        assert should_skip_memory(text)
+
+    def test_long_messages_are_unaffected(self):
+        long = "x " * 60
+        assert not should_skip_memory(long + "nothing correction-like here at all")
+        assert not should_skip_memory(long)
+
+    def test_existing_signal_words_still_work(self):
+        assert contains_signal_words("what do you think")
+        assert not contains_signal_words("cold today")

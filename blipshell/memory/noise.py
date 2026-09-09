@@ -49,12 +49,40 @@ def _normalize(text: str) -> str:
     return lower
 
 
+# Correction / revision markers (V3 E1 finding, 2026-09-09). A short message
+# that CHANGES a stored fact is the most important kind of short message and
+# used to be dropped: "Correction: I switched to spaces, four wide, for
+# indentation. Forget tabs." is 74 chars with none of the words above, so it
+# never reached memory, never got a dedup verdict, never superseded anything.
+# Deliberately narrow, matched on word boundaries (not substrings like the
+# set above), and "actually" only as a sentence opener with a clause after it.
+CORRECTION_PATTERN = re.compile(
+    r"(?:"
+    r"\bcorrection\b"
+    r"|\bto correct (?:that|myself|this)\b"
+    r"|^\s*actually[,:]?\s+\S+(?:\s+\S+){2,}"
+    r"|\bno longer\b|\bnot any ?more\b"
+    r"|\binstead of\b"
+    r"|\bswitch(?:ed|ing)? (?:to|from)\b"
+    r"|\bchanged (?:my|our|the|to|it)\b"
+    r"|\bscratch that\b|\bforget (?:that|what i said)\b"
+    r"|\bnow (?:use|using|prefer|on)\b"
+    r"|\b(?:i|we) prefer\b"
+    r"|\brather than\b"
+    r"|\b(?:update|revision|revised)\s*:"
+    r")",
+    re.IGNORECASE,
+)
+
+
 def contains_signal_words(text: str) -> bool:
     """Check if text contains any signal words indicating meaningful content."""
     if not text or not text.strip():
         return False
     lower = text.lower()
-    return any(word in lower for word in SIGNAL_WORDS)
+    if any(word in lower for word in SIGNAL_WORDS):
+        return True
+    return CORRECTION_PATTERN.search(text) is not None
 
 
 def _is_noise(text: str) -> bool:
