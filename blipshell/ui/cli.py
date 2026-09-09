@@ -500,6 +500,8 @@ def setup_logging(verbose: bool = False):
 @click.pass_context
 def main(ctx, resume_last, session_id, project, config_path, verbose):
     """BlipShell - Local LLM personal assistant with persistent memory."""
+    from blipshell.ui.encoding import harden_stdio
+    harden_stdio()  # a reply's emoji must never crash a cp1252 console or a redirected log
     setup_logging(verbose)
 
     ctx.ensure_object(dict)
@@ -1171,20 +1173,24 @@ def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios, db_path
 
         suite_result = await runner.run_suite(scenarios)
 
+        # Persist FIRST: a 20-minute run must survive a cosmetic failure in
+        # the console report (2026-09-09: a reply's emoji crashed the print
+        # on a cp1252 log and the JSON was never written).
+        json_str = None
+        if output or quiet:
+            json_str = export_json(suite_result, provenance=run_provenance(runner.last_config))
+            if output:
+                with open(output, "w", encoding="utf-8") as f:
+                    f.write(json_str)
+
         if not quiet:
             for sr in suite_result.scenario_results:
                 print_scenario_result(console, sr)
             print_suite_summary(console, suite_result)
-
-        if output or quiet:
-            json_str = export_json(suite_result, provenance=run_provenance(runner.last_config))
             if output:
-                with open(output, "w") as f:
-                    f.write(json_str)
-                if not quiet:
-                    console.print(f"\n[dim]Report written to {output}[/dim]")
-            if quiet:
-                print(json_str)
+                console.print(f"\n[dim]Report written to {output}[/dim]")
+        elif json_str is not None:
+            print(json_str)
 
         return suite_result
 
