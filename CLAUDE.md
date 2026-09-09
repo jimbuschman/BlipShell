@@ -276,6 +276,24 @@ blipshell/
 - Also: consolidation (near-dup merging), centroid + batch taggers, lessons with
   project scoping, project digests (stored in project metadata, auto-updated on
   session close).
+- **Project dossier is assembled from records; the digest is one labelled
+  section of it** (2026-09-09, V3 E2, `memory/dossier.py` +
+  `memory/project_events.py`, table `project_events`). Decisions in force
+  with reason and revisit condition, recently superseded decisions, open
+  follow-ups oldest first, last completed work ("claimed by assistant, not
+  verified" until a `verification` event exists - there is no writer for
+  that kind yet, so every completion says claimed), last session, sources.
+  The prose digest renders as `[inferred by the assistant from session
+  summaries]`. "Next useful action" is the oldest open follow-up or "Ask
+  before assuming one" - never invented. Updates are EVENT-DRIVEN: every
+  writer (decision tools, follow-up tools, `task_complete`, session close)
+  appends an event and marks the render stale. The nightly `rebuild_digests`
+  reconciles ACTIVE projects only (event in the last 14 days). Activation
+  injects the dossier as its own block, NOT inside the hour-cached repo
+  scan; its decision memories are skipped by every pool
+  (`MemoryManager.rendered_elsewhere`) and its follow-ups by the OPEN
+  FOLLOW-UPS block, so nothing renders twice. Behavioural gate (resume a
+  project after two weeks, claim nothing unverified) not yet run.
 
 ## LLM routing
 
@@ -392,7 +410,9 @@ blipshell/
   `tests/test_continuity_set.py -s` prints the table. Baseline 2026-09-09:
   survival 0.833, exclusion 0.429, and every recalled memory rendered twice
   (Recall + RecentHistory); after Stages B + E1: 1.0 / 1.0 / 0 over 16
-  cases. `Seed.via="pipeline"` drives the REAL write path with only the
+  cases; after E2: 1.0 / 1.0 / 0 over 17 (cases may set `active_project`
+  to compose the real project context, dossier included). `Seed.via="pipeline"`
+  drives the REAL write path with only the
   dedup verdict scripted, so supersession records are created by production
   code, never fixture metadata. Result files are `kind: context_delivery` —
   they say what reached the request, not what a model did with it; keep

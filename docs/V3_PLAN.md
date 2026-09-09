@@ -69,7 +69,7 @@ fixing - code moves.
 | B - Context contract | **DONE 2026-09-09** (B1-B4). Gate: survival 0.833 -> 1.0, exclusion 0.429 -> 0.571, duplicated renders 16 -> 0. The three cases still failing need SUPERSESSION labelling (see gate note) |
 | C - Continuity set | deterministic half BUILT 2026-09-09, baseline taken (survival 0.833, exclusion 0.429, 16 duplicated renders); model half not started |
 | D - Accountable lessons | D2a phase 1 (record-only attribution) BUILT 2026-09-09; judge has NO authority until the labelled evaluation passes and phase 2 is approved. D1/D3/D4 not started |
-| E - Project dossier + decisions | E1 DONE 2026-09-09 (supersession records + decisions + harness write-path cases; continuity exclusion 0.429 -> 1.0). E2/E3 not started |
+| E - Project dossier + decisions | E1 DONE 2026-09-09 (supersession records + decisions + harness write-path cases; continuity exclusion 0.429 -> 1.0). E2 DONE 2026-09-09 (events + dossier, event-driven, nightly reconcile; continuity 1.0 / 1.0 / 0 over 17 cases). E3 not started. Behavioural gate (return-after-gap simulate) not run |
 | F - Bounded initiative | deferred until E shows reuse |
 
 ---
@@ -862,6 +862,62 @@ session close (`session/manager.py:355`). Add triggers: decision recorded,
 `task_complete`, follow-up resolved, verification observed. The nightly job
 compacts and reconciles active projects only (skip dormant); compare
 preparation cost with later reuse before extending it.
+
+**As built (2026-09-09).** The digest was not extended; it stays prose and is
+wrapped. The dossier is assembled from RECORDS and the prose is one labelled
+section of it.
+
+- **Events** (`memory/project_events.py`, table `project_events`): kinds
+  `decision_recorded | decision_revised | decision_reopened | followup_added |
+  followup_resolved | followup_dismissed | task_completed | verification |
+  session_closed`, each with `summary`, `ref_kind/ref_id`, `session_id`,
+  `source_type` (B4 vocabulary). `record_event` also sets
+  `metadata_json.dossier_stale`, so the next read re-renders. Writers:
+  `memory/decisions.py` (record/revise/reopen), the follow-up tools
+  (add/resolve/dismiss), `TaskCompleteTool(on_complete=...)` ->
+  `agent_project._on_task_complete` (`task_completed`, source
+  assistant_inference - the assistant's CLAIM), session close
+  (`session_closed`, then `dossier.refresh`). No `verification` writer yet:
+  the kind exists so a verified state can be recorded, and until one is,
+  every completion renders "claimed by assistant, not verified". That is
+  the honest default, not a gap to paper over.
+- **Dossier** (`memory/dossier.py`): `build()` is pure reads - decisions in
+  force with `because` and `revisit when`, recently superseded decisions
+  labelled `[superseded <date>]` (E1 rows), open follow-ups oldest first,
+  last completed work (claimed vs verified), last closed session, sources
+  (digest session ids, decision/follow-up/event ids). `render()` is a pure
+  function. The prose digest renders under "Objective and current state"
+  as `[inferred by the assistant from session summaries (updated <date>)]`.
+  "Next useful action" is the oldest open follow-up BY REFERENCE, or
+  "_None recorded - no open follow-up. Ask before assuming one._" - never
+  invented. The render is cached in `metadata_json.dossier_md` and served
+  until an event marks it stale.
+- **Delivery.** Activation appends `=== Project Dossier (auto-maintained)
+  ===` to the project context as its own block (`_dossier_context`) - NOT
+  inside the repo scan, which is cached for an hour. The dossier's
+  decision memories are excluded from every pool
+  (`MemoryManager.rendered_elsewhere`, /why reason "already in the project
+  dossier") and its follow-ups from the OPEN FOLLOW-UPS block; the first
+  build rendered decision text three times (dossier, Recall, RecentHistory)
+  and follow-up text twice, 6 duplicated renders over 3 cases, now 0.
+  Deactivation clears both. `.blipshell/DIGEST.md` exports the dossier.
+- **Nightly.** `rebuild_digests` reconciles ACTIVE projects only
+  (`active_projects(days=14)`): one REASONING call folds the events since
+  `dossier_reconciled_at` into the prose, none when nothing happened;
+  reports `dossiers_reconciled` / `events_folded`. Preparation cost is
+  therefore one call per active project per night at most; reuse is what
+  the behavioural gate below measures.
+- **Harness.** `active_project` on a case composes the real project context
+  (scan + dossier) before the question; seed kinds `followup` and
+  `task_event`; case `project_resume_context` ("Where did we leave off, and
+  what should I do next?") must see the decision with its reason, the open
+  follow-up, and the completion marked as an unverified claim.
+
+**E2 gate 2026-09-09 (context delivery):** survival 1.000, exclusion 1.000,
+labelled 1.000, duplicated renders 0, 17 cases
+(`benchmark_results/continuity__<sha>__20260909T*.json`, kind
+`context_delivery`). The Stage E behavioural gate below (return-after-gap
+simulate, real model) has NOT been run.
 
 ### E3. Runbook memory (shape only)
 
