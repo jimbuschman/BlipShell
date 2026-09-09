@@ -1,8 +1,9 @@
 # CLAUDE.md — Project Context for BlipShell
 
 Current architecture, verified against code 2026-08-05. The old feature-by-feature
-build log lives in `docs/HISTORY.md`; the active plan is `docs/V2_PLAN.md`
-(2026-08-04, supersedes the sequencing in `docs/SYSTEM_REVIEW.md`).
+build log lives in `docs/HISTORY.md`; the active plan is `docs/V3_PLAN.md`
+(2026-09-08: evidence contract + accountable lessons, supersedes the sequencing
+in `docs/V2_PLAN.md`, whose Phase 4/5 leftovers still live there).
 `config.yaml` is the source of truth for models/endpoints/toggles — always check
 it before asserting an assignment.
 
@@ -266,7 +267,7 @@ blipshell/
 
 - **The validation split**: logic/wiring → HERE (pytest, seconds); model
   quality/behavior → Ollama PC only.
-- `tests/` (~69 files, 1620 passing + 3 skipped): `tests/fakes.py`
+- `tests/` (~69 files, 2005 passing + 3 skipped as of 2026-09-08): `tests/fakes.py`
   `ScriptedLLMClient` drives the REAL ChatLoop with canned turns —
   completion detection, guardrails gating, dedup validated deterministically
   (`tests/test_loop_integration.py`). `conftest.py` gives real in-memory SQLite +

@@ -1,5 +1,9 @@
 # BlipShell v2 Plan — Trust First, Then Alive
 
+> **Superseded 2026-09-08 by `docs/V3_PLAN.md`** for sequencing. Phases 0-2 here
+> are done; Phase 4 (alive layer step 2) and the unfinished Phase 5 items carry
+> forward and are still tracked here. New work starts from the v3 plan.
+
 _Date: 2026-08-04. Synthesis of a five-subsystem deep-dive audit (core loop, memory,
 LLM layer, UI/session/alive layer, testing/nightly), the rewrite question, the coding
 direction question, and an external borrow-ideas research pass. Supersedes the
