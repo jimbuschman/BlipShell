@@ -117,6 +117,30 @@ default **off**):
   which is why this is measured, not assumed. Benchmark job `dedup_structured`
   (owned by `models.reasoning` in `JOB_OWNERS`) scores schema-validity rate;
   enable only if it clears ~98%.
+  **Measured 2026-09-09** (`benchmark_results/20260909T025558__qwen3_14b.json`,
+  3 repeats, 144 live calls, cache bypassed - the first run that morning was
+  discarded because every repeat was a 0.0s cache hit; see commit 9539e8d):
+
+  | path | think | valid_rate | accuracy |
+  |---|---|---|---|
+  | text (production) | False | 1.000 | 0.750 |
+  | structured JSON | False | 1.000 | 0.750 |
+  | text | True | 1.000 | 0.750 |
+  | structured JSON | True | 1.000 | 0.806 +/- 0.083 |
+
+  Both grammars accept 100% of what qwen3:14b actually emits, so the schema
+  gate clears - but structured output buys nothing at think=False (identical
+  misses: two NONE-gold cases answered ADD, one UPDATE-gold answered ADD) and
+  costs ~5x latency (median 0.24s text vs 1.30s JSON, from the transcripts).
+  **Decision: `structured_output` stays OFF.** Every
+  miss is in the SAFE direction (ADD keeps both records; nothing wrong was
+  archived), and two of the three are arguable gold - the prompt's own rule
+  "if it adds ANY new information choose ADD" is what the model followed.
+  Do not tune the prompt off this; if redundancy matters, that is
+  consolidation's job. The one thing worth knowing: think=True nudged the
+  JSON path up, not the text path, and cost ~25x latency (median 6-8s, max
+  63s) - not worth it for a background call that already defaults to
+  think=False.
 - Either way: log the candidate set, the raw reply, and the decision at INFO,
   and stamp the ARCHIVED row's metadata with
   `dedup = {action, by, candidates, reply, structured, at}`. `blipshell repair

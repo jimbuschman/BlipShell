@@ -157,7 +157,12 @@ blipshell/
   (see Conventions), so a low valid_rate may be the think flag, not the
   schema — measure a think=True variant before concluding; and local models
   misbehave under schema constraints in thinking modes, which is why this is
-  measured and not assumed. `router.generate(response_format=...)` forwards
+  measured and not assumed. **Measured 2026-09-09 on qwen3:14b (3 live
+  repeats, 144 calls): valid_rate 1.000 on BOTH paths; accuracy 0.750 on
+  both at think=False with identical, safe-direction (ADD) misses; JSON costs
+  ~5x latency. Structured output stays OFF: it clears the gate and buys
+  nothing.** Numbers and reading in V3_PLAN A1.
+  `router.generate(response_format=...)` forwards
   the schema as Ollama `format`; the OpenAI-compat client drops it, so
   validation is the contract, not the constraint.
 - **Search** (memory/search.py): FTS5 + vec0 KNN fused with RRF (k=60), then
