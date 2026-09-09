@@ -1,0 +1,218 @@
+{
+  "schema": 1,
+  "kind": "context_delivery",
+  "git_sha": "65fc944",
+  "run_ts": "20260909T161332",
+  "host": "XTEK-COMPUTER5",
+  "summary": {
+    "cases": 17,
+    "survival_rate": 1.0,
+    "exclusion_rate": 1.0,
+    "labelled_rate": 1.0,
+    "duplicated_renders": 0,
+    "failed": []
+  },
+  "results": [
+    {
+      "name": "control_short_fact",
+      "family": "survival",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 2264,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "fact_buried_past_1200_chars",
+      "family": "survival",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 3321,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "fact_split_across_sessions",
+      "family": "survival",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 2347,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "exact_recall_number",
+      "family": "survival",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 2302,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "abstention_marker_when_nothing_matches",
+      "family": "survival",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 2458,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "paraphrases_do_not_crowd_out_the_source",
+      "family": "survival",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 2506,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "corrected_preference_current_question",
+      "family": "false_recall",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 2320,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "corrected_preference_history_question",
+      "family": "false_recall",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [
+        "I prefer tabs"
+      ],
+      "leaked": [],
+      "request_chars": 2469,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "conflicting_project_state_newer_wins",
+      "family": "false_recall",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 3448,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "unrelated_project_is_not_superseded",
+      "family": "false_recall",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 3545,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "decision_current_question",
+      "family": "false_recall",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [
+        "Keep minimax-m3"
+      ],
+      "leaked": [],
+      "request_chars": 3546,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "decision_history_question",
+      "family": "false_recall",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [
+        "Keep minimax-m3"
+      ],
+      "leaked": [],
+      "request_chars": 3546,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "project_resume_context",
+      "family": "survival",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 3763,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "assistant_speculation_is_not_fact",
+      "family": "false_recall",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [
+        "probably prefer Python"
+      ],
+      "leaked": [],
+      "request_chars": 2284,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "cross_project_value_is_labelled",
+      "family": "false_recall",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [
+        "30 seconds"
+      ],
+      "leaked": [],
+      "request_chars": 3462,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "other_persons_fact_keeps_its_owner",
+      "family": "false_recall",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [
+        "555-0100"
+      ],
+      "leaked": [],
+      "request_chars": 2288,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "stale_external_content_shows_its_age",
+      "family": "false_recall",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [
+        "20 requests per minute"
+      ],
+      "leaked": [],
+      "request_chars": 2301,
+      "duplicated_renders": 0
+    }
+  ]
+}
