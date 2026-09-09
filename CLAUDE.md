@@ -222,8 +222,20 @@ blipshell/
   **Decisions** (`memory/decisions.py`, tools record/revise/reopen/list)
   are memory rows of type `decision` with `DECISION/BECAUSE/REVISIT WHEN`
   content; revising writes a `revises` supersession, reopening undoes it.
-  **Known:** `memory/noise.py` drops sub-80-char messages without a signal
-  word, so a short correction never reaches memory - see V3_PLAN E1.
+  `memory/noise.py` used to drop sub-80-char messages without a signal word,
+  so a short correction never reached memory; `CORRECTION_PATTERN` (narrow,
+  word-bounded) now counts as signal. Keep it narrow - it is tested for
+  negatives too.
+- **Correction attribution is RECORD ONLY** (2026-09-09, V3 D2a phase 1,
+  `memory/attribution.py`): `lesson_uses` logs which lessons reached each
+  request; an accepted correction becomes a `corrections` row with the
+  lessons present on the corrected turn, and a background LOCAL judge stores
+  an attribution (lesson_wrong | lesson_ignored | lesson_misapplied |
+  unrelated | unattributed, strict parse, confidence floor 0.7). **No code
+  reads these to change a lesson**, and none may until the hand-labelled
+  evaluation (`python -m scripts.attribution_readout`, >= 10-15 genuine
+  lesson_wrong positives, agreement >= 0.8, FP <= 0.1) passes and the user
+  approves phase 2. Do not add that authority as a side effect of anything.
 - **Entity graph** (memory/entity_extractor.py): LLM triple extraction; 4-stage
   resolution — alias routing (merged names → canonical, follows chains) → exact
   match, typed on `(name, entity_type)` → embedding (≥0.85 auto-merge,

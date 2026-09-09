@@ -393,6 +393,42 @@ CREATE TABLE IF NOT EXISTS supersessions (
 CREATE INDEX IF NOT EXISTS idx_supersessions_old ON supersessions(old_kind, old_id, undone_at);
 CREATE INDEX IF NOT EXISTS idx_supersessions_new ON supersessions(new_kind, new_id);
 
+-- Correction attribution, phase 1: RECORD ONLY (V3 D2a). Which lessons were
+-- in the request each turn, and each accepted correction with the judge's
+-- attribution stored beside it. Nothing reads these to change a lesson;
+-- phase 2 is gated on a hand-labelled evaluation (human_* columns) and the
+-- user's explicit approval. Owned by memory/attribution.py.
+CREATE TABLE IF NOT EXISTS lesson_uses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lesson_id INTEGER NOT NULL,
+    session_id INTEGER,
+    turn_index INTEGER,
+    selected_by TEXT,
+    at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_lesson_uses_lesson ON lesson_uses(lesson_id);
+CREATE INDEX IF NOT EXISTS idx_lesson_uses_session ON lesson_uses(session_id, turn_index);
+
+CREATE TABLE IF NOT EXISTS corrections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER,
+    turn_index INTEGER,
+    text TEXT NOT NULL,
+    prev_assistant_excerpt TEXT,
+    lessons_present TEXT,
+    attribution TEXT NOT NULL DEFAULT 'unattributed',
+    lesson_id INTEGER,
+    confidence REAL,
+    judged_by TEXT,
+    judged_at DATETIME,
+    judge_raw TEXT,
+    human_attribution TEXT,
+    human_lesson_id INTEGER,
+    human_labelled_at DATETIME,
+    at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS friction_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER,

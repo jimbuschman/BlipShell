@@ -181,6 +181,7 @@ class SessionMixin:
                 session_role="system",
                 priority_score=lesson.importance,
                 source="lesson",
+                memory_id=lesson.id or 0,   # lesson_uses records which were sent (D2a)
             ))
             loaded += 1
         logger.info("Loaded %d/%d lessons (top by importance)", loaded, len(lessons))

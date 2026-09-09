@@ -184,6 +184,9 @@ class ChatMixin:
                 on_token("\n\n\x1b[2m[Reflecting...]\x1b[0m\n\n")
             response = await self._reflect_on_response(user_message, response, on_token)
 
+        # D2a phase 1, record only: which lessons were in this turn's request.
+        await self._record_lesson_uses()
+
         # Add assistant response to session
         if response and response.strip():
             self.session_manager.add_message(MessageRole.ASSISTANT, response)
@@ -244,6 +247,13 @@ class ChatMixin:
         # A correction nudges the affective interior (chastened) — display-only.
         # AFTER the judge, so a story about someone else never chastens.
         await self._update_mood("user_corrected")
+
+        # D2a phase 1: the correction is a RECORD, attributed in the background
+        # by a local judge whose answer is stored and changes nothing else.
+        # `_last_lessons_sent` still holds the PREVIOUS turn's lessons here -
+        # this turn's request has not been built yet - which is exactly the
+        # set that was in context when the corrected reply was produced.
+        await self._record_correction_for_attribution(user_message, prev_assistant)
 
         # Build anti-pattern lesson content
         anti_pattern = (
@@ -1035,6 +1045,7 @@ class ChatMixin:
                     session_role="system",
                     priority_score=similarity + 0.1,
                     source="lesson",
+                    memory_id=int(lr.get("id") or 0),
                 ))
                 trace_items.append({
                     "source": "lesson", "score": round(similarity, 3),
@@ -1065,6 +1076,50 @@ class ChatMixin:
             "lesson_results": lesson_count,
             **search_stats,
         })
+
+    async def _record_lesson_uses(self) -> None:
+        """D2a phase 1, record only. Never raises into the turn."""
+        uses = getattr(self, "_last_lessons_sent", None) or []
+        if not uses or getattr(self, "sqlite", None) is None:
+            return
+        try:
+            from blipshell.memory import attribution
+            await attribution.record_lesson_uses(
+                self.sqlite, session_id=self.session_manager.session_id,
+                turn_index=self._turn_number, uses=uses,
+            )
+        except Exception as e:
+            logger.warning("lesson_uses not recorded this turn: %s", e)
+
+    async def _record_correction_for_attribution(self, user_message: str, prev_assistant: str) -> None:
+        """D2a phase 1: store the correction with the lessons that were present,
+        then judge it in the background. Record only - see memory/attribution.py."""
+        if getattr(self, "sqlite", None) is None:
+            return
+        try:
+            from blipshell.memory import attribution
+            present = [lid for lid, _ in (getattr(self, "_last_lessons_sent", None) or [])]
+            cid = await attribution.record_correction(
+                self.sqlite, session_id=self.session_manager.session_id,
+                turn_index=self._turn_number + 1, text=user_message,
+                prev_assistant=prev_assistant, lessons_present=present,
+            )
+        except Exception as e:
+            logger.warning("Correction not recorded for attribution: %s", e)
+            return
+
+        async def _judge():
+            try:
+                await attribution.attribute_correction(self.sqlite, self.router, cid)
+            except Exception as e:
+                logger.warning("Attribution judge task failed for correction %d: %s", cid, e)
+
+        task = asyncio.create_task(_judge())
+        tasks = getattr(self, "_background_tasks", None)
+        if tasks is not None:
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+        self._last_attribution_task = task
 
     async def _provenance_for(self, table: str, hits: list[dict]) -> dict:
         """id -> (source_type, verification_state) for Recall hits on a derived
@@ -1400,6 +1455,12 @@ class ChatMixin:
         # sync; the charge is an async store write).
         self._last_rendered_pool_texts = {i.text for i in memory_items}
         self._stamp_trace_stages(memory_items)
+        # Which lessons reached THIS request, and how (D2a, record only).
+        self._last_lessons_sent = [
+            (i.memory_id, "pool" if i.pool_name == "Lessons" else "recall")
+            for i in memory_items
+            if getattr(i, "source", "") == "lesson" and getattr(i, "memory_id", 0)
+        ]
 
         # Build memory context string organized by pool.
         # Order: Core (stable facts) → Recall (most relevant search results) first.

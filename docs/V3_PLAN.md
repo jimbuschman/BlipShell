@@ -68,7 +68,7 @@ fixing - code moves.
 | A - Correctness | **DONE 2026-09-09.** A1 (2026-09-08), A2+A3, A4, A5, A6 all built, tested, merged to main; structured-dedup measured (A1 "Measured"). Gate below met |
 | B - Context contract | **DONE 2026-09-09** (B1-B4). Gate: survival 0.833 -> 1.0, exclusion 0.429 -> 0.571, duplicated renders 16 -> 0. The three cases still failing need SUPERSESSION labelling (see gate note) |
 | C - Continuity set | deterministic half BUILT 2026-09-09, baseline taken (survival 0.833, exclusion 0.429, 16 duplicated renders); model half not started |
-| D - Accountable lessons | not started |
+| D - Accountable lessons | D2a phase 1 (record-only attribution) BUILT 2026-09-09; judge has NO authority until the labelled evaluation passes and phase 2 is approved. D1/D3/D4 not started |
 | E - Project dossier + decisions | E1 DONE 2026-09-09 (supersession records + decisions + harness write-path cases; continuity exclusion 0.429 -> 1.0). E2/E3 not started |
 | F - Bounded initiative | deferred until E shows reuse |
 
@@ -645,6 +645,41 @@ similarity alone; any cloud judge for this (corrections are the most
 personal text in the corpus); any change to lesson selection before D1's
 per-turn retrieval exists.
 
+**APPROVED 2026-09-09 as written, with one addition:** the hand-labelled set
+must contain enough genuine `lesson_wrong` positives for the thresholds to
+mean anything - at least 10-15 if the correction history supports it. Phase
+1 stays strictly record-only until the judge passes the gate AND the user
+explicitly approves phase 2.
+
+**Phase 1 as built (2026-09-09), `memory/attribution.py`:**
+- Tables `lesson_uses` (lesson_id, session, turn, selected_by pool|recall)
+  and `corrections` (text, prev assistant excerpt, `lessons_present` ids,
+  judge `attribution`/`lesson_id`/`confidence`/`judge_raw`, and
+  `human_attribution`/`human_lesson_id` for the evaluation).
+- Every turn, `_build_messages` notes which lesson items reached the request
+  (Lessons pool items and Recall lesson hits now carry `memory_id` = lesson
+  id) and `chat()` records them after the turn.
+- An accepted correction (existing regex candidate -> local YES/NO judge,
+  unchanged) writes a corrections row whose `lessons_present` is the
+  PREVIOUS turn's set - the lessons in context when the corrected reply was
+  produced - then a background task runs the attribution judge
+  (`TaskType.REASONING`, local, `think=False`) and stores its verdict.
+  Parsing is strict (id must be one of the present lessons; `unrelated`
+  drops the id; confidence < 0.7 -> `unattributed` with the raw kept).
+- **Authority: none.** No code path reads these tables to change a lesson;
+  `tests/test_attribution.py` asserts pre-existing lessons are byte-identical
+  after a judged correction.
+- `python -m scripts.attribution_readout` (read-only) shows rows, per-lesson
+  counts, and once labels exist the per-class agreement and the
+  `lesson_wrong` false-positive rate, flagging when positives < 10;
+  `--label ID ATTRIBUTION [LESSON_ID]` records a human label.
+
+**Evaluation plan (next, on the Ollama PC):** let corrections accumulate;
+seed the labelled set from the live DB's existing correction-detector
+lessons (their text IS the correction), re-judged through the same path;
+label 30-50 including >= 10-15 `lesson_wrong`; run the judge 3 times;
+readout prints the gate. Nothing else moves until then.
+
 ### D3. Two creation paths, two promotion rules
 
 Lessons are created from two places with different trust:
@@ -774,9 +809,15 @@ labelled 1.000, duplicated renders 0, 16 cases.
 - `memory/noise.py` drops messages under 80 chars with no signal word -
   including "Correction: I switched to spaces, four wide, for indentation.
   Forget tabs." (74 chars). A short user correction never reaches memory at
-  all in production, so no verdict, no supersession. Adding correction verbs
-  ("correction", "actually", "switched", "no longer", "prefer") to the signal
-  words is a one-line change with a measurable effect; decide deliberately.
+  all in production, so no verdict, no supersession. **FIXED 2026-09-09 on
+  approval:** `CORRECTION_PATTERN` (word-bounded, narrow: correction, no
+  longer, not anymore, instead of, switched to/from, changed my/the/to,
+  scratch that, forget that, now use/prefer, I/we prefer, rather than,
+  update:/revised:, and "actually" only as a sentence opener with a clause)
+  counts as a signal word. `tests/test_noise_filter.py::TestCorrectionSignals`
+  pins 14 short corrections kept and 12 short non-corrections still dropped
+  ("the switch is in the hall", "preferences page loads slowly", bare
+  "actually").
 - The deterministic embedder scores a correction and the fact it corrects at
   ~0.18; the harness therefore uses candidate threshold 0 (nearest memories
   are the candidates). Production's 0.7 bar with the real embedder is
