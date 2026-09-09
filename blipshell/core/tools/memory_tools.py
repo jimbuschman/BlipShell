@@ -48,17 +48,20 @@ class SearchMemoriesTool(Tool):
         if not results:
             return "No relevant memories found."
 
+        from blipshell.memory.excerpt import excerpt
+
         output = []
         for r in results:
-            # Return raw content (actual conversation), not one-line summaries.
+            # Return raw content (actual conversation), not one-line summaries -
+            # windowed on the query, not cut at the first 1,200 chars (V3 B3).
             text = r.text if r.text and len(r.text) > len(r.summary or "") else (r.summary or r.text or "")
-            if len(text) > 1200:
-                text = text[:1200] + "..."
+            text = excerpt(text, query, max_chars=1200)
             ts = ""
             if r.timestamp:
                 ts = f" | {r.timestamp.strftime('%Y-%m-%d')}"
+            who = f" | {r.role}" if r.role in ("user", "assistant") else ""
             output.append(
-                f"[Score: {r.boosted_score:.2f}{ts}]\n"
+                f"[Score: {r.boosted_score:.2f}{ts}{who} | memory {r.memory_id}]\n"
                 f"{text}\n"
             )
         return "\n---\n".join(output)

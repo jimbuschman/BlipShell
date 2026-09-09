@@ -17,7 +17,7 @@ from blipshell.llm.prompts import (
     summarize_session_summaries,
 )
 from blipshell.llm.router import LLMRouter, TaskType
-from blipshell.memory.manager import MemoryManager, PoolItem, estimate_tokens
+from blipshell.memory.manager import MemoryManager, estimate_tokens
 from blipshell.memory.processor import MemoryProcessor
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.models.session import MessageRole, Session, SessionMessage
@@ -63,6 +63,10 @@ class SessionManager:
         self._memory_db_ids: dict[int, int] = {}  # message index → memories row ID
         self._pending_persists: list[asyncio.Task] = []  # pending save_raw_memory tasks
         self._currently_saving = False
+        # Index into _messages below which turns have already been summarised
+        # into RecentHistory because they fell out of the conversation window
+        # (V3 B1). Advanced by _build_messages; a turn is summarised once.
+        self.history_summarized_upto: int = 0
         # Sessions already closed. end_session deliberately leaves session_id
         # intact (callers still read it), so without this a second call would
         # re-run summarization, lesson extraction and the digest update —
@@ -146,17 +150,13 @@ class SessionManager:
             ))
             self._pending_persists.append(task)
 
-        # Add to memory manager ActiveSession pool
-        pool_text = f"{role.value}: {cleaned}"
-        if images:
-            names = ", ".join(i.get("orig_name", "image") for i in images)
-            pool_text += f" [image: {names}]"
-        self.memory_manager.add_memory("ActiveSession", PoolItem(
-            text=pool_text,
-            session_role=role.value,
-            priority_score=1.0 if role == MessageRole.USER else 0.8,
-            session_id=self.session_id or 0,
-        ))
+        # The conversation is NOT mirrored into the ActiveSession pool any more
+        # (V3 B1). It used to be rendered inside the system message from that
+        # pool AND appended as role messages by _build_messages, so every turn
+        # reached the model twice. _build_messages now owns the single
+        # representation: role messages, windowed by the ActiveSession token
+        # share, with excluded turns summarised into RecentHistory once
+        # (see history_summarized_upto).
 
     async def _persist_message(self, session_id: int, role: str, content: str, timestamp: str,
                                msg_idx: int, images: list[dict] | None = None):

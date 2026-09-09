@@ -38,6 +38,10 @@ class SearchResult:
     tags: list[str] = None
     tag_boost: float = 0.0
     timestamp: datetime | None = None
+    # Who said it and where (V3 B3): recall renders the speaker so an
+    # assistant's guess never reads as the user's statement.
+    role: str = ""
+    session_id: int | None = None
 
     def __post_init__(self):
         if self.tags is None:
@@ -368,6 +372,8 @@ class MemorySearch:
                 tags=memory_tags,
                 tag_boost=tag_boost,
                 timestamp=memory.timestamp,
+                role=memory.role or "",
+                session_id=memory.session_id,
             ))
 
         # Step 6: Entity graph expansion — find memories connected via entities
@@ -411,6 +417,8 @@ class MemorySearch:
                     rank=emem.rank,
                     importance=emem.importance,
                     timestamp=emem.timestamp,
+                    role=emem.role or "",
+                    session_id=emem.session_id,
                 ))
                 existing_ids.add(eid)
         except Exception as e:

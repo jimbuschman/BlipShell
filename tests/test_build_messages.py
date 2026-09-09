@@ -26,6 +26,7 @@ class _Msg:
         self.role = role
         self.content = content
         self.timestamp = timestamp
+        self.token_count = 0  # builder falls back to estimating
 
     def to_ollama_message(self):
         return {"role": self.role.value, "content": self.content}
@@ -44,7 +45,14 @@ def _agent(messages):
     a.session_manager.get_messages.return_value = messages
     a.router = MagicMock()
     a.config = MagicMock()
+    # V3 B1: the builder MEASURES the system prefix and the tool schemas
+    # before budgeting memory, so these must be real values, not mocks.
+    a.config.agent.system_prompt = "SYSTEM PROMPT"
+    a.tool_registry = MagicMock()
+    a.tool_registry.get_all_ollama_tools.return_value = []
+    a.session_manager.history_summarized_upto = 0
     a.model_settings = MagicMock()
+    a.model_settings.get.return_value = None
     a.active_project = None
     a._project_context = None
     a._files_read = set()

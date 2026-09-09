@@ -136,6 +136,7 @@ class SessionMixin:
                 text=cm.content,
                 session_role="system",
                 priority_score=cm.importance + 1.0,  # boost core memories
+                source="core",
             ))
         logger.info("Loaded %d core memories", len(core_memories))
 
@@ -174,6 +175,7 @@ class SessionMixin:
                 text=lesson.content,
                 session_role="system",
                 priority_score=lesson.importance,
+                source="lesson",
             ))
             loaded += 1
         logger.info("Loaded %d/%d lessons (top by importance)", loaded, len(lessons))
@@ -333,11 +335,15 @@ class SessionMixin:
                     text = m.content if m.content and len(m.content) > len(m.summary or "") else (m.summary or m.content or "")
                     if len(text) > 500:
                         text = text[:500] + "..."
+                    speaker = m.role if m.role in ("user", "assistant") else ""
                     self.memory_manager.add_memory("RecentHistory", PoolItem(
-                        text=f"{label} {text}",
+                        text=f"{label} {speaker + ': ' if speaker else ''}{text}",
                         session_role="system",
                         priority_score=2.0 + m.importance,
                         session_id=s.id,
+                        memory_id=m.id or 0,
+                        source="history",
+                        speaker=speaker,
                     ))
 
                 if s.summary:
@@ -355,20 +361,46 @@ class SessionMixin:
                 continue
 
             # Tier 2: Other recent sessions get summary only
-            text = s.summary
-            if not text:
-                memories = await self.sqlite.get_memories_by_session(s.id)
-                if not memories:
+            if s.summary:
+                self.memory_manager.add_memory("RecentHistory", PoolItem(
+                    text=s.summary,
+                    session_role="system",
+                    priority_score=2.0,
+                    session_id=s.id,
+                    source="summary",
+                ))
+                continue
+            # No summary yet (session never closed, or too young): a few of its
+            # memories, each as its OWN item with identity and speaker, so a
+            # memory Recall also finds is collapsed rather than rendered twice
+            # (V3 B1). The old "; ".join of raw content had no ids and no
+            # labels - it was the unlabelled second copy in the continuity
+            # baseline.
+            memories = await self.sqlite.get_memories_by_session(s.id)
+            if not memories:
+                continue
+            for m in memories[:5]:
+                if m.is_archived:
                     continue
-                text = "; ".join(
-                    m.summary or m.content for m in memories[:10]
-                )
-            self.memory_manager.add_memory("RecentHistory", PoolItem(
-                text=text,
-                session_role="system",
-                priority_score=2.0,
-                session_id=s.id,
-            ))
+                text = m.content if m.content and len(m.content) > len(m.summary or "") else (m.summary or m.content or "")
+                if not text:
+                    continue
+                if len(text) > 500:
+                    text = text[:500] + "..."
+                ts = m.timestamp
+                if ts and ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                label = f"[{ts.strftime('%Y-%m-%d')}] " if ts else ""
+                speaker = m.role if m.role in ("user", "assistant") else ""
+                self.memory_manager.add_memory("RecentHistory", PoolItem(
+                    text=f"{label}{speaker + ': ' if speaker else ''}{text}",
+                    session_role="system",
+                    priority_score=2.0,
+                    session_id=s.id,
+                    memory_id=m.id or 0,
+                    source="history",
+                    speaker=speaker,
+                ))
 
     async def _summarize_orphaned_sessions(self):
         """Generate summaries for recent sessions that never closed properly.

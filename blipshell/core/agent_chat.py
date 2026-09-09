@@ -33,6 +33,14 @@ logger = logging.getLogger(__name__)
 # threshold and surface their age.
 MESSAGE_STAMP_MIN_AGE_SECONDS = 600  # 10 minutes
 
+# Whole-request budgeting (V3 B1). The reply needs room too: reserve 1/8 of
+# the window, at least 256 tokens, never more than this cap - on a 32K local
+# window that is 2048. And however small the window, keep a floor for
+# conversation + memory so a giant tool schema cannot starve them silently
+# (it is logged at WARNING when it happens).
+RESPONSE_RESERVE_MAX_TOKENS = 2048
+MIN_MEMORY_TOKENS = 512
+
 
 def format_relative_time(ts, now=None, min_age_seconds: float = 0) -> str:
     """Render a timestamp as a compact relative label like ``"[3h ago] "``.
@@ -903,6 +911,12 @@ class ChatMixin:
         # Process memory results — inject raw content, not summaries.
         # Summaries are one-line abstractions ("User asked about X") that lose
         # the actual information. Raw content carries the real facts.
+        # Long memories are cut to a QUERY-RELEVANT window (memory/excerpt.py),
+        # not their first 1,200 chars: a fact matched at char 1,400 used to be
+        # retrieved and then thrown away here (review F6; continuity case
+        # fact_buried_past_1200_chars). Each item is rendered with its speaker
+        # so an assistant's guess never reads as the user's statement (B4).
+        from blipshell.memory.excerpt import excerpt
         MAX_MEMORY_CHARS = 1200  # ~300 tokens per memory
         memory_count = 0
         # Provenance for /why: every item injected this turn, with its score
@@ -918,17 +932,24 @@ class ChatMixin:
             for r in results:
                 # Use raw content when available and substantial, else summary
                 text = r.text if r.text and len(r.text) > len(r.summary or "") else (r.summary or r.text or "")
-                if len(text) > MAX_MEMORY_CHARS:
-                    text = text[:MAX_MEMORY_CHARS] + "..."
+                text = excerpt(text, query, max_chars=MAX_MEMORY_CHARS)
+                r_role = getattr(r, "role", "") or ""
+                speaker = r_role if r_role in ("user", "assistant") else ""
+                speaker_label = f"{speaker}: " if speaker else ""
                 self.memory_manager.add_memory("Recall", PoolItem(
-                    text=f"{_time_label(r.timestamp)}{text}",
+                    text=f"{_time_label(r.timestamp)}{speaker_label}{text}",
                     session_role="system",
                     priority_score=r.boosted_score,
+                    memory_id=getattr(r, "memory_id", 0) or 0,
+                    source="memory",
+                    speaker=speaker,
+                    session_id=getattr(r, "session_id", 0) or 0,
                 ))
                 trace_items.append({
                     "source": "memory", "id": r.memory_id,
                     "score": round(r.boosted_score, 3),
                     "preview": text[:120],
+                    "speaker": speaker,
                 })
         except Exception as e:
             logger.error("Memory search failed: %s", e)
@@ -966,6 +987,7 @@ class ChatMixin:
                     text=f"[Core] {cr.get('document', '')}",
                     session_role="system",
                     priority_score=similarity + 0.2,
+                    source="core",
                 ))
                 trace_items.append({
                     "source": "core", "score": round(similarity, 3),
@@ -989,6 +1011,7 @@ class ChatMixin:
                     text=f"[Lesson] {lr.get('document', '')}",
                     session_role="system",
                     priority_score=similarity + 0.1,
+                    source="lesson",
                 ))
                 trace_items.append({
                     "source": "lesson", "score": round(similarity, 3),
@@ -1162,100 +1185,10 @@ class ChatMixin:
             )
         return "\n".join(lines)
 
-    def _build_messages(self, user_message: str) -> list[dict]:
-        """Build the full message list with memory context.
-
-        Port of OllamaChat.SendMessageToOllama message building.
-        Uses dynamic context window based on the active endpoint.
-        """
-        from blipshell.memory.manager import MemoryManager
-
-        user_tokens = estimate_tokens(user_message)
-
-        # Use endpoint-specific context window if available
-        # Route to coding endpoint's context window when a project is active
-        context_role = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
-        context_limit = self.endpoint_manager.get_context_tokens_for_role(
-            context_role,
-            default=65536,
-        )
-
-        available = (
-            context_limit
-            - user_tokens
-            - MemoryManager.OVERHEAD_TOKENS
-        )
-
-        # Classify query and compute dynamic pool budgets
-        profile = classify_query(user_message)
-        pool_budgets = compute_pool_budgets(
-            profile, available, self.memory_manager.get_hard_caps(),
-        )
-        logger.debug("Query profile: %s", profile)
-
-        # Gather memory from all pools with dynamic budgets
-        memory_items = self.memory_manager.gather_memory(
-            token_budget=available, pool_budgets=pool_budgets,
-        )
-
-        # Record what actually survived the budget so the caller can charge
-        # self-thought fatigue at the real render boundary (_build_messages is
-        # sync; the charge is an async store write).
-        self._last_rendered_pool_texts = {i.text for i in memory_items}
-
-        # Build memory context string organized by pool.
-        # Order: Core (stable facts) → Recall (most relevant search results) first.
-        # These are the highest-signal content and go at the top where LLM
-        # attention is strongest. Lessons and history follow. ActiveSession
-        # (conversation) last — natural position.
-        pool_labels = {
-            "Core": "CoreFacts",
-            "Recall": "RelevantMemory",
-            "Lessons": "Lessons",
-            "RecentHistory": "RecentHistory",
-            "ActiveSession": "ActiveSession",
-        }
-        pool_order = ["Core", "Recall", "Lessons", "RecentHistory", "ActiveSession"]
-        context_parts: dict[str, list[str]] = {}
-        for item in memory_items:
-            pool = item.pool_name
-            if pool not in context_parts:
-                context_parts[pool] = []
-            context_parts[pool].append(f"   - {item.text}")
-
-        # Compute context stats for observability
-        pool_usage = {}
-        for item in memory_items:
-            p = item.pool_name
-            if p not in pool_usage:
-                pool_usage[p] = {"items": 0, "tokens": 0}
-            pool_usage[p]["items"] += 1
-            pool_usage[p]["tokens"] += item.estimated_tokens
-        total_used_tokens = sum(p["tokens"] for p in pool_usage.values())
-        usage_pct = (total_used_tokens / context_limit * 100) if context_limit > 0 else 0
-        self._last_context_stats = {
-            "query_profile": profile,
-            "context_limit": context_limit,
-            "available_tokens": available,
-            "pool_budgets": pool_budgets,
-            "pool_usage": pool_usage,
-            "total_context_items": len(memory_items),
-            "usage_pct": usage_pct,
-        }
-
-        memory_text = ""
-        for pool_name in pool_order:
-            if pool_name not in context_parts:
-                continue
-            label = pool_labels.get(pool_name, pool_name)
-            memory_text += f"{label}:\n" + "\n".join(context_parts[pool_name]) + "\n\n"
-        # Include any pools not in the explicit order (future-proofing)
-        for pool_name, items in context_parts.items():
-            if pool_name not in pool_order:
-                label = pool_labels.get(pool_name, pool_name)
-                memory_text += f"{label}:\n" + "\n".join(items) + "\n\n"
-
-        # Build messages
+    def _build_system_prefix(self) -> tuple[str, str]:
+        """The fixed parts of the system message, split around where the
+        memory block goes: (head, tail). Measured before the pools are
+        budgeted so memory gets what is actually left (V3 B1)."""
         system_prompt = self.config.agent.system_prompt
 
         # Get per-model settings for the active model
@@ -1300,17 +1233,16 @@ class ChatMixin:
         system_prompt += self._build_continuity_block(
             include_followups=False, include_time=False,
         )
+        head = system_prompt
 
-        if memory_text.strip():
-            system_prompt += f"\n\n{memory_text}"
-
+        tail = ""
         # Inject pending follow-ups from previous sessions
         if getattr(self, "_pending_follow_ups", "") and self._pending_follow_ups.strip():
-            system_prompt += f"\n\n{self._pending_follow_ups}"
+            tail += f"\n\n{self._pending_follow_ups}"
 
         if self._files_read:
             files_list = "\n".join(f"  - {f}" for f in sorted(self._files_read))
-            system_prompt += (
+            tail += (
                 "\n\nFILES ALREADY READ THIS SESSION (do NOT re-read these):\n"
                 + files_list
             )
@@ -1318,29 +1250,186 @@ class ChatMixin:
         # Derived capability block — keeps the model's self-knowledge in sync
         # with what's actually true this turn (e.g. vision availability) instead
         # of a hand-written claim that can drift from the code.
-        system_prompt += "\n\n" + self._build_capability_block()
+        tail += "\n\n" + self._build_capability_block()
 
         # Absolute time anchor. Placed at the END so the cacheable prefix of the
         # system prompt stays stable across turns — a changing timestamp near the
         # top would bust prompt caching on cloud endpoints every turn.
-        system_prompt += self._render_time_anchor()
+        tail += self._render_time_anchor()
+        return head, tail
+
+    def _build_messages(self, user_message: str) -> list[dict]:
+        """Build the full message list with memory context.
+
+        Port of OllamaChat.SendMessageToOllama message building.
+        Uses dynamic context window based on the active endpoint.
+
+        V3 B1 contract: the request is budgeted as a WHOLE (system prefix,
+        tool schemas, conversation window, memory pools, response reserve),
+        and the conversation appears exactly once - as role messages,
+        windowed by the ActiveSession token share, never mirrored into the
+        system message. Turns that fall out of the window are summarised
+        into RecentHistory once.
+        """
+        import json
+
+        from blipshell.memory.manager import MemoryManager
+
+        user_tokens = estimate_tokens(user_message)
+
+        # Use endpoint-specific context window if available
+        # Route to coding endpoint's context window when a project is active
+        context_role = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
+        context_limit = self.endpoint_manager.get_context_tokens_for_role(
+            context_role,
+            default=65536,
+        )
+
+        # ── Fixed parts, measured ──
+        head, tail = self._build_system_prefix()
+        prefix_tokens = estimate_tokens(head) + estimate_tokens(tail)
+        tools = self.tool_registry.get_all_ollama_tools() or []
+        tools_tokens = estimate_tokens(json.dumps(tools, default=str)) if tools else 0
+        response_reserve = min(RESPONSE_RESERVE_MAX_TOKENS, max(256, context_limit // 8))
+        fixed = prefix_tokens + tools_tokens + response_reserve + MemoryManager.OVERHEAD_TOKENS
+        available = context_limit - fixed
+        if available < MIN_MEMORY_TOKENS:
+            logger.warning(
+                "Context window %d leaves %d tokens for conversation+memory after "
+                "prefix=%d tools=%d reserve=%d; clamping to %d",
+                context_limit, available, prefix_tokens, tools_tokens, response_reserve,
+                MIN_MEMORY_TOKENS,
+            )
+            available = MIN_MEMORY_TOKENS
+
+        # Classify query and compute dynamic pool budgets
+        profile = classify_query(user_message)
+        pool_budgets = compute_pool_budgets(
+            profile, available, self.memory_manager.get_hard_caps(),
+        )
+        logger.debug("Query profile: %s", profile)
+
+        # ── Conversation window: newest turns that fit the ActiveSession share ──
+        now = datetime.now(timezone.utc)
+        all_msgs = self.session_manager.get_messages()
+        history_budget = pool_budgets.get("ActiveSession", 0)
+        window_start = len(all_msgs)
+        history_tokens = 0
+        for i in range(len(all_msgs) - 1, -1, -1):
+            t = getattr(all_msgs[i], "token_count", 0) or estimate_tokens(all_msgs[i].content or "")
+            # the newest message (this turn's user text) is always sent
+            if window_start < len(all_msgs) and history_tokens + t > history_budget:
+                break
+            history_tokens += t
+            window_start = i
+        history_msgs = all_msgs[window_start:]
+
+        # Turns that fell out of the window are summarised into RecentHistory
+        # ONCE (the cursor lives on the session manager, alongside the messages).
+        sm = self.session_manager
+        upto = getattr(sm, "history_summarized_upto", 0)
+        if not isinstance(upto, int):
+            upto = 0
+        if window_start > upto:
+            excluded = all_msgs[upto:window_start]
+            sm.history_summarized_upto = window_start
+            combined = " ".join(
+                f"{m.role.value}: {m.content}" for m in excluded
+                if m.content and m.role in (MessageRole.USER, MessageRole.ASSISTANT)
+            )
+            if combined.strip():
+                self.memory_manager.schedule_overflow_summary(combined)
+
+        # The history share the conversation did not use rolls into Recall;
+        # nothing is packed into ActiveSession any more.
+        spare = history_budget - history_tokens
+        if spare > 0 and "Recall" in pool_budgets:
+            pool_budgets["Recall"] += spare
+        pool_budgets["ActiveSession"] = 0
+
+        # Gather memory from all pools with dynamic budgets
+        memory_items = self.memory_manager.gather_memory(
+            token_budget=max(available - history_tokens, 0), pool_budgets=pool_budgets,
+        )
+
+        # Record what actually survived the budget so the caller can charge
+        # self-thought fatigue at the real render boundary (_build_messages is
+        # sync; the charge is an async store write).
+        self._last_rendered_pool_texts = {i.text for i in memory_items}
+
+        # Build memory context string organized by pool.
+        # Order: Core (stable facts) → Recall (most relevant search results) first.
+        # These are the highest-signal content and go at the top where LLM
+        # attention is strongest. Lessons and history follow.
+        pool_labels = {
+            "Core": "CoreFacts",
+            "Recall": "RelevantMemory",
+            "Lessons": "Lessons",
+            "RecentHistory": "RecentHistory",
+        }
+        pool_order = ["Core", "Recall", "Lessons", "RecentHistory"]
+        context_parts: dict[str, list[str]] = {}
+        for item in memory_items:
+            pool = item.pool_name
+            if pool not in context_parts:
+                context_parts[pool] = []
+            context_parts[pool].append(f"   - {item.text}")
+
+        # Compute context stats for observability
+        pool_usage = {}
+        for item in memory_items:
+            p = item.pool_name
+            if p not in pool_usage:
+                pool_usage[p] = {"items": 0, "tokens": 0}
+            pool_usage[p]["items"] += 1
+            pool_usage[p]["tokens"] += item.estimated_tokens
+        memory_tokens = sum(p["tokens"] for p in pool_usage.values())
+        request_tokens = prefix_tokens + tools_tokens + memory_tokens + history_tokens
+        usage_pct = (request_tokens / context_limit * 100) if context_limit > 0 else 0
+        self._last_context_stats = {
+            "query_profile": profile,
+            "context_limit": context_limit,
+            "prefix_tokens": prefix_tokens,
+            "tools_tokens": tools_tokens,
+            "response_reserve": response_reserve,
+            "available_tokens": available,
+            "history_tokens": history_tokens,
+            "history_messages": len(history_msgs),
+            "history_dropped": window_start,
+            "pool_budgets": pool_budgets,
+            "pool_usage": pool_usage,
+            "total_context_items": len(memory_items),
+            "request_tokens_estimate": request_tokens,
+            "usage_pct": usage_pct,
+        }
+
+        memory_text = ""
+        for pool_name in pool_order:
+            if pool_name not in context_parts:
+                continue
+            label = pool_labels.get(pool_name, pool_name)
+            memory_text += f"{label}:\n" + "\n".join(context_parts[pool_name]) + "\n\n"
+        # Include any pools not in the explicit order (future-proofing)
+        for pool_name, items in context_parts.items():
+            if pool_name not in pool_order:
+                label = pool_labels.get(pool_name, pool_name)
+                memory_text += f"{label}:\n" + "\n".join(items) + "\n\n"
+
+        system_prompt = head
+        if memory_text.strip():
+            system_prompt += f"\n\n{memory_text}"
+        system_prompt += tail
 
         messages = [
             {"role": "system", "content": system_prompt},
         ]
 
-        # Defined here, next to its only use. b785754 extracted the continuity
-        # assembly into _build_continuity_block() and took this line with it,
-        # leaving the reference below orphaned — so every turn that had any
-        # prior message in history died with "name 'now' is not defined".
-        now = datetime.now(timezone.utc)
-
-        # Add conversation history from ActiveSession (last messages). Prefix
-        # user/assistant turns with a relative-time label so the model can sense
-        # how much time passed between messages (and since the last contact).
-        # to_ollama_message() returns a fresh dict, so stamping its content here
-        # does not mutate stored history.
-        for msg in self.session_manager.get_messages()[-20:]:
+        # Conversation history: the window selected above, as role messages,
+        # once. Prefix user/assistant turns with a relative-time label so the
+        # model can sense how much time passed between messages (and since
+        # the last contact). to_ollama_message() returns a fresh dict, so
+        # stamping its content here does not mutate stored history.
+        for msg in history_msgs:
             om = msg.to_ollama_message()
             if msg.role in (MessageRole.USER, MessageRole.ASSISTANT) and om.get("content"):
                 label = format_relative_time(

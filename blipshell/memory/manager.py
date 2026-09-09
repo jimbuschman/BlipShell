@@ -52,6 +52,13 @@ class PoolItem:
     session_role: str = "user"  # user, assistant, system
     pool_name: str = ""
     session_id: int = 0
+    # Evidence identity (V3 B3/B4): which stored record this text came from,
+    # what kind of record it is, and who said it. memory_id > 0 lets the
+    # builder collapse the same memory arriving via two pools; `source` and
+    # `speaker` feed the rendered label and the /why trace.
+    memory_id: int = 0
+    source: str = ""     # memory | core | lesson | history | thought | user_model | summary
+    speaker: str = ""    # user | assistant | "" (system-authored)
 
     def __post_init__(self):
         if self.estimated_tokens == 0:
@@ -84,8 +91,14 @@ class Pool:
         self._items.append(item)
         self._items.sort(key=lambda x: x.priority_score, reverse=True)
 
-    def get_top_entries(self, available_tokens: int, max_override: int | None = None) -> list[PoolItem]:
-        """Get top entries that fit within available tokens and item count cap."""
+    def get_top_entries(self, available_tokens: int, max_override: int | None = None,
+                        exclude_memory_ids: set[int] | None = None) -> list[PoolItem]:
+        """Get top entries that fit within available tokens and item count cap.
+
+        `exclude_memory_ids`: items carrying one of these memory_ids are
+        skipped without charging the budget - the same memory already reached
+        the request through another pool (V3 B1: Recall beats RecentHistory).
+        """
         selected = []
         used = 0
         effective_cap = min(available_tokens, max_override or self.hard_cap or self.max_tokens)
@@ -93,6 +106,8 @@ class Pool:
         for item in self._items:
             if self.max_items and len(selected) >= self.max_items:
                 break
+            if exclude_memory_ids and item.memory_id and item.memory_id in exclude_memory_ids:
+                continue
             if used + item.estimated_tokens <= effective_cap:
                 selected.append(item)
                 used += item.estimated_tokens
@@ -205,16 +220,45 @@ class MemoryManager:
         remaining = token_budget
         result = []
 
-        for pool in self._pools.values():
+        # Recall first: it is query-relevant and carries the longer excerpt, so
+        # when RecentHistory offers the same memory (last session's content is
+        # both "recent" and "relevant"), the history copy is skipped. Before
+        # this every recalled memory of the previous session rendered twice
+        # (continuity baseline 2026-09-09: 16 duplicated renders / 13 cases).
+        order = sorted(self._pools.values(), key=lambda p: 0 if p.name == "Recall" else 1)
+        recalled_ids: set[int] = set()
+        for pool in order:
             cap = pool_budgets.get(pool.name) if pool_budgets else None
-            entries = pool.get_top_entries(remaining, max_override=cap)
+            exclude = recalled_ids if pool.name != "Recall" else None
+            entries = pool.get_top_entries(remaining, max_override=cap, exclude_memory_ids=exclude)
             for entry in entries:
                 if remaining >= entry.estimated_tokens:
                     entry.pool_name = pool.name
                     result.append(entry)
                     remaining -= entry.estimated_tokens
+                    if pool.name == "Recall" and entry.memory_id:
+                        recalled_ids.add(entry.memory_id)
 
         return result
+
+    def schedule_overflow_summary(self, text: str):
+        """Summarise conversation turns that fell out of the window into
+        RecentHistory (V3 B1). Fire-and-forget; returns the task, or None when
+        there is nothing to do or no callback / event loop."""
+        if not self._summarize_callback or not text or not text.strip():
+            return None
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("No event loop - conversation overflow not summarised")
+            return None
+        task = loop.create_task(self._summarize_and_store(text))
+        task.add_done_callback(
+            lambda t: logger.error("Overflow summarization failed: %s", t.exception())
+            if not t.cancelled() and t.exception() else None
+        )
+        return task
 
     def _trim_pool(self, pool_name: str):
         """Trim a pool by removing oldest items and optionally summarizing."""
@@ -228,20 +272,9 @@ class MemoryManager:
             if not oldest:
                 break
 
-            # For ActiveSession, summarize overflow into RecentHistory
-            if pool_name == "ActiveSession" and self._summarize_callback:
-                combined = " ".join(item.text for item in oldest)
-                import asyncio
-                try:
-                    loop = asyncio.get_running_loop()
-                    task = loop.create_task(self._summarize_and_store(combined))
-                    task.add_done_callback(
-                        lambda t: logger.error("Overflow summarization failed: %s", t.exception())
-                        if not t.cancelled() and t.exception() else None
-                    )
-                except RuntimeError:
-                    logger.warning("No event loop — overflow not summarized")
-
+            # (The ActiveSession special case - summarise evicted turns into
+            # RecentHistory - moved to _build_messages + schedule_overflow_summary
+            # when the conversation stopped being mirrored into a pool, V3 B1.)
             pool.remove_items(oldest)
 
     async def _summarize_and_store(self, text: str):
