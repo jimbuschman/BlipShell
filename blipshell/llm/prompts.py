@@ -242,13 +242,33 @@ def rank_lesson(text: str) -> tuple[str, str]:
     return system, user
 
 
+# Appended to the user prompt when the first dedup verdict could not be
+# parsed. Names the failure so the model does not repeat it; the grammar the
+# parser accepts is in memory/dedup_decision.py.
+DEDUP_RETRY_SUFFIX_TEXT = (
+    "\n\nYour previous reply could not be parsed. Reply with exactly one of: "
+    "ADD, NONE, UPDATE <number>, DELETE <number> - nothing else, no explanation. "
+    "UPDATE and DELETE require the number of an existing memory listed above."
+)
+DEDUP_RETRY_SUFFIX_JSON = (
+    "\n\nYour previous reply could not be parsed. Reply with ONLY a JSON object "
+    '{"action": "ADD|NONE|UPDATE|DELETE", "target_index": <number or null>, '
+    '"reason": "<short>"}. UPDATE and DELETE require target_index, the 1-based '
+    "number of an existing memory listed above."
+)
+
+
 def decide_memory_action(
-    new_memory: str, existing_memories: list[str],
+    new_memory: str, existing_memories: list[str], *, structured: bool = False,
 ) -> tuple[str, str]:
     """Prompt for deciding what to do with a new memory given similar existing ones.
 
     Returns (system_prompt, user_prompt).
     Actions: ADD (unique), UPDATE (refines existing), DELETE (contradicts), NONE (redundant).
+
+    `structured=True` asks for a JSON object matching
+    `dedup_decision.MEMORY_ACTION_SCHEMA` instead of a one-line verdict.
+    Both forms are parsed strictly - an ambiguous reply archives nothing.
     """
     system = (
         "You decide what to do with a new memory given similar existing memories.\n\n"
@@ -264,9 +284,21 @@ def decide_memory_action(
         "- Only choose NONE if the new memory is truly saying the exact same thing.\n"
         "- UPDATE means the new memory is a better/more detailed version of an existing one.\n"
         "- DELETE means the existing memory is factually wrong or outdated.\n\n"
-        "Respond with ONLY the action (and number if UPDATE or DELETE).\n"
-        "Examples: ADD, NONE, UPDATE 1, DELETE 2"
     )
+    if structured:
+        system += (
+            "Respond with ONLY a JSON object of the form\n"
+            '{"action": "ADD" | "NONE" | "UPDATE" | "DELETE", '
+            '"target_index": <1-based number of the existing memory, or null>, '
+            '"reason": "<one short sentence>"}\n'
+            "target_index is REQUIRED for UPDATE and DELETE and must be null for ADD and NONE."
+        )
+    else:
+        system += (
+            "Respond with ONLY the action (and number if UPDATE or DELETE), "
+            "on its own line, with no explanation.\n"
+            "Examples: ADD, NONE, UPDATE 1, DELETE 2"
+        )
 
     existing_lines = "\n".join(
         f"  {i+1}. {mem}" for i, mem in enumerate(existing_memories)

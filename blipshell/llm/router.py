@@ -196,7 +196,7 @@ class LLMRouter:
             prompt=prompt, model=model, system=system, **gen_kwargs,
         )
 
-    async def generate(self, task_type: str, prompt: str, system: Optional[str] = None, think: Optional[bool | str] = None, min_context_tokens: int | None = None) -> str:
+    async def generate(self, task_type: str, prompt: str, system: Optional[str] = None, think: Optional[bool | str] = None, min_context_tokens: int | None = None, response_format: dict | str | None = None) -> str:
         """Route a generate request to the appropriate model/endpoint.
 
         If the primary model/endpoint fails and a fallback model is configured,
@@ -206,6 +206,10 @@ class LLMRouter:
             min_context_tokens: If set, prefer endpoints with at least this many
                 context tokens. Used by session_review to route large sessions to
                 cloud endpoints with bigger context windows.
+            response_format: A JSON schema dict (or "json") forwarded to the
+                client as Ollama's `format` constraint. The OpenAI-compat
+                client drops it, so callers must still validate the reply -
+                this is a constraint where supported, not a guarantee.
         """
         ner_blocked = self._ner_blocked_endpoints()
         endpoint = await self._endpoint_manager.get_endpoint_for_role(
@@ -291,6 +295,8 @@ class LLMRouter:
                 gen_kwargs["think"] = think
             if use_fallback and not self._models.fallback_think:
                 gen_kwargs["think"] = False
+            if response_format is not None:
+                gen_kwargs["format"] = response_format
             result = await self._gated_generate(endpoint, prompt, model, system, gen_kwargs)
             endpoint.record_success(0)
             return result

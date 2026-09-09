@@ -120,6 +120,23 @@ blipshell/
   persisted immediately (crash-safe, `is_processed=0`) → noise filter → summarize →
   embed → dedup (LLM decides ADD/UPDATE/DELETE/NONE) → tag → combined
   rank+importance+type call → mark processed. Startup sweep reprocesses failures.
+  **The dedup verdict is parsed by a strict grammar** (`memory/dedup_decision.py`,
+  2026-09-08, V3 A1): the reply must BE a verdict (first/last line, last
+  sentence segment), UPDATE/DELETE need an explicit in-range 1-based index,
+  and anything else is RETRY → re-ask once → keep the new memory, archive
+  nothing, stamp `dedup_undecided` on it. The old parser matched action
+  SUBSTRINGS and defaulted a missing index to item 0, so "Do not DELETE
+  anything; ADD this as distinct." archived candidate #1 — the model being
+  careful was the trigger. Every archive stamps the archived row's metadata
+  `dedup = {action, by, candidates, reply, at}`; `blipshell repair
+  --unarchive-memory ID` explains and reverses it (re-embeds, keeps history).
+  `memory.dedup.structured_output` (default OFF) asks for a schema-constrained
+  JSON verdict instead; it is an EXPERIMENT until benchmark job
+  `dedup_structured` shows `valid_rate` ≥ ~0.98 on the `models.reasoning`
+  model with thinking on — local models misbehave under schema constraints in
+  thinking modes. `router.generate(response_format=...)` forwards the schema
+  as Ollama `format`; the OpenAI-compat client drops it, so validation is
+  the contract, not the constraint.
 - **Search** (memory/search.py): FTS5 + vec0 KNN fused with RRF (k=60), then
   boosts — importance, FadeMem recency (importance slows decay, each access resets
   effective age), tag overlap, active-project (+0.5), entity-graph expansion —

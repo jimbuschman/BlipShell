@@ -56,7 +56,7 @@ fixing - code moves.
 
 | Stage | Status |
 |---|---|
-| A - Correctness | not started |
+| A - Correctness | A1 BUILT 2026-09-08 (`v3/a1-dedup-parser`); structured-path measurement pending on the Ollama PC. A2-A6 not started |
 | B - Context contract | not started |
 | C - Continuity set | not started |
 | D - Accountable lessons | not started |
@@ -86,11 +86,19 @@ Fix, two paths behind one config toggle (`memory.dedup_structured_output`,
 default **off**):
 
 - **Strict parser (default).** Whole-response grammar: the reply must BE an
-  action, optionally followed by an index, and nothing else. UPDATE/DELETE
-  require an explicit in-range index. Anything else returns
-  `("RETRY", None)`; the caller stores nothing, archives nothing, and leaves
-  the message `is_processed=0` so the startup sweep retries it. Missing or
+  action, optionally followed by an index, and nothing else (first/last
+  non-empty line, reduced to its last sentence segment; two differing
+  verdicts is a conflict). UPDATE/DELETE require an explicit in-range
+  1-based index. Anything else returns `("RETRY", None)`. Missing or
   out-of-range index is a parse failure, never a default.
+  **As built (2026-09-08), RETRY re-asks ONCE with a sharper suffix, then
+  applies ADD**: the new memory stays, nothing is archived, and the new row's
+  metadata gets `dedup_undecided = {candidates, reply, at}` so the cases can
+  be found. The draft said "leave `is_processed=0` for the sweep" - rejected:
+  that re-runs summarize+embed on every sweep and, for a consistently
+  ambiguous model, is exactly the dedup zombie loop the 2026-08 deep-dive
+  found. `tests/test_dedup_decision.py::TestPipelineUndecided` pins the row
+  ending processed.
 - **Structured output (experimental).** Ask for a JSON object
   `{action, target_index, reason}` via the `format` kwarg that
   `llm/openai_client.py:144,183,283` already passes through; validate against a
@@ -99,13 +107,28 @@ default **off**):
   oddly under schema constraints in thinking modes. Add a benchmark case
   (`dedup_structured`, owned by `models.reasoning` in `JOB_OWNERS`) that scores
   schema-validity rate; enable only if it clears ~98%.
-- Either way: log the candidate set, the raw reply, and the decision at INFO
-  so a wrong archive can be explained and reversed (`blipshell repair` gains
-  `--unarchive-memory ID`).
+- Either way: log the candidate set, the raw reply, and the decision at INFO,
+  and stamp the ARCHIVED row's metadata with
+  `dedup = {action, by, candidates, reply, structured, at}`. `blipshell repair
+  --unarchive-memory ID` (repeatable, honours `--dry-run`, not part of
+  `--all`) prints that record, un-flags the row, re-embeds it from raw content
+  and keeps the record with an `unarchived_at` - history is never erased.
+- Benchmark: TWO pipeline rows, `dedup` (text path; unparseable counts as
+  WRONG, since in production it costs a re-ask and a default) and
+  `dedup_structured` (JSON path; accuracy over valid replies, `valid_rate`
+  separate and deciding). Both owned by `models.reasoning` in `JOB_OWNERS`;
+  `dedup_structured` is displayed but excluded from the composite because
+  production does not run it. Twelve cases, three per verdict, UPDATE/DELETE
+  targets deliberately not always item 1.
 
-Tests: the two quoted replies must produce RETRY; a valid `UPDATE 2` still
-works; RETRY leaves both records unarchived and the message unprocessed;
-config toggle selects the path.
+Tests (`tests/test_dedup_decision.py`, 40 cases + `test_benchmark_harness.py`):
+the two quoted replies produce RETRY; noisy-but-unambiguous replies still
+parse; RETRY twice leaves every candidate unarchived, the new row processed,
+and `dedup_undecided` recorded; a valid second reply is applied; out-of-range
+is undecided; the archive stamp survives existing metadata; the structured
+path forwards the schema and rejects text verdicts; `router.generate`
+forwards `response_format` as `format`; unarchive restores, re-embeds, keeps
+history, and is a no-op in dry-run.
 
 ### A2. Endpoint retry re-executes completed tool calls (HIGH)
 

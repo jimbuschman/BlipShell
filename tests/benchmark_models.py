@@ -251,6 +251,41 @@ CONTRADICTION_PAIRS = [
     ("Ranking runs on Groq", "Summarization runs on a local model", False),
 ]
 
+# Dedup verdict cases: (new_memory, [existing...], gold_action, gold_index_1based | None).
+# Balanced across the four verdicts, with the traps the strict grammar exists
+# for: a refusal that names actions, a near-duplicate that adds detail (UPDATE
+# not NONE), a contradiction (DELETE), and unrelated neighbours (ADD).
+DEDUP_CASES = [
+    # ADD - unique information despite lexical overlap
+    ("User's cat is named Luna and is 3 years old",
+     ["User has a dog named Max", "User works at Xanatek"], "ADD", None),
+    ("The desk robot's speaker is 4 ohm, 3 watt",
+     ["The desk robot uses an ESP32", "The desk robot uses JST connectors"], "ADD", None),
+    ("User is learning Rust on weekends",
+     ["User knows Python well", "User dislikes Java"], "ADD", None),
+    # NONE - redundant, same fact
+    ("User prefers dark mode",
+     ["User prefers dark mode in all editors", "User prefers tabs over spaces"], "NONE", None),
+    ("The vector store is sqlite-vec",
+     ["BlipShell uses sqlite-vec as its vector store", "Ranking runs on Groq"], "NONE", None),
+    ("User works at Xanatek",
+     ["User is employed at Xanatek", "User lives in Ohio"], "NONE", None),
+    # UPDATE - refines an existing memory (the second one, to catch index defaults)
+    ("User's dog Max is a 5-year-old golden retriever",
+     ["User prefers dark mode", "User has a dog named Max"], "UPDATE", 2),
+    ("Summarization runs on glm4:latest locally with a Groq fallback",
+     ["Ranking runs on Groq", "Summarization runs on a local model"], "UPDATE", 2),
+    ("User lives in Columbus, Ohio, near the university",
+     ["User lives in Ohio", "User has a cat"], "UPDATE", 1),
+    # DELETE - contradicts an existing memory (the existing is stale)
+    ("User switched to Linux full-time last month",
+     ["User uses Windows 10", "User prefers dark mode"], "DELETE", 1),
+    ("User moved to Texas in June",
+     ["User has a cat named Luna", "User lives in Ohio"], "DELETE", 2),
+    ("The project's vector store is now sqlite-vec; ChromaDB was removed",
+     ["The vector store is ChromaDB", "User works at Xanatek"], "DELETE", 1),
+]
+
 CONTRADICTION_LABELS = [
     "dark/light mode", "Win10/Linux", "likes/dislikes Python",
     "Chroma/sqlite-vec", "Ohio/Texas", "8ohm/4ohm",
@@ -429,6 +464,47 @@ async def benchmark_contradiction(router: LLMRouter) -> list[dict]:
             "raw": raw,
             "parsed": parsed,
             "expected": expected,
+            "correct": correct,
+            "time": round(elapsed, 2),
+        })
+        await asyncio.sleep(0.1)
+    return results
+
+
+async def benchmark_dedup(router: LLMRouter, *, structured: bool = False) -> list[dict]:
+    """The write-time dedup verdict, parsed by the SAME strict grammar production
+    runs (memory/dedup_decision.py). `structured=True` exercises the
+    schema-constrained JSON path behind memory.dedup.structured_output.
+
+    Each result: raw, parsed ("ADD"/"NONE"/"UPDATE"/"DELETE"/"RETRY"/"ERROR"),
+    parsed_index (0-based | None), expected, expected_index, valid, correct, time.
+    """
+    from blipshell.llm.prompts import decide_memory_action
+    from blipshell.memory import dedup_decision as dd
+
+    results = []
+    for new_mem, existing, gold_action, gold_index in DEDUP_CASES:
+        sys_prompt, user_prompt = decide_memory_action(new_mem, existing, structured=structured)
+        kwargs = {"system": sys_prompt, "think": False}
+        if structured:
+            kwargs["response_format"] = dd.MEMORY_ACTION_SCHEMA
+        gold_idx0 = (gold_index - 1) if gold_index else None
+        start = time.perf_counter()
+        try:
+            raw = await router.generate(TaskType.REASONING, user_prompt, **kwargs)
+            parsed, idx = dd.parse_action(raw, structured=structured)
+            valid = parsed != dd.RETRY and dd.in_range(parsed, idx, len(existing))
+            correct = valid and parsed == gold_action and idx == gold_idx0
+        except Exception as e:
+            raw, parsed, idx, valid, correct = f"ERROR: {e}", "ERROR", None, False, False
+        elapsed = time.perf_counter() - start
+        results.append({
+            "raw": raw,
+            "parsed": parsed,
+            "parsed_index": idx,
+            "expected": gold_action,
+            "expected_index": gold_idx0,
+            "valid": valid,
             "correct": correct,
             "time": round(elapsed, 2),
         })

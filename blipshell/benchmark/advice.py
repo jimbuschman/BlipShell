@@ -41,8 +41,9 @@ JOB_OWNERS: dict[str, tuple[tuple[str, ...], str]] = {
         "project-mode coding (cli project path, background coding tasks)",
     ),
     "reasoning": (
-        ("reasoning", "entity", "contradiction"),
-        "entity extraction + merge, contradiction checks, tag discovery, "
+        ("reasoning", "entity", "contradiction", "dedup", "dedup_structured"),
+        "entity extraction + merge, contradiction checks, the write-time dedup "
+        "verdict (processor._decide_and_apply_action), tag discovery, "
         "project digests, guardrail audits, self-thought relevance judge, "
         "context compaction",
     ),
@@ -78,6 +79,7 @@ JOB_OWNERS: dict[str, tuple[tuple[str, ...], str]] = {
 JOB_SUITE = {
     "ranking": "pipeline", "importance": "pipeline", "rank_importance": "pipeline",
     "contradiction": "pipeline", "entity": "pipeline", "summarization": "pipeline",
+    "dedup": "pipeline", "dedup_structured": "pipeline",
     "lessons": "pipeline", "reasoning": "reasoning", "code_gen": "reasoning",
     "coding_agentic": "coding", "tool_calling": "reasoning",
     "session_review": "session_review",

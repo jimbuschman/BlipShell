@@ -605,3 +605,106 @@ def test_rank_importance_without_truth_fields_is_unscoreable():
     from blipshell.benchmark.harness import score_rank_and_importance
     assert score_rank_and_importance(
         [{"raw": "x", "rank": 4, "importance": 0.8, "time": 0.1}]) is None
+
+
+# ---------------------------------------------------------------------------
+# Dedup verdict job (V3_PLAN A1) — scorers, dataset sanity, fake-router run
+# ---------------------------------------------------------------------------
+
+def test_score_dedup_text_counts_invalid_as_wrong():
+    results = [
+        {"parsed": "ADD", "valid": True, "correct": True},
+        {"parsed": "UPDATE", "valid": True, "correct": False},
+        {"parsed": "RETRY", "valid": False, "correct": False},   # wrong on the text path
+        {"parsed": "ERROR", "valid": False, "correct": False},   # transport error: excluded
+    ]
+    assert harness.score_dedup(results, count_invalid_as_wrong=True) == pytest.approx(1 / 3, abs=1e-4)
+    assert harness.score_dedup_valid_rate(results) == pytest.approx(0.5, abs=1e-4)
+
+
+def test_score_dedup_structured_scores_valid_only():
+    results = [
+        {"parsed": "DELETE", "valid": True, "correct": True},
+        {"parsed": "RETRY", "valid": False, "correct": False},
+        {"parsed": "RETRY", "valid": False, "correct": False},
+    ]
+    # accuracy over the one valid reply; validity is the separate, deciding number
+    assert harness.score_dedup(results, count_invalid_as_wrong=False) == pytest.approx(1.0, abs=1e-4)
+    assert harness.score_dedup_valid_rate(results) == pytest.approx(1 / 3, abs=1e-4)
+
+
+def test_score_dedup_none_when_nothing_scorable():
+    assert harness.score_dedup([], count_invalid_as_wrong=True) is None
+    assert harness.score_dedup([{"parsed": "ERROR"}], count_invalid_as_wrong=True) is None
+    assert harness.score_dedup([{"parsed": "RETRY", "valid": False}], count_invalid_as_wrong=False) is None
+    assert harness.score_dedup_valid_rate([]) is None
+
+
+def test_dedup_cases_are_balanced_and_gold_is_parseable():
+    """Gold verdicts must round-trip through the production grammar, and every
+    UPDATE/DELETE target must exist — a dataset the parser rejects measures
+    the dataset, not the model."""
+    from blipshell.memory import dedup_decision as dd
+    bm = harness._load_dataset("benchmark_models")
+    by_action = {}
+    for new_mem, existing, action, idx in bm.DEDUP_CASES:
+        by_action[action] = by_action.get(action, 0) + 1
+        text = f"{action} {idx}" if idx else action
+        parsed, pidx = dd.parse_action_text(text)
+        assert parsed == action
+        assert dd.in_range(parsed, pidx, len(existing)), (new_mem, action, idx)
+        obj = {"action": action, "target_index": idx}
+        assert dd.parse_action_json(__import__("json").dumps(obj)) == (action, (idx - 1) if idx else None)
+    assert set(by_action) == {"ADD", "NONE", "UPDATE", "DELETE"}
+    assert min(by_action.values()) >= 3
+
+
+async def test_benchmark_dedup_runs_against_fake_router_both_paths():
+    from unittest.mock import AsyncMock, MagicMock
+    from blipshell.memory import dedup_decision as dd
+    bm = harness._load_dataset("benchmark_models")
+    n = len(bm.DEDUP_CASES)
+
+    # Text path: answer gold for every case except one refusal and one bare UPDATE.
+    replies = []
+    for i, (_, _, action, idx) in enumerate(bm.DEDUP_CASES):
+        if i == 0:
+            replies.append("Do not DELETE anything; ADD this as distinct.")
+        elif i == 1:
+            replies.append("UPDATE")
+        else:
+            replies.append(f"{action} {idx}" if idx else action)
+    router = MagicMock()
+    router.generate = AsyncMock(side_effect=replies)
+    res = await bm.benchmark_dedup(router, structured=False)
+    assert len(res) == n
+    assert res[0]["parsed"] == dd.RETRY and res[0]["valid"] is False and res[0]["correct"] is False
+    assert res[1]["parsed"] == dd.RETRY
+    assert all(r["correct"] for r in res[2:])
+    assert harness.score_dedup_valid_rate(res) == pytest.approx((n - 2) / n, abs=1e-4)
+    assert harness.score_dedup(res, count_invalid_as_wrong=True) == pytest.approx((n - 2) / n, abs=1e-4)
+    # the text path must NOT send a format constraint
+    assert all("response_format" not in c.kwargs for c in router.generate.await_args_list)
+
+    # Structured path: schema forwarded; a text verdict is INVALID here.
+    import json as _json
+    replies = []
+    for i, (_, _, action, idx) in enumerate(bm.DEDUP_CASES):
+        if i == 0:
+            replies.append("ADD")  # not JSON -> invalid on this path
+        else:
+            replies.append(_json.dumps({"action": action, "target_index": idx, "reason": "x"}))
+    router = MagicMock()
+    router.generate = AsyncMock(side_effect=replies)
+    res = await bm.benchmark_dedup(router, structured=True)
+    assert res[0]["valid"] is False
+    assert all(r["correct"] for r in res[1:])
+    assert harness.score_dedup_valid_rate(res) == pytest.approx((n - 1) / n, abs=1e-4)
+    assert harness.score_dedup(res, count_invalid_as_wrong=False) == pytest.approx(1.0, abs=1e-4)
+    assert all(c.kwargs.get("response_format") == dd.MEMORY_ACTION_SCHEMA
+               for c in router.generate.await_args_list)
+
+
+def test_dedup_structured_is_displayed_but_not_composite():
+    assert "dedup_structured" in report.NON_COMPARABLE
+    assert "dedup" not in report.NON_COMPARABLE

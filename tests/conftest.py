@@ -141,6 +141,11 @@ def _canned_generate(task_type, prompt="", system=None, think=None, **kwargs):
         # Detect tag discovery
         if system and "tag" in system.lower() and "pattern" in system.lower():
             return "docker: \\bdocker\\b|\\bcontainer\\b"
+        # Detect the dedup verdict (strict grammar since V3 A1: a lesson-shaped
+        # reply would be RETRY, re-asked once, then ADD - doubling the call
+        # count every pipeline test sees). Answer as the prompt asks.
+        if system and system.startswith("You decide what to do with a new memory"):
+            return "ADD"
         # Detect contradiction check
         if system and "contradict" in system.lower():
             return "NO"

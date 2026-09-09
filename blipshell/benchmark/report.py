@@ -38,6 +38,21 @@ CATEGORIES = [
      "Average of correlation and calibration (1-MAE) vs gold importance."),
     ("contradiction", "Contradiction", "Decides whether two memories contradict.",
      "Exact YES/NO accuracy over a balanced set."),
+    ("dedup", "Dedup verdict (live pipeline)",
+     "Given a new memory and up to three similar ones, picks ADD / NONE / "
+     "UPDATE n / DELETE n as a one-line verdict (processor._decide_and_apply_action). "
+     "Parsed by the strict grammar production runs; an unparseable reply counts "
+     "as WRONG here because in production it costs a re-ask and then defaults "
+     "to keeping the memory.",
+     "Accuracy: action AND target must match gold. valid_rate (informational) = "
+     "share of replies the strict grammar accepted."),
+    ("dedup_structured", "Dedup verdict (structured, experimental)",
+     "Same cases, asked as a schema-constrained JSON object "
+     "(memory.dedup.structured_output). NOT the production default: this row "
+     "exists to decide whether it should be. Displayed, not in the composite.",
+     "Accuracy over schema-VALID replies; valid_rate = share of replies that "
+     "validated. Enable the toggle only when valid_rate clears ~0.98 on the "
+     "model that serves models.reasoning."),
     ("entity", "Entity extraction", "Extracts entities/relationships from text.",
      "F1 of extracted entities vs the expected entity set per item."),
     ("summarization", "Summarization", "Condenses a message into a memory note.",
@@ -76,6 +91,10 @@ LATENCY_SUITES = ["pipeline", "reasoning_suite", "session_review", "coding", "re
 # shared one task_type: the value is whichever was written last, so averaging it
 # in would silently mix two different metrics across models.
 NON_COMPARABLE = {"coding"}
+# "dedup_structured" measures a path production does not run by default
+# (memory.dedup.structured_output); it is displayed so the toggle decision has a
+# number, but a model's composite must reflect what it actually does in service.
+NON_COMPARABLE = NON_COMPARABLE | {"dedup_structured"}
 
 # Judged jobs whose output length is worth showing as a verbosity cross-check.
 JUDGED_JOBS = {"summarization", "lessons", "reasoning", "code_gen", "coding",

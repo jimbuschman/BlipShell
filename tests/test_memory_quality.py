@@ -166,15 +166,21 @@ class TestParseMemoryAction:
         assert action == "UPDATE"
         assert idx == 1
 
-    def test_default_on_garbage(self):
+    def test_garbage_is_retry_not_add(self):
+        # V3 A1: unparseable -> RETRY (caller re-asks once, then keeps the new
+        # memory). It used to default to ADD, which was harmless; the dangerous
+        # default was the one below.
         action, idx = MemoryProcessor._parse_memory_action("garbage response")
-        assert action == "ADD"  # default to ADD
+        assert action == "RETRY"
+        assert idx is None
 
     def test_case_insensitive(self):
         action, _ = MemoryProcessor._parse_memory_action("none")
         assert action == "NONE"
 
-    def test_update_without_number_defaults_to_first(self):
+    def test_update_without_number_is_retry(self):
+        # Used to default to item 0 - "Do not DELETE anything" archived
+        # candidate #1. There is no default target any more.
         action, idx = MemoryProcessor._parse_memory_action("UPDATE")
-        assert action == "UPDATE"
-        assert idx == 0
+        assert action == "RETRY"
+        assert idx is None

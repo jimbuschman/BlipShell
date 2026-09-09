@@ -1444,11 +1444,13 @@ def review_cmd(ctx, lessons, reflections, limit, quiet):
               help="Re-embed memories whose summaries were PII-sanitized ([PERSON]/[PII]).")
 @click.option("--repoint-husks", is_flag=True,
               help="Move mentions/aliases/relationships left on merged-away entities to their canonical.")
+@click.option("--unarchive-memory", "unarchive_ids", type=int, multiple=True,
+              help="Reverse a dedup archive: restore memory ID, re-embed it, keep its history. Repeatable.")
 @click.option("--dry-run", is_flag=True, help="Show counts without making changes.")
 @click.option("--all", "do_all", is_flag=True,
               help="Run all repairs.")
 @click.pass_context
-def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds, repoint_husks, dry_run, do_all):
+def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds, repoint_husks, unarchive_ids, dry_run, do_all):
     """Repair common DB issues.
 
     --restore-imports unarchives memories from imported sessions.
@@ -1456,10 +1458,12 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
     --fix-sessions fixes sessions where end_session() failed (count=0, no title).
     --fix-pii-embeds re-embeds memories with PII-sanitized summaries.
     --repoint-husks moves references stranded on merged-away entities to their canonical.
+    --unarchive-memory ID prints why the memory was archived (dedup provenance)
+      and restores it. Not part of --all: it names specific rows.
     """
     if not (restore_imports or sweep_orphans or fix_sessions or fix_pii_embeds
-            or repoint_husks or do_all):
-        console.print("[yellow]Nothing to do. Pass --restore-imports, --sweep-orphans, --fix-sessions, --fix-pii-embeds, --repoint-husks, or --all.[/yellow]")
+            or repoint_husks or unarchive_ids or do_all):
+        console.print("[yellow]Nothing to do. Pass --restore-imports, --sweep-orphans, --fix-sessions, --fix-pii-embeds, --repoint-husks, --unarchive-memory ID, or --all.[/yellow]")
         return
     if do_all:
         restore_imports = True
@@ -1610,6 +1614,28 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
                     )
                 elif dry_run:
                     console.print("[dim](dry-run; no changes)[/dim]")
+
+            if unarchive_ids:
+                from blipshell.memory.dedup_decision import unarchive_memory
+                for mid in unarchive_ids:
+                    rep = await unarchive_memory(sqlite, vectors, mid, dry_run=dry_run)
+                    dedup = rep.get("dedup")
+                    if dedup:
+                        console.print(
+                            f"[cyan]Memory {mid}:[/cyan] archived by dedup "
+                            f"[bold]{dedup.get('action')}[/bold] in favor of memory "
+                            f"{dedup.get('by')} at {dedup.get('at')} "
+                            f"[dim]reply={dedup.get('reply', '')[:80]!r}[/dim]"
+                        )
+                    else:
+                        console.print(f"[cyan]Memory {mid}:[/cyan] no dedup record on this row")
+                    if rep.get("summary"):
+                        console.print(f"  [dim]{rep['summary']}[/dim]")
+                    if rep["restored"]:
+                        embed = "re-embedded" if rep.get("reembedded") else f"re-embed FAILED: {rep.get('embed_error')}"
+                        console.print(f"  [green]Restored[/green] ({embed})")
+                    else:
+                        console.print(f"  [yellow]Not restored:[/yellow] {rep.get('reason')}")
         finally:
             await sqlite.close()
 

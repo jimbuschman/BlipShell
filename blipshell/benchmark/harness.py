@@ -446,6 +446,36 @@ def score_contradiction(results: list[dict]) -> Optional[float]:
     return sum(1 for r in valid if r.get("correct")) / len(valid)
 
 
+def score_dedup_valid_rate(results: list[dict]) -> Optional[float]:
+    """Share of dedup replies the strict parser accepted (RETRY/ERROR = invalid).
+
+    Informational for the text path (production re-asks once, then keeps the
+    memory); the DECIDING number for the structured path, which is enabled
+    only if the local model reliably produces schema-valid objects.
+    """
+    scored = [r for r in results if "valid" in r]
+    if not scored:
+        return None
+    return round(sum(1 for r in scored if r["valid"]) / len(scored), 4)
+
+
+def score_dedup(results: list[dict], *, count_invalid_as_wrong: bool) -> Optional[float]:
+    """Accuracy of the dedup verdict: action AND target index must match gold.
+
+    Text path: an unparseable reply is WRONG (`count_invalid_as_wrong=True`) -
+    in production it is a wasted call and a default. Structured path: scored
+    over valid replies only, because validity is reported separately and is
+    the gate for that path.
+    """
+    if count_invalid_as_wrong:
+        scored = [r for r in results if r.get("parsed") != "ERROR"]
+    else:
+        scored = [r for r in results if r.get("valid")]
+    if not scored:
+        return None
+    return round(sum(1 for r in scored if r.get("correct")) / len(scored), 4)
+
+
 def _f1(predicted: set, expected: set) -> float:
     """F1 of two sets. Both empty -> 1.0 (correctly extracted nothing)."""
     if not expected and not predicted:
@@ -668,6 +698,18 @@ class BenchmarkHarness:
         contradiction = await bm.benchmark_contradiction(r)
         rows.append(self._row("pipeline", "contradiction", "accuracy", score_contradiction(contradiction)))
 
+        status("pipeline: dedup verdict (text)")
+        dedup_text = await bm.benchmark_dedup(r, structured=False)
+        rows.append(self._row("pipeline", "dedup", "accuracy",
+                              score_dedup(dedup_text, count_invalid_as_wrong=True), raw=dedup_text))
+        rows.append(self._row("pipeline", "dedup", "valid_rate", score_dedup_valid_rate(dedup_text)))
+
+        status("pipeline: dedup verdict (structured)")
+        dedup_json = await bm.benchmark_dedup(r, structured=True)
+        rows.append(self._row("pipeline", "dedup_structured", "accuracy",
+                              score_dedup(dedup_json, count_invalid_as_wrong=False), raw=dedup_json))
+        rows.append(self._row("pipeline", "dedup_structured", "valid_rate", score_dedup_valid_rate(dedup_json)))
+
         status("pipeline: entity extraction")
         entity = await bm.benchmark_entity_extraction(r)
         rows.append(self._row("pipeline", "entity", "accuracy", score_entity(entity)))
@@ -690,7 +732,8 @@ class BenchmarkHarness:
         rows.append(self._row("pipeline", "lessons", "length_words",
                               _mean_words([l["response"] for l in lessons]), unit="words"))
 
-        lat = _mean_latency(ranking, importance, rank_imp, contradiction, entity, summ, lessons)
+        lat = _mean_latency(ranking, importance, rank_imp, contradiction, dedup_text, dedup_json,
+                            entity, summ, lessons)
         rows.append(self._row("pipeline", "pipeline", "latency_s", lat, unit="seconds"))
         return rows
 

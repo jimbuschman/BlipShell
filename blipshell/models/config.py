@@ -97,6 +97,11 @@ class DedupConfig(BaseModel):
     """Memory deduplication configuration."""
     enabled: bool = True
     similarity_threshold: float = 0.7  # min cosine similarity to consider as duplicate candidate
+    # Ask for a schema-constrained JSON verdict instead of a one-line text
+    # verdict. EXPERIMENTAL until the local model's schema-validity rate is
+    # measured (benchmark job `dedup_structured`); the text grammar is the
+    # default and remains the fallback parser's contract. See V3_PLAN A1.
+    structured_output: bool = False
 
 
 class EntityResolutionConfig(BaseModel):

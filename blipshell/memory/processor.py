@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from blipshell.llm.prompts import (
+    DEDUP_RETRY_SUFFIX_JSON,
+    DEDUP_RETRY_SUFFIX_TEXT,
     decide_memory_action,
     detect_contradiction,
     extract_lesson,
@@ -23,6 +25,7 @@ from blipshell.llm.prompts import (
     summarize_memory,
 )
 from blipshell.llm.router import LLMRouter, TaskType
+from blipshell.memory import dedup_decision
 from blipshell.memory.manager import estimate_tokens
 from blipshell.memory.noise import should_skip_memory
 from blipshell.memory.sqlite_store import SQLiteStore
@@ -60,6 +63,7 @@ class MemoryProcessor:
         # Dedup config
         self._dedup_enabled = config.dedup.enabled if config else True
         self._dedup_similarity_threshold = config.dedup.similarity_threshold if config else 0.7
+        self._dedup_structured = config.dedup.structured_output if config else False
 
     async def process_message(
         self,
@@ -397,72 +401,107 @@ class MemoryProcessor:
             similar.append(r)
         return similar[:n_results]
 
+    async def _ask_dedup_verdict(
+        self, summary: str, existing_summaries: list[str], n_candidates: int,
+    ) -> tuple[str, int | None, str]:
+        """Ask the model for a verdict; re-ask ONCE if it cannot be parsed.
+
+        Returns (action, 0-based index | None, last raw reply). `action` is
+        RETRY when both replies were unusable or out of range - the caller
+        then keeps the new memory and archives nothing.
+        """
+        structured = self._dedup_structured
+        system, prompt = decide_memory_action(summary, existing_summaries, structured=structured)
+        gen_kwargs: dict = {"system": system, "think": False}
+        if structured:
+            gen_kwargs["response_format"] = dedup_decision.MEMORY_ACTION_SCHEMA
+        suffix = DEDUP_RETRY_SUFFIX_JSON if structured else DEDUP_RETRY_SUFFIX_TEXT
+
+        response = await self.router.generate(TaskType.REASONING, prompt, **gen_kwargs)
+        action, idx = dedup_decision.parse_action(response, structured=structured)
+        if action != dedup_decision.RETRY and dedup_decision.in_range(action, idx, n_candidates):
+            return action, idx, response
+
+        logger.warning(
+            "Dedup verdict unusable (%s), re-asking once: %r",
+            "out of range" if action != dedup_decision.RETRY else "unparseable",
+            (response or "")[:200],
+        )
+        response = await self.router.generate(TaskType.REASONING, prompt + suffix, **gen_kwargs)
+        action, idx = dedup_decision.parse_action(response, structured=structured)
+        if action != dedup_decision.RETRY and dedup_decision.in_range(action, idx, n_candidates):
+            return action, idx, response
+        return dedup_decision.RETRY, None, response
+
     async def _decide_and_apply_action(
         self, new_memory_id: int, summary: str,
     ) -> str:
         """Find similar memories and ask LLM to decide: ADD/UPDATE/DELETE/NONE.
 
-        Returns the action taken.
+        Returns the action taken. An undecided verdict (unparseable twice, or
+        naming a candidate that does not exist) is applied as ADD: the new
+        memory stays, nothing is archived, and the new row's metadata records
+        `dedup_undecided` so the case can be found. Every archive stamps the
+        archived row with `dedup` = {action, by, candidates, reply, at}, which
+        `blipshell repair --unarchive-memory` reads to explain and reverse it.
         """
         similar = await self._find_similar_memories(summary, exclude_id=new_memory_id)
         if not similar:
             return "ADD"
 
+        candidate_ids = [s["id"] for s in similar]
         existing_summaries = [s["document"] for s in similar]
-        system, prompt = decide_memory_action(summary, existing_summaries)
-        response = await self.router.generate(
-            TaskType.REASONING, prompt, system=system, think=False,
+        action, target_idx, response = await self._ask_dedup_verdict(
+            summary, existing_summaries, len(similar),
         )
 
-        action, target_idx = self._parse_memory_action(response)
+        if action == dedup_decision.RETRY:
+            logger.warning(
+                "Dedup undecided for memory %d (candidates %s); keeping it, archiving nothing. reply=%r",
+                new_memory_id, candidate_ids, (response or "")[:200],
+            )
+            try:
+                await dedup_decision.merge_metadata(self.sqlite, new_memory_id, {
+                    "dedup_undecided": dedup_decision.undecided_record(
+                        candidates=candidate_ids, reply=response, structured=self._dedup_structured,
+                    ),
+                })
+            except Exception as e:
+                logger.warning("Could not record undecided dedup on memory %d: %s", new_memory_id, e)
+            return "ADD"
 
-        if action == "NONE":
-            return "NONE"
+        if action in ("ADD", "NONE"):
+            return action
 
-        if action == "UPDATE" and target_idx is not None and target_idx < len(similar):
-            old_id = similar[target_idx]["id"]
-            # Transfer tags from old → new, archive old
+        # UPDATE / DELETE: archive exactly the named candidate, with provenance.
+        old_id = similar[target_idx]["id"]
+        record = dedup_decision.archive_record(
+            action=action, by_memory_id=new_memory_id, candidates=candidate_ids,
+            reply=response, structured=self._dedup_structured,
+        )
+        if action == "UPDATE":
+            # The refined memory inherits the old one's tags.
             await self.sqlite.transfer_memory_tags(old_id, new_memory_id)
-            await self.sqlite.update_memory(old_id, is_archived=True)
-            try:
-                self.vectors.delete_memory(old_id)
-            except Exception as e:
-                logger.warning("Failed to delete memory %d vector during dedup: %s", old_id, e)
-            logger.info("Dedup: UPDATE — archived old memory %d in favor of %d", old_id, new_memory_id)
-            return "UPDATE"
-
-        if action == "DELETE" and target_idx is not None and target_idx < len(similar):
-            old_id = similar[target_idx]["id"]
-            await self.sqlite.update_memory(old_id, is_archived=True)
-            try:
-                self.vectors.delete_memory(old_id)
-            except Exception as e:
-                logger.warning("Failed to delete memory %d vector during dedup: %s", old_id, e)
-            logger.info("Dedup: DELETE — archived contradicted memory %d", old_id)
-            return "DELETE"
-
-        return "ADD"
+        await dedup_decision.merge_metadata(self.sqlite, old_id, {"dedup": record})
+        await self.sqlite.update_memory(old_id, is_archived=True)
+        try:
+            self.vectors.delete_memory(old_id)
+        except Exception as e:
+            logger.warning("Failed to delete memory %d vector during dedup: %s", old_id, e)
+        logger.info(
+            "Dedup: %s — archived memory %d (candidate %d of %s) in favor of %d; reply=%r",
+            action, old_id, target_idx + 1, candidate_ids, new_memory_id, (response or "")[:120],
+        )
+        return action
 
     @staticmethod
     def _parse_memory_action(text: str) -> tuple[str, int | None]:
-        """Parse LLM dedup action response.
+        """Parse a free-text dedup verdict (strict grammar; see dedup_decision).
 
-        Returns (action, target_index) where target_index is 0-based.
-        Examples: "ADD" → ("ADD", None), "UPDATE 1" → ("UPDATE", 0), "DELETE 2" → ("DELETE", 1)
+        Returns (action, 0-based index | None); ("RETRY", None) when the reply
+        is not unambiguously one verdict. There is no default target.
         """
-        text = text.strip().upper()
-        # Look for action word
-        for action in ("NONE", "UPDATE", "DELETE", "ADD"):
-            if action in text:
-                # Try to extract a number for UPDATE/DELETE
-                if action in ("UPDATE", "DELETE"):
-                    numbers = re.findall(r"\d+", text)
-                    if numbers:
-                        idx = int(numbers[0]) - 1  # 1-based to 0-based
-                        return action, max(idx, 0)
-                    return action, 0  # default to first if no number
-                return action, None
-        return "ADD", None  # default to ADD if unparseable
+        return dedup_decision.parse_action_text(text)
 
     _VALID_MEMORY_TYPES = {"fact", "event", "preference", "skill", "conversation"}
 
