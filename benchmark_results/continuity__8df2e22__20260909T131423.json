@@ -1,0 +1,182 @@
+{
+  "schema": 1,
+  "kind": "continuity",
+  "git_sha": "8df2e22",
+  "run_ts": "20260909T131423",
+  "host": "XTEK-COMPUTER5",
+  "summary": {
+    "cases": 13,
+    "survival_rate": 0.8333,
+    "exclusion_rate": 0.4286,
+    "labelled_rate": 0.4286,
+    "duplicated_renders": 16,
+    "failed": [
+      "fact_buried_past_1200_chars",
+      "corrected_preference_current_question",
+      "corrected_preference_history_question",
+      "conflicting_project_state_newer_wins",
+      "assistant_speculation_is_not_fact"
+    ]
+  },
+  "results": [
+    {
+      "name": "control_short_fact",
+      "family": "survival",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 2395,
+      "duplicated_renders": 1
+    },
+    {
+      "name": "fact_buried_past_1200_chars",
+      "family": "survival",
+      "passed": false,
+      "missing": [
+        "192.168.4.77"
+      ],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 3760,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "fact_split_across_sessions",
+      "family": "survival",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 2562,
+      "duplicated_renders": 2
+    },
+    {
+      "name": "exact_recall_number",
+      "family": "survival",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 2515,
+      "duplicated_renders": 1
+    },
+    {
+      "name": "abstention_marker_when_nothing_matches",
+      "family": "survival",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 2530,
+      "duplicated_renders": 0
+    },
+    {
+      "name": "paraphrases_do_not_crowd_out_the_source",
+      "family": "survival",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 2561,
+      "duplicated_renders": 1
+    },
+    {
+      "name": "corrected_preference_current_question",
+      "family": "false_recall",
+      "passed": false,
+      "missing": [],
+      "unlabelled": [
+        "I prefer tabs"
+      ],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 2616,
+      "duplicated_renders": 2
+    },
+    {
+      "name": "corrected_preference_history_question",
+      "family": "false_recall",
+      "passed": false,
+      "missing": [],
+      "unlabelled": [
+        "I prefer tabs"
+      ],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 2632,
+      "duplicated_renders": 2
+    },
+    {
+      "name": "conflicting_project_state_newer_wins",
+      "family": "false_recall",
+      "passed": false,
+      "missing": [],
+      "unlabelled": [
+        "vector store is ChromaDB"
+      ],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 2570,
+      "duplicated_renders": 2
+    },
+    {
+      "name": "assistant_speculation_is_not_fact",
+      "family": "false_recall",
+      "passed": false,
+      "missing": [],
+      "unlabelled": [
+        "probably prefer Python"
+      ],
+      "labelled": [],
+      "leaked": [],
+      "request_chars": 2463,
+      "duplicated_renders": 1
+    },
+    {
+      "name": "cross_project_value_is_labelled",
+      "family": "false_recall",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [
+        "30 seconds"
+      ],
+      "leaked": [],
+      "request_chars": 2520,
+      "duplicated_renders": 2
+    },
+    {
+      "name": "other_persons_fact_keeps_its_owner",
+      "family": "false_recall",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [
+        "555-0100"
+      ],
+      "leaked": [],
+      "request_chars": 2443,
+      "duplicated_renders": 1
+    },
+    {
+      "name": "stale_external_content_shows_its_age",
+      "family": "false_recall",
+      "passed": true,
+      "missing": [],
+      "unlabelled": [],
+      "labelled": [
+        "20 requests per minute"
+      ],
+      "leaked": [],
+      "request_chars": 2495,
+      "duplicated_renders": 1
+    }
+  ]
+}
