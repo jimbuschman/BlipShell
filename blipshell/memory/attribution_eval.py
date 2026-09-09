@@ -64,7 +64,7 @@ def judge_hash() -> str:
 @dataclass
 class EvalItem:
     item_id: str
-    source: str                       # corrections_row | historical_lesson
+    source: str                       # corrections_row | historical_lesson | historical_message
     source_id: int
     text: str
     prev_assistant: str
@@ -127,11 +127,29 @@ def parse_anti_pattern(content: str) -> tuple[Optional[str], str]:
     return m.group(1).strip(), (prev.group(1).strip() if prev else "")
 
 
+def _pool_at(others, ts):
+    """The always-on lesson pool as it stood at `ts` (pre-D1 selection: the
+    top-N by importance of every lesson that existed), reconstructed."""
+    pool = [o for o in others if o.timestamp and ts and o.timestamp <= ts]
+    pool.sort(key=lambda o: o.importance, reverse=True)
+    return pool[:TOP_N_RECONSTRUCTED]
+
+
 async def build_set(sqlite, *, generation: str, selection_behavior: str,
                     db_name: str = "", limit: int = 200) -> EvalSet:
-    """Collect candidate items from the corrections table and the historical
-    anti-pattern lessons. Does not label. Fails if the generation exists
-    frozen on disk (caller checks) - building never overwrites a frozen set."""
+    """Collect candidate items from three sources, most exact first:
+    1. `corrections` rows (phase 1 records: exact lessons_present),
+    2. historical anti-pattern lessons the detector minted,
+    3. the production correction detector replayed over raw user messages
+       written while a lesson pool existed (a candidate the detector would
+       have flagged; the pool is reconstructed at that time; the previous
+       assistant message in the session is the excerpt).
+    Source 3 exists because the 2026-09-02 corpus held only THREE detector
+    lessons: the detector wrote lessons for a fraction of the corrections it
+    saw, and the stage-2 judge (2026-09-02) rejects most candidates as
+    recounted dialogue. Its items are CANDIDATES - many will be labelled
+    `unrelated`, which is exactly the false-positive population the gate
+    needs. Does not label. Never overwrites a frozen set (caller checks)."""
     s = EvalSet(generation=generation, selection_behavior=selection_behavior,
                 created_at=datetime.now(timezone.utc).isoformat(), db_name=db_name)
 
@@ -160,14 +178,14 @@ async def build_set(sqlite, *, generation: str, selection_behavior: str,
     anti = [l for l in all_lessons if (l.added_by == "correction_detector"
                                         or (l.content or "").startswith("ANTI-PATTERN: User corrected"))]
     others = [l for l in all_lessons if l not in anti]
+    seen_texts = {i.text.strip().lower() for i in s.items}
     for l in sorted(anti, key=lambda x: x.timestamp or datetime.min)[:limit]:
         text, prev = parse_anti_pattern(l.content or "")
         if not text:
             continue
         ts = l.timestamp
-        pool = [o for o in others if o.timestamp and ts and o.timestamp <= ts]
-        pool.sort(key=lambda o: o.importance, reverse=True)
-        pool = pool[:TOP_N_RECONSTRUCTED]
+        pool = _pool_at(others, ts)
+        seen_texts.add(text.strip().lower())
         s.items.append(EvalItem(
             item_id=f"h{l.id}", source="historical_lesson", source_id=int(l.id),
             text=text, prev_assistant=prev,
@@ -176,7 +194,56 @@ async def build_set(sqlite, *, generation: str, selection_behavior: str,
             lessons=[[o.id, (o.content or "")[:300]] for o in pool[:att.MAX_LESSONS_JUDGED]],
             at=ts.isoformat() if ts else "",
         ))
+
+    # 3. detector replay over raw user messages, only while a pool existed
+    from blipshell.core.guardrails import detect_correction
+    first_lesson = min((o.timestamp for o in others if o.timestamp), default=None)
+    if first_lesson is not None:
+        cur = await sqlite._db.execute(
+            "SELECT id, session_id, content, timestamp FROM memories "
+            "WHERE role = 'user' AND is_archived = 0 AND timestamp >= ? ORDER BY id",
+            (first_lesson.isoformat(),))
+        rows = [dict(r) for r in await cur.fetchall()]
+        added = 0
+        for r in rows:
+            text = (r.get("content") or "").strip()
+            if not text or not detect_correction(text):
+                continue
+            key = text.lower()
+            if key in seen_texts:
+                continue  # the detector already minted a lesson for this one (source 2)
+            ts = _parse_ts(r.get("timestamp"))
+            pool = _pool_at(others, ts)
+            if not pool:
+                continue
+            prev_cur = await sqlite._db.execute(
+                "SELECT content FROM memories WHERE session_id = ? AND role = 'assistant' AND id < ? "
+                "ORDER BY id DESC LIMIT 1", (r["session_id"], r["id"]))
+            prev_row = await prev_cur.fetchone()
+            prev = (prev_row[0] or "")[:400] if prev_row else ""
+            seen_texts.add(key)
+            s.items.append(EvalItem(
+                item_id=f"m{r['id']}", source="historical_message", source_id=int(r["id"]),
+                text=text[:1000], prev_assistant=prev,
+                lessons_present=[o.id for o in pool],
+                lessons_present_source="reconstructed_top30",
+                lessons=[[o.id, (o.content or "")[:300]] for o in pool[:att.MAX_LESSONS_JUDGED]],
+                at=ts.isoformat() if ts else (r.get("timestamp") or ""),
+            ))
+            added += 1
+            if added >= limit:
+                break
     return s
+
+
+def _parse_ts(raw) -> Optional[datetime]:
+    if not raw:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
 
 # ---------------------------------------------------------------- label / freeze

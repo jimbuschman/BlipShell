@@ -178,3 +178,41 @@ class TestRun:
         full2, _ = ev.write_run(res2, base=base, summary_dir=summ, git_sha="abc124")
         assert json.loads(full2.read_text())["judge_version"].startswith("changed-from-")
         assert ev.render(res).startswith("generation=pre-D1")
+
+
+class TestBuildFromRawMessages:
+    async def test_detector_replay_adds_candidates_only_while_a_pool_existed(self, sqlite_store):
+        """Source 3: the production detector over raw user messages. A hit before
+        any lesson existed has no pool and is skipped; a hit whose text the
+        detector already turned into a lesson is not duplicated; the previous
+        assistant message in the session is the excerpt."""
+        from blipshell.models.memory import Memory
+        l1, l2, hist, cid = await _seed(sqlite_store)
+        now = datetime.now(timezone.utc)
+        sid = await sqlite_store.create_session(title="s", created_at=now - timedelta(days=3))
+        a_id = await sqlite_store.create_memory(Memory(session_id=sid, role="assistant",
+                                                       content="I renamed the module for you.",
+                                                       timestamp=now - timedelta(days=3, minutes=2)))
+        u_id = await sqlite_store.create_memory(Memory(session_id=sid, role="user",
+                                                       content="I already told you not to rename modules.",
+                                                       timestamp=now - timedelta(days=3)))
+        # before the first lesson: detector hit, but no pool -> not an item
+        early = await sqlite_store.create_memory(Memory(session_id=sid, role="user",
+                                                        content="That's wrong, read what I said.",
+                                                        timestamp=now - timedelta(days=30)))
+        # same text as the detector lesson's User said -> source 2 already has it
+        dup = await sqlite_store.create_memory(Memory(session_id=sid, role="user",
+                                                      content="No, that's wrong - the tests did not pass.",
+                                                      timestamp=now - timedelta(days=2)))
+        # not a correction at all
+        plain = await sqlite_store.create_memory(Memory(session_id=sid, role="user",
+                                                        content="Please add a docstring to the parser.",
+                                                        timestamp=now - timedelta(days=2)))
+        s = await ev.build_set(sqlite_store, generation="pre-D1", selection_behavior="x")
+        by = {i.item_id: i for i in s.items}
+        assert f"m{u_id}" in by
+        m = by[f"m{u_id}"]
+        assert m.source == "historical_message" and m.prev_assistant == "I renamed the module for you."
+        assert set(m.lessons_present) == {l1, l2} and m.lessons_present_source == "reconstructed_top30"
+        assert f"m{early}" not in by and f"m{dup}" not in by and f"m{plain}" not in by
+        assert {i.source for i in s.items} == {"corrections_row", "historical_lesson", "historical_message"}
