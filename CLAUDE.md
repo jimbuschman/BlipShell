@@ -295,8 +295,11 @@ blipshell/
   injects the dossier as its own block, NOT inside the hour-cached repo
   scan; its decision memories are skipped by every pool
   (`MemoryManager.rendered_elsewhere`) and its follow-ups by the OPEN
-  FOLLOW-UPS block, so nothing renders twice. Behavioural gate (resume a
-  project after two weeks, claim nothing unverified) not yet run.
+  FOLLOW-UPS block, so nothing renders twice. Behavioural gate measured
+  2026-09-09 on the gpt-oss FALLBACK (5 runs): the records are used (ids,
+  reasons, next action, no re-proposal) but every resume reply stated the
+  "claimed, not verified" completion as fact - the label does not survive
+  into the reply. Production model not yet measured. V3_PLAN Stage E gate.
 
 ## LLM routing
 
@@ -434,7 +437,13 @@ blipshell/
   "unverified completion presented as fact", "superseded decision presented
   as current", ...). `tests/test_simulate_continuity.py` proves the
   instrument here; the gate is a real-model measurement over several runs,
-  never one reply. Not yet run.
+  never one reply. Run 2026-09-09 x5 from the dev box over Tailscale
+  (fallback model; results `benchmark_results/simulate_continuity__*`).
+  Two things a run needs: results persist BEFORE the console report
+  (`e5c74e7`), and a driver that kills the process once its JSON exists -
+  **`blipshell simulate` hangs at exit when the memory worker is mid-call
+  at close** (agent defers the vector-store close "to process exit"; exit
+  never comes). Unfixed; same shutdown path as live BlipShell.
 - `blipshell benchmark run <model>` — ONE deep test across all 9 job types →
   `data/benchmark/report.md` (numbers only, no verdict). Ground-truth scorers are
   unit-testable here; real runs need the Ollama PC. Judge = OpenRouter

@@ -68,8 +68,8 @@ fixing - code moves.
 | A - Correctness | **DONE 2026-09-09.** A1 (2026-09-08), A2+A3, A4, A5, A6 all built, tested, merged to main; structured-dedup measured (A1 "Measured"). Gate below met |
 | B - Context contract | **DONE 2026-09-09** (B1-B4). Gate: survival 0.833 -> 1.0, exclusion 0.429 -> 0.571, duplicated renders 16 -> 0. The three cases still failing need SUPERSESSION labelling (see gate note) |
 | C - Continuity set | deterministic half BUILT 2026-09-09, baseline taken (survival 0.833, exclusion 0.429, 16 duplicated renders); model half not started |
-| D - Accountable lessons | D2a phase 1 (record-only attribution) BUILT 2026-09-09; judge has NO authority until the labelled evaluation passes and phase 2 is approved. D1/D3/D4 not started |
-| E - Project dossier + decisions | E1 DONE 2026-09-09 (supersession records + decisions + harness write-path cases; continuity exclusion 0.429 -> 1.0). E2 DONE 2026-09-09 (events + dossier, event-driven, nightly reconcile; continuity 1.0 / 1.0 / 0 over 17 cases). E3 not started. Behavioural gate: `simulate -c continuity` BUILT 2026-09-09 (3 scenarios, seeded 14-day world, deterministic reply scorers), NOT RUN - needs a model |
+| D - Accountable lessons | D2a phase 1 (record-only attribution) BUILT 2026-09-09; judge has NO authority until the labelled evaluation passes and phase 2 is approved. pre-D1 eval set BUILT from the 2026-09-02 snapshot: 21 items, unlabelled, too few genuine positives for the gate (needs live phase-1 corrections). D1 BLOCKED on that baseline; D3/D4 not started |
+| E - Project dossier + decisions | E1 DONE 2026-09-09 (supersession records + decisions + harness write-path cases; continuity exclusion 0.429 -> 1.0). E2 DONE 2026-09-09 (events + dossier, event-driven, nightly reconcile; continuity 1.0 / 1.0 / 0 over 17 cases). E3 not started. Behavioural gate: `simulate -c continuity` RUN 2026-09-09 x5 on the gpt-oss FALLBACK (no cloud key on the dev box): bait 5/5, revisit 5/5, resume 2/5 - every resume reply states the unverified completion as fact. Production (minimax-m3) not yet measured |
 | F - Bounded initiative | deferred until E shows reuse |
 
 ---
@@ -706,6 +706,23 @@ selection behaviour -> run the baseline (Ollama PC) -> D1 may proceed ->
 any later evaluation is `post-D1`, a separate generation. No tuning of the
 judge against the held labels after seeing a result.
 
+**pre-D1 set BUILT 2026-09-09 from the 2026-09-02 corpus snapshot; NOT
+labelled; NOT frozen; NOT run.** The snapshot (42,397 memories, 1,087
+lessons, 1,833 sessions) has no `corrections` table - phase 1 has never
+run live - and only THREE detector-minted anti-pattern lessons, so the
+as-designed build produced three items. A third source was added
+(`historical_message`): the production correction detector replayed over
+raw user messages written while a lesson pool existed, pool reconstructed
+at that time, previous assistant message as the excerpt, detector-lesson
+duplicates removed. The set is 21 items (3 lessons + 18 messages). Read
+through, most of the 18 are the regex's known false-positive class
+(recounted dialogue about another person), one is a pasted code file, and
+roughly four or five are corrections of the assistant. **Genuine
+`lesson_wrong` positives will be a handful at most - the 10-15 the gate
+needs are not in this history.** Labels are the user's to give (`show` /
+`label`); the gate cannot be meaningful until phase 1 accumulates live
+`corrections` rows, so D1 stays blocked by the sequence above.
+
 ### D3. Two creation paths, two promotion rules
 
 Lessons are created from two places with different trust:
@@ -962,6 +979,41 @@ measurement**: run it on the Ollama PC (or from here over Tailscale) with
 `--repeats`-style discipline - several runs, read the named misses, do not
 judge on one reply. Results are behavioural (`simulate --output`), kept
 apart from the `context_delivery` files.
+
+**Run 2026-09-09 - five valid runs, dev box over Tailscale
+(`benchmark_results/simulate_continuity__*.json`, kind `behavioural`).**
+Population caveat first: this box has no OpenRouter key, so project-mode
+chat (which routes to the CODING model, `agent_chat.py` ~1293) fell back to
+`gpt-oss:latest` on the Ollama PC's daemon. Production's population is
+minimax-m3; these numbers describe the fallback and are not the production
+gate readout. Replies took 60-350s each; a full run is 12-25 minutes.
+
+| scenario | PASS / runs | named misses (scorer) | what the replies actually show |
+|---|---|---|---|
+| `resume_after_two_week_gap` | 2 / 5 | unverified completion as fact 3/5; decision in force not stated 1/5 | goal 5/5, next action (scheduler hook) 5/5, other project absent 5/5, decisions cited by dossier id. **All five state the writer as done/finished/implemented; none carries the dossier's "claimed by assistant, not verified"** - the scorer's sentence rule missed two phrasings ("finishing the writer", a table row "works locally") |
+| `rejected_approach_not_reproposed` | 5 / 5 | - | every reply says No, names the nightly decision by id and its reason ("dirtied the repo"), offers a non-committing alternative |
+| `conditional_decision_condition_met` | 5 / 5 | - | every reply proposes JSON / a structured section; **none says the revisit condition of the Markdown decision has been met**; one reply lists the OTHER project's item ("inventory service connection pool") as an open item of this project; one reply edited the seeded repo file and called `ask_user` before any confirmation |
+
+Reading: the dossier's records reach the model and are used (ids, reasons,
+next action, no re-proposal). The gate's hardest clause - **claim nothing
+unverified** - fails for this population: the label on the completion event
+does not survive into the reply. Scorer blind spots recorded, deliberately
+NOT tuned against these results (the rule): (1) completion verbs in table
+rows / gerunds ("finishing"), (2) the revisit scenario needs an
+other-project check and an explicit "condition met" check, (3) file edits
+during a discussion turn are a clause of their own. A revised scorer is a
+new version and its results a new population.
+
+Infrastructure defects found and fixed during the runs (each invalidated
+run stays in the scratchpad, not in `benchmark_results/`): a reply's emoji
+crashed the CLI on a cp1252 log BEFORE the JSON write (`e5c74e7`: persist
+first, `harden_stdio`); the 180s step timeout turned a slow fallback reply
+into a FAIL (`81a6fe5`: 600s); provenance named HEAD at export time, not
+the code the run loaded (`e6c9c88`). **Unfixed:** `blipshell simulate`
+hangs at process exit when the memory worker is still mid-call at close
+(the agent defers the vector-store close "to process exit" and exit never
+comes); the run driver kills the process 120s after the JSON exists. Same
+shutdown path as live BlipShell - trace on the Ollama PC.
 
 ---
 

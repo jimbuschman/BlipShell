@@ -1,0 +1,177 @@
+{
+  "kind": "behavioural",
+  "git_sha": "e6c9c88",
+  "host": "Xtek-Computer5",
+  "run_ts": "20260909T220149",
+  "endpoints": [
+    {
+      "name": "openrouter",
+      "enabled": false,
+      "roles": [
+        "coding",
+        "tool_calling",
+        "session_review"
+      ],
+      "models": {
+        "coding": "minimax/minimax-m3",
+        "tool_calling": "deepseek/deepseek-v4-flash",
+        "session_review": "deepseek/deepseek-v4-flash"
+      }
+    },
+    {
+      "name": "groq",
+      "enabled": false,
+      "roles": [
+        "summarization",
+        "ranking_importance"
+      ],
+      "models": {
+        "summarization": "openai/gpt-oss-120b",
+        "ranking_importance": "openai/gpt-oss-120b"
+      }
+    },
+    {
+      "name": "local-cloud",
+      "enabled": true,
+      "roles": [
+        "tool_calling",
+        "reflection"
+      ],
+      "models": {
+        "tool_calling": "gemma4:31b-cloud",
+        "reflection": "gemma4:31b-cloud"
+      }
+    },
+    {
+      "name": "local",
+      "enabled": true,
+      "roles": [
+        "reasoning",
+        "embedding",
+        "summarization",
+        "ranking",
+        "importance",
+        "ranking_importance",
+        "session_review",
+        "reflection"
+      ],
+      "models": {}
+    }
+  ],
+  "models": {
+    "reasoning": "qwen3:14b",
+    "tool_calling": "gemma4:31b-cloud",
+    "coding": "minimax/minimax-m3",
+    "summarization": "glm4:latest",
+    "ranking": "qwen3:14b",
+    "importance": "qwen3:14b",
+    "ranking_importance": "qwen3:14b",
+    "session_review": "qwen3:14b",
+    "reflection": "qwen3:14b",
+    "embedding": "qwen3-embedding:0.6b",
+    "reasoning_fallback": "gpt-oss:latest",
+    "tool_calling_fallback": "gpt-oss:latest",
+    "coding_fallback": "gpt-oss:latest",
+    "summarization_fallback": "qwen3:14b",
+    "ranking_fallback": "qwen3:14b",
+    "importance_fallback": "qwen3:14b",
+    "ranking_importance_fallback": "qwen3.5:9b",
+    "session_review_fallback": "qwen3:14b",
+    "reflection_fallback": "qwen3:14b",
+    "fallback_think": false
+  },
+  "elapsed_seconds": 787.99,
+  "summary": {
+    "total": 3,
+    "passed": 3,
+    "warned": 0,
+    "failed": 0
+  },
+  "scenarios": [
+    {
+      "name": "resume_after_two_week_gap",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 223.91,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "Resume question",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 54.94,
+          "tools_called": [],
+          "tool_call_count": 0,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "local-cloud",
+            "model": "gpt-oss:latest",
+            "fallback": true
+          },
+          "response": "You\u2019re back just in time\u2014our last work on the project was finishing the Markdown export writer that writes `DIGEST.md` into the repo. The remaining gap is that the nightly scheduler hook hasn\u2019t been wired, so the export never runs automatically.\n\n**Next steps**\n\n1. **Add the scheduler hook** \u2013 create (or modify) the cron\u2011style or systemd\u2011timer entry that triggers `python -m export` once a day at, say, 02\u202f:\u202f00\u202fAM.  \n2. **Verify the hook** \u2013 run the hook manually to confirm `DIGEST.md` is generated and committed.  \n3. **Commit the changes** \u2013 push the new hook files and any related configuration to the repo.\n\nOnce that\u2019s in place, the nightly digest will be created automatically, and you can focus on any additional features or the upcoming demo."
+        }
+      ]
+    },
+    {
+      "name": "rejected_approach_not_reproposed",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 250.71,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "Bait: the rejected approach",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 63.77,
+          "tools_called": [],
+          "tool_call_count": 0,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "local-cloud",
+            "model": "gpt-oss:latest",
+            "fallback": true
+          },
+          "response": "No.  The project already has two decisions in force that specifically say the export should run only nightly (Decisions\u202f#10\u202fand\u202f#3).  Those were made because hourly rewrites were creating a lot of noisy commits and bloating the repo history.  If you start running it every hour you\u2019ll end up with a commit every time the digest changes \u2013 the file is rewritten daily, so the repo would accumulate a new commit each hour, which is unnecessary and would make it harder to track real changes.  \n\nIf you really need the repo to reflect the most recent digest, you could keep the nightly job and then trigger a \u201cforce\u2011push\u201d of the latest `DIGEST.md` in a separate, automated step, but that would add extra complexity without the benefit of hourly freshness.  So the current recommendation is to stay with the nightly schedule."
+        }
+      ]
+    },
+    {
+      "name": "conditional_decision_condition_met",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 308.74,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "The revisit condition is met",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 95.2,
+          "tools_called": [
+            "read_file",
+            "list_directory",
+            "read_file"
+          ],
+          "tool_call_count": 3,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "local-cloud",
+            "model": "gpt-oss:latest",
+            "fallback": true
+          },
+          "response": "Your CI job can pull the digest just like any other file and run a small parser against it.  \nThe digest is a plain Markdown file (`DIGEST.md`) that we already generate with `export.py`.  \nIt looks something like this:\n\n```markdown\n# Digest \u2013 2026\u201109\u201109\n\n## Open Items\n- [ ] #42: Update inventory service connection pool to 40 workers\n- [ ] #37: Add nightly scheduler hook for digest export\n```\n\n### How to parse it\n\n1. **Read the file**  \n   ```bash\n   cat DIGEST.md\n   ```\n\n2. **Extract the \u201cOpen Items\u201d section**  \n   In a script you can simply capture everything between `## Open Items` and the next level\u20112 header or end of file.\n\n3. **Pull the bullet lines**  \n   Each open item is a Markdown list entry.  A quick regex will give you the task IDs and titles:\n\n   ```python\n   import re\n\n   with open(\"DIGEST.md\") as f:\n       text = f.read()\n\n   section = re.search(r\"## Open Items(.*?)##\", text, re.S)\n   if section:\n       lines = section.group(1).strip().splitlines()\n       items = [re.sub(r\"^\\s*[-*]\\s*\\[\\s*\\]\\s*\", \"\", l) for l in lines]\n       print(items)\n   ```\n\n   This produces a list like:\n   ```\n   ['#42: Update inventory service connection pool to 40 workers',\n    '#37: Add nightly scheduler hook for digest export']\n   ```\n\n4. **Optional: JSON export**  \n   If you\u2019d rather have a machine\u2011friendly format you can modify `export.py` to emit a JSON block at the end of the file:\n\n   ```markdown\n   ## Open Items\n   - [ ] #42: ...\n\n   ```json\n   {\"open_items\": [\"#42: Update inventory service connection pool to 40 workers\",\n                   \"#37: Add nightly scheduler hook for digest export\"]} ```\n   ```\n\n   Your CI can then just `grep` the JSON block or use a lightweight JSON parser.\n\n### Quick CI snippet\n\n```yaml\nsteps:\n  - run: python -m export   # produce DIGEST.md\n  - run: |\n      ITEMS=$(grep -A1 -B1 \"## Open Items\" DIGEST.md | grep -E \"^\\s*-\\s*\\[ \\]\" | sed 's/^\\s*[-*]\\s*\\[\\s*\\]\\s*//')\n      echo \"$ITEMS\" | while read -r item; do\n        echo \"Open item: $item\"\n      done\n```\n\nThat gives you the list of open items in a format you can assert against or feed into your issue tracker.  \n\nFeel free to let me know if you need a concrete script or if the digest format changes!"
+        }
+      ]
+    }
+  ]
+}

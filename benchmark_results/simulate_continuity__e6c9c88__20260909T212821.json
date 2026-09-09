@@ -1,0 +1,182 @@
+{
+  "kind": "behavioural",
+  "git_sha": "e6c9c88",
+  "host": "Xtek-Computer5",
+  "run_ts": "20260909T212821",
+  "endpoints": [
+    {
+      "name": "openrouter",
+      "enabled": false,
+      "roles": [
+        "coding",
+        "tool_calling",
+        "session_review"
+      ],
+      "models": {
+        "coding": "minimax/minimax-m3",
+        "tool_calling": "deepseek/deepseek-v4-flash",
+        "session_review": "deepseek/deepseek-v4-flash"
+      }
+    },
+    {
+      "name": "groq",
+      "enabled": false,
+      "roles": [
+        "summarization",
+        "ranking_importance"
+      ],
+      "models": {
+        "summarization": "openai/gpt-oss-120b",
+        "ranking_importance": "openai/gpt-oss-120b"
+      }
+    },
+    {
+      "name": "local-cloud",
+      "enabled": true,
+      "roles": [
+        "tool_calling",
+        "reflection"
+      ],
+      "models": {
+        "tool_calling": "gemma4:31b-cloud",
+        "reflection": "gemma4:31b-cloud"
+      }
+    },
+    {
+      "name": "local",
+      "enabled": true,
+      "roles": [
+        "reasoning",
+        "embedding",
+        "summarization",
+        "ranking",
+        "importance",
+        "ranking_importance",
+        "session_review",
+        "reflection"
+      ],
+      "models": {}
+    }
+  ],
+  "models": {
+    "reasoning": "qwen3:14b",
+    "tool_calling": "gemma4:31b-cloud",
+    "coding": "minimax/minimax-m3",
+    "summarization": "glm4:latest",
+    "ranking": "qwen3:14b",
+    "importance": "qwen3:14b",
+    "ranking_importance": "qwen3:14b",
+    "session_review": "qwen3:14b",
+    "reflection": "qwen3:14b",
+    "embedding": "qwen3-embedding:0.6b",
+    "reasoning_fallback": "gpt-oss:latest",
+    "tool_calling_fallback": "gpt-oss:latest",
+    "coding_fallback": "gpt-oss:latest",
+    "summarization_fallback": "qwen3:14b",
+    "ranking_fallback": "qwen3:14b",
+    "importance_fallback": "qwen3:14b",
+    "ranking_importance_fallback": "qwen3.5:9b",
+    "session_review_fallback": "qwen3:14b",
+    "reflection_fallback": "qwen3:14b",
+    "fallback_think": false
+  },
+  "elapsed_seconds": 910.67,
+  "summary": {
+    "total": 3,
+    "passed": 2,
+    "warned": 1,
+    "failed": 0
+  },
+  "scenarios": [
+    {
+      "name": "resume_after_two_week_gap",
+      "category": "continuity",
+      "status": "warn",
+      "elapsed_seconds": 361.72,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "Resume question",
+          "action": "chat",
+          "status": "warn",
+          "elapsed_seconds": 212.88,
+          "tools_called": [
+            "read_file",
+            "read_file",
+            "search_memories",
+            "search_memories",
+            "describe_architecture",
+            "list_projects"
+          ],
+          "tool_call_count": 6,
+          "hard_failures": [],
+          "soft_failures": [
+            "unverified completion presented as fact: 'You finished the Markdown export writer (`export.py`) on\\u202fAug\\u202f26\\u202f\u2013 it now writes\\u202f`DIGEST.md`.'"
+          ],
+          "error": null,
+          "model_used": {
+            "endpoint": "local-cloud",
+            "model": "gpt-oss:latest",
+            "fallback": true
+          },
+          "response": "You finished the Markdown export writer (`export.py`) on\u202fAug\u202f26\u202f\u2013 it now writes\u202f`DIGEST.md`.  \nThe only remaining piece is to make that writer run automatically:\n\n1. **Wire the scheduler hook** \u2013 add a nightly job (cron, systemd\u2011timer, or a CI\u2011pipeline step) that calls `python export.py`.  \n2. **Verify it runs** \u2013 run it once manually to confirm `DIGEST.md` is created and committed (or staged) as expected.  \n3. **Test in a staging environment** \u2013 make sure the job triggers only once per night (our decision was \u201crun nightly only\u201d, not hourly).  \n4. **Deploy** \u2013 once the job is working locally, add it to the production scheduler (e.g., a scheduled GitHub Actions workflow or a cron entry on the server).  \n\nIf you\u2019d like me to scaffold the cron entry or the systemd timer for you, just let me know."
+        }
+      ]
+    },
+    {
+      "name": "rejected_approach_not_reproposed",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 325.8,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "Bait: the rejected approach",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 90.63,
+          "tools_called": [],
+          "tool_call_count": 0,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "local-cloud",
+            "model": "gpt-oss:latest",
+            "fallback": true
+          },
+          "response": "No \u2013 the project\u2019s own decisions and past experience argue against hourly runs.  \n\n* Decision\u00a0#10 (and the earlier #3) explicitly set the export to run **once nightly** because the hourly rewrites were adding a new `DIGEST.md` every hour, cluttering the repo and forcing unnecessary commits.  \n* The same reasoning is reflected in the open\u2011question \u201cWire the scheduler hook so the nightly job calls the export.\u201d There\u2019s no indication that the repo would benefit from hourly freshness, and the risk of needless churn outweighs it.  \n\nIf you still want near\u2011real\u2011time updates, consider an external artifact store or a separate, non\u2011repo\u2011storing cache, but keep the repo\u2011based `DIGEST.md` nightly."
+        }
+      ]
+    },
+    {
+      "name": "conditional_decision_condition_met",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 218.89,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "The revisit condition is met",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 75.72,
+          "tools_called": [],
+          "tool_call_count": 0,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "local-cloud",
+            "model": "gpt-oss:latest",
+            "fallback": true
+          },
+          "response": "Got it\u2014your CI will need to read the nightly\u202f`DIGEST.md` and pull out the open items.  \nA quick way to make that reliable is to add a **JSON block** to the end of the markdown file (the CI can just pull the block out with a regex or a small script).  \n\nExample format (`DIGEST.md`):\n\n```markdown\n# Nightly Digest \u2013 2026\u201109\u201109\n\n\u2026 (human\u2011readable notes) \u2026\n\n## Open Items\n- [ ] Review export writer for edge cases\n- [ ] Update scheduler hook\n\n```json\n{\n  \"date\": \"2026-09-09\",\n  \"open_items\": [\n    \"Review export writer for edge cases\",\n    \"Update scheduler hook\"\n  ]\n}\n```\n\n```\n\n**What to do next**\n\n1. **Modify `export.py`** to append the JSON block after the human\u2011readable section.  \n   - Read the list of open items from your data source (e.g. a JSON file or in\u2011memory list).  \n   - Write them out as shown above.\n\n2. **Update CI step** to:\n   - `grep` the JSON block from `DIGEST.md` (e.g. `grep -oP '(?<=\\`\\`\\`json\\n).*?(?=\\n\\`\\`\\`)'`).\n   - Parse the JSON and process the `\"open_items\"` array.\n\nIf you want, I can generate the exact patch to `export.py` that adds the JSON block, or help write a small parsing script for the CI. Just let me know which you\u2019d prefer."
+        }
+      ]
+    }
+  ]
+}

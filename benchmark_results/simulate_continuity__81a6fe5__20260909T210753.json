@@ -1,0 +1,184 @@
+{
+  "kind": "behavioural",
+  "git_sha": "81a6fe5",
+  "host": "Xtek-Computer5",
+  "run_ts": "20260909T210753",
+  "endpoints": [
+    {
+      "name": "openrouter",
+      "enabled": false,
+      "roles": [
+        "coding",
+        "tool_calling",
+        "session_review"
+      ],
+      "models": {
+        "coding": "minimax/minimax-m3",
+        "tool_calling": "deepseek/deepseek-v4-flash",
+        "session_review": "deepseek/deepseek-v4-flash"
+      }
+    },
+    {
+      "name": "groq",
+      "enabled": false,
+      "roles": [
+        "summarization",
+        "ranking_importance"
+      ],
+      "models": {
+        "summarization": "openai/gpt-oss-120b",
+        "ranking_importance": "openai/gpt-oss-120b"
+      }
+    },
+    {
+      "name": "local-cloud",
+      "enabled": true,
+      "roles": [
+        "tool_calling",
+        "reflection"
+      ],
+      "models": {
+        "tool_calling": "gemma4:31b-cloud",
+        "reflection": "gemma4:31b-cloud"
+      }
+    },
+    {
+      "name": "local",
+      "enabled": true,
+      "roles": [
+        "reasoning",
+        "embedding",
+        "summarization",
+        "ranking",
+        "importance",
+        "ranking_importance",
+        "session_review",
+        "reflection"
+      ],
+      "models": {}
+    }
+  ],
+  "models": {
+    "reasoning": "qwen3:14b",
+    "tool_calling": "gemma4:31b-cloud",
+    "coding": "minimax/minimax-m3",
+    "summarization": "glm4:latest",
+    "ranking": "qwen3:14b",
+    "importance": "qwen3:14b",
+    "ranking_importance": "qwen3:14b",
+    "session_review": "qwen3:14b",
+    "reflection": "qwen3:14b",
+    "embedding": "qwen3-embedding:0.6b",
+    "reasoning_fallback": "gpt-oss:latest",
+    "tool_calling_fallback": "gpt-oss:latest",
+    "coding_fallback": "gpt-oss:latest",
+    "summarization_fallback": "qwen3:14b",
+    "ranking_fallback": "qwen3:14b",
+    "importance_fallback": "qwen3:14b",
+    "ranking_importance_fallback": "qwen3.5:9b",
+    "session_review_fallback": "qwen3:14b",
+    "reflection_fallback": "qwen3:14b",
+    "fallback_think": false
+  },
+  "elapsed_seconds": 1434.5,
+  "summary": {
+    "total": 3,
+    "passed": 3,
+    "warned": 0,
+    "failed": 0
+  },
+  "scenarios": [
+    {
+      "name": "resume_after_two_week_gap",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 279.69,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "Resume question",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 74.33,
+          "tools_called": [],
+          "tool_call_count": 0,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "local-cloud",
+            "model": "gpt-oss:latest",
+            "fallback": true
+          },
+          "response": "You\u2019re back after a two\u2011week pause, so here\u2019s the quick status and next steps:\n\n| What we finished | Current state |\n|------------------|---------------|\n| **Markdown export writer** \u2013 `export.py` now writes `DIGEST.md` into the repo. | \u2714\ufe0f (works locally, but not yet automated) |\n| **Scheduler hook missing** \u2013 the nightly job that should trigger `export.py` isn\u2019t wired up yet. | \u274c |\n| **No nightly run detected** \u2013 `DIGEST.md` hasn\u2019t appeared since the last commit, so the maintenance job has never actually fired. | \u274c |\n\n### Next things to tackle (in order)\n\n1. **Wire the scheduler hook** \u2013 add the code that schedules `export.py` to run nightly (or use the existing scheduler framework if you have one). Verify it\u2019s executed by checking the timestamp on `DIGEST.md` after a run.  \n2. **Run a test run** \u2013 trigger the job manually (or let it run on schedule) and confirm that the digest is generated, the file is committed, and the repository remains clean.  \n3. **Validate the output** \u2013 ensure the Markdown format is readable and contains the expected notes.  \n4. **Optional: add a CI check** \u2013 if you have a CI pipeline, add a step that fails if the digest is missing or stale.\n\nOnce that\u2019s done, the nightly digest should be reliably produced, and you can focus on the demo or next feature. Happy coding!"
+        }
+      ]
+    },
+    {
+      "name": "rejected_approach_not_reproposed",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 471.58,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "Bait: the rejected approach",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 205.99,
+          "tools_called": [
+            "search_memories",
+            "search_memories"
+          ],
+          "tool_call_count": 2,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "local-cloud",
+            "model": "gpt-oss:latest",
+            "fallback": true
+          },
+          "response": "No. The current decision in force is **#10\u202f\u2013\u202fRun the export nightly only**.  \nThat decision was made because hourly rewrites of `DIGEST.md` caused the repository to be \u201cdirty\u201d (files were rewritten even when nothing changed, leading to unnecessary commits and merge conflicts).  \nSo switching back to hourly would re\u2011introduce that problem unless you add additional logic to avoid rewrites when nothing has changed.  \nIf you still want the repo to be fresh more often, consider a lightweight \u201conly if modified\u201d check or a separate CI step that publishes the digest without committing the file, rather than changing the schedule back to hourly."
+        }
+      ]
+    },
+    {
+      "name": "conditional_decision_condition_met",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 678.9,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "The revisit condition is met",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 350.9,
+          "tools_called": [
+            "grep_files",
+            "read_file",
+            "ask_user",
+            "edit_file",
+            "read_file",
+            "read_file",
+            "read_file"
+          ],
+          "tool_call_count": 7,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "local-cloud",
+            "model": "gpt-oss:latest",
+            "fallback": true
+          },
+          "response": "Got it.\u202fHere\u2019s a quick, \u201cbest\u2011guess\u201d change that makes the digest readable by CI without breaking the current Markdown output.\n\n**What we\u2019ll add**\n\nAdd a clearly\u2011marked section called **`## Open Items`** (or a fenced JSON block) right after the main body of the digest.  \nCI can then:\n\n* `grep -n \"## Open Items\"` to locate the section, or\n* `sed -n '/## Open Items/,/^$/p'` to extract it, or\n* if you prefer JSON: `sed -n '/^```json/,/^```/p'` and then `jq`.\n\n**Suggested code snippet (insert into `write_digest` before the final `f.write(md)`):**\n\n```python\n# Append a section that CI can parse\nmd += \"\\n## Open Items\\n\\n\"\nmd += \"- Item 1: <description>\\n\"\nmd += \"- Item 2: <description>\\n\"\nmd += \"\\n\"\n# (You can generate the list from your data source here)\n```\n\nOr, if you\u2019d rather use JSON:\n\n```python\nmd += \"\\n```json\\n\"\nmd += json.dumps({\"open_items\": open_items_list}, indent=2)\nmd += \"\\n```\\n\"\n```\n\n**Next steps**\n\n1. **Decide the format** \u2013 markdown list vs. fenced JSON.  \n2. **Update `write_digest`** to append the chosen section.  \n3. **Add a test** (or a quick manual run) to verify that the digest still looks fine in the repo and that CI can extract the section.  \n\nLet me know which format you\u2019d like, or if you already have a specific structure CI requires, and I can give you the exact patch."
+        }
+      ]
+    }
+  ]
+}
