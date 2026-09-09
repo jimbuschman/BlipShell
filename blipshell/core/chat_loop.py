@@ -780,8 +780,18 @@ class ChatLoop:
     ) -> tuple[list[int], list[int]]:
         """Partition tool call indices into sequential and parallel groups.
 
-        Sequential: tools requiring approval or ask_user (interactive prompts).
-        Parallel: everything else (reads, greps, globs, web tools, etc.).
+        Parallel: tools that declare `read_only = True` (reads, greps, globs,
+        web fetches) - the same flag plan mode trusts.
+        Sequential, in announced order: everything that mutates (write/edit,
+        shell, follow-ups, notes...), anything unknown to the registry, tools
+        requiring approval when a callback is installed, and ask_user.
+
+        Until 2026-09-09 (V3 A5) only the last two were sequential, so in
+        normal chat - no approval callback - two edits to one file or a write
+        and the command that reads it ran concurrently. Classification is by
+        effect, not by whether someone is watching. A finer scheme
+        (pure_read / external_read / idempotent_write / mutating_write /
+        exclusive) is not built until a real conflict shows up between reads.
 
         Returns (sequential_indices, parallel_indices).
         """
@@ -791,8 +801,11 @@ class ChatLoop:
         has_approval_cb = self.tool_registry._approval_callback is not None
 
         for i, (name, _args, _tc_id) in enumerate(parsed_calls):
+            tool = self.tool_registry.get_tool(name)
             needs_sequential = (
-                (has_approval_cb and name in approval_set)
+                tool is None
+                or not getattr(tool, "read_only", False)
+                or (has_approval_cb and name in approval_set)
                 or name == "ask_user"
             )
             if needs_sequential:
