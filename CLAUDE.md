@@ -56,7 +56,7 @@ blipshell/
 ├── ui/              # cli.py (~2.2K, Rich/Click) + views/commands/state/importers,
 │                    # web/ (FastAPI + WS + /v1)
 ├── robotics/        # cube system + EmotionEngine (off by default, inert at rest)
-├── simulate/        # multi-turn scenario runner (37 scenarios, 7 categories;
+├── simulate/        # multi-turn scenario runner (40 scenarios, 8 categories;
 │                    # defaults to a throwaway temp DB — see --db / --real-db)
 ├── benchmark/       # model eval harness (`blipshell benchmark run <model>`)
 └── models/          # pydantic config + data models
@@ -420,8 +420,18 @@ blipshell/
 - `blipshell simulate` — multi-turn scenarios against a real Agent. Scopes are
   `-s <scenario>` / `-c <category>`; there is NO `-t` tag flag. Runs against a
   throwaway temp DB by default (`--db PATH` to pick one, `--real-db` to use the
-  live corpus — it writes real sessions, lessons and digests). Needs the Ollama
-  PC: agent bootstrap requires the `openai` package.
+  live corpus — it writes real sessions, lessons and digests). Needs a model:
+  the Ollama PC, or the dev box over Tailscale (`openai` is installed here).
+  **`-c continuity` is the V3 Stage E behavioural gate** (2026-09-09,
+  `simulate/scenarios/continuity.py`): `SimScenario.setup` plants a fixed
+  14-day-old world (digest, decision in force, superseded decision, open
+  follow-up, an unverified `task_completed` claim, another project's facts)
+  BEFORE the session starts; each scenario is one chat turn scored by a
+  deterministic `response_validator` (soft -> WARN with the named miss:
+  "unverified completion presented as fact", "superseded decision presented
+  as current", ...). `tests/test_simulate_continuity.py` proves the
+  instrument here; the gate is a real-model measurement over several runs,
+  never one reply. Not yet run.
 - `blipshell benchmark run <model>` — ONE deep test across all 9 job types →
   `data/benchmark/report.md` (numbers only, no verdict). Ground-truth scorers are
   unit-testable here; real runs need the Ollama PC. Judge = OpenRouter

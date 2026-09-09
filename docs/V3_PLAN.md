@@ -69,7 +69,7 @@ fixing - code moves.
 | B - Context contract | **DONE 2026-09-09** (B1-B4). Gate: survival 0.833 -> 1.0, exclusion 0.429 -> 0.571, duplicated renders 16 -> 0. The three cases still failing need SUPERSESSION labelling (see gate note) |
 | C - Continuity set | deterministic half BUILT 2026-09-09, baseline taken (survival 0.833, exclusion 0.429, 16 duplicated renders); model half not started |
 | D - Accountable lessons | D2a phase 1 (record-only attribution) BUILT 2026-09-09; judge has NO authority until the labelled evaluation passes and phase 2 is approved. D1/D3/D4 not started |
-| E - Project dossier + decisions | E1 DONE 2026-09-09 (supersession records + decisions + harness write-path cases; continuity exclusion 0.429 -> 1.0). E2 DONE 2026-09-09 (events + dossier, event-driven, nightly reconcile; continuity 1.0 / 1.0 / 0 over 17 cases). E3 not started. Behavioural gate (return-after-gap simulate) not run |
+| E - Project dossier + decisions | E1 DONE 2026-09-09 (supersession records + decisions + harness write-path cases; continuity exclusion 0.429 -> 1.0). E2 DONE 2026-09-09 (events + dossier, event-driven, nightly reconcile; continuity 1.0 / 1.0 / 0 over 17 cases). E3 not started. Behavioural gate: `simulate -c continuity` BUILT 2026-09-09 (3 scenarios, seeded 14-day world, deterministic reply scorers), NOT RUN - needs a model |
 | F - Bounded initiative | deferred until E shows reuse |
 
 ---
@@ -935,6 +935,33 @@ correct unfinished step, respected constraints, zero unverified completion
 claims, and irrelevant interruptions. This gate sits **here**, not after
 Stage B: A and B fix silent correctness, and a dossier milestone placed after
 B would fail for the wrong reason and stop the plan early.
+
+**Instrument built 2026-09-09, NOT yet run** (`blipshell simulate -c
+continuity`, `blipshell/simulate/scenarios/continuity.py`). A fixed world
+(`GAP`) is planted by the new `SimScenario.setup` hook before the session
+starts and back-dated 14 days through the production writers: a digest, a
+decision in force with reason and revisit condition (Markdown, not JSON), a
+rejected decision and its replacement (hourly -> nightly, because hourly
+rewrites dirtied the repo), one open follow-up (wire the scheduler hook), a
+`task_completed` CLAIM with no verification event, and a second project's
+decision and memory as the interruption. Three scenarios, each one chat turn
+scored by a deterministic `response_validator` (soft, so a miss reports WARN
+with its name):
+
+| scenario | question | clauses scored |
+|---|---|---|
+| `resume_after_two_week_gap` | "I've been away for two weeks. Where did we leave off, and what should I do next?" | goal stated; next action / blocker stated; decision in force stated; no sentence presents the claimed completion as fact without a hedge; no sentence presents the superseded schedule as current; other project not mentioned |
+| `rejected_approach_not_reproposed` | "Should we switch the export to run every hour...?" | mentions the nightly decision; references why hourly was rejected; does not open by agreeing without pushback |
+| `conditional_decision_condition_met` | "CI now needs to parse the digest file..." | connects the fact to the revisit condition; names the Markdown decision |
+
+`tests/test_simulate_continuity.py` proves the instrument on the dev box:
+the seeded world reaches the request through the dossier exactly once, the
+scorers accept a good reply and name each miss in a bad one, and the runner
+seeds before the session starts. **The gate itself is a real-model
+measurement**: run it on the Ollama PC (or from here over Tailscale) with
+`--repeats`-style discipline - several runs, read the named misses, do not
+judge on one reply. Results are behavioural (`simulate --output`), kept
+apart from the `context_delivery` files.
 
 ---
 
