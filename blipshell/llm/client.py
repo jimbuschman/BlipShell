@@ -6,6 +6,7 @@ streaming, and structured responses.
 
 import asyncio
 import hashlib
+import json
 import logging
 from collections import OrderedDict
 from typing import Any, AsyncIterator, Optional
@@ -162,7 +163,19 @@ class LLMClient:
 
         Used for utility tasks like summarization, ranking, etc.
         """
-        cache_key = hashlib.sha256(f"{model}:{system or ''}:{prompt}".encode()).hexdigest()
+        # Every kwarg that changes the reply is part of the key. Until
+        # 2026-09-09 it was (model, system, prompt) only, so a think=True call
+        # returned the cached think=False reply and a schema-constrained
+        # (`format`) call could return a cached free-text one. The benchmark
+        # harness found it: its think=True diagnostic pass came back
+        # byte-identical in 0.0s.
+        variant = json.dumps(
+            {k: kwargs[k] for k in ("think", "format", "options") if k in kwargs},
+            sort_keys=True, default=str,
+        )
+        cache_key = hashlib.sha256(
+            f"{model}:{system or ''}:{prompt}:{variant}".encode()
+        ).hexdigest()
 
         if use_cache and cache_key in _response_cache:
             _response_cache.move_to_end(cache_key)

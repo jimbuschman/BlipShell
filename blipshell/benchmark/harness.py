@@ -38,6 +38,11 @@ LIVE_CORPUS_SUITES = frozenset({"realdata", "embedding"})
 
 BENCHMARK_JOBS = (
     "pipeline", "reasoning", "session_review", "realdata", "embedding", "coding",
+    # "dedup" is a SUBSET of pipeline (the two dedup-verdict rows only), so the
+    # structured-output toggle can be measured on a shared GPU without paying
+    # for the judged summarization/lessons jobs. Rows still carry suite
+    # "pipeline" so the report merges them; when both are requested it runs once.
+    "dedup",
 )
 
 # Repo root = <repo>/blipshell/benchmark/harness.py -> parents[2].
@@ -698,17 +703,8 @@ class BenchmarkHarness:
         contradiction = await bm.benchmark_contradiction(r)
         rows.append(self._row("pipeline", "contradiction", "accuracy", score_contradiction(contradiction)))
 
-        status("pipeline: dedup verdict (text)")
-        dedup_text = await bm.benchmark_dedup(r, structured=False)
-        rows.append(self._row("pipeline", "dedup", "accuracy",
-                              score_dedup(dedup_text, count_invalid_as_wrong=True), raw=dedup_text))
-        rows.append(self._row("pipeline", "dedup", "valid_rate", score_dedup_valid_rate(dedup_text)))
-
-        status("pipeline: dedup verdict (structured)")
-        dedup_json = await bm.benchmark_dedup(r, structured=True)
-        rows.append(self._row("pipeline", "dedup_structured", "accuracy",
-                              score_dedup(dedup_json, count_invalid_as_wrong=False), raw=dedup_json))
-        rows.append(self._row("pipeline", "dedup_structured", "valid_rate", score_dedup_valid_rate(dedup_json)))
+        dedup_rows, dedup_text, dedup_json = await self._dedup_rows(bm, status)
+        rows += dedup_rows
 
         status("pipeline: entity extraction")
         entity = await bm.benchmark_entity_extraction(r)
@@ -735,6 +731,59 @@ class BenchmarkHarness:
         lat = _mean_latency(ranking, importance, rank_imp, contradiction, dedup_text, dedup_json,
                             entity, summ, lessons)
         rows.append(self._row("pipeline", "pipeline", "latency_s", lat, unit="seconds"))
+        return rows
+
+    async def _dedup_rows(self, bm, status) -> tuple[list[dict], list[dict], list[dict]]:
+        """The dedup-verdict rows, shared by run_pipeline and run_dedup.
+
+        Production calls the verdict with think=False (processor._ask_dedup_verdict),
+        so the SCORING rows (accuracy, valid_rate) use think=False. qwen3
+        degrades with think=False (CLAUDE.md Conventions), so a think=True pass
+        is recorded as informational `*_think` metrics: if valid_rate is low and
+        valid_rate_think is not, the think flag is the problem, not the schema.
+        Returns (rows, text_results, structured_results) - the two result
+        lists feed the suite latency mean.
+        """
+        r = self.router
+        rows: list[dict] = []
+
+        status("pipeline: dedup verdict (text)")
+        dedup_text = await bm.benchmark_dedup(r, structured=False)
+        rows.append(self._row("pipeline", "dedup", "accuracy",
+                              score_dedup(dedup_text, count_invalid_as_wrong=True), raw=dedup_text))
+        rows.append(self._row("pipeline", "dedup", "valid_rate", score_dedup_valid_rate(dedup_text)))
+
+        status("pipeline: dedup verdict (structured)")
+        dedup_json = await bm.benchmark_dedup(r, structured=True)
+        rows.append(self._row("pipeline", "dedup_structured", "accuracy",
+                              score_dedup(dedup_json, count_invalid_as_wrong=False), raw=dedup_json))
+        rows.append(self._row("pipeline", "dedup_structured", "valid_rate", score_dedup_valid_rate(dedup_json)))
+
+        status("pipeline: dedup verdict (think=True diagnostic)")
+        text_think = await bm.benchmark_dedup(r, structured=False, think=True)
+        json_think = await bm.benchmark_dedup(r, structured=True, think=True)
+        rows.append(self._row("pipeline", "dedup", "accuracy_think",
+                              score_dedup(text_think, count_invalid_as_wrong=True), raw=text_think))
+        rows.append(self._row("pipeline", "dedup", "valid_rate_think", score_dedup_valid_rate(text_think)))
+        rows.append(self._row("pipeline", "dedup_structured", "accuracy_think",
+                              score_dedup(json_think, count_invalid_as_wrong=False), raw=json_think))
+        rows.append(self._row("pipeline", "dedup_structured", "valid_rate_think",
+                              score_dedup_valid_rate(json_think)))
+        return rows, dedup_text, dedup_json
+
+    async def run_dedup(self, on_status=None) -> list[dict]:
+        """Only the dedup-verdict rows (suite 'pipeline'), for a cheap GPU run."""
+        bm = _load_dataset("benchmark_models")
+
+        def status(msg):
+            if on_status:
+                on_status(msg)
+
+        rows, dedup_text, dedup_json = await self._dedup_rows(bm, status)
+        # Keyed on the suite name so report.LATENCY_SUITES picks it up; a
+        # dedup-only run's latency is the dedup calls' latency.
+        rows.append(self._row("pipeline", "pipeline", "latency_s",
+                              _mean_latency(dedup_text, dedup_json), unit="seconds"))
         return rows
 
     # -- reasoning / coding-gen / tool-calling (full tier) ----------------
@@ -1082,6 +1131,10 @@ class BenchmarkHarness:
         if "pipeline" in jobs:
             _label("pipeline")
             rows += await self.run_pipeline(on_status=on_status)
+        elif "dedup" in jobs:
+            # subset of pipeline; already covered when pipeline ran
+            _label("pipeline")
+            rows += await self.run_dedup(on_status=on_status)
         if "reasoning" in jobs:
             _label("reasoning")
             rows += await self.run_reasoning(on_status=on_status)

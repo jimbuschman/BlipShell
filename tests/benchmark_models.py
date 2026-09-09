@@ -471,10 +471,13 @@ async def benchmark_contradiction(router: LLMRouter) -> list[dict]:
     return results
 
 
-async def benchmark_dedup(router: LLMRouter, *, structured: bool = False) -> list[dict]:
+async def benchmark_dedup(router: LLMRouter, *, structured: bool = False,
+                          think: bool = False) -> list[dict]:
     """The write-time dedup verdict, parsed by the SAME strict grammar production
     runs (memory/dedup_decision.py). `structured=True` exercises the
     schema-constrained JSON path behind memory.dedup.structured_output.
+    `think` defaults to False because that is how production calls it; the
+    harness also records a think=True pass as a diagnostic.
 
     Each result: raw, parsed ("ADD"/"NONE"/"UPDATE"/"DELETE"/"RETRY"/"ERROR"),
     parsed_index (0-based | None), expected, expected_index, valid, correct, time.
@@ -485,7 +488,7 @@ async def benchmark_dedup(router: LLMRouter, *, structured: bool = False) -> lis
     results = []
     for new_mem, existing, gold_action, gold_index in DEDUP_CASES:
         sys_prompt, user_prompt = decide_memory_action(new_mem, existing, structured=structured)
-        kwargs = {"system": sys_prompt, "think": False}
+        kwargs = {"system": sys_prompt, "think": think}
         if structured:
             kwargs["response_format"] = dd.MEMORY_ACTION_SCHEMA
         gold_idx0 = (gold_index - 1) if gold_index else None

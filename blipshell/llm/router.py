@@ -196,7 +196,7 @@ class LLMRouter:
             prompt=prompt, model=model, system=system, **gen_kwargs,
         )
 
-    async def generate(self, task_type: str, prompt: str, system: Optional[str] = None, think: Optional[bool | str] = None, min_context_tokens: int | None = None, response_format: dict | str | None = None) -> str:
+    async def generate(self, task_type: str, prompt: str, system: Optional[str] = None, think: Optional[bool | str] = None, min_context_tokens: int | None = None, response_format: dict | str | None = None, use_cache: bool = True) -> str:
         """Route a generate request to the appropriate model/endpoint.
 
         If the primary model/endpoint fails and a fallback model is configured,
@@ -210,6 +210,10 @@ class LLMRouter:
                 client as Ollama's `format` constraint. The OpenAI-compat
                 client drops it, so callers must still validate the reply -
                 this is a constraint where supported, not a guarantee.
+            use_cache: False bypasses the client's response cache. The
+                benchmark sets it: a repeated run must measure the model,
+                and until 2026-09-09 every repeat after the first was a
+                0.0s cache hit (spread 0 by construction).
         """
         ner_blocked = self._ner_blocked_endpoints()
         endpoint = await self._endpoint_manager.get_endpoint_for_role(
@@ -297,6 +301,8 @@ class LLMRouter:
                 gen_kwargs["think"] = False
             if response_format is not None:
                 gen_kwargs["format"] = response_format
+            if not use_cache:
+                gen_kwargs["use_cache"] = False
             result = await self._gated_generate(endpoint, prompt, model, system, gen_kwargs)
             endpoint.record_success(0)
             return result

@@ -542,9 +542,25 @@ def _harness_with_stubbed_jobs():
         return AsyncMock(side_effect=fn)
 
     for name in ("run_pipeline", "run_reasoning", "run_session_review",
-                 "run_realdata", "run_embedding", "run_coding"):
+                 "run_realdata", "run_embedding", "run_coding", "run_dedup"):
         setattr(h, name, _stub(name))
     return h, called
+
+
+async def test_run_dedup_alone_runs_only_the_dedup_rows():
+    h, called = _harness_with_stubbed_jobs()
+    await h.run(jobs={"dedup"})
+    assert called == ["run_dedup"]
+
+
+async def test_run_dedup_is_subsumed_by_pipeline():
+    """dedup is a subset of pipeline; asking for both must not run it twice."""
+    h, called = _harness_with_stubbed_jobs()
+    await h.run(jobs={"pipeline", "dedup"})
+    assert called == ["run_pipeline"]
+    h, called = _harness_with_stubbed_jobs()
+    await h.run(db_path="x.db")  # default = everything
+    assert "run_dedup" not in called and "run_pipeline" in called
 
 
 async def test_run_all_jobs_by_default():
@@ -708,3 +724,30 @@ async def test_benchmark_dedup_runs_against_fake_router_both_paths():
 def test_dedup_structured_is_displayed_but_not_composite():
     assert "dedup_structured" in report.NON_COMPARABLE
     assert "dedup" not in report.NON_COMPARABLE
+
+
+# ---------------------------------------------------------------------------
+# The benchmark measures the MODEL, never the response cache (2026-09-09)
+# ---------------------------------------------------------------------------
+
+async def test_recording_router_bypasses_the_generate_cache():
+    """Every repeat after the first used to be a 0.0s cache hit, so --repeats
+    reported spread 0 for every generate()-routed job and the advice read the
+    pipeline suite as noiseless."""
+    from blipshell.benchmark.recording import RecordingRouter
+
+    seen = {}
+
+    class _Inner:
+        async def generate(self, task_type, prompt="", system=None, **kwargs):
+            seen.update(kwargs)
+            return "ok"
+
+    rr = RecordingRouter(_Inner())
+    assert await rr.generate("reasoning", "p", system="s", think=False) == "ok"
+    assert seen["use_cache"] is False
+    assert seen["think"] is False
+    # an explicit caller choice still wins
+    seen.clear()
+    await rr.generate("reasoning", "p", use_cache=True)
+    assert seen["use_cache"] is True

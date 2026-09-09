@@ -79,6 +79,13 @@ class RecordingRouter:
     async def generate(self, task_type, prompt="", system=None, **kwargs):
         t0 = time.monotonic()
         response, error = None, None
+        # A benchmark measures the MODEL. LLMClient.generate() caches by
+        # (model, system, prompt, variant), so without this every repeat after
+        # the first was a 0.0s cache hit and `--repeats` reported spread 0 for
+        # every generate()-routed job (the whole pipeline suite) - which the
+        # advice then read as "noiseless". Found 2026-09-09 when a think=True
+        # diagnostic pass came back byte-identical to think=False.
+        kwargs.setdefault("use_cache", False)
         try:
             response = await self._inner.generate(
                 task_type, prompt, system=system, **kwargs,
