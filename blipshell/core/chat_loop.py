@@ -677,6 +677,73 @@ async def stream_chat(
         return content, tool_calls
 
 
+BUDGET_DENIED_RESULT = (
+    "Not executed: the tool-call budget for this turn was exhausted before this "
+    "call. Do not retry it - summarize what you have so far."
+)
+_UNPAIRED_RESULT = (
+    "No result was recorded for this tool call (transcript repaired before "
+    "sending). Treat it as not executed."
+)
+
+
+def _tool_call_ids(msg: dict) -> list[str]:
+    ids = []
+    for tc in msg.get("tool_calls") or []:
+        tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+        if tc_id:
+            ids.append(str(tc_id))
+    return ids
+
+
+def repair_tool_pairing(messages: list[dict]) -> int:
+    """Ensure every assistant `tool_calls` id has a following tool message.
+
+    OpenAI-compatible endpoints reject a request in which an announced tool
+    call has no tool result. The loop now never produces that shape itself
+    (budget-denied calls get an explicit result; endpoint recovery happens at
+    the model-call boundary), so this is the BACKSTOP for histories the loop
+    did not build - a transcript restored from disk, a caller's hand-built
+    list, a future regression. It inserts a synthetic "not executed" result
+    for each missing id, in announced order, directly after the results that
+    do exist, and returns how many it inserted. Callers log > 0 at WARNING:
+    a repair is a symptom, not a fix. Native Ollama calls without ids have
+    nothing to pair by and are left alone.
+    """
+    inserted = 0
+    i = 0
+    while i < len(messages):
+        m = messages[i]
+        if not (isinstance(m, dict) and m.get("role") == "assistant" and m.get("tool_calls")):
+            i += 1
+            continue
+        want = _tool_call_ids(m)
+        if not want:
+            i += 1
+            continue
+        j = i + 1
+        have: set[str] = set()
+        while j < len(messages) and isinstance(messages[j], dict) and messages[j].get("role") == "tool":
+            if messages[j].get("tool_call_id"):
+                have.add(str(messages[j]["tool_call_id"]))
+            j += 1
+        missing = [tc_id for tc_id in want if tc_id not in have]
+        for k, tc_id in enumerate(missing):
+            messages.insert(j + k, {"role": "tool", "tool_call_id": tc_id, "content": _UNPAIRED_RESULT})
+        inserted += len(missing)
+        i = j + len(missing)
+    return inserted
+
+
+def _repair_before_send(messages: list[dict]) -> None:
+    fixed = repair_tool_pairing(messages)
+    if fixed:
+        logger.warning(
+            "Tool-call pairing repaired before send: %d announced call(s) had no "
+            "result - the transcript was malformed upstream", fixed,
+        )
+
+
 # ── ChatLoop ─────────────────────────────────────────────────────────────────
 
 
@@ -791,6 +858,8 @@ class ChatLoop:
                 iter_tools = tools if (tools and tool_call_count < config.budget) else None
 
             # ── LLM call (gated for local Ollama) ──
+            # Pairing check before EVERY outbound request (A3 backstop).
+            _repair_before_send(messages)
             # outbound_transform sees only what goes on the wire; `messages`
             # itself stays intact so history and memory keep the real text.
             wire_messages = (
@@ -823,18 +892,41 @@ class ChatLoop:
                 for tc in tool_calls:
                     parsed_calls.append(extract_tool_call_info(tc))
 
-                # Phase 2: Budget — trim to remaining budget, reserve slots
-                remaining = config.budget - tool_call_count
-                parsed_calls = parsed_calls[:remaining]
-                tool_call_count += len(parsed_calls)
-                for name, _, _ in parsed_calls:
-                    tool_call_names.append(name)
+                # Phase 2: Budget. The assistant message above carries EVERY
+                # announced call, so every one must get a result; calls past
+                # the remaining budget are DENIED (explicit failure result,
+                # not executed) rather than sliced off - slicing left them
+                # announced and unanswered, which OpenAI-compatible endpoints
+                # reject on the next request (review F2, A3). Declared-call
+                # accounting (parsed_calls) and executed-call accounting
+                # (tool_call_count / tool_call_names) are separate from here on.
+                # The completion tool is never denied: a turn that reached it
+                # should be allowed to finish.
+                remaining = max(config.budget - tool_call_count, 0)
+                budget_denied: set[int] = set()
+                if len(parsed_calls) > remaining:
+                    keep = [i for i, (n, _, _) in enumerate(parsed_calls)
+                            if config.completion_tool and n == config.completion_tool]
+                    slots = max(remaining - len(keep), 0)
+                    for i, (n, _, _) in enumerate(parsed_calls):
+                        if i in keep:
+                            continue
+                        if slots > 0:
+                            slots -= 1
+                        else:
+                            budget_denied.add(i)
+                executed_indices = [i for i in range(len(parsed_calls)) if i not in budget_denied]
+                tool_call_count += len(executed_indices)
+                for i in executed_indices:
+                    tool_call_names.append(parsed_calls[i][0])
 
                 # Phase 3: Batch dedup — across previous batch + within this batch
                 dedup_blocked: set[int] = set()
                 batch_seen: set[tuple[str, str]] = set()
                 if config.enable_dedup:
                     for i, (name, arguments, _) in enumerate(parsed_calls):
+                        if i in budget_denied:
+                            continue
                         args_key = json.dumps(arguments, sort_keys=True, default=str)
                         call_key = (name, args_key)
                         if call_key == last_tool_call and name != config.completion_tool:
@@ -849,7 +941,7 @@ class ChatLoop:
                     # Legacy on_token display (when no structured callback)
                     active_calls = [
                         (name, args) for i, (name, args, _) in enumerate(parsed_calls)
-                        if i not in dedup_blocked
+                        if i not in dedup_blocked and i not in budget_denied
                     ]
                     if len(active_calls) == 1:
                         name, args = active_calls[0]
@@ -862,7 +954,7 @@ class ChatLoop:
                     # Structured display: show tool names immediately (before execution)
                     active_calls = [
                         (name, args) for i, (name, args, _) in enumerate(parsed_calls)
-                        if i not in dedup_blocked
+                        if i not in dedup_blocked and i not in budget_denied
                     ]
                     if active_calls and self.on_token:
                         if len(active_calls) == 1:
@@ -873,19 +965,28 @@ class ChatLoop:
                             names = ", ".join(n for n, _ in active_calls)
                             self.on_token(f"\n\x1b[2m  {len(active_calls)} tools: {names} …\x1b[0m")
 
-                # Phase 5: Partition into sequential (approval/ask_user) and parallel
+                # Phase 5: Partition into sequential (approval/ask_user) and parallel.
+                # Budget-denied calls are answered here and never scheduled.
                 results: list[ToolResult | None] = [None] * len(parsed_calls)
+                for i in budget_denied:
+                    name, _, tc_id = parsed_calls[i]
+                    results[i] = ToolResult(
+                        tool_call_id=tc_id, name=name,
+                        result=BUDGET_DENIED_RESULT, success=False,
+                    )
                 use_parallel = (
                     config.enable_parallel
-                    and len(parsed_calls) > 1
+                    and len(executed_indices) > 1
                 )
 
                 if use_parallel:
                     seq_indices, par_indices = self._partition_for_parallel(
                         parsed_calls, config,
                     )
+                    seq_indices = [i for i in seq_indices if i not in budget_denied]
+                    par_indices = [i for i in par_indices if i not in budget_denied]
                 else:
-                    seq_indices = list(range(len(parsed_calls)))
+                    seq_indices = list(executed_indices)
                     par_indices = []
 
                 # Phase 6a: Execute sequential tools (approval, ask_user)
@@ -946,8 +1047,8 @@ class ChatLoop:
                         if self.on_token and not config.on_tool_display:
                             self.on_token("  [Task complete signal received]\n")
 
-                    # Caller tracking callback (sync or async)
-                    if on_tool_executed:
+                    # Caller tracking callback (sync or async) - executed tools only
+                    if on_tool_executed and i not in budget_denied:
                         ret = on_tool_executed(name, arguments, result)
                         if asyncio.iscoroutine(ret):
                             await ret
@@ -956,7 +1057,9 @@ class ChatLoop:
 
                     # Display result preview (compact, one line per tool)
                     if self.on_token and not config.on_tool_display:
-                        if i in dedup_blocked:
+                        if i in budget_denied:
+                            self.on_token(f"\x1b[2m    \u2502 {name}: [budget exhausted - not run]\x1b[0m\n")
+                        elif i in dedup_blocked:
                             self.on_token(f"\x1b[2m    \u2502 {name}: [duplicate blocked]\x1b[0m\n")
                         elif not result.success:
                             err = result.result[:100].replace("\n", " ")
@@ -989,9 +1092,10 @@ class ChatLoop:
                 if self.on_token and parsed_calls and not config.on_tool_display:
                     self.on_token("\n")
 
-                # Update last_tool_call for next batch dedup
-                if parsed_calls:
-                    last_name, last_args, _ = parsed_calls[-1]
+                # Update last_tool_call for next batch dedup (last EXECUTED call;
+                # a denied call never ran, so repeating it is not a duplicate)
+                if executed_indices:
+                    last_name, last_args, _ = parsed_calls[executed_indices[-1]]
                     last_tool_call = (
                         last_name,
                         json.dumps(last_args, sort_keys=True, default=str),
@@ -1002,7 +1106,8 @@ class ChatLoop:
                 if config.guardrails and hasattr(config.guardrails, 'check_doom_loop'):
                     try:
                         batch_calls_for_doom = [
-                            (name, args) for name, args, _ in parsed_calls
+                            (name, args) for i, (name, args, _) in enumerate(parsed_calls)
+                            if i not in budget_denied
                         ]
                         doom_warning = config.guardrails.check_doom_loop(batch_calls_for_doom)
                         if doom_warning:
@@ -1146,6 +1251,7 @@ class ChatLoop:
             try:
                 # Gate this call too — same as the main loop LLM calls, and
                 # same outbound transform (this call ships the whole history).
+                _repair_before_send(messages)
                 nudge_messages = (
                     config.outbound_transform(messages)
                     if config.outbound_transform else messages
