@@ -69,7 +69,7 @@ fixing - code moves.
 | B - Context contract | **DONE 2026-09-09** (B1-B4). Gate: survival 0.833 -> 1.0, exclusion 0.429 -> 0.571, duplicated renders 16 -> 0. The three cases still failing need SUPERSESSION labelling (see gate note) |
 | C - Continuity set | deterministic half BUILT 2026-09-09, baseline taken (survival 0.833, exclusion 0.429, 16 duplicated renders); model half not started |
 | D - Accountable lessons | not started |
-| E - Project dossier + decisions | not started |
+| E - Project dossier + decisions | E1 DONE 2026-09-09 (supersession records + decisions + harness write-path cases; continuity exclusion 0.429 -> 1.0). E2/E3 not started |
 | F - Bounded initiative | deferred until E shows reuse |
 
 ---
@@ -589,6 +589,62 @@ Absence of correction is **near-neutral**, not positive: a lesson can be
 irrelevant, ignored, or accidentally followed. Positive evidence is not
 manufactured here.
 
+### D2a. Attribution rules and the judge's authority - PROPOSAL (2026-09-09, awaiting approval)
+
+Written after E1, per the user's instruction: default to RECORDING uncertain
+attribution without demoting anything, and evaluate attribution accuracy
+before the judge gets any control over lesson importance.
+
+**Records (deterministic, no judgment).**
+- `lesson_uses(lesson_id, session_id, turn_index, selected_by)` - which
+  lessons were selected on which turn (D1 makes "selected" informative).
+- `corrections(id, session_id, turn_index, text, prev_assistant_excerpt,
+  lessons_present, attribution, lesson_id, confidence, judged_by, judged_at)`
+  - one row per correction the existing detector + `confirm_correction`
+  judge already accept (`core/agent_chat.py` correction path). `attribution`
+  starts as `unattributed`.
+
+**Attribution outcomes.** `lesson_wrong` | `lesson_ignored` |
+`lesson_misapplied` | `unrelated` | `unattributed`. Only `lesson_wrong` would
+ever touch a score; the others are signals about selection, scope, or
+nothing.
+
+**The judge.** One local call (`TaskType.REASONING`, qwen3:14b today) per
+correction, background, never on the chat path. Input: the correction text,
+the previous assistant reply excerpt, the lessons selected on that turn (id
++ text, at most 5). Output: a strict object `{lesson_id | null, attribution,
+confidence 0-1}` parsed like the dedup verdict - anything ambiguous, or
+confidence below 0.7, is `unattributed`. Volume is a few calls a week.
+
+**Authority, phase 1 - RECORD ONLY.** The judge's output is stored on the
+corrections row and nowhere else. No lesson's importance, status, or
+selection changes because of it. A readout (`python -m
+scripts.attribution_readout`) lists per-lesson attribution counts and the
+raw rows, so the attributions can be READ before they are trusted.
+
+**Evaluation before phase 2.** Build an attribution set of 30-50 real
+corrections (the live DB already holds the detector's anti-pattern lessons
+with the correction text; new corrections rows accumulate from day one),
+hand-labelled by the user. Measure per-class agreement over 3 repeats. The
+bar for granting authority: agreement on `lesson_wrong` >= 0.8 AND
+`lesson_wrong` false-positive rate <= 0.1 (a correct lesson blamed for
+being ignored is the failure that matters most), with repeat spread < 0.1.
+If the local model cannot meet it, phase 2 does not happen and the records
+remain a diagnostic.
+
+**Authority, phase 2 - only after the bar is met and the user approves.**
+`lesson_wrong` at confidence >= 0.7 becomes ONE CONTRADICTS vote in the
+existing revote (weighted above a reflection vote, capped at one revote
+step per correction - a single event can never sink a lesson alone).
+`lesson_ignored` becomes a salience signal for D1 ranking, also gated.
+Everything else stays record-only. Demotion is to candidate, archive to the
+importance floor; nothing is deleted (unchanged).
+
+**Explicitly not proposed:** any automatic promotion or demotion driven by
+similarity alone; any cloud judge for this (corrections are the most
+personal text in the corpus); any change to lesson selection before D1's
+per-turn retrieval exists.
+
 ### D3. Two creation paths, two promotion rules
 
 Lessons are created from two places with different trust:
@@ -658,6 +714,73 @@ Created by a tool (`record_decision`) and by session review when it detects
 Experiment: simulate scenarios that bait the assistant into re-proposing a
 rejected approach (`-c continuity`). Score re-proposals before/after, and
 correct reopening when the scenario changes the constraint.
+
+**As built (2026-09-09), on the user's terms: preserve old memories; record
+explicit, scoped supersession with provenance; cover current vs historical
+questions, conditional decisions and unrelated project scopes; the harness
+reads the records and the write path creates them.**
+
+- **Supersession is a record** (`memory/supersession.py`, table
+  `supersessions`): `old (kind,id) -relation-> new (kind,id)`, `scope`
+  (project or `global`), `relation` (contradicts | refines | revises),
+  `detected_by` (dedup_verdict | core_contradiction | decision_tool | user),
+  `evidence` (the verdict / judge answer), `source_type` of the NEW record,
+  `at`, `undone_at`. Idempotent on (old, new, relation); `undo` never deletes;
+  `history_of` returns every row touching a record.
+- **The dedup verdict no longer archives.** UPDATE -> `refines`, DELETE ->
+  `contradicts`; the old memory stays un-archived with its vector, stamped
+  `superseded_by`. The A1 archive semantics lasted one day; the repair
+  `--unarchive-memory` still serves consolidation archives.
+- **Scope.** Before the verdict is even asked, candidates in a DIFFERENT
+  project from the new memory are dropped (`same_scope`: a global or
+  same-project candidate qualifies; two different projects never do). A
+  correction in blipshell cannot supersede Wisp's look-alike fact.
+- **Core-memory contradiction** writes a `core_memory` supersession row
+  alongside the deactivation (which already sets `contradicted`, B4).
+- **Read side.** `MemorySearch.search(include_superseded=...)`: superseded
+  memories are DROPPED for current-state questions and kept with
+  `result.superseded` set for historical ones; `_search_relevant_memories`
+  decides via `is_historical_question(query)` (deterministic regex: "how did
+  X change", "used to", "originally", "over time", ...); Recall renders
+  `[superseded YYYY-MM-DD by memory N] speaker: text`. RecentHistory never
+  shows superseded memories - what is current lives there, history reaches
+  the request only through labelled Recall. `search_memories` gained
+  `include_superseded` for the model to ask for history.
+- **Decisions** (`memory/decisions.py`, tools `record_decision` /
+  `revise_decision` / `reopen_decision` / `list_decisions`): a memory row of
+  type `decision`, content rendered `DECISION: ... BECAUSE: ... REVISIT WHEN:
+  ...` so search and Recall need nothing new, structured fields in
+  `metadata_json`, ONE module owning the shape. Revising writes a
+  `revises` supersession (detected_by `decision_tool`); reopening undoes it
+  and marks the row reopened with the reason. `decided_by` is the
+  provenance (user_statement vs assistant_inference). Session-review
+  detection of "we decided" was NOT built - the tool is the only writer.
+- **Harness.** `Seed.via="pipeline"` drives `processor.process_message` with
+  only the model's dedup verdict scripted; decision seeds go through
+  `decisions.record/revise`. The three cases that failed after Stage B now
+  pass because production code wrote the record - **not** because fixtures
+  carry metadata. New cases: `unrelated_project_is_not_superseded`,
+  `decision_current_question`, `decision_history_question`. The scorer
+  excludes the current user turn from the scanned text (the question "Do I
+  prefer tabs or spaces?" contains its own forbidden substring).
+  Result payload `kind` is `context_delivery`: these numbers say what
+  reached the request, never what a model did with it; behavioural results
+  (simulate, the Tailscale model half) are a separate kind.
+
+**E1 gate 2026-09-09:** survival 1.000, exclusion 0.429 -> **1.000**,
+labelled 1.000, duplicated renders 0, 16 cases.
+
+**Findings surfaced, not fixed:**
+- `memory/noise.py` drops messages under 80 chars with no signal word -
+  including "Correction: I switched to spaces, four wide, for indentation.
+  Forget tabs." (74 chars). A short user correction never reaches memory at
+  all in production, so no verdict, no supersession. Adding correction verbs
+  ("correction", "actually", "switched", "no longer", "prefer") to the signal
+  words is a one-line change with a measurable effect; decide deliberately.
+- The deterministic embedder scores a correction and the fact it corrects at
+  ~0.18; the harness therefore uses candidate threshold 0 (nearest memories
+  are the candidates). Production's 0.7 bar with the real embedder is
+  untested here - that is the model half's job.
 
 ### E2. Digest -> dossier
 

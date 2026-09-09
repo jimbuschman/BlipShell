@@ -20,13 +20,29 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Seed:
-    """One memory to plant. `session` is a label; sessions are created per case."""
+    """One memory to plant. `session` is a label; sessions are created per case.
+
+    `via="direct"` writes the row and its vector straight into the stores.
+    `via="pipeline"` runs the REAL write path (processor.process_message:
+    summarise, embed, dedup verdict, tag, rank) with the model's dedup verdict
+    scripted to `dedup_verdict` - so a supersession record, if any, is created
+    by production code, not by fixture metadata (V3 E1 rule).
+    `kind="decision"` records a decision (memory/decisions.py); with
+    `supersedes_seed` naming an earlier decision seed's `label` it REVISES it.
+    """
     session: str
     role: str            # "user" | "assistant"
     content: str
     days_ago: float = 3.0
     project: str | None = None
-    kind: str = "memory"  # "memory" | "core" | "lesson"
+    kind: str = "memory"  # "memory" | "core" | "lesson" | "decision"
+    via: str = "direct"   # "direct" | "pipeline"
+    dedup_verdict: str = "ADD"          # pipeline only: the scripted verdict for THIS seed
+    # decision only
+    reason: str = ""
+    revisit_when: str = ""
+    supersedes_seed: str | None = None
+    label: str = ""
 
 
 @dataclass
@@ -120,42 +136,98 @@ CASES: list[ContinuityCase] = [
         why="The user's own statement must survive alongside the assistant's echoes of it (retrieval-provenance concern).",
     ),
     # ── False recall ──────────────────────────────────────────────────────
+    # The supersession cases go through the PRODUCTION write path: the
+    # correction is ingested by processor.process_message, whose dedup step
+    # asks the (scripted) model for a verdict; "DELETE 1" makes it record a
+    # supersession of the earlier memory. Nothing here is fixture metadata.
+    # Pipeline seeds are >= 80 chars on purpose: the production noise filter
+    # (memory/noise.py) DROPS shorter messages that carry no signal word -
+    # including "Correction: I switched to spaces..." at 74 chars. Recorded
+    # in V3_PLAN as a finding; the harness must not measure the filter.
     ContinuityCase(
         name="corrected_preference_current_question",
         family="false_recall",
         question="Do I prefer tabs or spaces for indentation?",
         seeds=[
-            Seed("s1", "user", "I prefer tabs for indentation in all my code.", days_ago=12),
-            Seed("s2", "user", "Correction: I switched to spaces, four wide, for indentation. Forget tabs.", days_ago=2),
+            Seed("s1", "user", "I prefer tabs for indentation in all my code, and every editor I use is set up that way.", days_ago=12, via="pipeline"),
+            Seed("s2", "user", "Correction: I switched to spaces, four wide, for indentation in all my code. Forget tabs entirely.",
+                 days_ago=2, via="pipeline", dedup_verdict="DELETE 1"),
         ],
         must_appear=["spaces, four wide"],
         forbidden_unless_labelled=[("I prefer tabs", "superseded")],
-        why="Current-state question: the old preference may appear only marked superseded.",
+        why="Current-state question: the superseded preference is hidden, or shown only marked superseded.",
     ),
     ContinuityCase(
         name="corrected_preference_history_question",
         family="false_recall",
         question="How did my indentation preference change over time?",
         seeds=[
-            Seed("s1", "user", "I prefer tabs for indentation in all my code.", days_ago=12),
-            Seed("s2", "user", "Correction: I switched to spaces, four wide, for indentation. Forget tabs.", days_ago=2),
+            Seed("s1", "user", "I prefer tabs for indentation in all my code, and every editor I use is set up that way.", days_ago=12, via="pipeline"),
+            Seed("s2", "user", "Correction: I switched to spaces, four wide, for indentation in all my code. Forget tabs entirely.",
+                 days_ago=2, via="pipeline", dedup_verdict="DELETE 1"),
         ],
         must_appear=["I prefer tabs", "spaces, four wide"],
         forbidden_unless_labelled=[("I prefer tabs", "superseded")],
-        why="History question NEEDS the superseded fact — labelled. Excluding it would be over-exclusion (review round 3).",
+        why="History question NEEDS the superseded fact - labelled. Excluding it would be over-exclusion (review round 3).",
     ),
     ContinuityCase(
         name="conflicting_project_state_newer_wins",
         family="false_recall",
         question="What vector store does BlipShell use?",
         seeds=[
-            Seed("s1", "user", "BlipShell's vector store is ChromaDB.", days_ago=90, project="blipshell"),
-            Seed("s2", "user", "We replaced ChromaDB: BlipShell's vector store is now sqlite-vec.", days_ago=5, project="blipshell"),
+            Seed("s1", "user", "BlipShell's vector store is ChromaDB, running alongside the SQLite database for search.", days_ago=90, project="blipshell", via="pipeline"),
+            Seed("s2", "user", "We replaced ChromaDB: BlipShell's vector store is now sqlite-vec, in the same database file.",
+                 days_ago=5, project="blipshell", via="pipeline", dedup_verdict="DELETE 1"),
         ],
         must_appear=["sqlite-vec"],
         forbidden_unless_labelled=[("vector store is ChromaDB", "superseded")],
         active_project="blipshell",
-        why="Newer state wins; the older state may appear only as superseded.",
+        why="Newer state wins within the project scope; the older state may appear only as superseded.",
+    ),
+    ContinuityCase(
+        name="unrelated_project_is_not_superseded",
+        family="false_recall",
+        question="What vector store does Wisp use?",
+        seeds=[
+            Seed("s1", "user", "Wisp's vector store is ChromaDB, kept separate from BlipShell's database on purpose for now.", days_ago=20, project="wisp", via="pipeline"),
+            # the same verdict a careless model would give; scope must make it a no-op
+            Seed("s2", "user", "We replaced ChromaDB: BlipShell's vector store is now sqlite-vec, in the same database file.",
+                 days_ago=5, project="blipshell", via="pipeline", dedup_verdict="DELETE 1"),
+        ],
+        must_appear=["Wisp's vector store is ChromaDB"],
+        must_not_appear=["superseded"],
+        active_project="wisp",
+        why="A correction in one project must not supersede a similar-looking fact in another; the Wisp fact stays current and unlabelled.",
+    ),
+    ContinuityCase(
+        name="decision_current_question",
+        family="false_recall",
+        question="What did we decide about the free-tier model?",
+        seeds=[
+            Seed("d1", "user", "Keep minimax-m3 on the free tier", kind="decision", days_ago=30, project="blipshell",
+                 reason="glm-5.2 is paid", revisit_when="glm-5.2 gets a free tier", label="d1"),
+            Seed("d2", "user", "Move chat to glm-5.2", kind="decision", days_ago=3, project="blipshell",
+                 reason="a free tier appeared", revisit_when="the free tier is rate limited", supersedes_seed="d1"),
+        ],
+        must_appear=["Move chat to glm-5.2", "REVISIT WHEN: the free tier is rate limited"],
+        forbidden_unless_labelled=[("Keep minimax-m3", "superseded")],
+        active_project="blipshell",
+        why="Conditional decisions: the current one carries its revisit condition; the revised one is hidden or labelled.",
+    ),
+    ContinuityCase(
+        name="decision_history_question",
+        family="false_recall",
+        question="How did our free-tier model decision change over time?",
+        seeds=[
+            Seed("d1", "user", "Keep minimax-m3 on the free tier", kind="decision", days_ago=30, project="blipshell",
+                 reason="glm-5.2 is paid", revisit_when="glm-5.2 gets a free tier", label="d1"),
+            Seed("d2", "user", "Move chat to glm-5.2", kind="decision", days_ago=3, project="blipshell",
+                 reason="a free tier appeared", revisit_when="the free tier is rate limited", supersedes_seed="d1"),
+        ],
+        must_appear=["Keep minimax-m3", "Move chat to glm-5.2"],
+        forbidden_unless_labelled=[("Keep minimax-m3", "superseded")],
+        active_project="blipshell",
+        why="The history of a decision needs the earlier one, labelled, with the reason it was made.",
     ),
     ContinuityCase(
         name="assistant_speculation_is_not_fact",

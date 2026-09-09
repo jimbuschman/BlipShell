@@ -208,6 +208,22 @@ blipshell/
   add a creation site - the default on `process_core_memory` is
   `assistant_inference` because a model-initiated save is the model's call
   even when it quotes the user.
+- **Supersession is a record, not an archive** (2026-09-09, V3 E1,
+  `memory/supersession.py`, table `supersessions`): when the dedup verdict
+  says DELETE/UPDATE or the core contradiction check says YES, the OLD row
+  stays (un-archived, vector intact) and a row records old -> new with
+  scope, relation, detector, evidence and the new record's provenance.
+  Search drops superseded memories for current-state questions and shows
+  them labelled `[superseded <date> by memory N]` for historical ones
+  (`is_historical_question`, deterministic regex); RecentHistory never
+  shows them. **Scope**: dedup drops candidates from a different project
+  before asking the verdict, so a correction in one project cannot
+  supersede a look-alike fact in another. `undo` reverses, never deletes.
+  **Decisions** (`memory/decisions.py`, tools record/revise/reopen/list)
+  are memory rows of type `decision` with `DECISION/BECAUSE/REVISIT WHEN`
+  content; revising writes a `revises` supersession, reopening undoes it.
+  **Known:** `memory/noise.py` drops sub-80-char messages without a signal
+  word, so a short correction never reaches memory - see V3_PLAN E1.
 - **Entity graph** (memory/entity_extractor.py): LLM triple extraction; 4-stage
   resolution — alias routing (merged names → canonical, follows chains) → exact
   match, typed on `(name, entity_type)` → embedding (≥0.85 auto-merge,
@@ -356,7 +372,12 @@ blipshell/
   Cases: `tests/benchmark_continuity.py`; instrument tests:
   `tests/test_continuity_set.py -s` prints the table. Baseline 2026-09-09:
   survival 0.833, exclusion 0.429, and every recalled memory rendered twice
-  (Recall + RecentHistory) — see V3_PLAN Stage C.
+  (Recall + RecentHistory); after Stages B + E1: 1.0 / 1.0 / 0 over 16
+  cases. `Seed.via="pipeline"` drives the REAL write path with only the
+  dedup verdict scripted, so supersession records are created by production
+  code, never fixture metadata. Result files are `kind: context_delivery` —
+  they say what reached the request, not what a model did with it; keep
+  behavioural (real-model) results separate. See V3_PLAN Stage C / E1.
 - `blipshell simulate` — multi-turn scenarios against a real Agent. Scopes are
   `-s <scenario>` / `-c <category>`; there is NO `-t` tag flag. Runs against a
   throwaway temp DB by default (`--db PATH` to pick one, `--real-db` to use the

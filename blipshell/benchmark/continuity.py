@@ -17,9 +17,18 @@ handed. Two rates come out:
   superseded fact to appear.
 
 No model is called: the chat client answers "ok" and every router.generate()
-is canned. That is the point — this is the Stage B gate, run before and
-after the context-contract changes, on the dev box, in seconds. The
-model-quality half (same evidence, two models) is a separate Tailscale run.
+is canned. That is the point — this measures CONTEXT DELIVERY (what reached
+the request), on the dev box, in seconds, and is the Stage B / E1 gate.
+It says nothing about what a model DOES with the request: behavioural
+results come from real-model runs (simulate scenarios, the Tailscale model
+half) and are reported separately, never merged into these numbers.
+
+Seeds may be planted directly or driven through the production write path
+(`Seed.via="pipeline"`): processor.process_message with the dedup verdict
+scripted per seed, so a supersession record is created by production code -
+never by fixture metadata. The headless config lowers the dedup similarity
+threshold because the deterministic embedder is not semantic; the verdict
+itself is the only scripted part.
 
 Run: `python -m blipshell.benchmark.continuity` prints the table and writes
 benchmark_results/continuity__<sha>__<ts>.json. The pytest wrapper is
@@ -76,7 +85,9 @@ def canned_generate(task_type, prompt: str = "", system: Optional[str] = None, *
     if tt == "ranking_importance":
         return "3 0.5 conversation"
     if tt == "summarization":
-        return (prompt or "")[:200]
+        # echo the message so the stored summary is the text, not the prompt
+        body = (prompt or "").split("Summarize this message:", 1)[-1].strip()
+        return body[:200] if body else "SKIP"
     return "NO"  # relevance judges (self-thought resurfacing) stay closed
 
 
@@ -102,6 +113,13 @@ async def bootstrap_headless_agent(db_path: str | Path, *, reply: str = "ok",
     )]
     cfg.reflection.enabled = False
     cfg.robotics.enabled = False
+    # The deterministic embedder is not semantic (a correction and the fact
+    # it corrects score ~0.18), so with the production 0.7 candidate bar the
+    # dedup step would never ask for a verdict. In the harness the nearest
+    # memories ARE the candidates: threshold 0 here only. The verdict is
+    # scripted per seed; everything after it is production code, including
+    # the scope check that protects other projects.
+    cfg.memory.dedup.similarity_threshold = 0.0
 
     agent = Agent(cfg, ConfigManager(None))
     await agent._build_subsystems()
@@ -134,11 +152,21 @@ class CaseResult:
     duplicated_renders: int = 0
 
 
+def _verdict_router(verdict: str):
+    """router.generate side-effect: the dedup verdict is `verdict`, all else canned."""
+    async def gen(task_type, prompt="", system=None, **kwargs):
+        if (system or "").lower().startswith("you decide what to do with a new memory"):
+            return verdict
+        return canned_generate(task_type, prompt=prompt, system=system, **kwargs)
+    return gen
+
+
 async def seed_case(agent, case, now: Optional[datetime] = None) -> None:
     from blipshell.models.memory import CoreMemory, Lesson, Memory, MemoryType
 
     now = now or datetime.now(timezone.utc)
     sessions: dict[str, int] = {}
+    decision_ids: dict[str, int] = {}
     for seed in case.seeds:
         ts = now - timedelta(days=seed.days_ago)
         if seed.session not in sessions:
@@ -146,13 +174,48 @@ async def seed_case(agent, case, now: Optional[datetime] = None) -> None:
                 title=f"seed {seed.session}", project=seed.project, created_at=ts,
             )
         sid = sessions[seed.session]
-        if seed.kind == "memory":
+        if seed.kind == "memory" and getattr(seed, "via", "direct") == "pipeline":
+            # The REAL write path, with only the model's verdict scripted.
+            agent.router.generate = AsyncMock(side_effect=_verdict_router(getattr(seed, "dedup_verdict", "ADD")))
+            try:
+                mid = await agent.processor.process_message(
+                    seed.content, role=seed.role, session_id=sid, timestamp=ts,
+                )
+            finally:
+                agent.router.generate = AsyncMock(side_effect=canned_generate)
+            if mid is None:
+                raise RuntimeError(f"pipeline seed was filtered as noise: {seed.content[:60]!r}")
+            # the pipeline stamps 'now'; the case wants the seed's age
+            await agent.sqlite._db.execute("UPDATE memories SET timestamp = ? WHERE id = ?",
+                                           (ts.isoformat(), mid))
+            await agent.sqlite._db.commit()
+        elif seed.kind == "memory":
             mid = await agent.sqlite.create_memory(Memory(
                 session_id=sid, role=seed.role, content=seed.content,
                 summary=seed.content[:200], timestamp=ts, rank=3, importance=0.6,
                 memory_type=MemoryType.CONVERSATION,
             ))
             agent.vectors.add_memory(mid, seed.content, {"session_id": str(sid), "role": seed.role})
+        elif seed.kind == "decision":
+            from blipshell.memory import decisions
+            label = getattr(seed, "label", "") or seed.session
+            target = getattr(seed, "supersedes_seed", None)
+            if target:
+                new = await decisions.revise_decision(
+                    agent.sqlite, agent.vectors, decision_ids[target], decision=seed.content,
+                    reason=getattr(seed, "reason", ""), revisit_when=getattr(seed, "revisit_when", ""),
+                    session_id=sid, decided_by=seed.role,
+                )
+            else:
+                new = await decisions.record_decision(
+                    agent.sqlite, agent.vectors, decision=seed.content,
+                    reason=getattr(seed, "reason", ""), revisit_when=getattr(seed, "revisit_when", ""),
+                    project=seed.project, session_id=sid, decided_by=seed.role,
+                )
+            decision_ids[label] = new.id
+            await agent.sqlite._db.execute("UPDATE memories SET timestamp = ? WHERE id = ?",
+                                           (ts.isoformat(), new.id))
+            await agent.sqlite._db.commit()
         elif seed.kind == "core":
             cid = await agent.sqlite.create_core_memory(CoreMemory(content=seed.content, importance=0.8))
             agent.vectors.add_core_memory(cid, seed.content)
@@ -165,8 +228,17 @@ async def seed_case(agent, case, now: Optional[datetime] = None) -> None:
         agent.active_project = {"name": case.active_project, "root_path": None}
 
 
-def _request_text(messages: list[dict]) -> str:
-    return "\n".join(str(m.get("content") or "") for m in messages)
+def _request_text(messages: list[dict], question: Optional[str] = None) -> str:
+    """Everything the model was sent EXCEPT the current user turn: the question
+    itself legitimately contains its own words ("Do I prefer tabs or spaces?")
+    and must not count as recalled evidence."""
+    parts = []
+    for i, m in enumerate(messages):
+        content = str(m.get("content") or "")
+        if question and i == len(messages) - 1 and m.get("role") == "user" and content.endswith(question):
+            continue
+        parts.append(content)
+    return "\n".join(parts)
 
 
 def _has_label(line: str, label: str) -> bool:
@@ -177,7 +249,7 @@ def _has_label(line: str, label: str) -> bool:
 
 
 def score_request(case, messages: list[dict]) -> CaseResult:
-    text = _request_text(messages)
+    text = _request_text(messages, getattr(case, "question", None))
     lines = text.splitlines()
     missing = [s for s in case.must_appear if s not in text]
     labelled, unlabelled = [], []
@@ -285,7 +357,7 @@ def write_result(results: list[CaseResult], summary: dict, out_dir: Optional[Pat
     sha = _git_sha() or "nosha"
     path = out_dir / f"continuity__{sha}__{ts}.json"
     payload = {
-        "schema": 1, "kind": "continuity", "git_sha": sha, "run_ts": ts,
+        "schema": 1, "kind": "context_delivery", "git_sha": sha, "run_ts": ts,
         "host": os.environ.get("COMPUTERNAME") or os.environ.get("HOSTNAME"),
         "summary": summary, "results": [asdict(r) for r in results],
     }

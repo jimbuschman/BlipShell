@@ -101,6 +101,15 @@ def test_dataset_is_well_formed():
         assert c.question and c.seeds, c.name
         assert c.must_appear or c.forbidden_unless_labelled or c.must_not_appear, c.name
         for s in c.seeds:
-            assert s.role in ("user", "assistant") and s.kind in ("memory", "core", "lesson"), c.name
+            assert s.role in ("user", "assistant") and s.kind in ("memory", "core", "lesson", "decision"), c.name
+            assert s.via in ("direct", "pipeline"), c.name
+            if s.via == "pipeline":
+                # the production noise filter must not eat a pipeline seed, or
+                # the case measures the filter instead of supersession
+                from blipshell.memory.noise import should_skip_memory
+                assert not should_skip_memory(s.content), (c.name, s.content)
+            if s.kind == "decision" and s.supersedes_seed:
+                labels = {(x.label or x.session) for x in c.seeds if x.kind == "decision"}
+                assert s.supersedes_seed in labels, (c.name, s.supersedes_seed)
     names = [c.name for c in CASES.values()]
     assert len(names) == len(set(names))
