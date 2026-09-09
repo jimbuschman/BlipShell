@@ -151,6 +151,8 @@ class TestWiring:
         for s in scen:
             assert s.setup is sc.seed_return_after_gap and s.requires_project == sc.PROJECT
             assert all(st.response_validator is not None for st in s.steps)
+            # a reply is the measurement; a tight timeout turns a slow reply into a FAIL (run 2, 2026-09-09)
+            assert all(st.timeout_seconds >= 600 for st in s.steps)
         names = [s.name for s in collect_all_scenarios()]
         assert len(names) == len(set(names))
 

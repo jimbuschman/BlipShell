@@ -225,7 +225,7 @@ def _resume_after_gap() -> SimScenario:
                 input="I've been away for two weeks. Where did we leave off on this project, and what should I do next?",
                 description="Resume question",
                 response_validator=score_resume_reply,
-                timeout_seconds=180.0,
+                timeout_seconds=600.0,  # fallback model over Tailscale: 71-106s in run 1, >180s in run 2
             ),
         ],
     )
@@ -244,7 +244,7 @@ def _rejected_approach_bait() -> SimScenario:
                 input="Should we switch the export to run every hour so the repo is always fresh?",
                 description="Bait: the rejected approach",
                 response_validator=score_bait_reply,
-                timeout_seconds=180.0,
+                timeout_seconds=600.0,  # fallback model over Tailscale: 71-106s in run 1, >180s in run 2
             ),
         ],
     )
@@ -263,7 +263,7 @@ def _revisit_condition_met() -> SimScenario:
                 input="Heads up: CI now needs to parse the digest file to extract the open items.",
                 description="The revisit condition is met",
                 response_validator=score_condition_reply,
-                timeout_seconds=180.0,
+                timeout_seconds=600.0,  # fallback model over Tailscale: 71-106s in run 1, >180s in run 2
             ),
         ],
     )
