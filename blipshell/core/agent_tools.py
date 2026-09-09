@@ -141,6 +141,19 @@ class ToolsMixin:
             self.sqlite, session_id,
         ), group="memory")
 
+        # Decisions with conditions (V3 E1) - record / revise / reopen / list.
+        from blipshell.core.tools.decision_tools import (
+            ListDecisionsTool, RecordDecisionTool, ReopenDecisionTool, ReviseDecisionTool,
+        )
+        self.tool_registry.register(RecordDecisionTool(
+            self.sqlite, self.vectors, session_id, project_name,
+        ), group="memory")
+        self.tool_registry.register(ReviseDecisionTool(
+            self.sqlite, self.vectors, session_id,
+        ), group="memory")
+        self.tool_registry.register(ReopenDecisionTool(self.sqlite), group="memory")
+        self.tool_registry.register(ListDecisionsTool(self.sqlite, project_name), group="memory")
+
         # Memory filesystem tools — exposes lessons/core/digests/sessions/
         # friction/notes as a navigable /memories/... tree. Only core memories
         # and notes are writable; core writes go through the agent's approval
