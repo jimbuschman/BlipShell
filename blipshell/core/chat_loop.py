@@ -11,7 +11,7 @@ import enum
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 from blipshell.models.tools import ToolCall, ToolResult
 
@@ -120,6 +120,17 @@ class LoopConfig:
     `messages` (which becomes conversation history and memory) is never
     replaced by the result. Used to strip credentials on cloud endpoints; kept
     generic so ChatLoop needs no knowledge of PII policy."""
+
+    on_model_call_error: Optional[Callable[[Exception], Awaitable[Optional[tuple]]]] = None
+    """Endpoint recovery at the MODEL-CALL boundary (V3 A2). Called when a
+    model call raises; returns `(client, model, chat_kwargs)` to retry the SAME
+    call on another endpoint/model, or None to give up (the error is re-raised).
+    The transcript at a model-call boundary is always consistent — every
+    announced tool call has its result — so nothing is rewound: completed
+    tool effects stay real and the tool budget stays turn-wide. The callback
+    may also update `ollama_gate` / `outbound_transform` / `context_limit` on
+    this config for the new endpoint; the loop re-reads them per call. None =
+    the exception propagates (single-endpoint callers, tests)."""
 
 
 @dataclass
@@ -791,6 +802,60 @@ class ChatLoop:
 
         return sequential, parallel
 
+    async def _call_model(
+        self,
+        client,
+        messages: list[dict],
+        model: str,
+        tools: list[dict] | None,
+        chat_kwargs: dict,
+        config: LoopConfig,
+        on_stream_done: Callable | None,
+    ) -> tuple[str, list | None, object, str, dict]:
+        """One model call at a consistent transcript boundary.
+
+        Runs the A3 pairing backstop, applies the outbound transform, gates
+        local calls, and — when the call raises and
+        `config.on_model_call_error` offers another (client, model,
+        chat_kwargs) — retries the SAME call there without touching
+        `messages`. Returns (content, tool_calls, client, model, chat_kwargs)
+        so the caller keeps using whatever endpoint finished the call.
+        CancelledError is not an Exception and passes straight through.
+        """
+        while True:
+            _repair_before_send(messages)
+            # outbound_transform sees only what goes on the wire; `messages`
+            # itself stays intact so history and memory keep the real text.
+            # Re-read per attempt: the switch callback may change it.
+            wire_messages = (
+                config.outbound_transform(messages)
+                if config.outbound_transform else messages
+            )
+            try:
+                if config.ollama_gate:
+                    async with config.ollama_gate.async_gate(config.gate_priority):
+                        content, tool_calls = await stream_chat(
+                            client, wire_messages, model, tools, chat_kwargs,
+                            self.on_token, on_stream_done,
+                        )
+                else:
+                    content, tool_calls = await stream_chat(
+                        client, wire_messages, model, tools, chat_kwargs,
+                        self.on_token, on_stream_done,
+                    )
+                return content, tool_calls, client, model, chat_kwargs
+            except Exception as exc:
+                if config.on_model_call_error is None:
+                    raise
+                nxt = await config.on_model_call_error(exc)
+                if nxt is None:
+                    raise
+                client, model, chat_kwargs = nxt
+                logger.info(
+                    "Model call failed (%s: %s); continuing this turn on '%s' with "
+                    "the transcript intact", type(exc).__name__, exc, model,
+                )
+
     async def run(
         self,
         client: LLMClient,
@@ -857,26 +922,10 @@ class ChatLoop:
             else:
                 iter_tools = tools if (tools and tool_call_count < config.budget) else None
 
-            # ── LLM call (gated for local Ollama) ──
-            # Pairing check before EVERY outbound request (A3 backstop).
-            _repair_before_send(messages)
-            # outbound_transform sees only what goes on the wire; `messages`
-            # itself stays intact so history and memory keep the real text.
-            wire_messages = (
-                config.outbound_transform(messages)
-                if config.outbound_transform else messages
+            # ── LLM call (gated for local Ollama; endpoint switch on failure) ──
+            content, tool_calls, client, model, chat_kwargs = await self._call_model(
+                client, messages, model, iter_tools, chat_kwargs, config, on_stream_done,
             )
-            if config.ollama_gate:
-                async with config.ollama_gate.async_gate(config.gate_priority):
-                    content, tool_calls = await stream_chat(
-                        client, wire_messages, model, iter_tools, chat_kwargs,
-                        self.on_token, on_stream_done,
-                    )
-            else:
-                content, tool_calls = await stream_chat(
-                    client, wire_messages, model, iter_tools, chat_kwargs,
-                    self.on_token, on_stream_done,
-                )
 
             # ── Tool calls ──
             if tool_calls and tool_call_count < config.budget:
@@ -1002,9 +1051,23 @@ class ChatLoop:
                             success=False,
                         )
                     else:
-                        tc_obj = ToolCall(id=tc_id, name=name, arguments=arguments)
-                        results[i] = await self.tool_registry.execute_tool_call(tc_obj)
-                        results[i].tool_call_id = tc_id
+                        try:
+                            tc_obj = ToolCall(id=tc_id, name=name, arguments=arguments)
+                            results[i] = await self.tool_registry.execute_tool_call(tc_obj)
+                            results[i].tool_call_id = tc_id
+                        except Exception as e:
+                            # A tool that RAISES (instead of returning ToolFailure)
+                            # must still produce a result, or the assistant
+                            # tool_calls message appended above is left
+                            # unanswered — the one transcript shape the old
+                            # endpoint rewind existed for. Same contract as the
+                            # parallel path below.
+                            logger.error("Sequential tool %s[%d] failed: %s", name, i, e)
+                            results[i] = ToolResult(
+                                tool_call_id=tc_id, name=name,
+                                result=f"Error executing {name}: {e}",
+                                success=False,
+                            )
 
                 # Phase 6b: Execute parallel tools concurrently
                 if par_indices:
@@ -1249,24 +1312,11 @@ class ChatLoop:
                 ),
             })
             try:
-                # Gate this call too — same as the main loop LLM calls, and
-                # same outbound transform (this call ships the whole history).
-                _repair_before_send(messages)
-                nudge_messages = (
-                    config.outbound_transform(messages)
-                    if config.outbound_transform else messages
+                # Same path as the main loop's calls: pairing backstop, outbound
+                # transform, gate, and endpoint switching on failure.
+                content, _, client, model, chat_kwargs = await self._call_model(
+                    client, messages, model, None, chat_kwargs, config, on_stream_done,
                 )
-                if config.ollama_gate:
-                    async with config.ollama_gate.async_gate(config.gate_priority):
-                        content, _ = await stream_chat(
-                            client, nudge_messages, model, None, chat_kwargs,
-                            self.on_token, on_stream_done,
-                        )
-                else:
-                    content, _ = await stream_chat(
-                        client, nudge_messages, model, None, chat_kwargs,
-                        self.on_token, on_stream_done,
-                    )
                 final_response = content or f"[Hit tool limit after {len(tool_call_names)} calls]"
                 completion_method = "nudge"
             except Exception as e:

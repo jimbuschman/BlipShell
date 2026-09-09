@@ -76,6 +76,23 @@ blipshell/
   completion check.
 - Completion = `task_complete` tool (plus inline-text fallback). The complexity
   classifier was removed — `!plan` prefix forces the executor path.
+- **Endpoint recovery happens INSIDE the loop, at the model-call boundary**
+  (2026-09-09, V3 A2). `LoopConfig.on_model_call_error` returns the next
+  `(client, model, chat_kwargs)`; `ChatLoop._call_model` retries the SAME
+  call there with `messages` untouched. `_run_chat_loop` is the endpoint
+  selector that installs it. The old snapshot-and-rewind around each attempt
+  kept the transcript clean but re-ran every tool of the failed attempt on
+  the next endpoint (reproduced under budget=1) — a transcript repair is
+  never a side-effect rollback. Every endpoint that failed this turn is
+  excluded, not just the last one. `tests/test_endpoint_retry.py`.
+- **Every announced tool call gets a result** (2026-09-09, V3 A3). Calls past
+  the remaining budget are DENIED with `BUDGET_DENIED_RESULT` (never run,
+  counted, dedup'd or passed to `on_tool_executed`); the completion tool is
+  never denied. Slicing used to leave them announced and unanswered, which
+  OpenAI-compatible endpoints 400 on. `repair_tool_pairing()` runs before
+  every send as a backstop and logs at WARNING when it had to act; a raising
+  tool becomes a failure result on both the sequential and parallel paths.
+  `tests/test_tool_budget_pairing.py`.
 - Executor extras: file cache + stale-file detection, context compaction
   (mechanical first, LLM summarization when needed, recent messages preserved).
   (A `[STATE]` block and an 80%/95% budget wind-down were documented here for

@@ -56,7 +56,7 @@ fixing - code moves.
 
 | Stage | Status |
 |---|---|
-| A - Correctness | A1 BUILT 2026-09-08 (`v3/a1-dedup-parser`); structured-path measurement pending on the Ollama PC. A2-A6 not started |
+| A - Correctness | A1 BUILT 2026-09-08 (`v3/a1-dedup-parser`, merged). A2 + A3 BUILT 2026-09-09 (`v3/a2-a3-loop-recovery`, two commits). Structured-dedup measurement: see A1 "Measured". A4-A6 not started |
 | B - Context contract | not started |
 | C - Continuity set | not started |
 | D - Accountable lessons | not started |
@@ -151,19 +151,35 @@ endpoints 400-ing on an assistant `tool_calls` message with no results -
 removing it naively brings that back.
 
 Fix: recovery moves **inside the loop, at the model-call boundary**.
-`ChatLoop.run` accepts a `client_provider` (or the retry moves into the loop
-itself) so that on a failed model call the loop keeps every completed
-assistant+tool-result pair and retries only the failed call with the next
-endpoint. Rewind is reduced to the one case it is correct for: failure
-between the assistant-with-tool_calls append and its results. Tool count is
-turn-wide, carried across endpoints. Each tool execution gets a durable id and
-a started/completed record so an uncertain external effect is inspected, not
-re-run. **A transcript repair is never a side-effect rollback.**
+**As built (2026-09-09):** `LoopConfig.on_model_call_error(exc) ->
+(client, model, chat_kwargs) | None`. `ChatLoop._call_model` wraps every
+model call (main loop and budget nudge); on failure it asks the callback for
+the next endpoint and retries the SAME call with `messages` untouched.
+`_run_chat_loop` is now an endpoint SELECTOR: it picks the first endpoint,
+installs the callback (which books the failure - `mark_model_failed` or
+`record_failure` - releases the request slot, and selects the next), and
+runs the loop once. The snapshot/rewind is gone. Every endpoint that failed
+this turn is excluded (the old code excluded only the last one, so A-B-A-B
+cycled a dead endpoint); the fallback-model path clears the set so each
+endpoint gets one shot with the new model. Tool count is turn-wide because
+there is only one `run()`.
+The "failure between assistant append and results" window no longer exists:
+the sequential tool path now catches a RAISING tool and records a failure
+result (the parallel path already did), and the A3 pairing repair runs
+before every send. So the rewind's one legitimate case is structurally
+prevented rather than handled. The durable-id/started-completed ledger the
+review proposed was NOT built: with no cross-endpoint replay there is
+nothing to reconcile; revisit only if a real double-execution shows up.
+**A transcript repair is never a side-effect rollback.**
 
-Tests (extend `tests/test_endpoint_retry.py`): endpoint fails after a tool
-executes -> the tool ran exactly once and the second endpoint sees its result;
-endpoint fails between assistant append and results -> rewind, no orphan
-tool_calls; total tool executions never exceed `budget` across endpoints.
+Tests (`tests/test_endpoint_retry.py`, rewritten to the new contract): the
+tool runs once and endpoint B sees the completed exchange; budget=1 is
+turn-wide across endpoints; failure before any mutation hands B the
+untouched conversation; the caller's list holds one consistent exchange;
+every endpoint dead -> None without re-execution; fallback model continues
+the turn; request accounting balances; the loop hook alone swaps clients,
+re-raises on None, and a raising tool becomes a failure result, not an
+orphan.
 
 ### A3. Budget trimming orphans announced tool calls (HIGH)
 
@@ -174,6 +190,13 @@ next request. Fix: every unexecuted call gets an explicit tool message
 (`ToolFailure("budget exhausted: not executed")`), and a pairing check runs
 **before every outbound request**, not only after batches. Executed-call
 accounting stays separate from declared-call accounting.
+**As built (2026-09-09):** calls past the budget are DENIED
+(`BUDGET_DENIED_RESULT`, success=False), never executed/counted/dedup'd and
+never passed to `on_tool_executed`; the completion tool is never denied
+(slicing used to drop `task_complete` silently and end the turn on
+"budget"). `repair_tool_pairing()` inserts synthetic "no result recorded"
+results for orphaned ids and runs before every send, logging at WARNING
+when it had to. `tests/test_tool_budget_pairing.py`.
 
 ### A4. Commit ingest drops backlog forever (MEDIUM)
 

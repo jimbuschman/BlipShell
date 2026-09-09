@@ -275,166 +275,179 @@ class ChatMixin:
         Both _chat_simple and executor.execute_dynamic use this to avoid
         duplicating endpoint/model/gate/fallback logic.
 
+        Recovery happens INSIDE the loop, at the model-call boundary (V3 A2):
+        this method picks the first endpoint and hands ChatLoop a callback
+        (`config.on_model_call_error`) that picks the next one when a model
+        call fails. The loop retries the same call there with the transcript
+        intact — completed tool/result pairs stay, the tool budget stays
+        turn-wide, and a tool that already ran is never run again. The
+        previous design snapshotted `messages` around each attempt and rewound
+        it on failure; that kept the transcript clean but re-executed every
+        tool of the failed attempt on the next endpoint (review F1, reproduced
+        under budget=1). A transcript repair is never a side-effect rollback.
+
         Returns:
             (LoopResult, endpoint_name, model, using_fallback) tuple.
             LoopResult is None if all endpoints failed.
         """
         from blipshell.core.chat_loop import ChatLoop
+        from blipshell.core.vision import has_image_refs, strip_image_refs
 
         task_type = TaskType.CODING if self.active_project else TaskType.TOOL_CALLING
-
-        # Get model for this task type
-        model = self.router.get_model(task_type)
-        using_fallback = False
-
-        # Vision gating: if this turn carries images, only vision-capable models
-        # may handle it. If none are available, degrade to text (see below).
-        from blipshell.core.vision import has_image_refs, strip_image_refs
-        require_vision = has_image_refs(messages)
-        vision_degraded = False
-
         tools = self.tool_registry.get_all_ollama_tools() or None
-
         loop = ChatLoop(self.tool_registry, on_token)
-        result = None
-        endpoint_name = ""
-        full_response = ""
-        last_failed_endpoint: str | None = None
 
-        # Try endpoints in priority order, then fall back to a different model.
         # Extra attempts leave room for skipping non-vision endpoints + degrading.
-        for attempt in range(5):
-            endpoint = await self.endpoint_manager.get_endpoint_for_role(
-                task_type, exclude=last_failed_endpoint,
-            )
+        max_attempts = 5
+        st = {
+            "model": self.router.get_model(task_type),
+            "using_fallback": False,
+            # Vision gating: if this turn carries images, only vision-capable
+            # models may handle it; if none are available, degrade to text.
+            "require_vision": has_image_refs(messages),
+            "vision_degraded": False,
+            # Every endpoint that failed THIS turn (with the current model) is
+            # excluded, so a dead endpoint is not re-tried after the next one
+            # also fails; the fallback-model path clears it to give each
+            # endpoint one shot with the new model.
+            "failed_endpoints": set(),
+            "attempts": 0,
+            "endpoint": None,   # the endpoint currently holding a request
+            "ep_model": None,
+            "endpoint_name": "",
+        }
 
-            if not endpoint:
-                # Image turn with no vision-capable endpoint left — degrade to
-                # text-only (strip images → placeholder) so the session survives
-                # a cloud outage instead of erroring.
-                if require_vision and not vision_degraded:
-                    messages = strip_image_refs(messages)
-                    require_vision = False
-                    vision_degraded = True
-                    last_failed_endpoint = None
-                    if on_token:
-                        on_token("\n\x1b[33m[No vision endpoint available — "
-                                 "describing from text only]\x1b[0m\n")
-                    continue
-                # All endpoints exhausted — try fallback model on any available endpoint
-                if not using_fallback:
-                    fallback = self.router.get_fallback_model(task_type)
-                    if (fallback and fallback != model
-                            and (not require_vision or self.model_settings.is_vision(fallback))):
-                        logger.warning("All endpoints failed for '%s', falling back to '%s'", model, fallback)
-                        model = fallback
-                        using_fallback = True
-                        last_failed_endpoint = None  # Reset — try all endpoints with fallback model
+        async def _select():
+            """Next (client, model, chat_kwargs) to try, or None when exhausted.
+            Owns start_request() on the endpoint it returns."""
+            while st["attempts"] < max_attempts:
+                st["attempts"] += 1
+                endpoint = await self.endpoint_manager.get_endpoint_for_role(
+                    task_type, exclude=st["failed_endpoints"] or None,
+                )
+                if not endpoint:
+                    if st["require_vision"] and not st["vision_degraded"]:
+                        # Image turn with no vision-capable endpoint left:
+                        # strip images to placeholders so the session survives
+                        # a cloud outage. A legitimate transformation, not a rewind.
+                        messages[:] = strip_image_refs(messages)
+                        st["require_vision"] = False
+                        st["vision_degraded"] = True
+                        st["failed_endpoints"] = set()
                         if on_token:
-                            on_token(f"\n\x1b[33m[Falling back to {fallback}]\x1b[0m\n")
+                            on_token("\n\x1b[33m[No vision endpoint available — "
+                                     "describing from text only]\x1b[0m\n")
                         continue
-                full_response = "Error: No available LLM endpoint."
-                break
+                    if not st["using_fallback"]:
+                        fallback = self.router.get_fallback_model(task_type)
+                        if (fallback and fallback != st["model"]
+                                and (not st["require_vision"]
+                                     or self.model_settings.is_vision(fallback))):
+                            logger.warning("All endpoints failed for '%s', falling back to '%s'",
+                                           st["model"], fallback)
+                            st["model"] = fallback
+                            st["using_fallback"] = True
+                            st["failed_endpoints"] = set()  # retry every endpoint with it
+                            if on_token:
+                                on_token(f"\n\x1b[33m[Falling back to {fallback}]\x1b[0m\n")
+                            continue
+                    return None
 
-            self._last_endpoint_used = endpoint.name
-            endpoint_name = endpoint.name
+                ep_model = endpoint.models.get(task_type) or st["model"]
+                if st["require_vision"] and not self.model_settings.is_vision(ep_model):
+                    logger.info("Skipping non-vision endpoint '%s' (model '%s') for image turn",
+                                endpoint.name, ep_model)
+                    st["failed_endpoints"].add(endpoint.name)
+                    continue
 
-            # Per-endpoint model override
-            ep_model = endpoint.models.get(task_type) or model
+                chat_kwargs: dict = {}
+                if endpoint.context_tokens:
+                    chat_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
+                if not self.think_enabled:
+                    chat_kwargs["think"] = False
+                if extra_chat_kwargs:
+                    chat_kwargs.update(extra_chat_kwargs)
 
-            # Vision gating: skip endpoints whose model can't see images.
-            if require_vision and not self.model_settings.is_vision(ep_model):
-                logger.info(
-                    "Skipping non-vision endpoint '%s' (model '%s') for image turn",
-                    endpoint.name, ep_model,
-                )
-                last_failed_endpoint = endpoint.name
-                continue
+                # Endpoint-specific loop settings; ChatLoop re-reads these per call.
+                if endpoint.context_tokens and hasattr(config, "context_limit"):
+                    config.context_limit = endpoint.context_tokens
+                if endpoint.provider == "ollama":
+                    from blipshell.llm.ollama_gate import INTERACTIVE, get_gate
+                    config.ollama_gate = get_gate()
+                    config.gate_priority = INTERACTIVE
+                else:
+                    config.ollama_gate = None
+                # Strip credentials when this endpoint relays off the machine.
+                # The interactive path bypasses router.generate() entirely, so
+                # this is where its sanitization lives. Secrets only, by design:
+                # see pii.sanitize_secrets and docs/V2_PLAN.md (D1).
+                if self.config.pii.enabled and endpoint.should_sanitize_pii:
+                    from blipshell.llm.pii import sanitize_messages_secrets
+                    config.outbound_transform = sanitize_messages_secrets
+                else:
+                    config.outbound_transform = None
 
-            chat_kwargs: dict = {}
-            if endpoint.context_tokens:
-                chat_kwargs["options"] = {"num_ctx": endpoint.context_tokens}
-            if not self.think_enabled:
-                chat_kwargs["think"] = False
-            if extra_chat_kwargs:
-                chat_kwargs.update(extra_chat_kwargs)
+                endpoint.start_request()
+                st["endpoint"] = endpoint
+                st["ep_model"] = ep_model
+                st["endpoint_name"] = endpoint.name
+                self._last_endpoint_used = endpoint.name
+                return endpoint.client, ep_model, chat_kwargs
+            return None
 
-            # Update config with endpoint-specific context limit (for compaction)
-            if endpoint.context_tokens and hasattr(config, 'context_limit'):
-                config.context_limit = endpoint.context_tokens
-
-            # Gate local Ollama calls (cloud endpoints bypass)
-            if endpoint.provider == "ollama":
-                from blipshell.llm.ollama_gate import INTERACTIVE, get_gate
-                config.ollama_gate = get_gate()
-                config.gate_priority = INTERACTIVE
-            else:
-                config.ollama_gate = None
-
-            # Strip credentials when this endpoint relays off the machine.
-            # The interactive path bypasses router.generate() entirely (it goes
-            # get_model_and_client -> stream_chat), so until now NOTHING on this
-            # path was sanitized despite pii_sanitize: true on the cloud
-            # endpoints — the conversation, the memory pools and file contents
-            # all went out raw. Secrets only, by design: see
-            # pii.sanitize_secrets and docs/V2_PLAN.md (D1).
-            if self.config.pii.enabled and endpoint.should_sanitize_pii:
-                from blipshell.llm.pii import sanitize_messages_secrets
-                config.outbound_transform = sanitize_messages_secrets
-            else:
-                config.outbound_transform = None
-
-            # ChatLoop mutates `messages` in place — it appends the assistant
-            # turn and every tool result, and compaction replaces the contents
-            # wholesale. Retrying the next endpoint with that same list replayed
-            # the failed attempt as history, reset the tool budget so the
-            # effective cap multiplied by the number of endpoints, and — when
-            # the failure landed between the assistant-with-tool_calls append
-            # and the tool results — handed the next endpoint an assistant
-            # message whose tool_calls have no matching responses, which
-            # OpenAI-compatible endpoints reject with a 400.
-            attempt_snapshot = [dict(m) for m in messages]
-
-            endpoint.start_request()
-            try:
-                result = await loop.run(
-                    client=endpoint.client,
-                    messages=messages,
-                    model=ep_model,
-                    tools=tools,
-                    chat_kwargs=chat_kwargs,
-                    config=config,
-                    on_tool_executed=on_tool_executed or self._on_tool_executed,
-                    on_stream_done=on_stream_done,
-                )
-                endpoint.record_success(0)
-                full_response = result.response
-                model = ep_model  # Report the actual model used, not the global name
-                break  # Success
-            except Exception as e:
-                if is_model_error(e):
-                    logger.warning(
-                        "Model-level error on endpoint '%s' (not penalizing): %s",
-                        endpoint.name, e,
-                    )
+        async def _on_model_call_error(exc: Exception):
+            """Book the failure against the endpoint that produced it, release
+            its request slot, and offer the next choice (or None)."""
+            ep, ep_model = st["endpoint"], st["ep_model"]
+            if ep is not None:
+                if is_model_error(exc):
+                    logger.warning("Model-level error on endpoint '%s' (not penalizing): %s",
+                                   ep.name, exc)
                     self.router.mark_model_failed(ep_model)
                 else:
-                    endpoint.record_failure()
-
-                # Rewind to the pre-attempt state (in place, so the caller's
-                # list is restored too) before handing it to another endpoint.
-                messages[:] = attempt_snapshot
-
+                    ep.record_failure()
+                ep.complete_request()
                 logger.warning(
-                    "Endpoint '%s' failed with '%s', trying next endpoint",
-                    endpoint.name, ep_model,
+                    "Endpoint '%s' failed with '%s' mid-turn; continuing on the next "
+                    "endpoint with the transcript intact", ep.name, ep_model,
                 )
-                last_failed_endpoint = endpoint.name
-                continue  # Try next endpoint
-            finally:
-                endpoint.complete_request()
+                st["failed_endpoints"].add(ep.name)
+                st["endpoint"] = None
+            return await _select()
 
-        return result, endpoint_name, model, using_fallback
+        first = await _select()
+        if first is None:
+            return None, st["endpoint_name"], st["model"], st["using_fallback"]
+        client, ep_model, chat_kwargs = first
+
+        result = None
+        config.on_model_call_error = _on_model_call_error
+        try:
+            result = await loop.run(
+                client=client,
+                messages=messages,
+                model=ep_model,
+                tools=tools,
+                chat_kwargs=chat_kwargs,
+                config=config,
+                on_tool_executed=on_tool_executed or self._on_tool_executed,
+                on_stream_done=on_stream_done,
+            )
+            if st["endpoint"] is not None:
+                st["endpoint"].record_success(0)
+        except Exception as e:
+            # Either every endpoint the selector could offer has been tried (the
+            # loop re-raises only after the callback returned None), or the
+            # failure was not at a model-call boundary. Nothing is rewound:
+            # completed tool effects are real and the transcript is consistent.
+            logger.error("Chat loop failed with no endpoint left to continue on: %s", e)
+        finally:
+            if st["endpoint"] is not None:
+                st["endpoint"].complete_request()
+            config.on_model_call_error = None  # the closure must not outlive this turn
+
+        model = st["ep_model"] if result is not None else st["model"]
+        return result, st["endpoint_name"], model, st["using_fallback"]
 
     @staticmethod
     def _fmt_mood_duration(seconds: float) -> str:
