@@ -109,26 +109,34 @@ def print_suite_summary(con: Console, suite: SimSuiteResult):
 RESPONSE_EXCERPT_CHARS = 4000
 
 
-def run_provenance(config=None) -> dict:
+def run_provenance(config=None, started: dict | None = None) -> dict:
     """What a preserved run needs to be comparable later: commit, host, time,
     and WHICH models were routed (by endpoint name and role - never a URL, the
     Tailscale endpoint must not land in a committed file). Scores from
-    different commits or different chat models are different populations."""
+    different commits or different chat models are different populations.
+
+    Call once BEFORE the run (`started = run_provenance()`) and pass it back
+    after: commit and timestamp must describe the code the run executed, not
+    whatever HEAD is when the report is written (a commit landed mid-run on
+    2026-09-09 and the file named code the run never loaded)."""
     import platform
     import subprocess
     from datetime import datetime, timezone
 
-    try:
-        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
-                             timeout=10).stdout.strip() or "unknown"
-    except Exception:
-        sha = "unknown"
-    prov = {
-        "kind": "behavioural",
-        "git_sha": sha,
-        "host": platform.node(),
-        "run_ts": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S"),
-    }
+    if started:
+        prov = dict(started)
+    else:
+        try:
+            sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
+                                 timeout=10).stdout.strip() or "unknown"
+        except Exception:
+            sha = "unknown"
+        prov = {
+            "kind": "behavioural",
+            "git_sha": sha,
+            "host": platform.node(),
+            "run_ts": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S"),
+        }
     if config is not None:
         try:
             prov["endpoints"] = [

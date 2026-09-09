@@ -47,6 +47,14 @@ def test_run_provenance_names_endpoints_and_models_but_never_urls():
     assert "100.1.2.3" not in json.dumps(prov)
 
 
+def test_run_provenance_keeps_the_start_commit_and_time():
+    started = {"kind": "behavioural", "git_sha": "start123", "host": "h", "run_ts": "20260909T000000"}
+    cfg = SimpleNamespace(endpoints=[], models=SimpleNamespace(tool_calling="x"))
+    prov = run_provenance(cfg, started)
+    assert prov["git_sha"] == "start123" and prov["run_ts"] == "20260909T000000"
+    assert prov["models"] == {"tool_calling": "x"} and prov["endpoints"] == []
+
+
 def test_run_provenance_without_config():
     prov = run_provenance(None)
     assert "endpoints" not in prov and prov["kind"] == "behavioural"

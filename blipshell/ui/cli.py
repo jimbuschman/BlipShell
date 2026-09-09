@@ -1171,6 +1171,7 @@ def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios, db_path
         if not quiet:
             console.print(f"[bold cyan]Running {len(scenarios)} simulation scenarios...[/bold cyan]")
 
+        started = run_provenance()  # commit + start time of the code this run executes
         suite_result = await runner.run_suite(scenarios)
 
         # Persist FIRST: a 20-minute run must survive a cosmetic failure in
@@ -1178,7 +1179,7 @@ def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios, db_path
         # on a cp1252 log and the JSON was never written).
         json_str = None
         if output or quiet:
-            json_str = export_json(suite_result, provenance=run_provenance(runner.last_config))
+            json_str = export_json(suite_result, provenance=run_provenance(runner.last_config, started))
             if output:
                 with open(output, "w", encoding="utf-8") as f:
                     f.write(json_str)
