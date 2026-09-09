@@ -72,6 +72,8 @@ CREATE TABLE IF NOT EXISTS core_memories (
     importance REAL DEFAULT 0.5,
     source_session_id INTEGER,
     is_active BOOLEAN DEFAULT 1,
+    source_type TEXT DEFAULT 'unknown',
+    verification_state TEXT DEFAULT 'unknown',
     FOREIGN KEY (source_session_id) REFERENCES sessions(id)
 );
 
@@ -84,6 +86,8 @@ CREATE TABLE IF NOT EXISTS lessons (
     importance REAL DEFAULT 0.5,
     source_session_id INTEGER,
     added_by TEXT DEFAULT 'system',
+    source_type TEXT DEFAULT 'unknown',
+    verification_state TEXT DEFAULT 'unknown',
     FOREIGN KEY (source_session_id) REFERENCES sessions(id)
 );
 
@@ -490,6 +494,12 @@ class SQLiteStore:
             "CREATE INDEX IF NOT EXISTS idx_sessions_external_id ON sessions(external_id)",
             # Soft-archive for low-value entity pruning (reversible — never deletes)
             "ALTER TABLE entities ADD COLUMN is_archived INTEGER DEFAULT 0",
+            # Provenance on derived layers (V3 B4): how a record was produced
+            # and whether it is stated / inferred / verified / contradicted.
+            "ALTER TABLE core_memories ADD COLUMN source_type TEXT DEFAULT 'unknown'",
+            "ALTER TABLE core_memories ADD COLUMN verification_state TEXT DEFAULT 'unknown'",
+            "ALTER TABLE lessons ADD COLUMN source_type TEXT DEFAULT 'unknown'",
+            "ALTER TABLE lessons ADD COLUMN verification_state TEXT DEFAULT 'unknown'",
             "ALTER TABLE entities ADD COLUMN archived_at DATETIME",
             "CREATE INDEX IF NOT EXISTS idx_entities_archived ON entities(is_archived)",
         ):
@@ -1253,6 +1263,9 @@ class SQLiteStore:
                 importance=r["importance"],
                 source_session_id=r["source_session_id"],
                 project=r["project"] if "project" in r.keys() else None,
+                added_by=(r["added_by"] if "added_by" in r.keys() else None) or "system",
+                source_type=(r["source_type"] if "source_type" in r.keys() else None) or "unknown",
+                verification_state=(r["verification_state"] if "verification_state" in r.keys() else None) or "unknown",
             )
             for r in rows
         ]
@@ -1782,15 +1795,19 @@ class SQLiteStore:
 
     async def create_core_memory(self, core_memory: CoreMemory) -> int:
         """Insert a core memory and return its ID."""
+        from blipshell.models.memory import default_verification
         cursor = await self._db.execute(
-            """INSERT INTO core_memories (content, category, timestamp, importance, source_session_id)
-               VALUES (?, ?, ?, ?, ?)""",
+            """INSERT INTO core_memories (content, category, timestamp, importance, source_session_id,
+               source_type, verification_state)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 core_memory.content,
                 core_memory.category,
                 core_memory.timestamp.isoformat(),
                 core_memory.importance,
                 core_memory.source_session_id,
+                core_memory.source_type or "unknown",
+                core_memory.verification_state or default_verification(core_memory.source_type),
             ),
         )
         await self._db.commit()
@@ -1810,14 +1827,20 @@ class SQLiteStore:
                 timestamp=r["timestamp"],
                 importance=r["importance"],
                 source_session_id=r["source_session_id"],
+                source_type=(r["source_type"] if "source_type" in r.keys() else None) or "unknown",
+                verification_state=(r["verification_state"] if "verification_state" in r.keys() else None) or "unknown",
             )
             for r in rows
         ]
 
     async def deactivate_core_memory(self, core_memory_id: int):
         """Deactivate a core memory."""
+        # Deactivation here means a newer core memory contradicted it
+        # (processor._check_core_memory_contradictions): record that as the
+        # verification state so the row explains itself (V3 B4).
         await self._db.execute(
-            "UPDATE core_memories SET is_active = 0 WHERE id = ?", (core_memory_id,)
+            "UPDATE core_memories SET is_active = 0, verification_state = 'contradicted' WHERE id = ?",
+            (core_memory_id,),
         )
         await self._db.commit()
 
@@ -1825,10 +1848,11 @@ class SQLiteStore:
 
     async def create_lesson(self, lesson: Lesson) -> int:
         """Insert a lesson and return its ID."""
+        from blipshell.models.memory import default_verification
         cursor = await self._db.execute(
             """INSERT INTO lessons (content, summary, timestamp, rank, importance,
-               source_session_id, added_by, project)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               source_session_id, added_by, project, source_type, verification_state)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 lesson.content,
                 lesson.summary,
@@ -1836,8 +1860,10 @@ class SQLiteStore:
                 lesson.rank,
                 lesson.importance,
                 lesson.source_session_id,
-                "system",
+                lesson.added_by or "system",
                 lesson.project,
+                lesson.source_type or "unknown",
+                lesson.verification_state or default_verification(lesson.source_type),
             ),
         )
         await self._db.commit()
@@ -1857,6 +1883,9 @@ class SQLiteStore:
                 importance=r["importance"],
                 source_session_id=r["source_session_id"],
                 project=r["project"] if "project" in r.keys() else None,
+                added_by=(r["added_by"] if "added_by" in r.keys() else None) or "system",
+                source_type=(r["source_type"] if "source_type" in r.keys() else None) or "unknown",
+                verification_state=(r["verification_state"] if "verification_state" in r.keys() else None) or "unknown",
             )
             for r in rows
         ]
@@ -1902,6 +1931,9 @@ class SQLiteStore:
                 importance=r["importance"],
                 source_session_id=r["source_session_id"],
                 project=r["project"] if "project" in r.keys() else None,
+                added_by=(r["added_by"] if "added_by" in r.keys() else None) or "system",
+                source_type=(r["source_type"] if "source_type" in r.keys() else None) or "unknown",
+                verification_state=(r["verification_state"] if "verification_state" in r.keys() else None) or "unknown",
             )
             for r in rows
         ]
@@ -2119,7 +2151,25 @@ class SQLiteStore:
             importance=row["importance"],
             source_session_id=row["source_session_id"],
             project=row["project"] if "project" in row.keys() else None,
+            added_by=(row["added_by"] if "added_by" in row.keys() else None) or "system",
+            source_type=(row["source_type"] if "source_type" in row.keys() else None) or "unknown",
+            verification_state=(row["verification_state"] if "verification_state" in row.keys() else None) or "unknown",
         )
+
+    async def get_provenance(self, table: str, ids: list[int]) -> dict[int, tuple[str, str]]:
+        """id -> (source_type, verification_state) for core_memories or lessons.
+
+        One query, for labelling Recall hits (which come back from the vector
+        tables without these fields)."""
+        if table not in ("core_memories", "lessons") or not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        cursor = await self._db.execute(
+            f"SELECT id, source_type, verification_state FROM {table} WHERE id IN ({placeholders})",
+            [int(i) for i in ids],
+        )
+        rows = await cursor.fetchall()
+        return {int(r["id"]): (r["source_type"] or "unknown", r["verification_state"] or "unknown") for r in rows}
 
     async def delete_lesson(self, lesson_id: int):
         """Delete a lesson."""

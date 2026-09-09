@@ -259,7 +259,8 @@ class MemoryFSBackend:
     async def _create_core(self, path: MemoryPath, content: str) -> MemoryPath:
         from blipshell.models.memory import CoreMemory  # local import
 
-        core = CoreMemory(content=content.strip())
+        # Written by the model through the memory filesystem tool (V3 B4).
+        core = CoreMemory(content=content.strip(), source_type="assistant_inference")
         new_id = await self.sqlite.create_core_memory(core)
         # Keep the embedding index in sync — without this, the new core memory
         # is invisible to semantic search until the nightly vector backfill.

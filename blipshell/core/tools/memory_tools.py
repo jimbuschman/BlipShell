@@ -195,9 +195,18 @@ class PromoteToCoreMemoryTool(Tool):
         else:
             return ToolFailure(f"Invalid source_type: {source_type}. Use 'memory' or 'lesson'.")
 
+        # Provenance follows the SOURCE (V3 B4): a promoted user-role memory
+        # is the user's statement; a promoted lesson keeps the lesson's type.
+        if source_type == "memory":
+            prov = "user_statement" if getattr(memory, "role", "") == "user" else "assistant_inference"
+        else:
+            prov = getattr(lesson, "source_type", "") or "reflection"
+            if prov == "unknown":
+                prov = "reflection"
         mem_id = await self.processor.process_core_memory(
             text=content,
             session_id=self.session_id,
+            source_type=prov,
         )
         return (
             f"Promoted {source_type} #{source_id} to core memory (ID: {mem_id}): "

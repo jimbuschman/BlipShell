@@ -226,6 +226,8 @@ async def reprocess_lessons(
                     rank=3,
                     importance=0.5,
                     source_session_id=session_id,
+                    source_type="reflection",
+                    added_by="reprocess",
                 )
                 lesson_id = await sqlite.create_lesson(lesson)
 

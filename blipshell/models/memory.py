@@ -46,6 +46,80 @@ class Memory(BaseModel):
     entities_extracted_at: Optional[datetime] = None
 
 
+# Provenance for DERIVED records (V3 B4). Raw memories carry `role`; the layers
+# built from them - core memories, lessons, the user model - used to carry
+# nothing, so "Jim said this" and "the model concluded this" were
+# indistinguishable once distilled. Every creation site now says which.
+SOURCE_TYPES = (
+    "user_statement",       # the user said it (verbatim or a direct paraphrase)
+    "assistant_inference",  # the model concluded/proposed it
+    "tool_observation",     # a tool returned it
+    "reflection",           # produced by a nightly/self-review pass over transcripts
+    "import",               # brought in from an external export
+    "unknown",              # pre-B4 rows
+)
+VERIFICATION_STATES = ("stated", "inferred", "verified", "contradicted", "unknown")
+
+
+def default_verification(source_type: str) -> str:
+    """The verification state a record starts in, given how it was produced."""
+    return {
+        "user_statement": "stated",
+        "import": "stated",
+        "tool_observation": "verified",
+        "assistant_inference": "inferred",
+        "reflection": "inferred",
+    }.get(source_type, "unknown")
+
+
+def provenance_tag(source_type: str, verification_state: str) -> str:
+    """Rendered prefix for a derived record: '' for what the user stated,
+    '[inferred] ' for a model's conclusion, '[contradicted] ' when a later
+    fact overrode it, '' for pre-B4 rows (unknown - we do not invent a label)."""
+    if verification_state == "inferred":
+        return "[inferred] "
+    if verification_state == "contradicted":
+        return "[contradicted] "
+    return ""
+
+
+# Provenance for DERIVED records (V3 B4). Raw memories carry `role`; the layers
+# built from them - core memories, lessons, the user model - used to carry
+# nothing, so "Jim said this" and "the model concluded this" were
+# indistinguishable once distilled. Every creation site now says which.
+SOURCE_TYPES = (
+    "user_statement",       # the user said it (verbatim or a direct paraphrase)
+    "assistant_inference",  # the model concluded/proposed it
+    "tool_observation",     # a tool returned it
+    "reflection",           # produced by a nightly/self-review pass over transcripts
+    "import",               # brought in from an external export
+    "unknown",              # pre-B4 rows
+)
+VERIFICATION_STATES = ("stated", "inferred", "verified", "contradicted", "unknown")
+
+
+def default_verification(source_type: str) -> str:
+    """The verification state a record starts in, given how it was produced."""
+    return {
+        "user_statement": "stated",
+        "import": "stated",
+        "tool_observation": "verified",
+        "assistant_inference": "inferred",
+        "reflection": "inferred",
+    }.get(source_type, "unknown")
+
+
+def provenance_tag(source_type: str, verification_state: str) -> str:
+    """Rendered prefix for a derived record: '' for what the user stated,
+    '[inferred] ' for a model's conclusion, '[contradicted] ' when a later
+    fact overrode it, '' for pre-B4 rows (unknown - we do not invent a label)."""
+    if verification_state == "inferred":
+        return "[inferred] "
+    if verification_state == "contradicted":
+        return "[contradicted] "
+    return ""
+
+
 class CoreMemory(BaseModel):
     """A persistent core memory (user preferences, facts, personality traits)."""
     id: Optional[int] = None
@@ -55,6 +129,10 @@ class CoreMemory(BaseModel):
     importance: float = 0.5
     tags: list[str] = Field(default_factory=list)
     source_session_id: Optional[int] = None
+    source_type: str = "unknown"
+    verification_state: str = ""  # "" -> default_verification(source_type) at create
+    source_type: str = "unknown"
+    verification_state: str = ""  # "" -> default_verification(source_type) at create
 
 
 class Lesson(BaseModel):
@@ -69,6 +147,12 @@ class Lesson(BaseModel):
     source_session_id: Optional[int] = None
     project: Optional[str] = None  # project context for scoped lesson search
     file_id: Optional[int] = None
+    added_by: str = "system"       # which path wrote it: session_review | correction_detector | user | reprocess | ...
+    source_type: str = "unknown"
+    verification_state: str = ""   # "" -> default_verification(source_type) at create
+    added_by: str = "system"       # which path wrote it: session_review | correction_detector | user | reprocess | ...
+    source_type: str = "unknown"
+    verification_state: str = ""   # "" -> default_verification(source_type) at create
 
 
 class MemorySearchResult(BaseModel):

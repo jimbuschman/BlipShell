@@ -231,12 +231,20 @@ class MemoryProcessor:
             ) from e
 
     async def process_core_memory(
-        self, text: str, session_id: int | None = None
+        self, text: str, session_id: int | None = None,
+        source_type: str = "assistant_inference",
     ) -> int:
-        """Process and store a core memory."""
+        """Process and store a core memory.
+
+        `source_type` says how the fact was produced (V3 B4). The default is
+        the honest one for a model-initiated save: even when the text quotes
+        the user, the decision to keep it as a standing fact was the model's.
+        Callers that KNOW better pass it (promotion of a user-role memory ->
+        user_statement)."""
         core_memory = CoreMemory(
             content=text,
             source_session_id=session_id,
+            source_type=source_type,
         )
         mem_id = await self.sqlite.create_core_memory(core_memory)
 
@@ -310,6 +318,8 @@ class MemoryProcessor:
             content=lesson_text,
             source_session_id=session_id,
             project=project,
+            source_type="reflection",   # a model's reading of a transcript (V3 B4)
+            added_by="session_review",
         )
         lesson_id = await self.sqlite.create_lesson(lesson)
 

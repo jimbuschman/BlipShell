@@ -70,6 +70,17 @@ def format_relative_time(ts, now=None, min_age_seconds: float = 0) -> str:
     return f"[{ts.strftime('%Y-%m-%d')}] "
 
 
+def _prov_tag(prov) -> str:
+    """Render tag for a (source_type, verification_state) pair, '' when unknown."""
+    if not prov:
+        return ""
+    from blipshell.models.memory import provenance_tag
+    try:
+        return provenance_tag(prov[0], prov[1])
+    except Exception:
+        return ""
+
+
 class ChatMixin:
     """Chat pipeline methods mixed into Agent."""
 
@@ -250,6 +261,8 @@ class ChatMixin:
                 content=anti_pattern,
                 source_session_id=self.session_manager.session_id,
                 project=self.active_project.get("name") if self.active_project else None,
+                source_type="user_statement",   # derived from what the user said (V3 B4)
+                added_by="correction_detector",
             )
             lesson_id = await self.sqlite.create_lesson(lesson)
 
@@ -978,13 +991,14 @@ class ChatMixin:
             core_results = core_task.result() if not core_task.cancelled() else []
             if isinstance(core_results, Exception):
                 raise core_results
-            for cr in core_results:
+            core_hits = [cr for cr in core_results if cr.get("similarity", 0.0) >= 0.4]
+            core_prov = await self._provenance_for("core_memories", core_hits)
+            for cr in core_hits:
                 similarity = cr.get("similarity", 0.0)
-                if similarity < 0.4:
-                    continue
                 core_count += 1
+                tag = _prov_tag(core_prov.get(cr.get("id")))
                 self.memory_manager.add_memory("Recall", PoolItem(
-                    text=f"[Core] {cr.get('document', '')}",
+                    text=f"[Core] {tag}{cr.get('document', '')}",
                     session_role="system",
                     priority_score=similarity + 0.2,
                     source="core",
@@ -1002,13 +1016,14 @@ class ChatMixin:
             lesson_results = lesson_task.result() if not lesson_task.cancelled() else []
             if isinstance(lesson_results, Exception):
                 raise lesson_results
-            for lr in lesson_results:
+            lesson_hits = [lr for lr in lesson_results if lr.get("similarity", 0.0) >= 0.4]
+            lesson_prov = await self._provenance_for("lessons", lesson_hits)
+            for lr in lesson_hits:
                 similarity = lr.get("similarity", 0.0)
-                if similarity < 0.4:
-                    continue
                 lesson_count += 1
+                tag = _prov_tag(lesson_prov.get(lr.get("id")))
                 self.memory_manager.add_memory("Recall", PoolItem(
-                    text=f"[Lesson] {lr.get('document', '')}",
+                    text=f"[Lesson] {tag}{lr.get('document', '')}",
                     session_role="system",
                     priority_score=similarity + 0.1,
                     source="lesson",
@@ -1042,6 +1057,20 @@ class ChatMixin:
             "lesson_results": lesson_count,
             **search_stats,
         })
+
+    async def _provenance_for(self, table: str, hits: list[dict]) -> dict:
+        """id -> (source_type, verification_state) for Recall hits on a derived
+        layer (V3 B4). Best effort: a store without the method (test fakes) or
+        a failing query yields no labels rather than no recall."""
+        ids = [h.get("id") for h in hits if h.get("id") is not None]
+        getter = getattr(getattr(self, "sqlite", None), "get_provenance", None)
+        if not ids or getter is None:
+            return {}
+        try:
+            return await getter(table, ids)
+        except Exception as e:
+            logger.debug("Provenance lookup for %s failed: %s", table, e)
+            return {}
 
     async def _search_self_thoughts(self, query: str):
         """Resurface a self-originated lingering thought when it's relevant *now*.

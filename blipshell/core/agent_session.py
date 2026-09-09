@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 from blipshell.memory.consolidation import MemoryConsolidator
 from blipshell.memory.manager import PoolItem
+from blipshell.models.memory import provenance_tag
 from blipshell.memory.tag_discovery import TagDiscovery
 from blipshell.memory.tagger import register_topic_patterns
 
@@ -132,8 +133,10 @@ class SessionMixin:
         """Load active core memories into the Core pool."""
         core_memories = await self.sqlite.get_active_core_memories()
         for cm in core_memories:
+            # A model's conclusion never renders as the user's statement (V3 B4).
+            tag = provenance_tag(cm.source_type, cm.verification_state)
             self.memory_manager.add_memory("Core", PoolItem(
-                text=cm.content,
+                text=f"{tag}{cm.content}",
                 session_role="system",
                 priority_score=cm.importance + 1.0,  # boost core memories
                 source="core",
@@ -153,7 +156,8 @@ class SessionMixin:
             doc = await UserModel(self.sqlite, self.router).get()
             if doc:
                 self.memory_manager.add_memory("Core", PoolItem(
-                    text="[Your working model of the user]\n" + doc,
+                    text="[Your working model of the user - inferred nightly from "
+                         "session reflections and commits, not stated by them]\n" + doc,
                     session_role="system",
                     priority_score=0.9,
                 ))
@@ -171,8 +175,9 @@ class SessionMixin:
         lessons.sort(key=lambda l: l.importance, reverse=True)
         loaded = 0
         for lesson in lessons[:30]:
+            tag = provenance_tag(lesson.source_type, lesson.verification_state)
             self.memory_manager.add_memory("Lessons", PoolItem(
-                text=lesson.content,
+                text=f"{tag}{lesson.content}",
                 session_role="system",
                 priority_score=lesson.importance,
                 source="lesson",

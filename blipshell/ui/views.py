@@ -269,6 +269,8 @@ async def _save_feedback(agent: Agent, feedback: str):
         importance=0.8,
         source_session_id=session_id,
         tags=["feedback"],
+        source_type="user_statement",  # typed in by the user (V3 B4)
+        added_by="user",
     )
 
     lesson_id = await agent.sqlite.create_lesson(lesson)

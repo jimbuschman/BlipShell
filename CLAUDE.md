@@ -197,6 +197,17 @@ blipshell/
   excerpt (`memory/excerpt.py`) with their speaker instead of the first
   1,200 chars; and the trace has retrieved / sent / omitted stages, which
   `/why` prints. The continuity set is the gate for all of it.
+  **Provenance on derived layers (V3 B4):** `core_memories` and `lessons`
+  carry `source_type` (user_statement | assistant_inference |
+  tool_observation | reflection | import | unknown) and
+  `verification_state` (stated | inferred | verified | contradicted |
+  unknown); vocabulary + defaults in `models/memory.py`. Every creation site
+  stamps them; `promote_to_core_memory` follows the source memory's role.
+  Inferred items render with `[inferred] ` in Core, Lessons and Recall; pre-B4
+  rows are `unknown` and get no invented label. Pass `source_type` when you
+  add a creation site - the default on `process_core_memory` is
+  `assistant_inference` because a model-initiated save is the model's call
+  even when it quotes the user.
 - **Entity graph** (memory/entity_extractor.py): LLM triple extraction; 4-stage
   resolution — alias routing (merged names → canonical, follows chains) → exact
   match, typed on `(name, entity_type)` → embedding (≥0.85 auto-merge,

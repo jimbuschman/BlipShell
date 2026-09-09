@@ -66,7 +66,7 @@ fixing - code moves.
 | Stage | Status |
 |---|---|
 | A - Correctness | **DONE 2026-09-09.** A1 (2026-09-08), A2+A3, A4, A5, A6 all built, tested, merged to main; structured-dedup measured (A1 "Measured"). Gate below met |
-| B - Context contract | B1, B2, B3 BUILT 2026-09-09; B4 (provenance fields) next. Gate so far: survival 0.833 -> 1.0, exclusion 0.429 -> 0.571, duplicated renders 16 -> 0 |
+| B - Context contract | **DONE 2026-09-09** (B1-B4). Gate: survival 0.833 -> 1.0, exclusion 0.429 -> 0.571, duplicated renders 16 -> 0. The three cases still failing need SUPERSESSION labelling (see gate note) |
 | C - Continuity set | deterministic half BUILT 2026-09-09, baseline taken (survival 0.833, exclusion 0.429, 16 duplicated renders); model half not started |
 | D - Accountable lessons | not started |
 | E - Project dossier + decisions | not started |
@@ -423,11 +423,42 @@ X" (user_statement) render differently and are weighted differently in D. This
 is cheap now and unpleasant after another ten thousand memories. The linkage
 graph (`supported_by`, `derived_from`, `supersedes`) is explicitly **not** built
 here; B3's `source_id` is the hook if it is ever needed.
+**As built (2026-09-09):** `core_memories` and `lessons` gain `source_type` +
+`verification_state` (schema + ALTER migration, default `unknown` for pre-B4
+rows - no label is invented for them). `models/memory.py` owns the vocabulary
+(`SOURCE_TYPES`, `VERIFICATION_STATES`, `default_verification`,
+`provenance_tag`). Every creation site is stamped: `save_core_memory` and the
+memory-filesystem write -> `assistant_inference`; `promote_to_core_memory`
+follows the SOURCE (a user-role memory -> `user_statement`, a lesson keeps its
+type); session-review and reprocess lessons -> `reflection`; the correction
+detector's anti-pattern lesson and `/feedback` -> `user_statement`; a core
+memory deactivated by the contradiction check -> `contradicted`. `added_by`
+on lessons is now set per path (was a hard-coded "system"). Rendering: Core
+and Lessons pool items and Recall hits on either layer carry `[inferred] `
+when the state is inferred (`SQLiteStore.get_provenance` labels Recall hits
+in one query); the user-model header says it is inferred nightly. `created_by`
+from the draft became `added_by` (lessons already had the column); `source_id`
+was not added as a column - `source_session_id` exists on both tables and no
+consumer needed finer linkage yet. `tests/test_provenance.py`.
 
 **Stage B gate (deterministic, runs here):** on the Stage C continuity set,
 answer-bearing passage survival into *sent* and false-recall exclusion rate,
 measured before and after B. Every source `/why` reports maps to the actual
 request. Local fallback fits its window. If neither rate moves, stop.
+**Gate result 2026-09-09:** survival 0.833 -> **1.000**; exclusion 0.429 ->
+**0.571**; duplicated renders 16 -> **0**; requests ~10% smaller; `/why`
+reports sent vs omitted with reasons. Both rates moved, so the plan
+continues. The three false-recall cases still failing
+(`corrected_preference_*`, `conflicting_project_state_newer_wins`) all need
+one thing B does not build: a **superseded** label on the older of two
+conflicting memories. In production the write-time dedup verdict (A1)
+archives the contradicted memory so it never surfaces; the harness seeds
+memories directly and so measures the READ side, where nothing marks
+supersession. A read-side heuristic (lexical overlap + time gap -> "older,
+possibly superseded") would mislabel; the honest fix is a supersession
+record written when a contradiction is DETECTED (dedup DELETE/UPDATE, core
+contradiction check) and read by Recall rendering - that is Stage E1's
+`supersedes` relation, so those three cases are E1's gate, not B's.
 
 ---
 
