@@ -51,6 +51,11 @@ class AddFollowUpTool(Tool):
             project=self._project,
             due_hint=due_hint or None,
         )
+        from blipshell.memory import project_events
+        await project_events.record_event(
+            self._sqlite, project=self._project, kind="followup_added", summary=content,
+            ref_kind="follow_up", ref_id=fid, session_id=self._session_id,
+        )
         result = f"Follow-up #{fid} queued: {content}"
         if due_hint:
             result += f" (due: {due_hint})"
@@ -129,7 +134,21 @@ class ResolveFollowUpTool(Tool):
     async def execute(self, id: int, action: str = "resolve", **kwargs) -> str:
         if action == "dismiss":
             ok = await self._sqlite.dismiss_follow_up(id)
+            if ok:
+                from blipshell.memory import project_events
+                await project_events.record_event(
+                    self._sqlite, project=await project_events.follow_up_project(self._sqlite, id),
+                    kind="followup_dismissed", summary=f"follow-up #{id} dismissed",
+                    ref_kind="follow_up", ref_id=id, session_id=self._session_id,
+                )
             return f"Follow-up #{id} dismissed." if ok else f"Follow-up #{id} not found or already resolved."
         else:
             ok = await self._sqlite.resolve_follow_up(id, self._session_id)
+            if ok:
+                from blipshell.memory import project_events
+                await project_events.record_event(
+                    self._sqlite, project=await project_events.follow_up_project(self._sqlite, id),
+                    kind="followup_resolved", summary=f"follow-up #{id} resolved",
+                    ref_kind="follow_up", ref_id=id, session_id=self._session_id,
+                )
             return f"Follow-up #{id} resolved." if ok else f"Follow-up #{id} not found or already resolved."

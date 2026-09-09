@@ -68,7 +68,7 @@ class ProjectMixin:
         self.tool_registry.register(
             AskUserTool(callback=self._ask_user_callback), group="general",
         )
-        self.tool_registry.register(TaskCompleteTool(), group="general")
+        self.tool_registry.register(TaskCompleteTool(on_complete=self._on_task_complete), group="general")
 
         # Initialize repo map for code structure context
         self._repo_map = RepoMap(root)
@@ -90,15 +90,17 @@ class ProjectMixin:
         cached_at = settings.get("project_context_cached_at", 0)
 
         if cached and (time.time() - cached_at) < 3600:
-            self._project_context = cached
+            scan = cached
             logger.info("Using cached project context for '%s'", name)
         else:
-            self._project_context = await self._scan_project_context(project)
-            settings["project_context"] = self._project_context
+            scan = await self._scan_project_context(project)
+            settings["project_context"] = scan
             settings["project_context_cached_at"] = time.time()
             await self.sqlite.update_project(
                 name, settings_json=json.dumps(settings),
             )
+        # The dossier is NOT part of the cached scan: it re-renders on events.
+        self._project_context = scan + await self._dossier_context(project)
 
         # Sync executor with project state
         if self.task_executor:
@@ -116,6 +118,9 @@ class ProjectMixin:
 
         self.active_project = None
         self._project_context = ""
+        self.memory_manager.rendered_elsewhere = set()
+        self._dossier_followup_ids = set()
+        self._pending_follow_ups = await self._load_follow_ups()
         self._repo_map = None
         # Re-register file tools without root
         self._register_tools_with_root(None)
@@ -252,18 +257,43 @@ class ProjectMixin:
                 except Exception as e:
                     logger.debug("Failed to load key file %s: %s", fname, e)
 
-        # Project digest — memory of what's been done across sessions
-        try:
-            from blipshell.memory.project_digest import ProjectDigestManager
-            digest_mgr = ProjectDigestManager(self.sqlite, self.router)
-            digest = await digest_mgr.get_digest(project["name"])
-            if digest:
-                parts.append(f"\n=== Project Digest (auto-maintained) ===\n{digest}")
-                logger.info(
-                    "Injected project digest for '%s' (%d chars)",
-                    project["name"], len(digest),
-                )
-        except Exception as e:
-            logger.error("Failed to load project digest: %s", e)
-
         return "\n".join(parts)
+
+    async def _dossier_context(self, project: dict) -> str:
+        """Project dossier block (V3 E2): the prose digest, labelled inferred,
+        plus the RECORDS a return needs - decisions in force with reasons and
+        revisit conditions, recently superseded ones, open follow-ups, last
+        completed work (claimed vs verified), the next useful action.
+
+        Never cached with the repo scan: the render is invalidated by events.
+        What the dossier carries is not rendered a second time - the memory
+        pools skip those memory ids and the follow-ups block skips those items."""
+        try:
+            from blipshell.memory import dossier
+            md, decision_ids, followup_ids = await dossier.get_dossier(self.sqlite, project["name"])
+        except Exception as e:
+            logger.error("Failed to load project dossier: %s", e)
+            return ""
+        if not md:
+            return ""
+        self.memory_manager.rendered_elsewhere = set(decision_ids)
+        self._dossier_followup_ids = set(followup_ids)
+        self._pending_follow_ups = await self._load_follow_ups()
+        logger.info("Injected project dossier for '%s' (%d chars)", project["name"], len(md))
+        return f"\n=== Project Dossier (auto-maintained) ===\n{md}"
+
+    async def _on_task_complete(self, summary: str, files_modified: str = "", decisions_made: str = "") -> None:
+        """task_complete -> project event (V3 E2). The assistant's claim, marked so."""
+        if not self.active_project:
+            return
+        from blipshell.memory import project_events
+        text = summary or ""
+        if files_modified:
+            text += f" [files: {files_modified}]"
+        if decisions_made:
+            text += f" [decisions noted: {decisions_made}]"
+        await project_events.record_event(
+            self.sqlite, project=self.active_project.get("name"), kind="task_completed",
+            summary=text, session_id=getattr(self.session_manager, "session_id", None),
+            source_type="assistant_inference",
+        )

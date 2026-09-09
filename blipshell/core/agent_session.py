@@ -474,6 +474,11 @@ class SessionMixin:
         try:
             project = self.active_project["name"] if self.active_project else None
             items = await self.sqlite.get_pending_follow_ups(project=project, limit=10)
+            # Items the active project's dossier already lists (V3 E2) are not
+            # repeated here; the block keeps project-less ones and the
+            # instruction to resolve.
+            skip = getattr(self, "_dossier_followup_ids", None) or set()
+            items = [i for i in items if i["id"] not in skip]
             if not items:
                 return ""
 

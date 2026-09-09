@@ -96,12 +96,16 @@ class Pool:
         self._items.sort(key=lambda x: x.priority_score, reverse=True)
 
     def get_top_entries(self, available_tokens: int, max_override: int | None = None,
-                        exclude_memory_ids: set[int] | None = None) -> list[PoolItem]:
+                        exclude_memory_ids: set[int] | None = None,
+                        rendered_elsewhere: set[int] | None = None) -> list[PoolItem]:
         """Get top entries that fit within available tokens and item count cap.
 
         `exclude_memory_ids`: items carrying one of these memory_ids are
         skipped without charging the budget - the same memory already reached
         the request through another pool (V3 B1: Recall beats RecentHistory).
+        `rendered_elsewhere`: same, for memories a block outside the pools
+        carries (the active project's dossier, V3 E2). Each is recorded in
+        `last_omitted` under its own reason so the /why trace says which.
         """
         selected = []
         omitted: list[tuple[PoolItem, str]] = []
@@ -114,6 +118,9 @@ class Pool:
                 continue
             if exclude_memory_ids and item.memory_id and item.memory_id in exclude_memory_ids:
                 omitted.append((item, "already sent via Recall"))
+                continue
+            if rendered_elsewhere and item.memory_id and item.memory_id in rendered_elsewhere:
+                omitted.append((item, "already in the project dossier"))
                 continue
             if used + item.estimated_tokens <= effective_cap:
                 selected.append(item)
@@ -159,6 +166,10 @@ class MemoryManager:
         self._pools: dict[str, Pool] = {}
         self._pool_configs: dict[str, dict] = {}
         self._summarize_callback = None
+        # Memory ids that reach the request through a block OUTSIDE the pools
+        # (the active project's dossier, V3 E2). Every pool skips them, Recall
+        # included: the dossier is their canonical, structured place.
+        self.rendered_elsewhere: set[int] = set()
 
         self._configure_pools()
 
@@ -238,10 +249,12 @@ class MemoryManager:
         # (continuity baseline 2026-09-09: 16 duplicated renders / 13 cases).
         order = sorted(self._pools.values(), key=lambda p: 0 if p.name == "Recall" else 1)
         recalled_ids: set[int] = set()
+        elsewhere = self.rendered_elsewhere or None
         for pool in order:
             cap = pool_budgets.get(pool.name) if pool_budgets else None
             exclude = recalled_ids if pool.name != "Recall" else None
-            entries = pool.get_top_entries(remaining, max_override=cap, exclude_memory_ids=exclude)
+            entries = pool.get_top_entries(remaining, max_override=cap, exclude_memory_ids=exclude,
+                                           rendered_elsewhere=elsewhere)
             for entry in entries:
                 if remaining >= entry.estimated_tokens:
                     entry.pool_name = pool.name

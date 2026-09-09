@@ -1632,6 +1632,23 @@ class NightlyRunner:
                 logger.error("Digest rebuild failed for '%s': %s", name, e)
                 skipped += 1
 
+        # V3 E2: fold this window's project events into the prose digest and
+        # re-render the dossier - ACTIVE projects only (an event or a session
+        # in the last 14 days); dormant projects cost nothing.
+        from blipshell.memory import dossier, project_events
+        reconciled = 0
+        events_folded = 0
+        try:
+            for name in await project_events.active_projects(self.sqlite):
+                try:
+                    st = await dossier.reconcile(self.sqlite, self.router, name)
+                    reconciled += 1
+                    events_folded += int(st.get("folded", 0))
+                except Exception as e:
+                    logger.error("Dossier reconcile failed for '%s': %s", name, e)
+        except Exception as e:
+            logger.error("Dossier reconcile could not list active projects: %s", e)
+
         # Mirror every project's digest + lessons into its repo
         # (.blipshell/DIGEST.md). Runs for ALL projects, not just rebuilt
         # ones: lessons change without the digest changing, and the export
@@ -1643,7 +1660,8 @@ class NightlyRunner:
                 if await export_digest(self.sqlite, project["name"]):
                     exported += 1
         return {"rebuilt": rebuilt, "skipped": skipped,
-                "exported": exported, "total": len(projects)}
+                "exported": exported, "total": len(projects),
+                "dossiers_reconciled": reconciled, "events_folded": events_folded}
 
     async def close(self):
         """Clean up resources."""

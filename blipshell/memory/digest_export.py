@@ -82,8 +82,16 @@ async def export_digest(sqlite, project_name: str) -> Optional[Path]:
         if not digest and not lessons:
             return None
 
+        # The exported document is the DOSSIER when one has been rendered
+        # (digest + decisions + follow-ups + completed work, V3 E2); the bare
+        # digest is the fallback for a project that has never had an event.
+        from blipshell.memory import dossier
+        body_digest = await dossier.get_dossier_md(sqlite, project_name) or digest
+        # The header's "updated" is when the CONTENT last changed (the prose
+        # digest); the dossier carries its own render date in its body, and a
+        # re-render of unchanged records must not rewrite the file.
         body = render_markdown(
-            project_name, digest, lessons,
+            project_name, body_digest, lessons,
             updated_at=meta.get("digest_updated_at"),
         )
 

@@ -101,7 +101,7 @@ async def test_budget_omissions_carry_a_reason(tmp_path):
         trace = agent._last_retrieval_trace
         assert trace["omitted"], "with six long memories and a 400-token Recall budget something must be omitted"
         assert all(o.get("reason") for o in trace["omitted"])
-        assert all(o["reason"] in ("over budget", "item cap", "already sent via Recall", "not selected")
+        assert all(o["reason"] in ("over budget", "item cap", "already sent via Recall", "already in the project dossier", "not selected")
                    for o in trace["omitted"])
     finally:
         await _close(agent)

@@ -355,6 +355,15 @@ class SessionManager:
         await digest_mgr.update_digest(
             self.project, session.summary, session.title or "", self.session_id,
         )
+        # V3 E2: the close is a project event; the dossier re-renders now so
+        # the next activation reads current records, not last night's.
+        from blipshell.memory import dossier, project_events
+        await project_events.record_event(
+            self.sqlite, project=self.project, kind="session_closed",
+            summary=(session.summary or "")[:300], ref_kind="session", ref_id=self.session_id,
+            session_id=self.session_id, source_type="reflection",
+        )
+        await dossier.refresh(self.sqlite, self.project)
         # Mirror the fresh digest + lessons into the repo itself
         # (.blipshell/DIGEST.md) so other tools inherit them. Best-effort by
         # design — export_digest returns None rather than raising, and a

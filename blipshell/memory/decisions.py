@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from blipshell.memory import supersession
+from blipshell.memory import project_events, supersession
 from blipshell.models.memory import Memory, MemoryType
 
 logger = logging.getLogger(__name__)
@@ -101,6 +101,11 @@ async def record_decision(sqlite, vectors, *, decision: str, reason: str = "",
         except Exception as e:
             logger.warning("Decision %d embed failed (FTS still finds it): %s", mid, e)
     logger.info("Decision %d recorded (%s): %s", mid, decided_by, decision[:80])
+    await project_events.record_event(
+        sqlite, project=project, kind="decision_recorded", summary=decision, ref_kind="memory",
+        ref_id=mid, session_id=session_id,
+        source_type="user_statement" if decided_by == "user" else "assistant_inference",
+    )
     return (await get_decision(sqlite, mid))
 
 
@@ -141,6 +146,12 @@ async def revise_decision(sqlite, vectors, old_id: int, *, decision: str, reason
         evidence=(reason or decision)[:300],
         source_type="user_statement" if decided_by != "assistant" else "assistant_inference",
     )
+    await project_events.record_event(
+        sqlite, project=old.project, kind="decision_revised",
+        summary=f"#{old_id} -> #{new.id}: {decision}", ref_kind="memory", ref_id=new.id,
+        session_id=session_id,
+        source_type="user_statement" if decided_by != "assistant" else "assistant_inference",
+    )
     return new
 
 
@@ -155,6 +166,11 @@ async def reopen_decision(sqlite, decision_id: int, *, reason: str = "") -> Opti
             await supersession.undo(sqlite, rec.id)
     await _update_meta(sqlite, decision_id, status="reopened", reopened_reason=reason,
                        reopened_at=datetime.now(timezone.utc).isoformat())
+    await project_events.record_event(
+        sqlite, project=dec.project, kind="decision_reopened",
+        summary=f"#{decision_id} reopened: {reason or dec.decision}", ref_kind="memory",
+        ref_id=decision_id, source_type="user_statement",
+    )
     return await get_decision(sqlite, decision_id)
 
 

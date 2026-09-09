@@ -154,6 +154,7 @@ class Agent(
         # Project (BlipCode)
         self.active_project: Optional[dict] = None
         self._project_context: str = ""
+        self._dossier_followup_ids: set = set()  # follow-ups the active project's dossier lists (E2)
         self._file_changes: list[dict] = []
         self._files_read: set[str] = set()  # tracks files/dirs already read this session
         self._file_mtimes: dict[str, float] = {}  # path → mtime at last read (for external edit detection)

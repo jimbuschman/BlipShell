@@ -15,6 +15,10 @@ AskUserCallback = Callable[[str], Awaitable[str]]
 class TaskCompleteTool(Tool):
     """Signal that the current task is complete.
 
+    `on_complete(summary, files_modified, decisions_made)` (optional, async or
+    sync) lets the agent record the completion as a project event (V3 E2).
+    The summary is the assistant's CLAIM; the dossier says so.
+
     Instead of asking the LLM to output a magic string like "TASK_COMPLETE",
     this tool leverages the model's tool-calling training. The model calls this
     tool exactly like any other tool, which is far more reliable than expecting
@@ -22,6 +26,9 @@ class TaskCompleteTool(Tool):
 
     Based on patterns from Cline (attempt_completion) and OpenHands (AgentFinishAction).
     """
+
+    def __init__(self, on_complete=None):
+        self._on_complete = on_complete
 
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
@@ -61,6 +68,14 @@ class TaskCompleteTool(Tool):
         decisions_made: str = "",
         **kwargs,
     ) -> str:
+        if self._on_complete is not None:
+            try:
+                ret = self._on_complete(summary, files_modified, decisions_made)
+                if hasattr(ret, "__await__"):
+                    await ret
+            except Exception as e:  # recording is derived state; never fail the completion
+                import logging
+                logging.getLogger(__name__).warning("task_complete event not recorded: %s", e)
         # Build a structured completion message
         parts = []
         if summary:

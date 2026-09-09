@@ -47,6 +47,14 @@ class TestSkipNotBreak:
         pool.get_top_entries(100, exclude_memory_ids={7})
         assert [(i.memory_id, why) for i, why in pool.last_omitted] == [(7, "already sent via Recall")]
 
+    def test_dossier_carried_ids_are_recorded_under_their_own_reason(self):
+        pool = Pool("Recall", max_tokens=100)
+        pool.add(_item(10, prio=2.0, memory_id=7))
+        pool.add(_item(10, prio=1.0, memory_id=8))
+        got = pool.get_top_entries(100, rendered_elsewhere={7})
+        assert [i.memory_id for i in got] == [8]
+        assert [(i.memory_id, why) for i, why in pool.last_omitted] == [(7, "already in the project dossier")]
+
     def test_max_items_still_caps(self):
         pool = Pool("Lessons", max_tokens=1000, max_items=2)
         for mid in range(1, 5):
