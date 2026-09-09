@@ -133,3 +133,36 @@ class ThoughtHarness:
 
     async def texts(self) -> list[str]:
         return [r["text"] for r in await self.rows()]
+
+
+# ── Deterministic embeddings (no Ollama) ─────────────────────────────────────
+
+
+def make_embedding(text: str, dim: int = 1024) -> list[float]:
+    """Deterministic fake embedding: similar text -> similar vector.
+
+    Character-frequency buckets plus a length signal, unit-normalised for
+    sqlite-vec cosine distance. Crude on purpose: the lexical (FTS5) half of
+    hybrid search carries real matches; this keeps the vector half alive and
+    deterministic so the REAL VectorStore and MemorySearch run end to end.
+    """
+    import math
+    vec = [0.0] * dim
+    for i, ch in enumerate(text.lower()):
+        vec[(ord(ch) * 7 + i * 3) % dim] += 1.0
+    vec[0] = len(text) / 100.0
+    norm = math.sqrt(sum(x * x for x in vec))
+    if norm > 0:
+        vec = [x / norm for x in vec]
+    else:
+        vec[0] = 1.0
+    return vec
+
+
+def install_fake_embedder(vectors, dim: int | None = None) -> None:
+    """Point a real VectorStore at make_embedding instead of Ollama."""
+    from unittest.mock import MagicMock
+    d = dim or getattr(vectors, "embedding_dim", 1024)
+    vectors._embed = lambda text: make_embedding(text, d)
+    vectors._embed_batch = lambda texts, chunk_size=32: [make_embedding(t, d) for t in texts]
+    vectors._ollama_client = MagicMock()  # so _require_open passes

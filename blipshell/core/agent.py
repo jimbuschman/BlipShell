@@ -181,12 +181,31 @@ class Agent(
             await self._do_initialize(on_status)
 
     async def _do_initialize(self, on_status=None):
-        """Internal initialize — called under _init_lock."""
+        """Internal initialize — called under _init_lock.
+
+        Two halves (V3 Stage C, 2026-09-09): `_build_subsystems` constructs
+        every object and touches only the database; `_start_background` is
+        everything that reaches the network or spawns a task (embed warmup,
+        PII engine probe, memory worker, reflection, cube server, health
+        checks, nightly scheduler, startup jobs). The split exists so the
+        continuity harness can bootstrap a REAL agent — real stores, real
+        search, real context assembly — on a box with no Ollama, by building
+        the subsystems, swapping the embedder and chat client, and never
+        starting the background half. Production calls both.
+        """
 
         def _status(msg: str):
             if on_status:
                 on_status(msg)
 
+        await self._build_subsystems(_status)
+        await self._start_background(_status)
+
+        self._initialized = True
+        logger.info("Agent initialized")
+
+    async def _build_subsystems(self, _status=lambda msg: None):
+        """Construct stores, router, memory, session, executor, tools. DB only."""
         _status("Loading database...")
         self.sqlite = SQLiteStore(self.config.database.path)
         await self.sqlite.initialize()
@@ -200,14 +219,6 @@ class Agent(
         )
         self.vectors.initialize()
 
-        # Warm the embedding model before the memory worker can occupy Ollama —
-        # a cold embed model queued behind a big-model load blows EMBED_TIMEOUT
-        # and the first turn runs memory-blind (seen live 2026-07-09).
-        # Fire-and-forget: first into Ollama's queue, never blocks startup.
-        self._embed_warmup_task = asyncio.create_task(
-            asyncio.to_thread(self.vectors.warmup),
-        )
-
         # Endpoint manager
         self.endpoint_manager = EndpointManager(self.config.endpoints, self.config.llm)
         # Local mode (/local): hide off-machine endpoints from routing.
@@ -218,13 +229,6 @@ class Agent(
             self.config.models, self.endpoint_manager,
             pii_enabled=self.config.pii.enabled,
             require_ner=self.config.pii.require_ner,
-        )
-        # Which PII engine will cloud-bound text actually get? Presidio's load
-        # failure used to be one INFO line and a silent downgrade to regex.
-        # Resolve it off-thread (spaCy import is seconds) and log at WARNING
-        # when it matters: regex-only AND some endpoint relays offsite.
-        self._pii_engine_task = asyncio.create_task(
-            asyncio.to_thread(self._report_pii_engine),
         )
 
         # Memory manager — use endpoint context_tokens for pool sizing
@@ -251,11 +255,10 @@ class Agent(
         from blipshell.memory.fs_backend import MemoryFSBackend
         self._memory_fs_backend = MemoryFSBackend(self.sqlite, self.vectors)
 
-        # Background memory worker (dedicated thread with own event loop + connections)
-        _status("Starting memory worker...")
+        # Background memory worker (dedicated thread with own event loop +
+        # connections). Constructed here, STARTED in _start_background.
         from blipshell.memory.worker import MemoryWorker
         self._memory_worker = MemoryWorker(self.config, self.vectors)
-        self._memory_worker.start()
 
         # Session manager
         self.session_manager = SessionManager(
@@ -308,8 +311,8 @@ class Agent(
         # Restore persisted mood (decayed by however long BlipShell was away).
         await self._load_emotion()
 
-        # Self-reflection: a self-layer for lingering thoughts + an idle loop
-        # that forms one (once per quiet gap) and lets BlipShell raise it on return.
+        # Self-reflection: a self-layer for lingering thoughts. The idle loop
+        # that forms them is started in _start_background.
         from blipshell.core.self_reflection import SelfThoughtStore
 
         async def _embed_self_thought(text: str):
@@ -333,6 +336,35 @@ class Agent(
             half_life_days=_refl.gravity_half_life_days,
             min_weight=_refl.gravity_min_weight,
         )
+
+        # Load per-model behavioral settings
+        if self.config.model_settings:
+            self.model_settings.load(self.config.model_settings)
+
+        # Load discovered tag patterns into tagger
+        await self._load_discovered_tags()
+
+    async def _start_background(self, _status=lambda msg: None):
+        """Everything that reaches the network or spawns a task."""
+        # Warm the embedding model before the memory worker can occupy Ollama —
+        # a cold embed model queued behind a big-model load blows EMBED_TIMEOUT
+        # and the first turn runs memory-blind (seen live 2026-07-09).
+        # Fire-and-forget: first into Ollama's queue, never blocks startup.
+        self._embed_warmup_task = asyncio.create_task(
+            asyncio.to_thread(self.vectors.warmup),
+        )
+
+        # Which PII engine will cloud-bound text actually get? Presidio's load
+        # failure used to be one INFO line and a silent downgrade to regex.
+        # Resolve it off-thread (spaCy import is seconds) and log at WARNING
+        # when it matters: regex-only AND some endpoint relays offsite.
+        self._pii_engine_task = asyncio.create_task(
+            asyncio.to_thread(self._report_pii_engine),
+        )
+
+        _status("Starting memory worker...")
+        self._memory_worker.start()
+
         if self.config.reflection.enabled:
             self._reflection_task = asyncio.create_task(self._reflection_loop())
             # On-return reflection: the idle loop only sees quiet gaps while
@@ -366,13 +398,6 @@ class Agent(
                 self._cube_server = None
             # Mood loop — decays + renders the face, and registers an idle mood.
             self._mood_task = asyncio.create_task(self._mood_loop())
-
-        # Load per-model behavioral settings
-        if self.config.model_settings:
-            self.model_settings.load(self.config.model_settings)
-
-        # Load discovered tag patterns into tagger
-        await self._load_discovered_tags()
 
         _status("Checking endpoints...")
         await self.endpoint_manager.startup_health_check()
@@ -410,9 +435,6 @@ class Agent(
 
         # Queue background tasks instead of blocking startup
         await self._enqueue_startup_background_tasks()
-
-        self._initialized = True
-        logger.info("Agent initialized")
 
     async def _maybe_auto_backup(self):
         """Auto-backup if more than 24 hours since last backup.

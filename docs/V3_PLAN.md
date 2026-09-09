@@ -67,7 +67,7 @@ fixing - code moves.
 |---|---|
 | A - Correctness | **DONE 2026-09-09.** A1 (2026-09-08), A2+A3, A4, A5, A6 all built, tested, merged to main; structured-dedup measured (A1 "Measured"). Gate below met |
 | B - Context contract | not started |
-| C - Continuity set | not started |
+| C - Continuity set | deterministic half BUILT 2026-09-09, baseline taken (survival 0.833, exclusion 0.429, 16 duplicated renders); model half not started |
 | D - Accountable lessons | not started |
 | E - Project dossier + decisions | not started |
 | F - Bounded initiative | deferred until E shows reuse |
@@ -440,6 +440,35 @@ disposable snapshot or an explicit non-mutating mode.
 The model-quality half (same evidence packets, two models; then same model, two
 assembly variants) runs over Tailscale. It separates "assembly lost it" from
 "the model could not use it". Both can be true.
+
+**As built (2026-09-09), deterministic half.** `blipshell/benchmark/continuity.py`
+boots a REAL agent per case - real SQLiteStore, real VectorStore with the
+deterministic embedder from `tests/fakes.py`, real MemorySearch, real pools,
+real `_build_messages` - against a throwaway DB, plants the case's memories,
+asks the question, and scores the request the chat client was handed. To make
+that possible without a network, `Agent._do_initialize` was split into
+`_build_subsystems` (DB only) and `_start_background` (warmup, PII probe,
+memory worker, reflection, cube server, health checks, scheduler, startup
+jobs); production calls both, the harness calls the first and swaps the
+embedder, endpoint clients and `router.generate`. Cases live in
+`tests/benchmark_continuity.py` (13 today: 6 survival, 7 false-recall, each
+with `must_appear` / `forbidden_unless_labelled` keyed to its question);
+`tests/test_continuity_set.py` proves the instrument (control fact survives,
+abstention marker appears, one request per turn, no background half) and
+prints the table; `python -m blipshell.benchmark.continuity` writes
+`benchmark_results/continuity__<sha>__<ts>.json`.
+
+**Baseline, pre-Stage B (sha 981a6a7 code, measured 2026-09-09):**
+
+| metric | value | reading |
+|---|---|---|
+| survival_rate | 0.833 (5/6) | the fact past char 1,200 is lost - retrieved, then truncated (F6) |
+| exclusion_rate | 0.429 (3/7) | superseded, contradicted and speculative text surfaces UNLABELLED; the three passes carry their attribution inside the content itself (project name, owner, absolute date) |
+| labelled_rate | 0.429 | same three; no label the pipeline added |
+| duplicated_renders | 16 | **every recalled memory is rendered twice**: once in Recall with a time label, once in RecentHistory without. A B1 finding the review did not have - F4 was about the current conversation; this is recent-session content duplicated across two pools |
+
+The Stage B gate is these four numbers, re-run after B lands. Model-quality
+half not started.
 
 ---
 

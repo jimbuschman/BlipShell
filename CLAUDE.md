@@ -323,6 +323,17 @@ blipshell/
   completion detection, guardrails gating, dedup validated deterministically
   (`tests/test_loop_integration.py`). `conftest.py` gives real in-memory SQLite +
   canned router.
+- **Continuity set** (2026-09-09, V3 Stage C): `python -m blipshell.benchmark.continuity`
+  boots a REAL agent per case with no network (`Agent._build_subsystems`, the
+  DB-only half of initialize, + the deterministic embedder in `tests/fakes.py`
+  + a recording chat client), plants memories, asks a question and scores
+  the REQUEST the model would have been sent: survival (answer text present)
+  and exclusion (superseded/speculative/other-project text absent or
+  labelled on its line). No model is called; it is the Stage B gate.
+  Cases: `tests/benchmark_continuity.py`; instrument tests:
+  `tests/test_continuity_set.py -s` prints the table. Baseline 2026-09-09:
+  survival 0.833, exclusion 0.429, and every recalled memory rendered twice
+  (Recall + RecentHistory) — see V3_PLAN Stage C.
 - `blipshell simulate` — multi-turn scenarios against a real Agent. Scopes are
   `-s <scenario>` / `-c <category>`; there is NO `-t` tag flag. Runs against a
   throwaway temp DB by default (`--db PATH` to pick one, `--real-db` to use the
