@@ -222,10 +222,32 @@ async def seed_case(agent, case, now: Optional[datetime] = None) -> None:
         elif seed.kind == "lesson":
             lid = await agent.sqlite.create_lesson(Lesson(content=seed.content, importance=0.6))
             agent.vectors.add_lesson(lid, seed.content)
+        elif seed.kind == "followup":
+            fid = await agent.sqlite.add_follow_up(seed.content, session_id=sid, project=seed.project,
+                                                   due_hint=getattr(seed, "reason", "") or None)
+            from blipshell.memory import project_events
+            await project_events.record_event(agent.sqlite, project=seed.project, kind="followup_added",
+                                              summary=seed.content, ref_kind="follow_up", ref_id=fid, session_id=sid)
+        elif seed.kind == "task_event":
+            from blipshell.memory import project_events
+            await project_events.record_event(agent.sqlite, project=seed.project, kind="task_completed",
+                                              summary=seed.content, session_id=sid,
+                                              source_type="assistant_inference")
         else:
             raise ValueError(f"unknown seed kind {seed.kind!r}")
     if case.active_project:
-        agent.active_project = {"name": case.active_project, "root_path": None}
+        # A real project row with a real (empty) root, and the project context
+        # the activation path builds - so the dossier reaches the request the
+        # way it does in production (E2).
+        root = Path(tempfile.mkdtemp(prefix="blipshell_proj_"))
+        if not await agent.sqlite.get_project(case.active_project):
+            await agent.sqlite.create_project(case.active_project, root_path=str(root))
+        else:
+            await agent.sqlite.update_project(case.active_project, root_path=str(root))
+        project_row = await agent.sqlite.get_project(case.active_project)
+        agent.active_project = {"name": case.active_project, "root_path": str(root)}
+        agent._project_context = (await agent._scan_project_context(project_row)
+                                  + await agent._dossier_context(project_row))
 
 
 def _request_text(messages: list[dict], question: Optional[str] = None) -> str:

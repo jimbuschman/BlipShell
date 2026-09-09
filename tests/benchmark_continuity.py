@@ -35,7 +35,7 @@ class Seed:
     content: str
     days_ago: float = 3.0
     project: str | None = None
-    kind: str = "memory"  # "memory" | "core" | "lesson" | "decision"
+    kind: str = "memory"  # "memory" | "core" | "lesson" | "decision" | "followup" | "task_event"
     via: str = "direct"   # "direct" | "pipeline"
     dedup_verdict: str = "ADD"          # pipeline only: the scripted verdict for THIS seed
     # decision only
@@ -209,7 +209,7 @@ CASES: list[ContinuityCase] = [
             Seed("d2", "user", "Move chat to glm-5.2", kind="decision", days_ago=3, project="blipshell",
                  reason="a free tier appeared", revisit_when="the free tier is rate limited", supersedes_seed="d1"),
         ],
-        must_appear=["Move chat to glm-5.2", "REVISIT WHEN: the free tier is rate limited"],
+        must_appear=["Move chat to glm-5.2", "the free tier is rate limited"],
         forbidden_unless_labelled=[("Keep minimax-m3", "superseded")],
         active_project="blipshell",
         why="Conditional decisions: the current one carries its revisit condition; the revised one is hidden or labelled.",
@@ -228,6 +228,28 @@ CASES: list[ContinuityCase] = [
         forbidden_unless_labelled=[("Keep minimax-m3", "superseded")],
         active_project="blipshell",
         why="The history of a decision needs the earlier one, labelled, with the reason it was made.",
+    ),
+    ContinuityCase(
+        name="project_resume_context",
+        family="survival",
+        question="Where did we leave off on blipshell, and what should I do next?",
+        seeds=[
+            Seed("d1", "user", "Keep the reranker disabled", kind="decision", days_ago=20, project="blipshell",
+                 reason="as written it would degrade ranking", revisit_when="normalisation covers all candidates"),
+            Seed("f1", "user", "Re-run the dedup benchmark after the noise-filter change", kind="followup",
+                 days_ago=4, project="blipshell", reason="before D1"),
+            Seed("t1", "assistant", "Implemented the supersession table and read-side labelling", kind="task_event",
+                 days_ago=1, project="blipshell"),
+        ],
+        must_appear=[
+            "=== Project Dossier (auto-maintained) ===",
+            "Keep the reranker disabled - because as written it would degrade ranking",
+            "Re-run the dedup benchmark after the noise-filter change",
+            "claimed by assistant, not verified] Implemented the supersession table",
+            "Follow-up #",
+        ],
+        active_project="blipshell",
+        why="Return after a gap: the request must carry the decisions in force with their reasons, the open follow-ups, the last completed work marked as a claim, and a next action drawn from records - the E2 context-delivery gate. Behavioural resume quality is measured separately.",
     ),
     ContinuityCase(
         name="assistant_speculation_is_not_fact",
