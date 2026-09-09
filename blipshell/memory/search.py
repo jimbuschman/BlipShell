@@ -42,6 +42,10 @@ class SearchResult:
     # assistant's guess never reads as the user's statement.
     role: str = ""
     session_id: int | None = None
+    # Set only when the caller asked to include superseded records (a
+    # historical question): the active Supersession that replaced this one,
+    # so the renderer can label it (V3 E1).
+    superseded: object = None
 
     def __post_init__(self):
         if self.tags is None:
@@ -134,8 +138,15 @@ class MemorySearch:
         current_session_id: int | None = None,
         n_results: int | None = None,
         active_project: str | None = None,
+        include_superseded: bool = False,
     ) -> list[SearchResult]:
         """Search memories by semantic similarity.
+
+        `include_superseded` (V3 E1): superseded memories - ones an active
+        supersession record says were replaced - are dropped for a
+        current-state question and kept, with `result.superseded` set, for a
+        historical one. The old rows are never archived by supersession, so
+        this is the only place the distinction is applied.
 
         Args:
             query: The search query
@@ -436,6 +447,28 @@ class MemorySearch:
             except Exception as e:
                 logger.warning("Reranking failed, using original scores: %s", e)
         _t_rerank_ms = (time.monotonic() - _t_rerank_start) * 1000
+
+        # Step 6c: Supersession (V3 E1) - hide replaced records unless the
+        # caller asked for history; attach the record when shown.
+        superseded_dropped = 0
+        try:
+            from blipshell.memory import supersession as _sup
+            sup = await _sup.superseded(self.sqlite, "memory", [r.memory_id for r in results])
+        except Exception as e:
+            logger.warning("Supersession lookup failed (showing everything unlabelled): %s", e)
+            sup = {}
+        if sup:
+            kept = []
+            for r in results:
+                rec = sup.get(r.memory_id)
+                if rec is None:
+                    kept.append(r)
+                elif include_superseded:
+                    r.superseded = rec
+                    kept.append(r)
+                else:
+                    superseded_dropped += 1
+            results = kept
 
         # Step 7: Sort by boosted score. When the query named a time range,
         # partition-prefer: in-range results rank ahead of out-of-range ones,

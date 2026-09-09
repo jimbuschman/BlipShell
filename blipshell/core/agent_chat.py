@@ -895,12 +895,18 @@ class ChatMixin:
 
         # Run all three searches concurrently — they're independent queries.
         # With gate removed from search methods, these can hit Ollama in parallel.
+        # A historical question ("how did my preference change?") wants the
+        # superseded records too, labelled; a current-state one does not (E1).
+        from blipshell.memory.supersession import is_historical_question
+        include_superseded = is_historical_question(query)
+
         async def _search_memories():
             return await self.search.search(
                 query=query,
                 current_session_id=self.session_manager.session_id,
                 n_results=15,
                 active_project=active_proj,
+                include_superseded=include_superseded,
             )
 
         async def _search_core():
@@ -949,8 +955,10 @@ class ChatMixin:
                 r_role = getattr(r, "role", "") or ""
                 speaker = r_role if r_role in ("user", "assistant") else ""
                 speaker_label = f"{speaker}: " if speaker else ""
+                sup = getattr(r, "superseded", None)
+                sup_label = sup.label() if sup is not None and hasattr(sup, "label") else ""
                 self.memory_manager.add_memory("Recall", PoolItem(
-                    text=f"{_time_label(r.timestamp)}{speaker_label}{text}",
+                    text=f"{_time_label(r.timestamp)}{sup_label}{speaker_label}{text}",
                     session_role="system",
                     priority_score=r.boosted_score,
                     memory_id=getattr(r, "memory_id", 0) or 0,

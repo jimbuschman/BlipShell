@@ -288,6 +288,17 @@ class SessionMixin:
         except Exception as e:
             logger.error("Entity embedding backfill failed: %s", e)
 
+    async def _superseded_ids(self, memory_ids) -> set:
+        """Memories an active supersession record says were replaced (V3 E1).
+        RecentHistory shows what is CURRENT; a superseded fact reaches the
+        request only through Recall, labelled, when the question is historical."""
+        try:
+            from blipshell.memory import supersession
+            return set(await supersession.superseded(self.sqlite, "memory", memory_ids))
+        except Exception as e:
+            logger.warning("Supersession lookup for RecentHistory failed (showing all): %s", e)
+            return set()
+
     async def _load_recent_sessions(self):
         """Load context from recent sessions into RecentHistory pool.
 
@@ -314,9 +325,11 @@ class SessionMixin:
                 actual_memory_count = len([m for m in mems if m.summary and not m.is_archived])
             if not loaded_substantive and actual_memory_count >= 5:
                 memories = await self.sqlite.get_memories_by_session(s.id)
+                superseded_ids = await self._superseded_ids([m.id for m in memories])
                 good_memories = [
                     m for m in memories
                     if m.summary and not m.is_archived and m.importance >= 0.3
+                    and m.id not in superseded_ids
                 ]
                 good_memories.sort(key=lambda m: m.importance, reverse=True)
 
@@ -384,7 +397,8 @@ class SessionMixin:
             memories = await self.sqlite.get_memories_by_session(s.id)
             if not memories:
                 continue
-            for m in memories[:5]:
+            superseded_ids = await self._superseded_ids([m.id for m in memories])
+            for m in [m for m in memories if m.id not in superseded_ids][:5]:
                 if m.is_archived:
                     continue
                 text = m.content if m.content and len(m.content) > len(m.summary or "") else (m.summary or m.content or "")

@@ -9,8 +9,9 @@ archived candidate #1. These tests pin the replacement:
 - an optional schema-constrained JSON path behind `memory.dedup.structured_output`;
 - an undecided reply re-asks ONCE, then keeps the new memory (ADD) and archives
   nothing - ambiguity must never destroy a record;
-- every archive stamps the archived row with who/why, so `blipshell repair
-  --unarchive-memory` can explain and reverse it.
+- every UPDATE/DELETE verdict stamps the old row with who/why AND writes a
+  supersession record (V3 E1) - the old memory is preserved, hidden for
+  current-state questions and labelled for historical ones.
 
 Logic/wiring only - no model. The structured path's schema-validity rate
 against qwen3:14b is a benchmark job, not a unit test.
@@ -217,9 +218,11 @@ class TestDecideAndApply:
         assert action == "UPDATE"
         m1 = await sqlite_store.get_memory(old[0])
         m2 = await sqlite_store.get_memory(old[1])
-        assert not m1.is_archived
-        assert m2.is_archived
-        mock_chroma.delete_memory.assert_called_once_with(old[1])
+        assert not m1.is_archived and not m2.is_archived, "superseded, never archived (E1)"
+        mock_chroma.delete_memory.assert_not_called()
+        from blipshell.memory import supersession as sup
+        recs = await sup.superseded(sqlite_store, "memory", old)
+        assert set(recs) == {old[1]} and recs[old[1]].new_id == new and recs[old[1]].relation == "refines"
         # the second prompt tells the model its first reply was unusable
         second_prompt = router.generate.await_args_list[1].args[1]
         assert "could not be parsed" in second_prompt.lower() or "exactly one" in second_prompt.lower()
@@ -235,7 +238,7 @@ class TestDecideAndApply:
         assert not (await sqlite_store.get_memory(old[0])).is_archived
         mock_chroma.delete_memory.assert_not_called()
 
-    async def test_archive_is_stamped_with_provenance(self, sqlite_store, mock_chroma):
+    async def test_supersession_is_stamped_with_provenance(self, sqlite_store, mock_chroma):
         old = await _seed(sqlite_store, "User lives in Ohio")
         (new,) = await _seed(sqlite_store, "User moved to Texas")
         _candidates(mock_chroma, old, ["User lives in Ohio"])
@@ -245,8 +248,9 @@ class TestDecideAndApply:
         assert await proc._decide_and_apply_action(new, "User moved to Texas") == "DELETE"
 
         m = await sqlite_store.get_memory(old[0])
-        assert m.is_archived
+        assert not m.is_archived
         meta = json.loads(m.metadata_json)
+        assert meta["superseded_by"] == new
         rec = meta["dedup"]
         assert rec["action"] == "DELETE"
         assert rec["by"] == new
@@ -296,7 +300,9 @@ class TestStructuredPath:
         proc = _processor(sqlite_store, mock_chroma, router, structured=True)
 
         assert await proc._decide_and_apply_action(new, "User switched to Linux") == "DELETE"
-        assert (await sqlite_store.get_memory(old[0])).is_archived
+        from blipshell.memory import supersession as sup
+        assert not (await sqlite_store.get_memory(old[0])).is_archived
+        assert (await sup.superseded(sqlite_store, "memory", old))[old[0]].new_id == new
         kwargs = router.generate.await_args.kwargs
         assert kwargs.get("response_format") == dd.MEMORY_ACTION_SCHEMA
 
@@ -368,6 +374,9 @@ class TestUnarchiveRepair:
         _candidates(mock_chroma, old, ["User lives in Ohio"])
         proc = _processor(sqlite_store, mock_chroma, _scripted_router("DELETE 1"))
         await proc._decide_and_apply_action(new, "User moved to Texas")
+        # Dedup supersedes rather than archives since E1; consolidation still
+        # archives, and a row can be archived by hand - the repair reverses that.
+        await sqlite_store.update_memory(old[0], is_archived=True)
         assert (await sqlite_store.get_memory(old[0])).is_archived
 
         report = await dd.unarchive_memory(sqlite_store, mock_chroma, old[0])

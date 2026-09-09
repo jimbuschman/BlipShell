@@ -369,6 +369,30 @@ CREATE TABLE IF NOT EXISTS commit_evidence (
 CREATE INDEX IF NOT EXISTS idx_commit_evidence_pending
     ON commit_evidence(status, project, epoch);
 
+-- Explicit, scoped supersession with provenance (V3 E1). The OLD record is
+-- kept where it is (un-archived, vector intact); this row says a NEWER one
+-- replaced it, in which scope, by which detector, on what evidence. Search
+-- hides superseded records for current-state questions and shows them,
+-- labelled, for historical ones. Reversible via undone_at, never deleted.
+-- Owned by memory/supersession.py.
+CREATE TABLE IF NOT EXISTS supersessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    old_kind TEXT NOT NULL,
+    old_id INTEGER NOT NULL,
+    new_kind TEXT NOT NULL,
+    new_id INTEGER NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'global',
+    relation TEXT NOT NULL,
+    detected_by TEXT NOT NULL,
+    evidence TEXT,
+    source_type TEXT DEFAULT 'unknown',
+    at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    undone_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_supersessions_old ON supersessions(old_kind, old_id, undone_at);
+CREATE INDEX IF NOT EXISTS idx_supersessions_new ON supersessions(new_kind, new_id);
+
 CREATE TABLE IF NOT EXISTS friction_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id INTEGER,

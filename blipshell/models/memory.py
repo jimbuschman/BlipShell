@@ -17,6 +17,7 @@ class MemoryType(str, Enum):
     EVENT = "event"
     PREFERENCE = "preference"
     SKILL = "skill"
+    DECISION = "decision"  # a decision with its reason and revisit condition (V3 E1, memory/decisions.py)
 
 
 class Tag(BaseModel):

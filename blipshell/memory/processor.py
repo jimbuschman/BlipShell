@@ -25,7 +25,7 @@ from blipshell.llm.prompts import (
     summarize_memory,
 )
 from blipshell.llm.router import LLMRouter, TaskType
-from blipshell.memory import dedup_decision
+from blipshell.memory import dedup_decision, supersession
 from blipshell.memory.manager import estimate_tokens
 from blipshell.memory.noise import should_skip_memory
 from blipshell.memory.sqlite_store import SQLiteStore
@@ -384,6 +384,20 @@ class MemoryProcessor:
                     self.vectors.delete_core_memory(r["id"])
                 except Exception as e:
                     logger.warning("Failed to delete contradicted core memory %d vector: %s", r["id"], e)
+                # The relationship is a record, not a log line (V3 E1).
+                try:
+                    prov = await self.sqlite.get_provenance("core_memories", [core_memory_id])
+                    await supersession.record(
+                        self.sqlite,
+                        old_kind="core_memory", old_id=int(r["id"]),
+                        new_kind="core_memory", new_id=int(core_memory_id),
+                        scope=None, relation="contradicts", detected_by="core_contradiction",
+                        evidence=answer.strip()[:120],
+                        source_type=prov.get(core_memory_id, ("unknown", ""))[0],
+                    )
+                except Exception as e:
+                    logger.warning("Could not record core-memory supersession %d -> %d: %s",
+                                   r["id"], core_memory_id, e)
                 deactivated += 1
                 logger.info(
                     "Deactivated contradicted core memory %d (superseded by %d)",
@@ -459,6 +473,26 @@ class MemoryProcessor:
         if not similar:
             return "ADD"
 
+        # Scope (V3 E1): a verdict reached for a memory in project A may only
+        # supersede candidates in A or in no project. Two different projects
+        # never supersede each other, however alike the sentences look.
+        try:
+            projects = await supersession.memory_projects(
+                self.sqlite, [new_memory_id] + [s["id"] for s in similar],
+            )
+        except Exception as e:
+            logger.warning("Dedup scope lookup failed (treating all as global): %s", e)
+            projects = {}
+        new_project = projects.get(new_memory_id)
+        out_of_scope = [s["id"] for s in similar
+                        if not supersession.same_scope(new_project, projects.get(s["id"]))]
+        if out_of_scope:
+            logger.info("Dedup: %d candidate(s) in other projects excluded for memory %d: %s",
+                        len(out_of_scope), new_memory_id, out_of_scope)
+            similar = [s for s in similar if s["id"] not in out_of_scope]
+            if not similar:
+                return "ADD"
+
         candidate_ids = [s["id"] for s in similar]
         existing_summaries = [s["document"] for s in similar]
         action, target_idx, response = await self._ask_dedup_verdict(
@@ -483,7 +517,11 @@ class MemoryProcessor:
         if action in ("ADD", "NONE"):
             return action
 
-        # UPDATE / DELETE: archive exactly the named candidate, with provenance.
+        # UPDATE / DELETE: the named candidate is SUPERSEDED, not archived
+        # (V3 E1). It stays in place with its vector; a supersession row says
+        # the new memory replaced it, in which scope, on what evidence. Search
+        # hides it for current-state questions and labels it for historical
+        # ones. The `dedup` stamp on the old row keeps the verdict readable.
         old_id = similar[target_idx]["id"]
         record = dedup_decision.archive_record(
             action=action, by_memory_id=new_memory_id, candidates=candidate_ids,
@@ -492,15 +530,24 @@ class MemoryProcessor:
         if action == "UPDATE":
             # The refined memory inherits the old one's tags.
             await self.sqlite.transfer_memory_tags(old_id, new_memory_id)
-        await dedup_decision.merge_metadata(self.sqlite, old_id, {"dedup": record})
-        await self.sqlite.update_memory(old_id, is_archived=True)
-        try:
-            self.vectors.delete_memory(old_id)
-        except Exception as e:
-            logger.warning("Failed to delete memory %d vector during dedup: %s", old_id, e)
+        await dedup_decision.merge_metadata(
+            self.sqlite, old_id, {"dedup": record, "superseded_by": new_memory_id},
+        )
+        new_mem = await self.sqlite.get_memory(new_memory_id)
+        new_role = getattr(new_mem, "role", "") or ""
+        await supersession.record(
+            self.sqlite,
+            old_kind="memory", old_id=old_id, new_kind="memory", new_id=new_memory_id,
+            scope=new_project,
+            relation="refines" if action == "UPDATE" else "contradicts",
+            detected_by="dedup_verdict",
+            evidence=response or "",
+            source_type="user_statement" if new_role == "user" else "assistant_inference",
+        )
         logger.info(
-            "Dedup: %s — archived memory %d (candidate %d of %s) in favor of %d; reply=%r",
-            action, old_id, target_idx + 1, candidate_ids, new_memory_id, (response or "")[:120],
+            "Dedup: %s — memory %d superseded by %d (candidate %d of %s, scope %s); reply=%r",
+            action, old_id, new_memory_id, target_idx + 1, candidate_ids,
+            supersession.scope_of(new_project), (response or "")[:120],
         )
         return action
 

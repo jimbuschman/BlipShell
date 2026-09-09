@@ -35,14 +35,21 @@ class SearchMemoriesTool(Tool):
                               description="Search query — be specific (e.g. 'cat name' not 'what do you know about me')"),
                 ToolParameter(name="max_results", type=ToolParameterType.INTEGER,
                               description="Maximum results to return (default 5)", required=False),
+                ToolParameter(name="include_superseded", type=ToolParameterType.BOOLEAN,
+                              description=("Also return memories a newer memory has superseded "
+                                           "(for 'how did X change' questions). Default false: "
+                                           "only current facts."),
+                              required=False),
             ],
         )
 
-    async def execute(self, query: str, max_results: int = 5, **kwargs) -> str:
+    async def execute(self, query: str, max_results: int = 5,
+                      include_superseded: bool = False, **kwargs) -> str:
         results = await self.search.search(
             query=query,
             current_session_id=self.current_session_id,
             n_results=max_results,
+            include_superseded=bool(include_superseded),
         )
 
         if not results:
@@ -60,8 +67,10 @@ class SearchMemoriesTool(Tool):
             if r.timestamp:
                 ts = f" | {r.timestamp.strftime('%Y-%m-%d')}"
             who = f" | {r.role}" if r.role in ("user", "assistant") else ""
+            sup = getattr(r, "superseded", None)
+            sup_txt = f" | SUPERSEDED {sup.at[:10]} by memory {sup.new_id}" if sup is not None else ""
             output.append(
-                f"[Score: {r.boosted_score:.2f}{ts}{who} | memory {r.memory_id}]\n"
+                f"[Score: {r.boosted_score:.2f}{ts}{who} | memory {r.memory_id}{sup_txt}]\n"
                 f"{text}\n"
             )
         return "\n---\n".join(output)
