@@ -103,10 +103,20 @@ default **off**):
   `{action, target_index, reason}` via the `format` kwarg that
   `llm/openai_client.py:144,183,283` already passes through; validate against a
   schema; invalid -> same RETRY path. **Treat as an experiment until measured
-  against qwen3:14b with `think` on, over Tailscale** - local models behave
-  oddly under schema constraints in thinking modes. Add a benchmark case
-  (`dedup_structured`, owned by `models.reasoning` in `JOB_OWNERS`) that scores
-  schema-validity rate; enable only if it clears ~98%.
+  on the model that actually serves this call, over Tailscale.** Which model
+  that is comes from config.yaml's endpoint role maps, not the `models:`
+  block and not CLAUDE.md's table: the verdict is `TaskType.REASONING`, only
+  the `local` endpoint lists `reasoning` in its roles, and it has no override,
+  so today it is qwen3:14b with gpt-oss:latest as fallback - NOT the chat
+  model (deepseek-v4-flash on OpenRouter). Production calls it with
+  `think=False` (`processor._ask_dedup_verdict`) and the benchmark job does
+  the same. Two cautions when reading the number: qwen3 degrades with
+  think=False (CLAUDE.md Conventions), so a low `valid_rate` may be the think
+  flag rather than the schema - run a think=True variant before concluding;
+  and local models behave oddly under schema constraints in thinking modes,
+  which is why this is measured, not assumed. Benchmark job `dedup_structured`
+  (owned by `models.reasoning` in `JOB_OWNERS`) scores schema-validity rate;
+  enable only if it clears ~98%.
 - Either way: log the candidate set, the raw reply, and the decision at INFO,
   and stamp the ARCHIVED row's metadata with
   `dedup = {action, by, candidates, reply, structured, at}`. `blipshell repair

@@ -132,11 +132,17 @@ blipshell/
   --unarchive-memory ID` explains and reverses it (re-embeds, keeps history).
   `memory.dedup.structured_output` (default OFF) asks for a schema-constrained
   JSON verdict instead; it is an EXPERIMENT until benchmark job
-  `dedup_structured` shows `valid_rate` ≥ ~0.98 on the `models.reasoning`
-  model with thinking on — local models misbehave under schema constraints in
-  thinking modes. `router.generate(response_format=...)` forwards the schema
-  as Ollama `format`; the OpenAI-compat client drops it, so validation is
-  the contract, not the constraint.
+  `dedup_structured` shows `valid_rate` ≥ ~0.98 on the model that actually
+  serves TaskType.REASONING — per config.yaml that is the `local` endpoint
+  only, qwen3:14b (fallback gpt-oss:latest), NOT the chat model — called the
+  way production calls it: `think=False` (processor.py `_ask_dedup_verdict`;
+  the benchmark job matches). Two cautions: qwen3 degrades with think=False
+  (see Conventions), so a low valid_rate may be the think flag, not the
+  schema — measure a think=True variant before concluding; and local models
+  misbehave under schema constraints in thinking modes, which is why this is
+  measured and not assumed. `router.generate(response_format=...)` forwards
+  the schema as Ollama `format`; the OpenAI-compat client drops it, so
+  validation is the contract, not the constraint.
 - **Search** (memory/search.py): FTS5 + vec0 KNN fused with RRF (k=60), then
   boosts — importance, FadeMem recency (importance slows decay, each access resets
   effective age), tag overlap, active-project (+0.5), entity-graph expansion —
