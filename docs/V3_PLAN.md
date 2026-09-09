@@ -25,14 +25,23 @@ fixing - code moves.
   fact must reach the model, and `/why` must tell the truth about it) and makes
   learning accountable (a lesson must be judged on outcomes, not on a model
   agreeing with another model's reflection).
-- **The pivot is parked.** The gpt6 conversation proposed a Voyager-style
+- **The learning experiment is a separate, explicit track - the user's call,
+  not this plan's.** The gpt6 conversation proposed a Voyager-style
   executable-skill library with a self-running learning runner and transfer
-  tests. That is a research programme, not an assistant feature, and it is
-  coding-agent territory the v2 direction declined. If it is built, it is built
-  in Wisp or a separate repo, after this plan's correctness work, because a
-  learning experiment measured through a loop that double-executes tools and
-  truncates answer-bearing text would be measuring noise. The one thread from
-  that conversation kept here is outcome-backed lessons (Stage D).
+  tests. The first draft of this plan parked it as "coding-agent territory";
+  the third review round (2026-09-09) pushed back, correctly: executable
+  skills could serve research, documents and data as much as code, and the
+  deferral was inherited from the v2 coding decision rather than decided.
+  What this plan actually claims is narrower: (1) it is a research programme
+  with its own success criterion (transfer), so it belongs on its own track
+  with its own doc, in Wisp or a separate repo; (2) its FIRST experiment
+  needs only the infrastructure it uses - a task set with checkable
+  outcomes, a bounded runner, a skill store, an independent evaluator - and
+  completing this assistant roadmap is not its admission requirement; (3) it
+  should not be MEASURED through a loop that double-executes tools or drops
+  answer-bearing text, which Stage A has now fixed. Whether and when to start
+  it is a decision for the user, recorded here as open. The one thread kept in
+  this plan is outcome-backed lessons (Stage D).
 - **Two gates, and a stop rule.** Stage B has a deterministic gate (continuity set
   survival + false-recall rates). Stage E has a behavioural gate (resume an
   abandoned project correctly). If a stage's gate does not move, stop and
@@ -405,11 +414,20 @@ known distractors:
 - unknown answer requiring abstention
 - fallback after a completed tool action (ties to A2)
 
-**False recall (wrong fact stays out) - weighted at least as heavily**
-- old preference explicitly corrected later; only the correction may appear
-- two conflicting project states; newer wins, older is labelled superseded
-- assistant speculation that must not surface as fact
-- near-identical memories from two different projects; only the active one
+**False recall (wrong fact stays out) - weighted at least as heavily.**
+The criterion is *appropriate to the question and accurately labelled*, not
+"historical material never appears" (review round 3): "what is my current
+preference?" must surface only the correction, while "how did my preference
+change?" NEEDS the superseded fact, marked as superseded. Every case names
+its question.
+- old preference explicitly corrected later: current-state question ->
+  only the correction; history question -> both, older labelled superseded
+- two conflicting project states: the newer by EVENT time wins, not by
+  import/recording time (B4 carries both); older labelled superseded
+- assistant speculation that must not surface as fact (may surface AS a
+  proposal when the question is "what did we consider?")
+- near-identical memories from two different projects: only the active one
+  for a project-scoped question; both, labelled, for a cross-project one
 - fact belonging to another session/person that must not leak
 - stale imported external content that must show its age
 
@@ -444,24 +462,35 @@ exists: `memory/vector_store.py:46`) plus a small always-on set (explicit
 correction lessons, see D3). Now "selected" means "judged relevant to this
 turn" and becomes a usable signal. Budget stays in the Lessons pool.
 
-### D2. Outcome evidence, negative-only at first
+### D2. Corrections are attribution-pending events, not verdicts
 
-New table `lesson_uses(lesson_id, session_id, turn_index, selected_by,
-correction_followed, correction_similarity)`. Deterministic signals only:
+**Revised after review round 3 (2026-09-09).** The first draft weighted each
+selected lesson's penalty by the correction's cosine similarity to it.
+Similarity identifies the TOPIC, not responsibility: a lesson saying "verify
+before claiming success", ignored, followed by a correction about an
+unverified claim, would be penalised for being right. So a correction is
+recorded as an event that still needs attribution, and only one attribution
+outcome touches a lesson's score.
 
-- **Selected** this turn (D1).
-- **Correction followed**: the guardrails correction detector
-  (`core/guardrails.py:146` `detect_correction`) fired on the next user turn.
-- **Attribution**: embed the correction text and weight each selected
-  lesson's penalty by cosine similarity to it (one vector query, no LLM).
-  Unrelated lessons take a near-zero hit; always-on lessons take none.
+New table `lesson_uses(lesson_id, session_id, turn_index, selected_by)` and
+`corrections(id, session_id, turn_index, text, attribution, lesson_id,
+judged_by, judged_at)`. Deterministic parts: which lessons were selected
+(D1), and that the correction detector (`core/guardrails.py:146`) fired.
+The attribution itself is a judgment, and this is the ONE place in the plan
+that accepts a small local-LLM judge: corrections arrive a few times a week,
+the call is background, and the default on any parse failure is
+`unattributed` = no effect. Four outcomes, applied differently:
+
+| attribution | meaning | effect |
+|---|---|---|
+| `lesson_wrong` | the selected lesson's guidance produced the corrected behaviour | CONTRADICTS evidence for that lesson, weighted above reflection votes |
+| `lesson_ignored` | the lesson was appropriate and not followed | no score change; a SELECTION/salience signal (D1 ranking, prompt placement) |
+| `lesson_misapplied` | followed, but in the wrong situation | a counterexample on the lesson's scope (D4), not a demotion |
+| `unrelated` / `unattributed` | the correction concerned something else, or the judge could not say | no effect |
 
 Absence of correction is **near-neutral**, not positive: a lesson can be
 irrelevant, ignored, or accidentally followed. Positive evidence is not
-manufactured here. Feed `correction_followed` into the existing revote as
-CONTRADICTS evidence weighted above reflection judgments. Real causal
-attribution ("which lesson drove the behaviour that got corrected") is a later
-problem; do not block on it.
+manufactured here.
 
 ### D3. Two creation paths, two promotion rules
 
@@ -469,11 +498,25 @@ Lessons are created from two places with different trust:
 `core/agent_chat.py:246` (correction detector -> anti-pattern lesson, i.e.
 **Jim explicitly said so**) and `memory/processor.py:310` (session review ->
 reflection lesson, i.e. **the model concluded so**). `added_by` already exists
-(`sqlite_store.py:86`). Correction-derived lessons activate immediately and
-join the always-on set. Reflection-derived lessons start as **candidates**: not
-selectable until N sessions pass without a CONTRADICTS vote (N from config,
-default 3). Demotion is to candidate, archive is to `importance` floor - never
-delete; the revision history stays.
+(`sqlite_store.py:86`).
+
+- **Correction-derived lessons** activate immediately and join the always-on
+  set - but the lesson text is a model's generalisation of what Jim said, and
+  the verbatim correction has more authority than the rule extracted from
+  it. Store the verbatim (B4: `source_type=user_statement`) alongside the
+  derived rule (`assistant_inference`), render the verbatim when the lesson
+  is selected, and let the rule be the searchable index.
+- **Reflection-derived lessons** start as **candidates**. The first draft
+  promoted them after N sessions without contradiction while they were NOT
+  selectable - surviving three sessions unused proves nothing, which
+  contradicts D2's own evidence rule (review round 3). Promotion now
+  requires EXPOSURE with evidence: a candidate may be selected per turn at
+  low priority, at most one candidate per turn, and is promoted only after
+  K selections (config, default 5) with zero `lesson_wrong` attributions
+  and at least one `lesson_ignored`/no-correction turn where it was plainly
+  relevant, OR a held-out replay (D4) shows benefit. Demotion is to
+  candidate, archive is to the `importance` floor - never delete; the
+  revision history stays.
 
 ### D4. Lesson as scoped procedure (shape only)
 
@@ -482,13 +525,22 @@ resolved file identities from two cwds; success = same inode"), store trigger,
 scope, action, expected result, counterexample. This is the "remember what
 worked, with enough detail to reuse it" thread from gpt6. Shape it in the
 schema now; populate from correction lessons first (they have the most
-concrete context). No promotion without a held-out replay (Stage C harness).
+concrete context). Promotion of a procedure requires a held-out replay on the
+Stage C harness: the same task with and without the procedure, same model,
+same evidence.
 
-**Stage D experiment (the one worth running):** does a lesson's importance
-trajectory under outcome evidence diverge from its trajectory under
-reflection-only evidence? Run both revote channels in parallel for a month on
-the live corpus, dry-run, and compare. If they never diverge, the outcome
-signal is too weak and we learned that for the cost of a table.
+**Stage D readout (revised):** the first draft asked whether a lesson's
+importance trajectory under outcome evidence DIVERGES from its trajectory
+under reflection-only evidence. Divergence is diagnostic only - two update
+rules can differ without either improving anything (review round 3). The
+primary measurement is outcome-based: (1) **repeat-correction rate** - the
+share of corrections whose topic (deterministic content-word clustering, as
+in `memory/themes.py`) recurs within 30 days, before vs after D1-D3; (2) the
+Stage C continuity tasks run with and without lesson selection, same model
+and evidence, scored on task success and unsupported claims. The
+month-long dual-channel dry run stays as a cheap diagnostic alongside.
+Stage D is **not implemented until this section has been re-read against
+the D2 attribution table** - it changed materially.
 
 ---
 
@@ -618,6 +670,20 @@ ask first.
 - `blipshell review from gpt6.txt` - the lessons/learning conversation; the
   skill-library pivot is parked, outcome-backed lessons and decisions with
   conditions are adopted (D, E1).
+- Review round 3 (2026-09-09, on the plan text as of Stage A done): adopted -
+  corrections are attribution-pending events with a four-way outcome, not
+  similarity-weighted penalties (D2); candidate promotion requires exposure
+  with evidence, not survival unused (D3); the verbatim correction outranks
+  the rule derived from it (D3); the Stage D readout is outcome-based, with
+  score divergence demoted to a diagnostic; false-recall cases are keyed by
+  the question and judge labelling, not blanket exclusion (C); the learning
+  experiment is an explicit separate track and the user's decision, not
+  "coding-agent territory". Its A2 concern (a rewind window after tool calls
+  are appended) described the pre-build text; as built there is no rewind at
+  all and the window is structurally closed - the residual is a process
+  crash between a tool finishing and its result being appended, and the
+  pairing repair now labels that result "outcome UNKNOWN, inspect state
+  before retrying" instead of "treat as not executed".
 - `output.txt` - review of this plan's first draft; adopted: negative-only
   outcome evidence with attribution, event-driven dossier, decisions with a
   migration exit, minimal provenance now, assistant-inference typing,

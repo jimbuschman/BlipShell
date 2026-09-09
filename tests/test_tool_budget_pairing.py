@@ -153,6 +153,7 @@ class TestPairingRepair:
         inserted = messages[3]
         assert inserted["role"] == "tool" and inserted["tool_call_id"] == "tc1"
         assert "no result" in inserted["content"].lower()
+        assert "unknown" in inserted["content"].lower(), "a missing result is not proof of non-execution"
         assert messages[4]["role"] == "user"
 
     def test_orphan_at_end_of_transcript(self):

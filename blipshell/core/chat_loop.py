@@ -694,7 +694,8 @@ BUDGET_DENIED_RESULT = (
 )
 _UNPAIRED_RESULT = (
     "No result was recorded for this tool call (transcript repaired before "
-    "sending). Treat it as not executed."
+    "sending). Its outcome is UNKNOWN - it may have run and its effect may be "
+    "real. Inspect the actual state before retrying it."
 )
 
 
