@@ -138,4 +138,4 @@ class TestRequiredModelBlocker:
 
 def test_provenance_records_the_scorer_version():
     from blipshell.simulate.reporting import run_provenance
-    assert run_provenance()["scorer_version"] == sc.SCORER_VERSION == 2
+    assert run_provenance()["scorer_version"] == sc.SCORER_VERSION == 3

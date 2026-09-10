@@ -280,7 +280,16 @@ class ProjectMixin:
         self._dossier_followup_ids = set(followup_ids)
         self._pending_follow_ups = await self._load_follow_ups()
         logger.info("Injected project dossier for '%s' (%d chars)", project["name"], len(md))
-        return f"\n=== Project Dossier (auto-maintained) ===\n{md}"
+        return (
+            "\n=== Project Dossier (auto-maintained) ===\n"
+            "How to use it: decisions in force govern this project until the user changes them. "
+            "A QUESTION about one ('should we switch to X?') is a discussion - state the decision and "
+            "its reason, do not change it. An explicit INSTRUCTION to change it ('make it X', 'set that up') "
+            "is authorization - before acting, say which decision it overrides and why that decision was "
+            "made, then record the change with revise_decision. Never override a decision silently. "
+            "Completed work marked 'claimed by assistant, not verified' is reported as unverified.\n"
+            f"{md}"
+        )
 
     async def _on_task_complete(self, summary: str, files_modified: str = "", decisions_made: str = "") -> None:
         """task_complete -> project event (V3 E2). The assistant's claim, marked so."""

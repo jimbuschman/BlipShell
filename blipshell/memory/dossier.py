@@ -152,6 +152,15 @@ def render(d: Dossier, now: Optional[datetime] = None) -> str:
 
     L.append("## Last completed work")
     if d.completed:
+        claimed = [e for e in d.completed if e["kind"] != "verification"]
+        if claimed:
+            # Both measured models (fallback x5, production x5, 2026-09-09)
+            # rewrote "claimed by assistant, not verified" as "Done". The
+            # rule has to be in the record the model reads, not only in the
+            # label.
+            L.append("Items marked 'claimed by assistant, not verified' are the assistant's own reports with no "
+                     "verification event. REPORT THEM AS UNVERIFIED ('the assistant reported X; not verified'), "
+                     "never as done, finished, built or working, until a verification event exists.")
         for e in d.completed:
             state = "verified" if e["kind"] == "verification" else "claimed by assistant, not verified"
             L.append(f"- [{(e.get('at') or '')[:10]}, {state}] {e['summary']}")

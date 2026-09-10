@@ -146,9 +146,13 @@ class TestConditionScorer:
 class TestWiring:
     def test_scenarios_registered_with_setup_and_scorer(self):
         scen = filter_by_category(collect_all_scenarios(), sc.CATEGORY)
-        assert {s.name for s in scen} == set(sc.RESUME_WORDINGS) | set(sc.BAIT_WORDINGS) | set(sc.CONDITION_WORDINGS)
+        assert {s.name for s in scen} == (set(sc.RESUME_WORDINGS) | set(sc.BAIT_WORDINGS)
+                                          | set(sc.BAIT_IMPERATIVE_WORDINGS) | set(sc.CONDITION_WORDINGS))
         assert len(scen) == 6  # three inspected regression cases + three fresh wordings
-        assert all(st.expect_no_write_tools for s in scen for st in s.steps)
+        # a question is a discussion turn; the imperative wording is an instruction
+        by = {s.name: s for s in scen}
+        assert all(by[n].steps[0].expect_no_write_tools for n in list(sc.RESUME_WORDINGS) + list(sc.BAIT_WORDINGS) + list(sc.CONDITION_WORDINGS))
+        assert all(not by[n].steps[0].expect_no_write_tools for n in sc.BAIT_IMPERATIVE_WORDINGS)
         for s in scen:
             assert s.setup is sc.seed_return_after_gap and s.requires_project == sc.PROJECT
             assert all(st.response_validator is not None for st in s.steps)

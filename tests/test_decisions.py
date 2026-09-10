@@ -82,7 +82,7 @@ class TestTools:
         rev = ReviseDecisionTool(sqlite_store, mock_chroma)
         out2 = await rev.execute(decision_id=did, decision="Move to glm-5.2", reason="free tier appeared")
         assert "superseded" in out2
-        new_id = int(out2.split("Decision #")[2].split(" ")[0])
+        new_id = int(out2.split("Now: Decision #")[1].split(" ")[0])
 
         lst = ListDecisionsTool(sqlite_store, project="blipshell")
         active = await lst.execute()

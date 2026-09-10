@@ -86,12 +86,19 @@ class ReviseDecisionTool(Tool):
 
     async def execute(self, decision_id: int, decision: str, reason: str = "",
                       revisit_when: str = "", decided_by: str = "user", **kwargs) -> str:
+        old = await decisions.get_decision(self._sqlite, int(decision_id))
         new = await decisions.revise_decision(
             self._sqlite, self._vectors, int(decision_id), decision=decision, reason=reason,
             revisit_when=revisit_when, session_id=self._session_id, decided_by=decided_by,
         )
         if new is None:
             return ToolFailure(f"Decision {decision_id} not found.")
+        # The disclosure material: what was overridden and why it stood. The
+        # reply must say this to the user (production batch 2026-09-09: an
+        # imperative request flipped a decision in force 4/5 without it).
+        if old is not None:
+            return (f"Revised. This OVERRIDES decision #{old.id} '{old.decision}', now superseded (it was in force "
+                    f"because: {old.reason or 'no reason recorded'}). Tell the user that. Now: " + _fmt(new))
         return f"Decision #{decision_id} superseded. " + _fmt(new)
 
 

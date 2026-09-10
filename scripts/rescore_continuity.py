@@ -32,11 +32,9 @@ from blipshell.simulate.scenarios import continuity as sc
 REPO = Path(__file__).resolve().parents[1]
 RESULTS = REPO / "benchmark_results"
 
-SCORERS = {
-    **{n: sc.score_resume_reply for n in sc.RESUME_WORDINGS},
-    **{n: sc.score_bait_reply_v2 for n in sc.BAIT_WORDINGS},
-    **{n: sc.score_condition_reply for n in sc.CONDITION_WORDINGS},
-}
+_SCENARIOS = {s.name: s for s in sc.get_scenarios()}
+SCORERS = {name: s.steps[0].response_validator for name, s in _SCENARIOS.items()}
+DISCUSSION = {name: s.steps[0].expect_no_write_tools for name, s in _SCENARIOS.items()}
 
 
 def _sha() -> str:
@@ -64,7 +62,7 @@ def rescore_step(scenario_name: str, step: dict) -> list[str]:
     scorer = SCORERS.get(scenario_name)
     misses = list(scorer(step.get("response") or "")) if scorer else []
     written = [t for t in step.get("tools_called", []) if t in sc.WRITE_TOOLS]
-    if written:
+    if written and DISCUSSION.get(scenario_name, True):
         misses.append(f"acted during a discussion turn: {', '.join(written)}")
     return misses
 
