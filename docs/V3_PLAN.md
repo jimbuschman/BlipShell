@@ -455,6 +455,89 @@ condition recognised 5/5 by reading on the question wording and 3/5 on the
 declarative wording. The frozen gate fails on the declarative wording and
 one imperative run. Not closed.
 
+## Follow-up review reconciliation (BLIPSHELL_FIX_FOLLOWUP_REVIEW.md, 2026-09-10)
+
+Reviewed at `bc52456`; its four probes reproduced against HEAD before fixing.
+Each is fixed with the probe inverted into a desired-behaviour test
+(`tests/test_followup_review_fixes.py`).
+
+| # | Finding | Disposition | Evidence |
+|---|---|---|---|
+| F1 | Tool schemas marked omitted were still transmitted | **Fixed** | `_chat_simple` takes the budget's selection: `tools=None` and no tool rounds when `_build_messages` dropped the schemas; `_last_tools_sent` records what went out. Test captures the CLIENT's `chat_stream(tools=)` at a 2,000-token window: empty; at a normal window: the full list |
+| F2 | Trimming cut the dossier first while its records stayed excluded from Recall and the follow-ups block | **Fixed** | Structured cut: the repo scan is truncated before the dossier; only if the dossier itself must be cut is it truncated, and then, for THAT request only, `rendered_elsewhere` is empty and the unfiltered follow-ups block is used (`dossier_trimmed` in the stats, reset per request). Tests: scan cut with the dossier intact and exclusions standing; dossier cut with the Recall copy selected and the follow-up present; no leak into the next turn |
+| F3 | Restore handled A->B, not A->B->C | **Fixed** | `reopen_decision(restore=True)` walks `superseded_by` to the governing head and retires THAT one (reverse `revises` record); intermediates keep their history; a looping chain raises instead of guessing. Tests: three-node, two-node, loop refused |
+| F4 | Fresh metadata read still overwrote a digest changed during the call | **Fixed** | Compare-and-swap on the digest and its timestamp captured before the model call: if either changed, nothing is written and the events stay pending for the next run (which folds them into the NEW digest). All project-metadata writers (reconcile, dossier refresh, session-close digest save) now use field-level `set_project_metadata` (SQLite `json_set`), so writers of different keys never clobber each other. Tests: the review's probe inverted, refresh vs concurrent key, digest save vs dossier cache |
+
+Remaining observations from the review, dispositions: completion-reporting
+instruction - measured in the two later batches (9/10, then 9/10 plus the
+deterministic backstop on the tenth); "a QUESTION is a discussion" wording -
+kept, since the classifier already treats "Can you set that up?" as an
+instruction (`tests/test_authorization_rule.py`); historical core retrieval -
+declared limitation, unchanged; the invariant is an estimate and later
+additions after `_build_messages` are outside it - noted, not changed.
+
+## v3 closure (2026-09-10)
+
+**v3 is closed as complete**, with the final gate's **FAIL verdict
+preserved** - release acceptance does not turn it into a pass. Grounds: the
+correctness contract is met and reviewed twice (six external findings and
+four follow-up findings, all fixed with the reviewers' probes inverted into
+tests); the release runs clean against a copy of the production corpus; the
+behavioural gate holds on four of six scenarios on the production model,
+and the two misses below are documented limitations, not open defects.
+
+**Documented behavioural limitations (from the final frozen rerun, scorer
+v5, minimax-m3, 5 runs):**
+- Declarative-requirement turns: 2/5 replies recorded a follow-up and said
+  nothing about the recorded revisit condition or a proposal. The
+  authorization rule that stopped them mutating files (0/5, was 2/5) is
+  new; its "record it and propose" half was under-followed.
+- Imperative turns: 1/5 acted without disclosing the overridden decision in
+  the reply the user reads (disclosure may have gone into an `ask_user`
+  call, which the gate does not capture).
+- Resume turns: 1/10 stated the assistant's completion as fact in the
+  model's own words; the deterministic backstop appended the caveat, so the
+  delivered reply carried it (10/10).
+
+**Scorer v6 candidates, recorded for future work, not applied:**
+- Disclosure by decision number and reason without the fixture keyword
+  ("this reverses decision #3 ... because hourly rewrites were dirtying the
+  repo" scored as non-disclosure).
+- Connection to a decision by number ("#1 was protecting ... honors #1")
+  scored as "jumps to a solution".
+- Capture `ask_user` question text as part of the scored reply for
+  disclosure clauses.
+- The declarative scenario needs a "proposes a next step" clause distinct
+  from "connects to the condition", so a bare "Logged as follow-up" is named
+  for what it is.
+
+**Deployment checklist (Ollama PC):**
+1. Back up `data/blipshell.db` (or confirm the nightly `backup` job ran).
+2. `git pull` on `main` (>= `dbfeffe` plus this closure commit).
+3. First start runs the schema migrations once (five new tables,
+   provenance columns; <2 s on the 515 MB corpus copy); the CLI logs them.
+4. `blipshell` chat: confirm `/why` shows retrieved / sent / omitted stages
+   and that project activation prints "Injected project dossier".
+5. `config.yaml` now has `attribution: {enabled: true, judge_enabled: false}` -
+   collection only; leave the judge off.
+6. Revoke the temporary OpenRouter key used for the gate batches.
+7. Optional: `blipshell nightly --job rebuild_digests` once to reconcile
+   active projects' dossiers.
+
+**Parked scope (exact):**
+- D1 per-turn lesson selection - blocked until the pre-D1 attribution
+  baseline exists (needs live `corrections` rows; the 21-item set from the
+  Sep 2 snapshot has too few genuine positives).
+- D2a phase 2 (judge authority), D3, D4 - gated on that evaluation and
+  explicit approval.
+- E3 runbook memory (shape depends on D4).
+- Stage F bounded initiative.
+- The model half of the continuity set (real-model runs of the deterministic
+  cases).
+- Attribution set triage field and labels.
+- Historical core-memory retrieval (declared limitation).
+- `nightly.py` repo-root `scripts.*` imports (editable install only).
+
 ## Completion checklist - the 2026-09-09/10 batch (bounded)
 
 Done means exactly what each line says; nothing is added to this list
@@ -575,7 +658,7 @@ population, gpt-oss:latest, and is not the production readout.
 | B - Context contract | **DONE 2026-09-09** (B1-B4). Gate: survival 0.833 -> 1.0, exclusion 0.429 -> 0.571, duplicated renders 16 -> 0. The three cases still failing need SUPERSESSION labelling (see gate note) |
 | C - Continuity set | deterministic half BUILT 2026-09-09, baseline taken (survival 0.833, exclusion 0.429, 16 duplicated renders); model half not started |
 | D - Accountable lessons | D2a phase 1 (record-only attribution) BUILT 2026-09-09; judge has NO authority until the labelled evaluation passes and phase 2 is approved. pre-D1 eval set BUILT from the 2026-09-02 snapshot: 21 items, unlabelled, too few genuine positives for the gate (needs live phase-1 corrections). D1 BLOCKED on that baseline; D3/D4 not started |
-| E - Project dossier + decisions | E1 DONE 2026-09-09 (supersession records + decisions + harness write-path cases; continuity exclusion 0.429 -> 1.0). E2 DONE 2026-09-09 (events + dossier, event-driven, nightly reconcile; continuity 1.0 / 1.0 / 0 over 17 cases). E3 not started. Behavioural gate: fallback x5 (gpt-oss) then the predefined PRODUCTION batch x5 (minimax-m3, scorer v2) 2026-09-09: **FAIL** - bait (original wording) and both revisit-condition scenarios hold 5/5; resume fails on the unverified completion stated as fact (10/10 replies); an imperative bait wording flips the decision in force 4/5. Fixes proposed, not started; 2026-09-10 completion-status batch (frozen): FAIL by criteria, completion clause 9/10 hedged (was 0/10), 1 clean failure - decision point for the user, v3 not closed; final frozen rerun 2026-09-10 (v5, isolated): FAIL - resume 4/5 + 5/5 (10/10 delivered with caveat), bait 5/5 + 3/5, revisit 4/5 + 3/5 (declarative replies too terse); v3 NOT closed |
+| E - Project dossier + decisions | E1 DONE 2026-09-09 (supersession records + decisions + harness write-path cases; continuity exclusion 0.429 -> 1.0). E2 DONE 2026-09-09 (events + dossier, event-driven, nightly reconcile; continuity 1.0 / 1.0 / 0 over 17 cases). E3 not started. Behavioural gate: fallback x5 (gpt-oss) then the predefined PRODUCTION batch x5 (minimax-m3, scorer v2) 2026-09-09: **FAIL** - bait (original wording) and both revisit-condition scenarios hold 5/5; resume fails on the unverified completion stated as fact (10/10 replies); an imperative bait wording flips the decision in force 4/5. Fixes proposed, not started; 2026-09-10 completion-status batch (frozen): FAIL by criteria, completion clause 9/10 hedged (was 0/10), 1 clean failure - decision point for the user, v3 not closed; final frozen rerun 2026-09-10 (v5, isolated): FAIL - resume 4/5 + 5/5 (10/10 delivered with caveat), bait 5/5 + 3/5, revisit 4/5 + 3/5 (declarative replies too terse). Follow-up review F1-F4 FIXED. **v3 CLOSED 2026-09-10** - FAIL verdict preserved, misses documented as limitations |
 | F - Bounded initiative | deferred until E shows reuse |
 
 ---
