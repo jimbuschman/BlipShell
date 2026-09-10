@@ -111,14 +111,19 @@ class ReopenDecisionTool(Tool):
             parameters=[
                 ToolParameter(name="decision_id", type=ToolParameterType.INTEGER, description="ID of the decision to reopen."),
                 ToolParameter(name="reason", type=ToolParameterType.STRING, description="What changed.", required=False),
+                ToolParameter(name="restore", type=ToolParameterType.BOOLEAN, required=False,
+                              description="false (default): reopen for DISCUSSION only - the current decision stays in "
+                                          "force. true: RESTORE this decision as the governing one and retire its "
+                                          "replacement (only when the user has said so)."),
             ],
         )
 
-    async def execute(self, decision_id: int, reason: str = "", **kwargs) -> str:
-        d = await decisions.reopen_decision(self._sqlite, int(decision_id), reason=reason)
+    async def execute(self, decision_id: int, reason: str = "", restore: bool = False, **kwargs) -> str:
+        d = await decisions.reopen_decision(self._sqlite, int(decision_id), reason=reason, restore=bool(restore))
         if d is None:
             return ToolFailure(f"Decision {decision_id} not found.")
-        return "Reopened. " + _fmt(d)
+        return ("Restored as the governing decision. " if restore else
+                "Reopened for discussion (not in force until restored or revised). ") + _fmt(d)
 
 
 class ListDecisionsTool(Tool):

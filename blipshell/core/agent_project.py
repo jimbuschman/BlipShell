@@ -276,7 +276,7 @@ class ProjectMixin:
             return ""
         if not md:
             return ""
-        self.memory_manager.rendered_elsewhere = set(decision_ids)
+        self.memory_manager.rendered_elsewhere = {("memory", int(i)) for i in decision_ids}
         self._dossier_followup_ids = set(followup_ids)
         self._pending_follow_ups = await self._load_follow_ups()
         logger.info("Injected project dossier for '%s' (%d chars)", project["name"], len(md))

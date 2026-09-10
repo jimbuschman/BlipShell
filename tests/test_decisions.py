@@ -39,14 +39,22 @@ class TestModule:
         assert rec.new_id == new.id and rec.relation == "revises" and rec.detected_by == "decision_tool"
         assert rec.scope == "blipshell" and rec.source_type == "user_statement"
 
-    async def test_reopen_undoes_the_supersession(self, sqlite_store, mock_chroma):
+    async def test_reopen_is_discussion_and_restore_undoes_the_supersession(self, sqlite_store, mock_chroma):
+        """Review finding 4 (2026-09-10): reopening for discussion must not
+        put two contradictory decisions in force. Only an explicit restore
+        undoes the supersession and retires the replacement."""
         old = await decisions.record_decision(sqlite_store, mock_chroma, decision="A", reason="r")
         new = await decisions.revise_decision(sqlite_store, mock_chroma, old.id, decision="B", reason="r2")
         back = await decisions.reopen_decision(sqlite_store, old.id, reason="B did not work")
         assert back.status == "reopened" and back.reopened_reason == "B did not work"
+        assert old.id in await sup.superseded(sqlite_store, "memory", [old.id]), "still superseded while discussed"
+        assert (await decisions.get_decision(sqlite_store, new.id)).status == "active"
+        restored = await decisions.reopen_decision(sqlite_store, old.id, reason="B rejected", restore=True)
+        assert restored.status == "active" and restored.superseded_by is None
         assert await sup.superseded(sqlite_store, "memory", [old.id]) == {}
+        assert (await decisions.get_decision(sqlite_store, new.id)).status == "superseded"
         hist = await sup.history_of(sqlite_store, "memory", old.id)
-        assert len(hist) == 1 and hist[0].undone_at is not None
+        assert len(hist) == 2 and hist[0].undone_at is not None and hist[1].undone_at is None
 
     async def test_list_filters(self, sqlite_store, mock_chroma):
         a = await decisions.record_decision(sqlite_store, mock_chroma, decision="A", project="p1")
@@ -82,7 +90,7 @@ class TestTools:
         assert "Keep minimax" in await lst.execute(status="superseded")
 
         reo = ReopenDecisionTool(sqlite_store)
-        assert (await reo.execute(decision_id=did, reason="free tier was rate limited")).startswith("Reopened.")
+        assert (await reo.execute(decision_id=did, reason="free tier was rate limited")).startswith("Reopened for discussion")
         assert "Keep minimax" in await lst.execute(status="reopened")
 
     async def test_failures_are_typed(self, sqlite_store, mock_chroma):

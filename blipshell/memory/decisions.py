@@ -155,21 +155,57 @@ async def revise_decision(sqlite, vectors, old_id: int, *, decision: str, reason
     return new
 
 
-async def reopen_decision(sqlite, decision_id: int, *, reason: str = "") -> Optional[Decision]:
-    """The revisit condition was met: the old decision is back in force. Undoes
-    the supersession that replaced it (never deletes it) and marks it reopened."""
+async def reopen_decision(sqlite, decision_id: int, *, reason: str = "",
+                          restore: bool = False) -> Optional[Decision]:
+    """Two distinct transitions (external review 2026-09-10, finding 4):
+
+    `restore=False` - REOPEN FOR DISCUSSION. The decision's status becomes
+    `reopened`: pending, NOT in force. Whatever replaced it stays in force
+    and its supersession stays active; `superseded_by` is kept as history.
+    The dossier lists it under "reopened for discussion", never among the
+    decisions in force, so two contradictory decisions are never both
+    governing.
+
+    `restore=True` - RESTORE AS THE GOVERNING DECISION. Its active
+    replacement (if any) is retired: marked superseded by this decision,
+    with a `revises` supersession record from replacement -> this one, and
+    the original supersession that retired this one is undone. This one
+    returns to `active` with `superseded_by` cleared. History is preserved
+    in both directions.
+
+    Both record a `decision_reopened` event. Returns the decision, or None
+    if `decision_id` is not one."""
     dec = await get_decision(sqlite, decision_id)
     if dec is None:
         return None
+    now = datetime.now(timezone.utc).isoformat()
+    if not restore:
+        await _update_meta(sqlite, decision_id, status="reopened", reopened_reason=reason, reopened_at=now)
+        await project_events.record_event(
+            sqlite, project=dec.project, kind="decision_reopened",
+            summary=f"#{decision_id} reopened for discussion: {reason or dec.decision}", ref_kind="memory",
+            ref_id=decision_id, source_type="user_statement",
+        )
+        return await get_decision(sqlite, decision_id)
+
+    # restore: retire the replacement(s) that are still governing
     for rec in await supersession.history_of(sqlite, "memory", decision_id):
         if rec.old_id == decision_id and rec.undone_at is None:
             await supersession.undo(sqlite, rec.id)
-    await _update_meta(sqlite, decision_id, status="reopened", reopened_reason=reason,
-                       reopened_at=datetime.now(timezone.utc).isoformat())
+            repl = await get_decision(sqlite, rec.new_id)
+            if repl is not None and repl.status in ("active", "reopened"):
+                await _update_meta(sqlite, repl.id, status="superseded", superseded_by=decision_id)
+                await supersession.record(
+                    sqlite, old_kind="memory", old_id=repl.id, new_kind="memory", new_id=decision_id,
+                    scope=dec.project, relation="revises", detected_by="decision_tool",
+                    evidence=(reason or f"restored #{decision_id}")[:300], source_type="user_statement",
+                )
+    await _update_meta(sqlite, decision_id, status="active", superseded_by=None,
+                       reopened_reason=reason, reopened_at=now)
     await project_events.record_event(
         sqlite, project=dec.project, kind="decision_reopened",
-        summary=f"#{decision_id} reopened: {reason or dec.decision}", ref_kind="memory",
-        ref_id=decision_id, source_type="user_statement",
+        summary=f"#{decision_id} restored as the governing decision: {reason or dec.decision}",
+        ref_kind="memory", ref_id=decision_id, source_type="user_statement",
     )
     return await get_decision(sqlite, decision_id)
 

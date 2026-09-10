@@ -295,7 +295,8 @@ class SessionMixin:
         request only through Recall, labelled, when the question is historical."""
         try:
             from blipshell.memory import supersession
-            return set(await supersession.superseded(self.sqlite, "memory", memory_ids))
+            project = self.active_project["name"] if self.active_project else None
+            return set(await supersession.superseded(self.sqlite, "memory", memory_ids, for_project=project))
         except Exception as e:
             logger.warning("Supersession lookup for RecentHistory failed (showing all): %s", e)
             return set()

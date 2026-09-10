@@ -44,14 +44,14 @@ class TestSkipNotBreak:
     def test_excluded_memory_ids_are_recorded_too(self):
         pool = Pool("RecentHistory", max_tokens=100)
         pool.add(_item(10, prio=2.0, memory_id=7))
-        pool.get_top_entries(100, exclude_memory_ids={7})
+        pool.get_top_entries(100, exclude_keys={("memory", 7)})
         assert [(i.memory_id, why) for i, why in pool.last_omitted] == [(7, "already sent via Recall")]
 
     def test_dossier_carried_ids_are_recorded_under_their_own_reason(self):
         pool = Pool("Recall", max_tokens=100)
         pool.add(_item(10, prio=2.0, memory_id=7))
         pool.add(_item(10, prio=1.0, memory_id=8))
-        got = pool.get_top_entries(100, rendered_elsewhere={7})
+        got = pool.get_top_entries(100, rendered_elsewhere={("memory", 7)})
         assert [i.memory_id for i in got] == [8]
         assert [(i.memory_id, why) for i, why in pool.last_omitted] == [(7, "already in the project dossier")]
 

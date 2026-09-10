@@ -47,6 +47,7 @@ class Dossier:
     digest: Optional[str]
     digest_updated_at: Optional[str]
     decisions_active: list[dec.Decision] = field(default_factory=list)
+    decisions_reopened: list[dec.Decision] = field(default_factory=list)  # pending discussion, NOT in force
     decisions_superseded: list[tuple[dec.Decision, str]] = field(default_factory=list)  # (decision, date)
     open_followups: list[dict] = field(default_factory=list)   # oldest first
     completed: list[dict] = field(default_factory=list)        # task_completed / verification events, newest first
@@ -64,8 +65,10 @@ async def build(sqlite, project: str) -> Dossier:
     d = Dossier(project=project, digest=meta.get("digest"), digest_updated_at=meta.get("digest_updated_at"))
 
     all_decisions = await dec.list_decisions(sqlite, project=project, limit=200)
-    d.decisions_active = [x for x in all_decisions if x.status in ("active", "reopened")]
-    sup_rows = await supersession.superseded(sqlite, "memory", [x.id for x in all_decisions if x.status == "superseded"])
+    d.decisions_active = [x for x in all_decisions if x.status == "active"]
+    d.decisions_reopened = [x for x in all_decisions if x.status == "reopened"]
+    sup_rows = await supersession.superseded(sqlite, "memory", [x.id for x in all_decisions if x.status == "superseded"],
+                                             for_project=project)
     d.decisions_superseded = sorted(
         [(x, (sup_rows[x.id].at if x.id in sup_rows else x.at)[:10]) for x in all_decisions if x.status == "superseded"],
         key=lambda t: t[1], reverse=True,
@@ -82,7 +85,7 @@ async def build(sqlite, project: str) -> Dossier:
     d.sources = {
         "digest_session_ids": meta.get("digest_session_ids", []),
         "event_ids": [e["id"] for e in d.completed] + ([d.last_session["id"]] if d.last_session else []),
-        "decision_ids": [x.id for x in d.decisions_active],
+        "decision_ids": [x.id for x in d.decisions_active] + [x.id for x in d.decisions_reopened],
         "followup_ids": [f["id"] for f in d.open_followups],
     }
     return d
@@ -104,7 +107,7 @@ def render(d: Dossier, now: Optional[datetime] = None) -> str:
     L.append("## Decisions in force")
     if d.decisions_active:
         for x in d.decisions_active:
-            tag = " [reopened]" if x.status == "reopened" else ""
+            tag = ""
             who = "" if x.decided_by == "user" else " [proposed by assistant]"
             line = f"- #{x.id}{tag}{who} {x.decision}"
             if x.reason:
@@ -115,6 +118,17 @@ def render(d: Dossier, now: Optional[datetime] = None) -> str:
     else:
         L.append("_None recorded._")
     L.append("")
+
+    if d.decisions_reopened:
+        L.append("## Reopened for discussion (NOT in force)")
+        for x in d.decisions_reopened:
+            line = f"- #{x.id} {x.decision}"
+            if x.reopened_reason:
+                line += f" - reopened because {x.reopened_reason}"
+            if x.superseded_by:
+                line += f" - currently replaced by #{x.superseded_by}"
+            L.append(line)
+        L.append("")
 
     if d.decisions_superseded:
         L.append("## Recently superseded decisions")
@@ -170,7 +184,8 @@ def listed_ids(d: Dossier) -> tuple[set[int], set[int]]:
     """(decision memory ids, follow-up ids) the render carries. While the
     project is active the pools and the follow-ups block skip these: the
     dossier is their canonical, structured place, a second copy is waste."""
-    decision_ids = {x.id for x in d.decisions_active} | {x.id for x, _ in d.decisions_superseded}
+    decision_ids = ({x.id for x in d.decisions_active} | {x.id for x in d.decisions_reopened}
+                    | {x.id for x, _ in d.decisions_superseded})
     return decision_ids, {f["id"] for f in d.open_followups}
 
 
@@ -211,32 +226,74 @@ async def get_dossier(sqlite, project: str) -> tuple[Optional[str], set[int], se
     return md, decision_ids, followup_ids
 
 
+RECONCILE_BATCH = 200
+
+
 async def reconcile(sqlite, router, project: str) -> dict:
-    """Nightly: fold events since the last reconcile into the prose digest
-    (one LLM call), then re-render. Skips the call when nothing happened."""
+    """Nightly: fold the OLDEST unfolded events (up to RECONCILE_BATCH) into
+    the prose digest with one LLM call, then re-render.
+
+    Acknowledgement is a queue, not a timestamp (external review 2026-09-10,
+    finding 3 - the same class the commit-evidence queue fixed): the cursor
+    `dossier_reconciled_event_id` is the id of the last event actually
+    incorporated, advanced ONLY after the updated digest is persisted. A
+    failed or empty model reply leaves every event pending; events beyond
+    the batch, or arriving during the call, stay pending for the next run.
+    Without a digest nothing is folded and nothing is acknowledged: the
+    events are already rendered by the dossier itself, and the first session
+    close writes the digest they will be folded into.
+
+    Returns: folded (incorporated this run), pending (still unfolded after
+    this run), digest_updated, and reason/error when nothing was folded."""
     from blipshell.llm.prompts import update_digest_with_sessions
     from blipshell.llm.router import TaskType
 
     row = await sqlite.get_project(project)
     if not row:
-        return {"project": project, "folded": 0, "reason": "no such project"}
+        return {"project": project, "folded": 0, "pending": 0, "digest_updated": False, "reason": "no such project"}
     meta = json.loads(row.get("metadata_json") or "{}")
-    since = meta.get("dossier_reconciled_at")
-    new_events = await pe.events(sqlite, project, since=since, limit=200)
-    stats = {"project": project, "folded": len(new_events), "digest_updated": False}
-    if new_events and meta.get("digest"):
-        lines = "\n".join(f"- [{e['kind']}] {e['summary']}" for e in reversed(new_events))
-        system, user = update_digest_with_sessions(meta["digest"], f"[Project events since last reconcile]\n{lines}")
-        try:
-            updated = await router.generate(TaskType.REASONING, user, system=system)
-            if updated and updated.strip():
-                meta["digest"] = updated.strip()
-                meta["digest_updated_at"] = datetime.now(timezone.utc).isoformat()
-                stats["digest_updated"] = True
-        except Exception as e:
-            logger.warning("Dossier reconcile for '%s' could not fold events: %s", project, e)
-            stats["error"] = str(e)
-    meta["dossier_reconciled_at"] = datetime.now(timezone.utc).isoformat()
-    await sqlite.update_project(project, metadata_json=json.dumps(meta))
+    cursor = int(meta.get("dossier_reconciled_event_id") or 0)
+    batch = await pe.events_after(sqlite, project, cursor, limit=RECONCILE_BATCH)
+    stats = {"project": project, "folded": 0, "pending": len(batch), "digest_updated": False}
+    if not batch:
+        stats["pending"] = 0
+        await refresh(sqlite, project)
+        return stats
+    if not meta.get("digest"):
+        stats["pending"] = await pe.pending_count(sqlite, project, cursor)
+        stats["reason"] = "no digest yet - events stay pending until a session close writes one"
+        await refresh(sqlite, project)
+        return stats
+
+    lines = "\n".join(f"- [{e['kind']}] {e['summary']}" for e in batch)
+    system, user = update_digest_with_sessions(meta["digest"], f"[Project events since last reconcile]\n{lines}")
+    try:
+        updated = await router.generate(TaskType.REASONING, user, system=system)
+    except Exception as e:
+        logger.warning("Dossier reconcile for '%s' could not fold %d events (left pending): %s",
+                       project, len(batch), e)
+        stats["error"] = str(e)
+        stats["pending"] = await pe.pending_count(sqlite, project, cursor)
+        await refresh(sqlite, project)
+        return stats
+    if not updated or not updated.strip():
+        stats["reason"] = "empty model reply - events left pending"
+        stats["pending"] = await pe.pending_count(sqlite, project, cursor)
+        await refresh(sqlite, project)
+        return stats
+
+    # Persist digest + cursor together, on a FRESH read of the metadata so a
+    # concurrent writer (a session close during the call) is not overwritten
+    # from this stale snapshot.
+    fresh_row = await sqlite.get_project(project)
+    fresh = json.loads((fresh_row or {}).get("metadata_json") or "{}")
+    fresh["digest"] = updated.strip()
+    fresh["digest_updated_at"] = datetime.now(timezone.utc).isoformat()
+    fresh["dossier_reconciled_event_id"] = int(batch[-1]["id"])
+    fresh["dossier_reconciled_at"] = fresh["digest_updated_at"]
+    await sqlite.update_project(project, metadata_json=json.dumps(fresh))
+    stats["folded"] = len(batch)
+    stats["digest_updated"] = True
+    stats["pending"] = await pe.pending_count(sqlite, project, int(batch[-1]["id"]))
     await refresh(sqlite, project)
     return stats

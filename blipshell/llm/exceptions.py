@@ -135,3 +135,11 @@ def is_model_error(error: Exception) -> bool:
                 return True
 
     return False
+
+
+class ContextOverflowError(Exception):
+    """The request's MANDATORY content (system prompt, this turn's user
+    message, response reserve) does not fit the model's context window even
+    after every trimmable block was removed. Raised by
+    ChatMixin._build_messages instead of sending an over-limit request
+    (external review 2026-09-10, finding 6)."""

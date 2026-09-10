@@ -136,8 +136,33 @@ def _row(r) -> Supersession:
     )
 
 
-async def superseded(sqlite, kind: str, ids: Iterable[int]) -> dict[int, Supersession]:
-    """old_id -> its active supersession (the most recent, if several)."""
+ANY_SCOPE = object()  # sentinel: no scope filtering (audit / history views)
+
+
+def applies_in(record_scope: str, for_project: Optional[str]) -> bool:
+    """Does a supersession recorded under `record_scope` govern a reader
+    working in `for_project` (None = general chat, no project active)?
+
+    A GLOBAL record governs everywhere. A project-scoped record governs
+    ONLY inside that project: "use spaces in projectA" is an exception to
+    the global tabs preference, not a replacement of it - in project B and
+    in general chat the global fact is still current. External review
+    2026-09-10 (finding 2): the scope was stored but never read, so a
+    project exception erased the global default everywhere.
+    """
+    if record_scope == GLOBAL_SCOPE or not record_scope:
+        return True
+    return for_project is not None and record_scope == for_project
+
+
+async def superseded(sqlite, kind: str, ids: Iterable[int], *,
+                     for_project=ANY_SCOPE) -> dict[int, Supersession]:
+    """old_id -> its active supersession (the most recent that APPLIES).
+
+    `for_project`: the reader's context - a project name, or None for
+    general chat - so a project-scoped record is honoured only inside that
+    project (see `applies_in`). Omit it (ANY_SCOPE) only for audit views
+    that want every active record regardless of where it applies."""
     ids = [int(i) for i in ids if i is not None]
     if not ids:
         return {}
@@ -149,7 +174,10 @@ async def superseded(sqlite, kind: str, ids: Iterable[int]) -> dict[int, Superse
     )
     out: dict[int, Supersession] = {}
     for r in await cur.fetchall():
-        out[int(r["old_id"])] = _row(r)  # later rows overwrite: newest wins
+        rec = _row(r)
+        if for_project is not ANY_SCOPE and not applies_in(rec.scope, for_project):
+            continue
+        out[int(r["old_id"])] = rec  # later rows overwrite: newest wins
     return out
 
 
@@ -163,14 +191,39 @@ async def history_of(sqlite, kind: str, record_id: int) -> list[Supersession]:
     return [_row(r) for r in await cur.fetchall()]
 
 
-async def undo(sqlite, supersession_id: int) -> bool:
-    """Mark a supersession undone (the old record is current again). Never deletes."""
-    cur = await sqlite._db.execute(
-        "UPDATE supersessions SET undone_at = ? WHERE id = ? AND undone_at IS NULL",
+async def undo(sqlite, supersession_id: int, *, vectors=None) -> bool:
+    """Mark a supersession undone AND restore the old record's effective
+    state for its kind. Never deletes.
+
+    - memory: nothing else to do - memories are never deactivated by a
+      supersession; the record alone hides them at read time.
+    - core_memory: the contradiction path deactivates the old core memory
+      and drops its vector (processor._check_core_memory_contradictions), so
+      undo reactivates it and re-embeds it when a vector store is given.
+      External review 2026-09-10 (finding 5): before this, undo flipped the
+      record and left the fact absent from the active set.
+    Returns False when no active record had that id."""
+    cur = await sqlite._db.execute("SELECT * FROM supersessions WHERE id = ? AND undone_at IS NULL",
+                                   (int(supersession_id),))
+    row = await cur.fetchone()
+    if row is None:
+        return False
+    rec = _row(row)
+    await sqlite._db.execute(
+        "UPDATE supersessions SET undone_at = ? WHERE id = ?",
         (datetime.now(timezone.utc).isoformat(), int(supersession_id)),
     )
     await sqlite._db.commit()
-    return bool(cur.rowcount)
+    if rec.old_kind == "core_memory":
+        still_superseded = await superseded(sqlite, "core_memory", [rec.old_id])
+        if rec.old_id not in still_superseded:  # no other active record keeps it retired
+            cm = await sqlite.reactivate_core_memory(rec.old_id)
+            if cm is not None and vectors is not None:
+                try:
+                    vectors.add_core_memory(cm.id, cm.content)
+                except Exception as e:  # the row is active either way; the index can be rebuilt
+                    logger.warning("Undo re-embedded core memory %d failed: %s", rec.old_id, e)
+    return True
 
 
 async def memory_projects(sqlite, memory_ids: Iterable[int]) -> dict[int, Optional[str]]:

@@ -1911,6 +1911,23 @@ class SQLiteStore:
             for r in rows
         ]
 
+    async def reactivate_core_memory(self, core_memory_id: int):
+        """Undo a contradiction deactivation (supersession.undo, V3 E1). The
+        verification state returns to what its provenance implies - a user's
+        statement is `stated`, anything else `inferred` - since the
+        pre-contradiction value was not kept. Returns the row, or None."""
+        cur = await self._db.execute("SELECT source_type FROM core_memories WHERE id = ?", (core_memory_id,))
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        state = "stated" if (row["source_type"] or "") == "user_statement" else "inferred"
+        await self._db.execute(
+            "UPDATE core_memories SET is_active = 1, verification_state = ? WHERE id = ?",
+            (state, core_memory_id),
+        )
+        await self._db.commit()
+        return await self.get_core_memory(core_memory_id)
+
     async def deactivate_core_memory(self, core_memory_id: int):
         """Deactivate a core memory."""
         # Deactivation here means a newer core memory contradicted it

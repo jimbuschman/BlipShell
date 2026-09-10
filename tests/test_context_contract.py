@@ -44,7 +44,7 @@ class TestRecallDedup:
         pool.add(PoolItem(text="a", priority_score=3, memory_id=7))
         pool.add(PoolItem(text="b", priority_score=2, memory_id=8))
         pool.add(PoolItem(text="c", priority_score=1))  # no id: never excluded
-        got = pool.get_top_entries(1000, exclude_memory_ids={7})
+        got = pool.get_top_entries(1000, exclude_keys={("memory", 7)})
         assert [i.text for i in got] == ["b", "c"]
 
     def test_gather_skips_history_copies_of_recalled_memories(self, memory_config):

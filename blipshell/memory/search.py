@@ -453,7 +453,10 @@ class MemorySearch:
         superseded_dropped = 0
         try:
             from blipshell.memory import supersession as _sup
-            sup = await _sup.superseded(self.sqlite, "memory", [r.memory_id for r in results])
+            # scoped to the reader's project: a project exception never hides
+            # the global fact elsewhere (review finding 2)
+            sup = await _sup.superseded(self.sqlite, "memory", [r.memory_id for r in results],
+                                        for_project=active_project)
         except Exception as e:
             logger.warning("Supersession lookup failed (showing everything unlabelled): %s", e)
             sup = {}

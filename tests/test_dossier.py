@@ -155,7 +155,7 @@ class TestReconcile:
         stats = await dossier.reconcile(sqlite_store, router, "hot")
         assert stats["folded"] == 1 and stats["digest_updated"] is True
         meta = json.loads((await sqlite_store.get_project("hot"))["metadata_json"])
-        assert meta["digest"] == "hot digest v2 (folded events)" and meta["dossier_reconciled_at"]
+        assert meta["digest"] == "hot digest v2 (folded events)" and meta["dossier_reconciled_event_id"]
         assert "hot digest v2" in meta["dossier_md"]
         prompt = router.generate.await_args.args[1]
         assert "built the dossier" in prompt and "hot digest v1" in prompt
@@ -210,7 +210,7 @@ class TestActivationContext:
             assert agent.memory_manager.rendered_elsewhere == set()
 
             await agent.activate_project("blip")
-            assert agent.memory_manager.rendered_elsewhere == {d.id}
+            assert agent.memory_manager.rendered_elsewhere == {("memory", d.id)}
             assert agent._dossier_followup_ids == {fid}
             assert "renew the domain" in agent._pending_follow_ups
             assert "re-run the Tailscale benchmark" not in agent._pending_follow_ups

@@ -64,6 +64,22 @@ class PoolItem:
         if self.estimated_tokens == 0:
             self.estimated_tokens = estimate_tokens(self.text)
 
+    @property
+    def record_kind(self) -> str:
+        """Which table `memory_id` indexes. Memories, history and summaries
+        are all rows of `memories`; lessons, core memories and thoughts have
+        their own id sequences. External review 2026-09-10: a bare-int
+        exclusion set suppressed lesson #1 because memory #1 was recalled."""
+        if self.source in ("lesson", "core", "thought", "user_model"):
+            return self.source
+        return "memory"
+
+    @property
+    def record_key(self):
+        """(record_kind, id) - the only identity two pool items may be
+        compared on. None when the item has no stored record behind it."""
+        return (self.record_kind, self.memory_id) if self.memory_id else None
+
 
 class Pool:
     """A single memory token budget pool."""
@@ -96,16 +112,18 @@ class Pool:
         self._items.sort(key=lambda x: x.priority_score, reverse=True)
 
     def get_top_entries(self, available_tokens: int, max_override: int | None = None,
-                        exclude_memory_ids: set[int] | None = None,
-                        rendered_elsewhere: set[int] | None = None) -> list[PoolItem]:
+                        exclude_keys: set[tuple] | None = None,
+                        rendered_elsewhere: set[tuple] | None = None) -> list[PoolItem]:
         """Get top entries that fit within available tokens and item count cap.
 
-        `exclude_memory_ids`: items carrying one of these memory_ids are
-        skipped without charging the budget - the same memory already reached
-        the request through another pool (V3 B1: Recall beats RecentHistory).
-        `rendered_elsewhere`: same, for memories a block outside the pools
-        carries (the active project's dossier, V3 E2). Each is recorded in
-        `last_omitted` under its own reason so the /why trace says which.
+        Both exclusion sets hold typed record keys, `(record_kind, id)` as
+        `PoolItem.record_key` yields them - never bare ids, which collide
+        across the independent id sequences of memories and lessons.
+        `exclude_keys`: the same record already reached the request through
+        another pool (V3 B1: Recall beats RecentHistory). `rendered_elsewhere`:
+        a block outside the pools carries it (the active project's dossier,
+        V3 E2). Each is recorded in `last_omitted` under its own reason so the
+        /why trace says which.
         """
         selected = []
         omitted: list[tuple[PoolItem, str]] = []
@@ -116,10 +134,11 @@ class Pool:
             if self.max_items and len(selected) >= self.max_items:
                 omitted.append((item, "item cap"))
                 continue
-            if exclude_memory_ids and item.memory_id and item.memory_id in exclude_memory_ids:
+            key = item.record_key
+            if exclude_keys and key and key in exclude_keys:
                 omitted.append((item, "already sent via Recall"))
                 continue
-            if rendered_elsewhere and item.memory_id and item.memory_id in rendered_elsewhere:
+            if rendered_elsewhere and key and key in rendered_elsewhere:
                 omitted.append((item, "already in the project dossier"))
                 continue
             if used + item.estimated_tokens <= effective_cap:
@@ -166,10 +185,11 @@ class MemoryManager:
         self._pools: dict[str, Pool] = {}
         self._pool_configs: dict[str, dict] = {}
         self._summarize_callback = None
-        # Memory ids that reach the request through a block OUTSIDE the pools
-        # (the active project's dossier, V3 E2). Every pool skips them, Recall
-        # included: the dossier is their canonical, structured place.
-        self.rendered_elsewhere: set[int] = set()
+        # Typed record keys, (record_kind, id), that reach the request through
+        # a block OUTSIDE the pools (the active project's dossier, V3 E2).
+        # Every pool skips them, Recall included: the dossier is their
+        # canonical, structured place.
+        self.rendered_elsewhere: set[tuple] = set()
 
         self._configure_pools()
 
@@ -248,20 +268,20 @@ class MemoryManager:
         # this every recalled memory of the previous session rendered twice
         # (continuity baseline 2026-09-09: 16 duplicated renders / 13 cases).
         order = sorted(self._pools.values(), key=lambda p: 0 if p.name == "Recall" else 1)
-        recalled_ids: set[int] = set()
+        recalled_keys: set[tuple] = set()
         elsewhere = self.rendered_elsewhere or None
         for pool in order:
             cap = pool_budgets.get(pool.name) if pool_budgets else None
-            exclude = recalled_ids if pool.name != "Recall" else None
-            entries = pool.get_top_entries(remaining, max_override=cap, exclude_memory_ids=exclude,
+            exclude = recalled_keys if pool.name != "Recall" else None
+            entries = pool.get_top_entries(remaining, max_override=cap, exclude_keys=exclude,
                                            rendered_elsewhere=elsewhere)
             for entry in entries:
                 if remaining >= entry.estimated_tokens:
                     entry.pool_name = pool.name
                     result.append(entry)
                     remaining -= entry.estimated_tokens
-                    if pool.name == "Recall" and entry.memory_id:
-                        recalled_ids.add(entry.memory_id)
+                    if pool.name == "Recall" and entry.record_key:
+                        recalled_keys.add(entry.record_key)
 
         return result
 

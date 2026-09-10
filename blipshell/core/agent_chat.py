@@ -591,8 +591,13 @@ class ChatMixin:
         # Search relevant memories for recall
         await self._search_relevant_memories(user_message)
 
-        # Build message list
-        messages = self._build_messages(user_message)
+        # Build message list (an over-limit request is refused, not sent)
+        from blipshell.llm.exceptions import ContextOverflowError
+        try:
+            messages = self._build_messages(user_message)
+        except ContextOverflowError as e:
+            logger.error("Request refused: %s", e)
+            return f"Error: {e}"
 
         # Only now has a self-thought actually reached the prompt — charge its
         # surfacing fatigue (a budget-evicted thought pays nothing).
@@ -1295,10 +1300,21 @@ class ChatMixin:
             )
         return "\n".join(lines)
 
-    def _build_system_prefix(self) -> tuple[str, str]:
+    def _build_system_prefix(self, max_head_tokens: int | None = None,
+                             drop_files_list: bool = False) -> tuple[str, str, list[str]]:
         """The fixed parts of the system message, split around where the
-        memory block goes: (head, tail). Measured before the pools are
-        budgeted so memory gets what is actually left (V3 B1)."""
+        memory block goes: (head, tail, omissions). Measured before the pools
+        are budgeted so memory gets what is actually left (V3 B1).
+
+        `max_head_tokens` (review finding 6, oversize policy): when the fixed
+        parts would not leave room for the conversation and memory, the
+        TRIMMABLE blocks are cut, in this order, each cut recorded in
+        `omissions` so /why and the context stats say what the model did not
+        see: (1) project context (repo scan + dossier) truncated to what fits,
+        (2) the scratchpad/notes continuity block dropped. The system prompt
+        and the model-specific instructions are mandatory and never cut here.
+        `drop_files_list` removes the files-read list from the tail."""
+        omissions: list[str] = []
         system_prompt = self.config.agent.system_prompt
 
         # Get per-model settings for the active model
@@ -1331,7 +1347,18 @@ class ChatMixin:
             if ms and ms.extra_instructions:
                 system_prompt += f"MODEL-SPECIFIC INSTRUCTIONS:\n{ms.extra_instructions}\n\n"
 
-            system_prompt += self._project_context
+            project_context = self._project_context
+            if max_head_tokens is not None:
+                room = max_head_tokens - estimate_tokens(system_prompt)
+                pc_tokens = estimate_tokens(project_context)
+                if pc_tokens > max(room, 0):
+                    keep_tokens = max(room, 0)
+                    keep_chars = int(len(project_context) * keep_tokens / pc_tokens * 0.9) if pc_tokens else 0
+                    dropped = pc_tokens - estimate_tokens(project_context[:keep_chars])
+                    project_context = (project_context[:keep_chars]
+                                       + f"\n[project context truncated: ~{dropped} tokens omitted to fit the window]\n")
+                    omissions.append(f"project context truncated (~{dropped} tokens)")
+            system_prompt += project_context
         else:
             # Plain chat mode — apply chat-specific behavioral instructions
             if ms and ms.chat_instructions:
@@ -1340,9 +1367,12 @@ class ChatMixin:
         # Consolidate all context into a single system message (CC approach).
         # Scratchpad and session notes come from the shared builder so the
         # executor path gets the identical block — see _build_continuity_block.
-        system_prompt += self._build_continuity_block(
-            include_followups=False, include_time=False,
-        )
+        continuity = self._build_continuity_block(include_followups=False, include_time=False)
+        if max_head_tokens is not None and continuity.strip():
+            if estimate_tokens(system_prompt) + estimate_tokens(continuity) > max_head_tokens:
+                omissions.append(f"scratchpad/notes block omitted ({estimate_tokens(continuity)} tokens)")
+                continuity = ""
+        system_prompt += continuity
         head = system_prompt
 
         tail = ""
@@ -1350,12 +1380,14 @@ class ChatMixin:
         if getattr(self, "_pending_follow_ups", "") and self._pending_follow_ups.strip():
             tail += f"\n\n{self._pending_follow_ups}"
 
-        if self._files_read:
+        if self._files_read and not drop_files_list:
             files_list = "\n".join(f"  - {f}" for f in sorted(self._files_read))
             tail += (
                 "\n\nFILES ALREADY READ THIS SESSION (do NOT re-read these):\n"
                 + files_list
             )
+        elif self._files_read:
+            omissions.append(f"files-read list omitted ({len(self._files_read)} files)")
 
         # Derived capability block — keeps the model's self-knowledge in sync
         # with what's actually true this turn (e.g. vision availability) instead
@@ -1366,7 +1398,7 @@ class ChatMixin:
         # system prompt stays stable across turns — a changing timestamp near the
         # top would bust prompt caching on cloud endpoints every turn.
         tail += self._render_time_anchor()
-        return head, tail
+        return head, tail, omissions
 
     def _build_messages(self, user_message: str) -> list[dict]:
         """Build the full message list with memory context.
@@ -1396,21 +1428,54 @@ class ChatMixin:
         )
 
         # ── Fixed parts, measured ──
-        head, tail = self._build_system_prefix()
+        head, tail, omitted_fixed = self._build_system_prefix()
         prefix_tokens = estimate_tokens(head) + estimate_tokens(tail)
         tools = self.tool_registry.get_all_ollama_tools() or []
         tools_tokens = estimate_tokens(json.dumps(tools, default=str)) if tools else 0
         response_reserve = min(RESPONSE_RESERVE_MAX_TOKENS, max(256, context_limit // 8))
-        fixed = prefix_tokens + tools_tokens + response_reserve + MemoryManager.OVERHEAD_TOKENS
+        # Formatting overhead (pool labels, message framing) scales with the
+        # window: the flat 1000-token allowance was half of a 2000-token window
+        # and alone made small windows infeasible under the hard bound.
+        overhead = min(MemoryManager.OVERHEAD_TOKENS, max(128, context_limit // 16))
+        fixed = prefix_tokens + tools_tokens + response_reserve + overhead
         available = context_limit - fixed
-        if available < MIN_MEMORY_TOKENS:
+        # This turn's user message is mandatory; the floor is for memory +
+        # the rest of the conversation ON TOP of it.
+        needed = MIN_MEMORY_TOKENS + user_tokens
+        tools_omitted = False
+        if available < needed:
+            # Oversize policy (review finding 6): the window is a HARD bound.
+            # Trim the trimmable fixed blocks - project context, scratchpad/
+            # notes, files-read list - then, as the last resort, the tool
+            # schemas (the model cannot call tools this turn, and the stats
+            # say so). If the mandatory content still does not fit, refuse
+            # with an explicit error instead of sending an over-limit request.
+            head_budget = context_limit - tools_tokens - response_reserve - overhead - needed - estimate_tokens(tail)
+            head, tail, omitted_fixed = self._build_system_prefix(max_head_tokens=max(head_budget, 0),
+                                                                  drop_files_list=True)
+            prefix_tokens = estimate_tokens(head) + estimate_tokens(tail)
+            fixed = prefix_tokens + tools_tokens + response_reserve + overhead
+            available = context_limit - fixed
+            if available < needed and tools_tokens:
+                omitted_fixed.append(f"tool schemas omitted ({tools_tokens} tokens): window too small")
+                tools_omitted = True
+                tools_tokens = 0
+                fixed = prefix_tokens + response_reserve + overhead
+                available = context_limit - fixed
+            if available < needed:
+                from blipshell.llm.exceptions import ContextOverflowError
+                raise ContextOverflowError(
+                    f"The request does not fit the model's context window of {context_limit} tokens: "
+                    f"system prompt {prefix_tokens} + response reserve {response_reserve} + this message "
+                    f"{user_tokens} + minimum memory {MIN_MEMORY_TOKENS} exceed it even with "
+                    f"{', '.join(omitted_fixed) or 'nothing left to trim'}. Shorten the message or the "
+                    f"system prompt, or use a model with a larger window."
+                )
             logger.warning(
-                "Context window %d leaves %d tokens for conversation+memory after "
-                "prefix=%d tools=%d reserve=%d; clamping to %d",
-                context_limit, available, prefix_tokens, tools_tokens, response_reserve,
-                MIN_MEMORY_TOKENS,
+                "Context window %d: fixed context trimmed to fit (%s); %d tokens left for conversation+memory",
+                context_limit, "; ".join(omitted_fixed), available,
             )
-            available = MIN_MEMORY_TOKENS
+        self._tools_omitted_this_turn = tools_omitted
 
         # Classify query and compute dynamic pool budgets
         profile = classify_query(user_message)
@@ -1503,6 +1568,16 @@ class ChatMixin:
         memory_tokens = sum(p["tokens"] for p in pool_usage.values())
         request_tokens = prefix_tokens + tools_tokens + memory_tokens + history_tokens
         usage_pct = (request_tokens / context_limit * 100) if context_limit > 0 else 0
+        # Final invariant: estimated request + reserve within the window.
+        # Estimates are a tokenizer approximation, so this is the bound the
+        # builder can promise, not an exact provider count.
+        if request_tokens + response_reserve > context_limit:
+            from blipshell.llm.exceptions import ContextOverflowError
+            raise ContextOverflowError(
+                f"The request ({request_tokens} tokens estimated) plus the response reserve "
+                f"({response_reserve}) exceeds the model's context window of {context_limit}; "
+                f"this message alone is {user_tokens} tokens."
+            )
         self._last_context_stats = {
             "query_profile": profile,
             "context_limit": context_limit,
@@ -1518,6 +1593,8 @@ class ChatMixin:
             "total_context_items": len(memory_items),
             "request_tokens_estimate": request_tokens,
             "usage_pct": usage_pct,
+            "omitted_fixed": list(omitted_fixed),
+            "tools_omitted": tools_omitted,
         }
 
         memory_text = ""

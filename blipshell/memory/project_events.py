@@ -72,6 +72,24 @@ async def events(sqlite, project: str, *, since: Optional[str] = None,
     return [dict(r) for r in await cur.fetchall()]
 
 
+async def events_after(sqlite, project: str, after_id: int, *, limit: int = 200) -> list[dict]:
+    """Events with id > after_id, OLDEST first - the consumption order for a
+    cursor. Ids are the stable high-water mark; timestamps are not (two
+    events can share one, and a reconcile that stamps 'now' skips whatever
+    arrived during the model call)."""
+    cur = await sqlite._db.execute(
+        "SELECT * FROM project_events WHERE project = ? AND id > ? ORDER BY id ASC LIMIT ?",
+        (project, int(after_id), int(limit)),
+    )
+    return [dict(r) for r in await cur.fetchall()]
+
+
+async def pending_count(sqlite, project: str, after_id: int) -> int:
+    cur = await sqlite._db.execute(
+        "SELECT COUNT(*) FROM project_events WHERE project = ? AND id > ?", (project, int(after_id)))
+    return int((await cur.fetchone())[0])
+
+
 async def active_projects(sqlite, *, days: int = 14) -> list[str]:
     """Projects with an event or a session in the window - the ones worth
     spending nightly compute on."""
