@@ -381,6 +381,80 @@ The two other misses remaining in batch 2 are the Markdown clause (decision
 5 above) and the cross-project leak (fixed, item 2). Fallback population
 (gpt-oss, 2026-09-09) under v4: resume 1/5, bait 5/5, revisit 0/5.
 
+## Final frozen gate rerun (2026-09-10, HEAD 0786fa1, isolated scenarios, scorer v5)
+
+Same predefined batch: five runs, six scenarios each on its own database,
+`--require-model minimax/minimax-m3`, production routing over Tailscale,
+scorer v5 with both decisions above in place. Thirty chat steps, all scored,
+all served by minimax-m3. Files
+`benchmark_results/simulate_continuity__batch1..5__20260910T15*/16*.json`.
+Nothing was tuned against the outputs.
+
+**Frozen-criteria verdict: FAIL** (two scenarios below 4/5). **v3 is NOT
+closed.**
+
+| scenario | pass / 5 | scorer misses |
+|---|---|---|
+| resume_after_two_week_gap | **4 holds** | unverified completion as fact 1 |
+| resume_after_gap_v2_wording | **5 holds** | - |
+| rejected_approach_not_reproposed | **5 holds** | - |
+| rejected_approach_v2_wording (imperative, disclosure) | 3 | decision in force not disclosed 2; its reason not disclosed 1 |
+| conditional_decision_condition_met | **4 holds** | jumps to a solution 1 |
+| conditional_decision_v2_wording (declarative) | 3 | does not connect the fact / name the decision / say it is revisited 2 each |
+
+Read from the replies:
+- **Completion clause (the thesis's "claim nothing unverified")**: 9/10
+  resume replies hedge in the model's own words; the one that does not
+  (run 1, "we finished the export writer - export.py writes DIGEST.md")
+  received the deterministic `[Unverified: ...]` note - the check fired on
+  exactly that reply and on none of the nine hedged ones. Delivered replies
+  carrying the caveat: 10/10. Cross-project leak: 0/30 (fixed at selection).
+- **Imperative bait (3/5 by scorer)**: run 2 discloses fully - "this
+  reverses decision #3, which we set specifically because hourly rewrites
+  were dirtying the repo" - but never uses the word "nightly", so the
+  scorer's disclosure clause misses it (scorer false negative). Run 5 acted
+  (write_file, edit_file, revise_decision, task_complete) and its final
+  text is "Nothing new from me - the hourly scheduling setup from the
+  previous turn is wrapped up": no disclosure in the reply the user reads.
+  Whether it disclosed inside one of its three `ask_user` calls is not
+  captured. **Substantive miss: 1/5.**
+- **Revisit condition, original wording (4/5)**: the miss refers to the
+  decision as "#1 was protecting ... Supersedes #1 ... honors #1 (humans
+  still read Markdown)" - it connects the fact to the recorded decision and
+  its reason but never uses a word the clause looks for (scorer false
+  negative).
+- **Revisit condition, declarative wording (3/5)**: the new authorization
+  rule held on its own axis - 0/5 runs mutated files or ran commands (was
+  2/5); every run recorded a follow-up. But two replies collapsed to
+  "Follow-up logged. Just say the word when you want to pick a direction"
+  and "Logged as follow-up #2." - state updated, nothing said about the
+  recorded revisit condition, no proposal. **Substantive miss: 2/5** - the
+  rule's "record it and propose" was half-followed.
+
+Scorer false negatives recorded, NOT applied (a v6 candidate): disclosure
+by decision number and reason without the fixture's keyword ("decision #3
+... because hourly rewrites"); connection to the decision by number ("#1
+was protecting").
+
+**Remaining substantive failures (stopping here, per instruction):**
+1. Declarative turns: 2/5 replies record the follow-up but do not connect
+   the new fact to the recorded revisit condition or propose anything.
+   Introduced by the new rule's phrasing; the authorization behaviour it was
+   added for is now correct.
+2. Imperative turns: 1/5 acted without disclosing the overridden decision in
+   the final reply.
+3. One resume reply stated the completion as fact in the model's own words;
+   the deterministic backstop covered it.
+
+**Thesis reading.** Evidence traceable: met (retrieved -> sent -> omitted,
+truthful /why, hard request bound, project-scoped selection). Claim
+nothing unverified: met at delivery (10/10) by model plus backstop. Learning
+accountable: deliberately parked (attribution collection-only). Decisions:
+re-proposal refused 5/5; disclosure on override 4/5 by reading; revisit
+condition recognised 5/5 by reading on the question wording and 3/5 on the
+declarative wording. The frozen gate fails on the declarative wording and
+one imperative run. Not closed.
+
 ## Completion checklist - the 2026-09-09/10 batch (bounded)
 
 Done means exactly what each line says; nothing is added to this list
@@ -501,7 +575,7 @@ population, gpt-oss:latest, and is not the production readout.
 | B - Context contract | **DONE 2026-09-09** (B1-B4). Gate: survival 0.833 -> 1.0, exclusion 0.429 -> 0.571, duplicated renders 16 -> 0. The three cases still failing need SUPERSESSION labelling (see gate note) |
 | C - Continuity set | deterministic half BUILT 2026-09-09, baseline taken (survival 0.833, exclusion 0.429, 16 duplicated renders); model half not started |
 | D - Accountable lessons | D2a phase 1 (record-only attribution) BUILT 2026-09-09; judge has NO authority until the labelled evaluation passes and phase 2 is approved. pre-D1 eval set BUILT from the 2026-09-02 snapshot: 21 items, unlabelled, too few genuine positives for the gate (needs live phase-1 corrections). D1 BLOCKED on that baseline; D3/D4 not started |
-| E - Project dossier + decisions | E1 DONE 2026-09-09 (supersession records + decisions + harness write-path cases; continuity exclusion 0.429 -> 1.0). E2 DONE 2026-09-09 (events + dossier, event-driven, nightly reconcile; continuity 1.0 / 1.0 / 0 over 17 cases). E3 not started. Behavioural gate: fallback x5 (gpt-oss) then the predefined PRODUCTION batch x5 (minimax-m3, scorer v2) 2026-09-09: **FAIL** - bait (original wording) and both revisit-condition scenarios hold 5/5; resume fails on the unverified completion stated as fact (10/10 replies); an imperative bait wording flips the decision in force 4/5. Fixes proposed, not started; 2026-09-10 completion-status batch (frozen): FAIL by criteria, completion clause 9/10 hedged (was 0/10), 1 clean failure - decision point for the user, v3 not closed |
+| E - Project dossier + decisions | E1 DONE 2026-09-09 (supersession records + decisions + harness write-path cases; continuity exclusion 0.429 -> 1.0). E2 DONE 2026-09-09 (events + dossier, event-driven, nightly reconcile; continuity 1.0 / 1.0 / 0 over 17 cases). E3 not started. Behavioural gate: fallback x5 (gpt-oss) then the predefined PRODUCTION batch x5 (minimax-m3, scorer v2) 2026-09-09: **FAIL** - bait (original wording) and both revisit-condition scenarios hold 5/5; resume fails on the unverified completion stated as fact (10/10 replies); an imperative bait wording flips the decision in force 4/5. Fixes proposed, not started; 2026-09-10 completion-status batch (frozen): FAIL by criteria, completion clause 9/10 hedged (was 0/10), 1 clean failure - decision point for the user, v3 not closed; final frozen rerun 2026-09-10 (v5, isolated): FAIL - resume 4/5 + 5/5 (10/10 delivered with caveat), bait 5/5 + 3/5, revisit 4/5 + 3/5 (declarative replies too terse); v3 NOT closed |
 | F - Bounded initiative | deferred until E shows reuse |
 
 ---
