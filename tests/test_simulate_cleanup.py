@@ -41,3 +41,27 @@ async def test_runner_cleanup_releases_the_stores(tmp_path):
     await SimRunner(quiet=True)._cleanup(agent, scenario)
     assert _store_threads() == []
     assert agent.sqlite._db is None or getattr(agent.sqlite, "_closed", True)
+
+
+async def test_preflight_agent_is_fully_released(monkeypatch):
+    """The pre-flight validator boots its own agent; it must release the
+    stores too, or the interpreter hangs at exit on its SQLite thread."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from blipshell.simulate import runner as r
+
+    agent = SimpleNamespace(
+        start_session=AsyncMock(), end_session=AsyncMock(), force_cleanup=AsyncMock(),
+        activate_project=AsyncMock(), deactivate_project=AsyncMock(),
+        tool_registry=SimpleNamespace(get_tool_names=lambda: ["read_file"]),
+        sqlite=SimpleNamespace(list_projects=AsyncMock(return_value=[])),
+    )
+
+    async def fake_bootstrap(self):
+        return agent, object(), object()
+
+    monkeypatch.setattr(r.SimRunner, "_bootstrap_agent", fake_bootstrap)
+    errors = await r.SimRunner(quiet=True)._preflight_validate([])
+    assert errors == []
+    agent.end_session.assert_awaited_once()
+    agent.force_cleanup.assert_awaited_once()

@@ -326,11 +326,17 @@ class SimRunner:
                             f"Scenario '{scenario.name}': unknown tool '{name}'{suggestion}"
                         )
 
-        # Cleanup
+        # Cleanup - end the session AND release the stores: the pre-flight
+        # agent was the last leak (2026-09-09 production batch, run 1 hung
+        # 36 minutes after writing its JSON on this agent's aiosqlite thread).
         try:
             await agent.end_session()
         except Exception:
             pass
+        try:
+            await agent.force_cleanup()
+        except Exception as e:
+            logger.warning("Pre-flight agent cleanup failed: %s", e)
 
         if not errors:
             self.on_status(f"  Pre-flight OK: {len(all_known)} tools validated")

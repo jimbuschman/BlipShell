@@ -28,6 +28,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 RESULTS = REPO / "benchmark_results"
 HOLD_THRESHOLD = 4  # of 5
+MAX_RUN_SECS = 3600      # six scenarios at up to 600s each, plus session closes
+EXIT_GRACE_SECS = 120    # after the JSON exists
 
 
 def run_once(index: int, model: str, config_path: str | None) -> Path | None:
@@ -45,8 +48,21 @@ def run_once(index: int, model: str, config_path: str | None) -> Path | None:
         cmd += ["--config-path", config_path]
     cmd += ["simulate", "-c", "continuity", "--require-model", model, "--output", str(out)]
     print(f"=== run {index}: {' '.join(cmd[3:])}", flush=True)
-    proc = subprocess.run(cmd, cwd=REPO)
-    if proc.returncode != 0:
+    # The result is complete once the JSON exists (the CLI persists before
+    # its console report). A process that has not exited GRACE seconds after
+    # that is hung on a leaked thread, not still measuring: kill it and say so.
+    proc = subprocess.Popen(cmd, cwd=REPO)
+    waited = 0.0
+    while proc.poll() is None and not out.exists() and waited < MAX_RUN_SECS:
+        time.sleep(5); waited += 5
+    grace = 0.0
+    while proc.poll() is None and out.exists() and grace < EXIT_GRACE_SECS:
+        time.sleep(5); grace += 5
+    if proc.poll() is None:
+        why = "hung at exit after writing its JSON" if out.exists() else f"no result after {MAX_RUN_SECS}s"
+        print(f"    process {why}; killing it (infrastructure, not a measurement)", flush=True)
+        proc.kill(); proc.wait(timeout=30)
+    elif proc.returncode != 0:
         print(f"    process exit {proc.returncode}")
     return out if out.exists() else None
 
