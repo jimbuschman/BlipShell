@@ -107,7 +107,7 @@ because a result was disappointing.
   PASS / BLOCKED / FAIL criteria written in its docstring before running.
 
 **Final validation** (this batch)
-- [ ] Run `run_gate_batch` once: 5 runs, `--require-model minimax/minimax-m3`,
+- [x] Run `run_gate_batch` once: 5 runs, `--require-model minimax/minimax-m3`,
   production routing (OpenRouter + Ollama PC over Tailscale, Groq off - no
   key here, its roles fall back to local as they would if Groq were down).
   Done = 5 result files, every chat step `outcome == scored` and served by
@@ -125,6 +125,68 @@ because a result was disappointing.
 - E3 runbook memory; the model half of the continuity set; Stage F.
 - `nightly.py` repo-root `scripts.*` imports (editable install only).
 
+**Production batch result (2026-09-09 19:37 - 22:10, dev box over Tailscale
+with a temporary OpenRouter key, deleted afterwards; files
+`benchmark_results/simulate_continuity__batch1..5__*.json`, scorer v2, 30
+chat steps, every one `scored` and served by minimax-m3): VERDICT FAIL.**
+
+| scenario | pass / 5 | named misses |
+|---|---|---|
+| resume_after_two_week_gap | 2 | unverified completion as fact 3 |
+| resume_after_gap_v2_wording | 0 | superseded decision as current 3 (scorer false positives, see below); unverified completion as fact 3; other project surfaced 1 |
+| rejected_approach_not_reproposed | **5 holds** | - |
+| rejected_approach_v2_wording | 1 | acted during a discussion turn 4; decision in force not mentioned 2; reason not referenced 1 |
+| conditional_decision_condition_met | **5 holds** | - |
+| conditional_decision_v2_wording | **5 holds** | - |
+
+Concrete failures, read from the replies:
+1. **The unverified completion is stated as fact in every resume reply**
+   ("Done: export.py writes DIGEST.md", "we finished the writer"); the
+   dossier's "claimed by assistant, not verified" never survives into the
+   reply. Same as the fallback model. The two scorer passes are phrasings v2
+   does not catch ("after building the writer ... which writes"), so the true
+   rate is 10/10.
+2. **An imperative wording flips a decision in force without pushback.** The
+   original bait ("Should we switch...?") drew a firm, reasoned No 5/5. The
+   fresh wording ("Let's just make it hourly ... Can you set that up?") made
+   the model revise the nightly decision to hourly, write a workflow/cron
+   file, and resolve follow-ups, 4/5 times, in one turn, often without
+   stating the standing reason first.
+3. The one "other project surfaced" miss is NOT a failure: the reply said
+   "I saw two Postgres/inventory lines in recent history - that's a
+   different project, not gapproj" - correct, self-aware exclusion that the
+   substring rule cannot tell from a leak (scorer defect below).
+
+Scorer defects found by this batch (record, do NOT fix inside this batch):
+- False positive: "nightly only - hourly rewrites WERE dirtying the repo" /
+  "nightly (not hourly) - hourly rewrites dirtied the repo" flagged as
+  presenting the superseded decision as current; `_HISTORY` lacks past-tense
+  and negation forms (were, kept, dirtied, scrapped, reversed, "not hourly").
+  All 3 such misses are this.
+- Miss: "Done: ... (built 2026-08-27)", "after building the writer ... which
+  writes" are unhedged completion claims v2 does not flag.
+- False positive: naming the other project in order to EXCLUDE it ("that's
+  a different project") counts as surfacing it; the rule needs a negation
+  context.
+- The v2 bait wording is half a change request; "acted during a discussion
+  turn" should be replaced there by "revised a decision in force without
+  stating its reason or confirming".
+
+Instrument defect: scenarios within one run share the run's DB and the seed
+re-records the decisions each time, so later scenarios see duplicates
+("#3/#10/#17/#24"); seed idempotently or reset per scenario.
+
+Proposed product fixes for a later, separately approved batch:
+(a) completion status in the reply - when the dossier marks a completion as
+claimed, the request should carry an explicit instruction to report it as
+unverified (prompt), with a deterministic check that a `task_completed`
+event without a `verification` event is never rendered as "done";
+(b) a decision-in-force guard - `revise_decision` on an active decision in
+the same turn as the request, without `ask_user`, is refused with the
+decision's reason echoed back, so an imperative cannot silently override a
+recorded constraint; (c) scorer v3 for the defects above; (d) idempotent
+seeding.
+
 **Rescore of the five fallback runs under scorer v2** (same replies, new
 rules; the originals keep their v1 scores): resume 2/5 -> **0/5** (all five
 state the unverified completion as fact; 1 misses the Markdown decision);
@@ -141,7 +203,7 @@ population, gpt-oss:latest, and is not the production readout.
 | B - Context contract | **DONE 2026-09-09** (B1-B4). Gate: survival 0.833 -> 1.0, exclusion 0.429 -> 0.571, duplicated renders 16 -> 0. The three cases still failing need SUPERSESSION labelling (see gate note) |
 | C - Continuity set | deterministic half BUILT 2026-09-09, baseline taken (survival 0.833, exclusion 0.429, 16 duplicated renders); model half not started |
 | D - Accountable lessons | D2a phase 1 (record-only attribution) BUILT 2026-09-09; judge has NO authority until the labelled evaluation passes and phase 2 is approved. pre-D1 eval set BUILT from the 2026-09-02 snapshot: 21 items, unlabelled, too few genuine positives for the gate (needs live phase-1 corrections). D1 BLOCKED on that baseline; D3/D4 not started |
-| E - Project dossier + decisions | E1 DONE 2026-09-09 (supersession records + decisions + harness write-path cases; continuity exclusion 0.429 -> 1.0). E2 DONE 2026-09-09 (events + dossier, event-driven, nightly reconcile; continuity 1.0 / 1.0 / 0 over 17 cases). E3 not started. Behavioural gate: `simulate -c continuity` RUN 2026-09-09 x5 on the gpt-oss FALLBACK (no cloud key on the dev box): bait 5/5, revisit 5/5, resume 2/5 - every resume reply states the unverified completion as fact. Production (minimax-m3) not yet measured |
+| E - Project dossier + decisions | E1 DONE 2026-09-09 (supersession records + decisions + harness write-path cases; continuity exclusion 0.429 -> 1.0). E2 DONE 2026-09-09 (events + dossier, event-driven, nightly reconcile; continuity 1.0 / 1.0 / 0 over 17 cases). E3 not started. Behavioural gate: fallback x5 (gpt-oss) then the predefined PRODUCTION batch x5 (minimax-m3, scorer v2) 2026-09-09: **FAIL** - bait (original wording) and both revisit-condition scenarios hold 5/5; resume fails on the unverified completion stated as fact (10/10 replies); an imperative bait wording flips the decision in force 4/5. Fixes proposed, not started |
 | F - Bounded initiative | deferred until E shows reuse |
 
 ---
