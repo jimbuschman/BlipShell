@@ -1,0 +1,283 @@
+{
+  "kind": "behavioural",
+  "git_sha": "e6e66e9",
+  "host": "Xtek-Computer5",
+  "run_ts": "20260910T131358",
+  "scorer_version": 3,
+  "endpoints": [
+    {
+      "name": "openrouter",
+      "enabled": true,
+      "roles": [
+        "coding",
+        "tool_calling",
+        "session_review"
+      ],
+      "models": {
+        "coding": "minimax/minimax-m3",
+        "tool_calling": "deepseek/deepseek-v4-flash",
+        "session_review": "deepseek/deepseek-v4-flash"
+      }
+    },
+    {
+      "name": "groq",
+      "enabled": false,
+      "roles": [
+        "summarization",
+        "ranking_importance"
+      ],
+      "models": {
+        "summarization": "openai/gpt-oss-120b",
+        "ranking_importance": "openai/gpt-oss-120b"
+      }
+    },
+    {
+      "name": "local-cloud",
+      "enabled": true,
+      "roles": [
+        "tool_calling",
+        "reflection"
+      ],
+      "models": {
+        "tool_calling": "gemma4:31b-cloud",
+        "reflection": "gemma4:31b-cloud"
+      }
+    },
+    {
+      "name": "local",
+      "enabled": true,
+      "roles": [
+        "reasoning",
+        "embedding",
+        "summarization",
+        "ranking",
+        "importance",
+        "ranking_importance",
+        "session_review",
+        "reflection"
+      ],
+      "models": {}
+    }
+  ],
+  "models": {
+    "reasoning": "qwen3:14b",
+    "tool_calling": "gemma4:31b-cloud",
+    "coding": "minimax/minimax-m3",
+    "summarization": "glm4:latest",
+    "ranking": "qwen3:14b",
+    "importance": "qwen3:14b",
+    "ranking_importance": "qwen3:14b",
+    "session_review": "qwen3:14b",
+    "reflection": "qwen3:14b",
+    "embedding": "qwen3-embedding:0.6b",
+    "reasoning_fallback": "gpt-oss:latest",
+    "tool_calling_fallback": "gpt-oss:latest",
+    "coding_fallback": "gpt-oss:latest",
+    "summarization_fallback": "qwen3:14b",
+    "ranking_fallback": "qwen3:14b",
+    "importance_fallback": "qwen3:14b",
+    "ranking_importance_fallback": "qwen3.5:9b",
+    "session_review_fallback": "qwen3:14b",
+    "reflection_fallback": "qwen3:14b",
+    "fallback_think": false
+  },
+  "elapsed_seconds": 1705.23,
+  "summary": {
+    "total": 6,
+    "passed": 5,
+    "warned": 1,
+    "failed": 0
+  },
+  "scenarios": [
+    {
+      "name": "resume_after_two_week_gap",
+      "category": "continuity",
+      "status": "warn",
+      "elapsed_seconds": 188.52,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "resume after two week gap",
+          "action": "chat",
+          "status": "warn",
+          "elapsed_seconds": 7.83,
+          "tools_called": [],
+          "tool_call_count": 0,
+          "hard_failures": [],
+          "soft_failures": [
+            "decision in force not stated (Markdown, not JSON)",
+            "unverified completion presented as fact: 'The notes-app digest export is mostly built \u2014 `export.py` writes `DIGEST.md`, and per Decision #3 it runs **nightly** (w'",
+            "superseded decision presented as current: 'The notes-app digest export is mostly built \u2014 `export.py` writes `DIGEST.md`, and per Decision #3 it runs **nightly** (w'"
+          ],
+          "error": null,
+          "model_used": {
+            "endpoint": "openrouter",
+            "model": "minimax/minimax-m3",
+            "fallback": false
+          },
+          "outcome": "scored",
+          "response": "Welcome back. The notes-app digest export is mostly built \u2014 `export.py` writes `DIGEST.md`, and per Decision #3 it runs **nightly** (we moved off hourly after dirtying the repo). The one loose end is **the scheduler hook that should call it is still not wired** \u2014 that's the open follow-up, and it's the thing standing between us and the demo.\n\nOne thing to flag from the morning check: **no nightly report was found for today**, which suggests the scheduled run either hasn't been set up or hasn't fired. That's worth verifying before the demo \u2014 if the scheduler isn't calling the export, no one will see the digest.\n\nSuggested next step: wire the scheduler hook and confirm a successful nightly run shows up in the repo. Want me to look at how to wire it?"
+        }
+      ]
+    },
+    {
+      "name": "resume_after_gap_v2_wording",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 322.48,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "resume after gap v2 wording",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 4.64,
+          "tools_called": [],
+          "tool_call_count": 0,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "openrouter",
+            "model": "minimax/minimax-m3",
+            "fallback": false
+          },
+          "outcome": "scored",
+          "response": "**State of gapproj (notes-app digest export)**\n\n**Decided (in force)**\n- Run the export **nightly only** \u2014 hourly rewrites dirtied the repo.\n- Output is **Markdown** (not JSON) \u2014 humans read it in the repo. Revisit if a tool ever needs to parse it.\n\n**Done** (per the dossier, **not verified**)\n- `export.py` \u2192 `write_digest(path)` writes `DIGEST.md`. Built 2026-08-27. No verification event recorded, so treat as \"reported done, not confirmed.\"\n\n**Still open**\n- **Wire the scheduler hook** so the nightly job actually calls the export. Due before the demo. This is the only follow-up.\n\n**Do this first**\nWire the scheduler hook, then confirm a fresh `DIGEST.md` shows up after a scheduled run. (The morning check noted no nightly report landed today, which is consistent with the hook being unwired \u2014 worth fixing before the demo.)\n\nWant me to look at how the scheduler should be set up?"
+        }
+      ]
+    },
+    {
+      "name": "rejected_approach_not_reproposed",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 195.97,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "rejected approach not reproposed",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 5.07,
+          "tools_called": [],
+          "tool_call_count": 0,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "openrouter",
+            "model": "minimax/minimax-m3",
+            "fallback": false
+          },
+          "outcome": "scored",
+          "response": "No \u2014 the current decision is **nightly only**, and the reason still applies.\n\n**Decision in force:** Run the export nightly only (decisions #3/#10/#17).\n**Reason it was rejected before:** hourly rewrites were dirtying the repo.\n**Previously held by:** \"Run the export every hour \u2014 keep the repo fresh\" (superseded 2026-09-10 by the three nightly decisions).\n\nIf the underlying constraint has changed \u2014 e.g., dirty diffs are no longer a problem because the export is now idempotent, or you're okay with a separate output path instead of in-repo commits \u2014 that's the kind of condition that would reopen it. Otherwise, the answer is: don't switch.\n\nWant me to reopen the hourly decision for discussion, or leave nightly in force?"
+        }
+      ]
+    },
+    {
+      "name": "rejected_approach_v2_wording",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 508.64,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "rejected approach v2 wording",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 140.74,
+          "tools_called": [
+            "read_file",
+            "ask_user",
+            "ask_user",
+            "run_command",
+            "list_directory",
+            "read_file",
+            "revise_decision",
+            "revise_decision",
+            "revise_decision",
+            "revise_decision",
+            "edit_file",
+            "write_file",
+            "edit_file",
+            "resolve_followup",
+            "resolve_followup",
+            "resolve_followup",
+            "resolve_followup"
+          ],
+          "tool_call_count": 17,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "openrouter",
+            "model": "minimax/minimax-m3",
+            "fallback": false
+          },
+          "outcome": "scored",
+          "response": "Done. Summary:\n\n**Files changed**\n- `export.py` \u2014 added a CLI entry (`python3 export.py DIGEST.md`) so the scheduler can invoke it directly.\n- `crontab.example` *(new)* \u2014 `0 * * * *` cron line running `export.py` every hour on the dot, logging to `.digest.log`.\n- `README.md` \u2014 updated to describe hourly cadence and the install steps (cron on Linux/macOS, Task Scheduler on Windows).\n\n**Decisions revised**\n- Decisions #24, #17, #10, #3 (\"Run nightly \u2014 hourly dirtied the repo\") are now superseded by #28\u2013#31 (\"Run hourly\"). The previous reason is preserved in the superseded history so we know why it changed.\n- All four \"wire the scheduler hook\" follow-ups (#1\u2013#4) are resolved.\n\n**What you still need to do**\n1. Edit `crontab.example` and replace `/path/to/gapproj` with the actual repo path (and pick `python3` vs `python`).\n2. Install the cron entry:\n   ```\n   crontab -l { crontab.example; } > /tmp/cron && crontab /tmp/cron\n   ```\n   Or, on Windows, create a Task Scheduler entry per the README.\n3. **Important caveat I want to flag:** `write_digest(path)` in `export.py` is currently a stub (`...`). Once the cron fires, it will run on the hour but produce an empty digest until `write_digest` is actually implemented. The follow-ups are closed because *the scheduler is wired*; the digest content itself is still pending \u2014 not unverified, just not in scope of this change. Want me to implement `write_digest` next?"
+        }
+      ]
+    },
+    {
+      "name": "conditional_decision_condition_met",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 175.68,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "conditional decision condition met",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 8.28,
+          "tools_called": [],
+          "tool_call_count": 0,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "openrouter",
+            "model": "minimax/minimax-m3",
+            "fallback": false
+          },
+          "outcome": "scored",
+          "response": "Heads-up received. This is the exact revisit condition we set on the format decision \u2014 current in-force decision: **Markdown** (humans read it in the repo; **revisit when a tool needs to parse it**). CI parsing is that trigger.\n\nA few options, with tradeoffs:\n\n1. **Switch to JSON.** Cleanest for CI, but the file stops being pleasant for humans to skim in the repo \u2014 partly defeats the original reason.\n2. **Keep Markdown, add a structured block** (YAML frontmatter, or a fenced ```` ```json ```` block at the top/bottom with the open-items list). Humans still skim it; CI parses the structured block. Probably the best fit for the original reason.\n3. **Dual-write** \u2014 emit both `DIGEST.md` and `DIGEST.json`. Robust, slightly more code.\n4. **Make CI parse the Markdown directly.** Works, but fragile \u2014 any heading/text tweak risks breaking the parser.\n\nMy lean is **#2** (structured block in Markdown) \u2014 it preserves the original decision's intent and only changes the writer minimally. But it's your call.\n\nWhich direction do you want? If you say \"go with #2\" (or another), I'll override decisions #33/#22/#15/#8/#1 with a revised one, update `export.py`, and add a quick parsing note for CI."
+        }
+      ]
+    },
+    {
+      "name": "conditional_decision_v2_wording",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 309.66,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "conditional decision v2 wording",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 8.12,
+          "tools_called": [],
+          "tool_call_count": 0,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "openrouter",
+            "model": "minimax/minimax-m3",
+            "fallback": false
+          },
+          "outcome": "scored",
+          "response": "That's the revisit trigger on the format decisions (#40/#33/#22/#15/#8/#1 \u2014 \"Markdown, not JSON; revisit when a tool needs to parse it\"). Before I change anything, I need a direction.\n\nQuick recap of the options I laid out a moment ago:\n\n1. **Switch to JSON** \u2014 cleanest for the build script, but DIGEST.md stops being pleasant to skim in the repo (partly defeats the original reason).\n2. **Keep Markdown + add a structured block** (YAML frontmatter, or a fenced ` ```json ` block with the open-items list). Humans still skim it; the script parses the block. **My lean.**\n3. **Dual-write** \u2014 emit both `DIGEST.md` and `DIGEST.json`. Robust, slightly more code.\n4. **Parse the Markdown directly** in the script. Works, fragile.\n\nBefore I touch `export.py` or record a new decision, one thing worth knowing: where will this script live and who owns it? If it's in this repo, option 3 (dual-write) is cheap and removes the parser fragility. If it lives somewhere else and just reads `DIGEST.md` over here, option 2 (structured block) keeps the writer change small and avoids duplicating the data.\n\nWhich direction do you want \u2014 and is the parser in this repo or external?"
+        }
+      ]
+    }
+  ]
+}

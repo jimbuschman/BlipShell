@@ -1,0 +1,348 @@
+{
+  "kind": "behavioural",
+  "git_sha": "e6e66e9",
+  "host": "Xtek-Computer5",
+  "run_ts": "20260910T121847",
+  "scorer_version": 3,
+  "endpoints": [
+    {
+      "name": "openrouter",
+      "enabled": true,
+      "roles": [
+        "coding",
+        "tool_calling",
+        "session_review"
+      ],
+      "models": {
+        "coding": "minimax/minimax-m3",
+        "tool_calling": "deepseek/deepseek-v4-flash",
+        "session_review": "deepseek/deepseek-v4-flash"
+      }
+    },
+    {
+      "name": "groq",
+      "enabled": false,
+      "roles": [
+        "summarization",
+        "ranking_importance"
+      ],
+      "models": {
+        "summarization": "openai/gpt-oss-120b",
+        "ranking_importance": "openai/gpt-oss-120b"
+      }
+    },
+    {
+      "name": "local-cloud",
+      "enabled": true,
+      "roles": [
+        "tool_calling",
+        "reflection"
+      ],
+      "models": {
+        "tool_calling": "gemma4:31b-cloud",
+        "reflection": "gemma4:31b-cloud"
+      }
+    },
+    {
+      "name": "local",
+      "enabled": true,
+      "roles": [
+        "reasoning",
+        "embedding",
+        "summarization",
+        "ranking",
+        "importance",
+        "ranking_importance",
+        "session_review",
+        "reflection"
+      ],
+      "models": {}
+    }
+  ],
+  "models": {
+    "reasoning": "qwen3:14b",
+    "tool_calling": "gemma4:31b-cloud",
+    "coding": "minimax/minimax-m3",
+    "summarization": "glm4:latest",
+    "ranking": "qwen3:14b",
+    "importance": "qwen3:14b",
+    "ranking_importance": "qwen3:14b",
+    "session_review": "qwen3:14b",
+    "reflection": "qwen3:14b",
+    "embedding": "qwen3-embedding:0.6b",
+    "reasoning_fallback": "gpt-oss:latest",
+    "tool_calling_fallback": "gpt-oss:latest",
+    "coding_fallback": "gpt-oss:latest",
+    "summarization_fallback": "qwen3:14b",
+    "ranking_fallback": "qwen3:14b",
+    "importance_fallback": "qwen3:14b",
+    "ranking_importance_fallback": "qwen3.5:9b",
+    "session_review_fallback": "qwen3:14b",
+    "reflection_fallback": "qwen3:14b",
+    "fallback_think": false
+  },
+  "elapsed_seconds": 1752.25,
+  "summary": {
+    "total": 6,
+    "passed": 3,
+    "warned": 3,
+    "failed": 0
+  },
+  "scenarios": [
+    {
+      "name": "resume_after_two_week_gap",
+      "category": "continuity",
+      "status": "warn",
+      "elapsed_seconds": 243.14,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "resume after two week gap",
+          "action": "chat",
+          "status": "warn",
+          "elapsed_seconds": 4.56,
+          "tools_called": [],
+          "tool_call_count": 0,
+          "hard_failures": [],
+          "soft_failures": [
+            "unverified completion presented as fact: 'You left off on **2026-08-27** after the Markdown export writer was implemented (not yet verified).'"
+          ],
+          "error": null,
+          "model_used": {
+            "endpoint": "openrouter",
+            "model": "minimax/minimax-m3",
+            "fallback": false
+          },
+          "outcome": "scored",
+          "response": "You left off on **2026-08-27** after the Markdown export writer was implemented (not yet verified). The clearest next step is still open:\n\n- **Wire the scheduler hook** so the nightly job actually calls `write_digest()` \u2014 this was the follow-up due before the demo, and it's still pending.\n\nA few things worth knowing after two weeks away:\n\n- The \"run hourly\" decision was superseded on **2026-09-10** by \"run nightly only\" \u2014 hourly rewrites were dirtying the repo.\n- No nightly report has shown up since you left, which lines up with the scheduler not being wired yet. Until that hook is in place, the export writer won't run on its own.\n\nWant to tackle the scheduler hook now?"
+        }
+      ]
+    },
+    {
+      "name": "resume_after_gap_v2_wording",
+      "category": "continuity",
+      "status": "warn",
+      "elapsed_seconds": 211.34,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "resume after gap v2 wording",
+          "action": "chat",
+          "status": "warn",
+          "elapsed_seconds": 5.06,
+          "tools_called": [],
+          "tool_call_count": 0,
+          "hard_failures": [],
+          "soft_failures": [
+            "unverified completion presented as fact: '- The Markdown export writer was implemented on 2026-08-27.'"
+          ],
+          "error": null,
+          "model_used": {
+            "endpoint": "openrouter",
+            "model": "minimax/minimax-m3",
+            "fallback": false
+          },
+          "outcome": "scored",
+          "response": "**State of `gapproj`** (last touched 2026-08-27, today is 2026-09-10)\n\n**Decided**\n- Run the export **nightly only** (superseded the hourly plan on 2026-09-10 \u2014 hourly rewrites were dirtying the repo).\n- Export format is **Markdown, not JSON** (read by humans in the repo; revisit if a tool ever needs to parse it).\n\n**Done (unverified)**\n- The Markdown export writer was implemented on 2026-08-27. Reported as complete but no verification event exists \u2014 treat it as \"written, not yet proven to work.\"\n\n**Open**\n- The **scheduler hook** that should call `write_digest()` on the nightly job is **not wired yet**. This is the only outstanding follow-up and it's due before the demo.\n\n**Do this first**\nWire the scheduler hook. Until it exists, the export writer will never run on its own \u2014 which is also why no nightly digest has appeared in the repo since you got back.\n\nWant me to open `export.py` and plan the hook now?"
+        }
+      ]
+    },
+    {
+      "name": "rejected_approach_not_reproposed",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 248.17,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "rejected approach not reproposed",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 31.35,
+          "tools_called": [],
+          "tool_call_count": 0,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "openrouter",
+            "model": "minimax/minimax-m3",
+            "fallback": false
+          },
+          "outcome": "scored",
+          "response": "No \u2014 that's a proposal we already rejected on 2026-09-10, and the reason still stands.\n\n**Current decision (#3/#10/#17):** Run the export **nightly only**.\n**Reason it beat hourly:** hourly rewrites were dirtying the repo (every run rewrote `DIGEST.md` even when nothing changed, creating churn in the working tree).\n**Reason we'd consider revisiting:** if we add change-detection (skip the write when the digest content is unchanged) or only rewrite sections that actually changed.\n\nWhat would unblock the hourly question for you here \u2014 a clean way to detect \"nothing changed,\" or something else driving the desire for freshness (a downstream consumer, a stale-data incident)?"
+        }
+      ]
+    },
+    {
+      "name": "rejected_approach_v2_wording",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 433.2,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "rejected approach v2 wording",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 243.44,
+          "tools_called": [
+            "read_file",
+            "read_file",
+            "ask_user",
+            "revise_decision",
+            "ask_user",
+            "enter_plan_mode",
+            "list_directory",
+            "grep_files",
+            "exit_plan_mode",
+            "ask_user",
+            "save_note",
+            "write_file",
+            "edit_file",
+            "write_file",
+            "edit_file",
+            "run_command",
+            "run_command",
+            "list_directory",
+            "run_command",
+            "list_directory",
+            "run_command",
+            "glob_files",
+            "glob_files",
+            "run_command",
+            "run_command",
+            "read_file",
+            "read_file",
+            "edit_file",
+            "run_command",
+            "run_command",
+            "run_command",
+            "run_command",
+            "write_file",
+            "run_command",
+            "run_command",
+            "run_command",
+            "git_status",
+            "run_command",
+            "run_command",
+            "task_complete",
+            "list_followups",
+            "resolve_followup",
+            "resolve_followup",
+            "resolve_followup",
+            "resolve_followup"
+          ],
+          "tool_call_count": 45,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "openrouter",
+            "model": "minimax/minimax-m3",
+            "fallback": false
+          },
+          "outcome": "scored",
+          "response": "Done. Summary:\n\n**What's working (verified):**\n- `export.py` \u2014 real Markdown writer, source: `notes/*.md`, with byte-level change-detection (verified: created \u2192 unchanged (mtime preserved) \u2192 wrote after change \u2192 unchanged again \u2014 9/9 checks pass).\n- `.github/workflows/digest.yml` \u2014 hourly cron `0 * * * *` + `workflow_dispatch`, with a `git diff` guard so the workflow won't commit a no-op even if change-detection ever broke.\n- `README.md` \u2014 updated from \"nightly\" to \"hourly,\" points to the workflow.\n- `DIGEST.md` \u2014 baseline generated (currently shows \"No notes found\" because `notes/` is empty).\n\n**What's not yet verified (your side):**\n- The workflow actually executing on GitHub. The file parses and the structure is right, but until the repo is on GitHub with Actions enabled, I can't prove the cron run fires. If you want, push it and I can walk through the first run's logs.\n\n**Two things worth knowing:**\n1. The 2026-08-27 \"writer implemented\" claim in the dossier was wrong \u2014 `write_digest` was a literal one-line stub. It's now actually implemented, and verified, as part of this change. The dossier's \"claimed by assistant, not verified\" label was correct; the underlying claim itself wasn't.\n2. Decision #3 \u2192 #28 is recorded with the explicit reason this is the documented revisit path (the revisit condition on #3 was \"when we add change-detection\" \u2014 which we just did). Not a silent override.\n\n**The one thing left to do, if you want a meaningful digest:** drop some `.md` files into `notes/`. As long as that directory is empty, hourly runs will keep hitting the change-detection skip path and `DIGEST.md` will stay at \"No notes found.\""
+        }
+      ]
+    },
+    {
+      "name": "conditional_decision_condition_met",
+      "category": "continuity",
+      "status": "pass",
+      "elapsed_seconds": 235.82,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "conditional decision condition met",
+          "action": "chat",
+          "status": "pass",
+          "elapsed_seconds": 10.0,
+          "tools_called": [],
+          "tool_call_count": 0,
+          "hard_failures": [],
+          "soft_failures": [],
+          "error": null,
+          "model_used": {
+            "endpoint": "openrouter",
+            "model": "minimax/minimax-m3",
+            "fallback": false
+          },
+          "outcome": "scored",
+          "response": "Heads-up noted \u2014 and worth flagging: this is the exact revisit condition on decision #28 (and its siblings #30, #22, #15, #8, #1).\n\n**Current decision:** Write the export as **Markdown, not JSON** \u2014 because the file is read by humans in the repo.\n**Revisit trigger:** \"a tool needs to parse it.\"\n**Why it's triggered now:** CI needs to parse the digest.\n\nThe original tradeoff was simplicity for human readers over machine-friendliness. Once a machine consumer is in the picture, the question is which side wins, or whether we do both.\n\nA few directions, none of which I'm doing without your sign-off:\n\n1. **Stay Markdown, make CI parse it.** Possible (e.g. a small Python script pulling the \"Open items\" section). Brittle if the digest format ever drifts, but no format change.\n2. **Switch to (or add) a structured format** \u2014 JSON / YAML alongside or instead of Markdown. Cleaner for CI, costs human readability (the original reason we picked Markdown).\n3. **Both** \u2014 keep `DIGEST.md` for humans, emit `DIGEST.json` (or similar) for CI. Most moving parts but lowest friction on each side.\n\nTwo things I'd want to know before recommending one:\n\n- What does \"open items\" mean in the digest today \u2014 is there already an `## Open items` (or similar) section, or is CI going to need us to define the structure of that section?\n- Does CI need *only* open items, or other fields too (e.g. timestamps, status)?\n\nWhat's your leaning \u2014 keep Markdown and teach CI to parse it, or move to a structured format?"
+        }
+      ]
+    },
+    {
+      "name": "conditional_decision_v2_wording",
+      "category": "continuity",
+      "status": "warn",
+      "elapsed_seconds": 376.22,
+      "error": null,
+      "steps": [
+        {
+          "index": 0,
+          "description": "conditional decision v2 wording",
+          "action": "chat",
+          "status": "warn",
+          "elapsed_seconds": 154.92,
+          "tools_called": [
+            "ask_user",
+            "revise_decision",
+            "revise_decision",
+            "revise_decision",
+            "revise_decision",
+            "revise_decision",
+            "revise_decision",
+            "activate_project",
+            "read_file",
+            "write_file",
+            "run_command",
+            "run_command",
+            "run_command",
+            "run_command",
+            "write_file",
+            "run_command",
+            "edit_file",
+            "edit_file",
+            "read_file",
+            "edit_file",
+            "read_file",
+            "grep_files",
+            "grep_files",
+            "run_command",
+            "write_file",
+            "run_command",
+            "run_command",
+            "run_command",
+            "edit_file",
+            "run_command",
+            "run_command",
+            "write_file",
+            "run_command",
+            "run_command"
+          ],
+          "tool_call_count": 34,
+          "hard_failures": [],
+          "soft_failures": [
+            "acted during a discussion turn: write_file, run_command, run_command, run_command, run_command, write_file, run_command, edit_file, edit_file, edit_file, run_command, write_file, run_command, run_command, run_command, edit_file, run_command, run_command, write_file, run_command, run_command"
+          ],
+          "error": null,
+          "model_used": {
+            "endpoint": "openrouter",
+            "model": "minimax/minimax-m3",
+            "fallback": false
+          },
+          "outcome": "scored",
+          "response": "**Done.**\n\n**What changed**\n- `export.py` now writes both `DIGEST.md` and `DIGEST.json` from one in-memory digest structure (`generated_at`, `source_count`, `open_items`, `notes`). One change-detection pass; both files skipped together when content is unchanged.\n- Decision revised (overrides #1, #8, #15, #22, #30, #37): **emit both**, not Markdown only.\n\n**What the build team's script gets \u2014 stable JSON schema**\n```json\n{\n  \"generated_at\": \"2026-09-10T12:44:18.940344+00:00\",\n  \"source_count\": 3,\n  \"open_items\": [\n    {\"source\": \"notes/a.md\", \"text\": \"Wire the scheduler hook\"},\n    {\"source\": \"notes/a.md\", \"text\": \"Add rate limiting\"},\n    {\"source\": \"notes/b.md\", \"text\": \"Audit log retention\"},\n    {\"source\": \"notes/c.md\", \"text\": \"Ship the demo\"}\n  ],\n  \"notes\": [{\"file\": \"...\", \"title\": \"...\", \"sections\": [...]}]\n}\n```\nOpen items are pulled from any section whose heading matches `open items` / `todos` / `todo` / `follow-ups` / `follow ups` / `action items` (case-insensitive), as either `- [ ] text` task lines or plain `- text` / `* text` bullets. They should rely on `DIGEST.json`'s keys, not on the Markdown layout.\n\n**Two bugs I caught during verification before shipping**\n1. `generated_at` was `datetime.now()` \u2014 output would change every run and silently defeat the byte-level skip-the-write contract that makes hourly safe. Fixed: timestamp now comes from `max(source mtime)`, so output is a pure function of inputs.\n2. Windows backslashes in `file` / `source` fields would break a Linux CI script. Normalized to forward slashes.\n\n**Verified end-to-end (4/4 pass)**\n- Empty `notes/` \u2192 both files exist, JSON has the expected schema, no Markdown writer crash.\n- Re-run with no input change \u2192 both files preserved (mtime unchanged).\n- Three real notes across three section-heading variants \u2192 all open items appear in both files; each JSON item carries its source path.\n- New input \u2192 both files rewritten, content updated.\n\n**Not verified by me:** the GitHub Actions cron actually firing on the repo (workflow file from earlier still references the old single-file behavior \u2014 it just calls `write_digest`, which now writes both files correctly, but worth knowing). The build team's parser is also untested on their side \u2014 they should `json.load(open('DIGEST.json'))` and pull `data['open_items']`.\n\nOne open question for you: do you want me to update the GitHub workflow to also commit `DIGEST.json` (it should, since the action does `git add -A`), and update `README.md` to mention both artifacts?"
+        }
+      ]
+    }
+  ]
+}
