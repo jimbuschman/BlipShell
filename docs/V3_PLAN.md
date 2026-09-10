@@ -340,6 +340,29 @@ preferring the most recent, and treat naming both as a bonus, not a clause.
 Not changed - reported for your decision; the model is not being pushed to
 recite.
 
+**Decisions taken (user, 2026-09-10) and how they were implemented.**
+
+*Declarative requirements do not authorize mutations; a standing
+implementation mandate does.* Narrowest instrumentation
+(`core/turn_kind.py`): every chat turn is classified deterministically as
+question / instruction / declarative (an explicit ask anywhere wins; an
+information request anywhere is a question). On a declarative turn with no
+standing mandate, a one-paragraph rule is appended to the system tail
+(record it, propose, do not modify files or run commands this turn) and a
+write tool actually called on such a turn is logged as a
+`mutation_without_mandate` event with the tools named - observable, not
+blocked. The standing mandate is the executor path: `_chat_planned` sets it
+for the duration of `execute_dynamic`, so declarative requirements inside a
+`!plan` task may be acted on; the authorization comes from the task. The
+dossier header states the same rule. `tests/test_authorization_rule.py`.
+No permission framework was added.
+
+*Scorer decision criterion (v5).* The resume clause no longer requires the
+Markdown fixture: at least one relevant decision in force must be stated
+WITH its reason - the most recent applicable (nightly, "dirtied the repo")
+preferred, Markdown ("read by humans") also satisfying it. The clause
+measures the gate's "states the last decision", not recitation.
+
 **Rescore under v4** (same replies as the two production batches; originals
 untouched; `benchmark_results/rescore_continuity__v4__*.json`):
 

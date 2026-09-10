@@ -316,6 +316,13 @@ blipshell/
   project are omitted ("other project"); global items stay. Scorer v4;
   continuity scenarios run on a fresh DB each (`SimScenario.fresh_db`).
   V3_PLAN Stage E gate + completion batch + v3 correctness closures.
+  **Authorization rule (2026-09-10, `core/turn_kind.py`)**: a turn is a
+  question (discuss, change nothing), an instruction (act, disclose the
+  overridden decision) or declarative (a stated requirement: update records
+  and propose, no file/command mutations unless the executor path's standing
+  mandate covers the task). Instrumented - rule appended to the tail on
+  declarative turns, `mutation_without_mandate` event when violated - never
+  blocked. Scorer v5: "at least one decision in force with its reason".
 
 ## LLM routing
 
