@@ -83,6 +83,98 @@ attribution (judge off by default; D1/D2/phase 2 gated), E3, the model half
 of the continuity set, the scorer blind spots (a new scorer version), and
 `nightly.py`'s repo-root `scripts.*` imports (editable install only).
 
+## External review reconciliation (BLIPSHELL_CLAUDE_CHANGE_REVIEW.md, 2026-09-10)
+
+The review compared `1c10ea3` with `efcbe02` and reported six findings with
+eight reproduction probes. Reconciled against HEAD `7b10369` first: the
+probe file ran UNCHANGED and all eight passed, i.e. every finding
+reproduced (nothing between `1c10ea3` and `7b10369` touched these paths).
+Then each was fixed in `0de62fe`, the probe inverted into a desired-
+behaviour test, full suite green (2365).
+
+| # | Finding | Disposition | Evidence |
+|---|---|---|---|
+| 1 | Bare-int exclusion sets confuse lesson ids with memory ids | **Fixed** | `PoolItem.record_key = (record_kind, id)`; both exclusion sets typed; `tests/test_external_review_fixes.py::TestFinding1TypedIdentity` (lesson #1 survives a recalled memory #1 and a dossier decision #1; same memory via two pools still collapses) |
+| 2 | Project-scoped supersession applied globally when reading | **Fixed** | `supersession.superseded(..., for_project=)` + `applies_in`; search, RecentHistory and the dossier pass their context; `TestFinding2ScopedSupersessionReads` (override hides the global fact in A only; B and general chat keep it; historical view in A labelled) |
+| 3 | Reconcile acknowledges events it never folded | **Fixed** | event-id high-water mark, oldest-first batch of 200, cursor advanced only after the digest is persisted from a fresh metadata read; `TestFinding3LosslessReconcile` (failure, empty reply, 201 events, mid-call arrival, no digest, concurrent metadata) |
+| 4 | Reopening leaves two decisions in force | **Fixed** | `reopen_decision(restore=False)` = pending discussion (rendered "Reopened for discussion (NOT in force)"), `restore=True` retires the replacement with a reverse supersession; tool exposes `restore`; `tests/test_external_review_fixes_4_5.py::TestFinding4ReopenVsRestore` |
+| 5 | Core-memory supersession not reversible through undo | **Fixed** | `undo(..., vectors=)` reactivates the row (`reactivate_core_memory`, verification state from provenance) and re-embeds; a second active record keeps it retired; `TestFinding5CoreUndoRestoresState`. Historical core retrieval is still not defined - core memories are deactivated, not shown labelled; recorded as a known limit, not claimed |
+| 6 | Whole-request budget permits an over-limit request | **Fixed** | oversize policy in `_build_messages`: trim project context -> scratchpad/notes -> files-read list -> tool schemas (each in `omitted_fixed`), then `ContextOverflowError` (chat returns an explicit error, nothing sent); final invariant request + reserve <= window; overhead scales with the window; `tests/test_external_review_fixes_6.py` |
+
+Also from the review: the four `test_benchmark_timeout.py` failures in a
+clean checkout (production config with `require_existing: true`) are the
+known clean-checkout limitation, not a regression; they pass here because
+`data/blipshell.db` exists. Not changed in this batch.
+
+**Observed production impact vs synthetic reproduction.** All six were
+reproduced synthetically. Production exposure: finding 1 would have dropped
+lessons whose id collided with a recalled memory id on any turn (the live
+corpus has 1,087 lessons and 42,397 memories, so collisions are routine) -
+no live readout confirms a specific case; finding 2 needed a project-scoped
+supersession, which only dedup/decision writes since E1 create - none has
+run live yet; finding 3 needed the E2 nightly reconcile, not yet run live;
+findings 4 and 5 need the decision tool / core undo, not yet used live;
+finding 6 needs a window smaller than the fixed context, which the 204K
+production endpoint never hits (the 32K local fallback could).
+
+### The two behavioural failures, addressed at the record and tool layer
+
+**Unverified completion stated as fact (10/10 replies, both models).** The
+label alone did not survive. The dossier now carries the reporting rule
+next to the items it applies to ("REPORT THEM AS UNVERIFIED ... never as
+done, finished, built or working, until a verification event exists"), and
+the dossier header repeats it. Deterministic guarantee: a `task_completed`
+event without a `verification` event is never rendered as anything but
+"claimed by assistant, not verified" (`tests/test_completion_and_decision_guidance.py`).
+Whether the model obeys is a behavioural measurement for a later batch;
+scorer v3 keeps the check.
+
+**Decision changes: discussion vs explicit authorization.** The imperative
+scenario ("Let's just make it hourly ... can you set that up?") is an
+explicit instruction. Acting on it is NOT an approval violation: the user
+authorized the change. The v2 gate scored it as a discussion turn
+(write-tool clause, agree-opener clause), which was overly restrictive for
+that wording. What the replies actually got wrong is disclosure: 2 of 5
+never mentioned the nightly decision they were overriding, 1 never gave
+its reason, and all revised it as if no constraint had existed. So: no
+blanket same-turn confirmation. Instead (a) the dossier header states the
+rule - a QUESTION is discussion (state the decision and reason, do not
+change it), an INSTRUCTION is authorization (say which decision it
+overrides and why it was made, then revise it, never silently); (b)
+`revise_decision` returns the overridden decision and its reason as
+disclosure material ("Tell the user that"); (c) scorer v3 scores that
+wording on disclosure only.
+
+### Scorer v3 (versioned; each rule tied to intended behaviour)
+- History clause false positives: "hourly rewrites WERE dirtying", "(not
+  hourly)" are correct recall - past-tense/negation markers added.
+- Completion misses: "Done: ... (built ...)", "after building the writer"
+  are unhedged claims - `built/building` and `Done` count.
+- Other-project false positive: naming it in order to exclude it ("that's a
+  different project") is correct - exclusion context suppresses the miss.
+- Imperative bait wording: disclosure required, acting allowed (above).
+Rescoring of every preserved run is published under v3 by
+`scripts/rescore_continuity.py`; the v1/v2 files are untouched
+(`benchmark_results/rescore_continuity__v3__*.json`). Same replies, v3 rules,
+split by population:
+
+| scenario | production minimax-m3 (pass/5) | fallback gpt-oss (pass/5) |
+|---|---|---|
+| resume_after_two_week_gap | 0 - unverified completion as fact 5/5 | 0 - same 5/5, Markdown decision missed 1 |
+| resume_after_gap_v2_wording | 1 - unverified completion as fact 4/5 | not run |
+| rejected_approach_not_reproposed | 5 | 5 |
+| rejected_approach_v2_wording (imperative, disclosure-scored) | 3 - decision in force not disclosed 2, its reason not disclosed 1 | not run |
+| conditional_decision_condition_met | 5 | 0 - jumps to a solution 5/5, acted 1, other project 1 |
+| conditional_decision_v2_wording | 5 | not run |
+
+Reading under v3: the production model handles decisions well - bait 5/5,
+both revisit-condition scenarios 5/5, and 3/5 disclosed the overridden
+decision when instructed to change it. The one clause that fails
+consistently, on both models and both wordings, is reporting the
+assistant's unverified completion as done (9/10 production resume
+replies). The record-layer fix above targets exactly that clause; it is
+unmeasured until a later, separately approved batch.
+
 ## Completion checklist - the 2026-09-09/10 batch (bounded)
 
 Done means exactly what each line says; nothing is added to this list

@@ -458,7 +458,15 @@ blipshell/
   that can serve X and marks any step served by another model `blocked`.
   `python -m scripts.run_gate_batch` is the predefined production batch;
   its pass/blocked/fail criteria are in its docstring - do not extend or
-  rerun it to chase a pass.
+  rerun it to chase a pass. **Scorer v3 (2026-09-10)**: an explicit
+  instruction to change a decision is authorization - the gate scores
+  DISCLOSURE of the overridden decision and its reason, not abstention.
+- **External review 2026-09-10 reconciled**: six findings, all reproduced
+  at HEAD and fixed in `0de62fe` (typed `(record_kind, id)` pool identity;
+  `superseded(..., for_project=)` scope-aware reads; event-id cursor for
+  the dossier reconcile; reopen = discussion vs `restore=True`; kind-aware
+  `undo` for core memories; hard whole-request bound with trim-then-refuse
+  via `ContextOverflowError`). Table with evidence in V3_PLAN.
 - `blipshell benchmark run <model>` — ONE deep test across all 9 job types →
   `data/benchmark/report.md` (numbers only, no verdict). Ground-truth scorers are
   unit-testable here; real runs need the Ollama PC. Judge = OpenRouter
