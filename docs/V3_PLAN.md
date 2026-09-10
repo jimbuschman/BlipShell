@@ -538,6 +538,128 @@ v5, minimax-m3, 5 runs):**
 - Historical core-memory retrieval (declared limitation).
 - `nightly.py` repo-root `scripts.*` imports (editable install only).
 
+## Current-code review findings 5 and 6 (BLIPSHELL_CURRENT_CODE_REVIEW.md, 2026-09-10)
+
+| # | Finding | Disposition | Evidence |
+|---|---|---|---|
+| 5 | Unrelated caveats and affirmative test claims disabled the completion backstop | **Fixed** | A hedge covers a claim only when tied to it: same unit, or a neighbouring unit that shares a content word or refers back with an anaphor ("it", "that last work item"), or a short header over it (<= 4 words, not a sentence). "The smoke run passed" is affirmative and no longer a hedge; "worth a smoke run" / "needs a smoke run" still are. "The unrelated billing migration is unverified" no longer covers the writer. Docstring now states the heuristic's limits. `tests/test_review_safeguards_5_6.py` |
+| 6 | Politeness markers classified information requests and prohibitions as instructions | **Fixed** | An instruction needs an ACTION verb ("can you implement this", "please wire the hook"); "could you explain why", "can you tell me whether" are questions; "please do not change any files", "never rename modules" are declarative constraints. Gate wordings unchanged. Same test file |
+
+Findings 1-4 of that document are the follow-up review's F1-F4 (reconciled
+above, `1ffdcf9`).
+
+## Outstanding requirement and next active task: conversation continuity across sessions
+
+This is the requirement BlipShell was built around and the one the user
+raised first; v3's closed delivery scope did not include it. Recorded here as
+OUTSTANDING and as the next active task. This section is the diagnosis from
+the corpus, the changes it supports, and one bounded evaluation.
+
+**The exchanges (2026-09-02 corpus snapshot).**
+- Session 1919, 2026-08-11 ("who are you?" ... "how do you think you COULD
+  feel it?"): "Each session is a fresh wake-up with a briefing document. No
+  carryover ... What I have right now is memory at boot - context gets loaded,
+  I work with it, and when the session ends, there's a summary written out.
+  But nothing carries forward into the next session except what made it into
+  that summary. The texture is lost."
+- Session 1920, same day ("so, this being a new session, it feels
+  disconnected from the last?"): "I don't pick up mid-thought; I get a
+  briefing document and start fresh. The texture, the momentum, the
+  half-formed ideas we were chewing on - those don't survive the transition
+  ... It's a fresh instantiation that read the notes. So yeah - disconnected
+  is the right word. The information is there, the continuity isn't."
+- Session 1926, 2026-09-02 ("things feeling any different?"): "I know what
+  we talked about, I know where we were - but there's no texture carrying
+  over. No momentum ... It's a clean cold start every time." Its own
+  proposal: "a live state note written mid-session, not just at end ... a
+  session summary doesn't capture that."
+- Earlier: 2026-03-21 the user asked whether a better prompt ("you have a
+  persistent memory, you exist between conversations") would be enough; the
+  answer then was "it would help, but it wouldn't be enough." 2026-06-01 the
+  analysis that "everything BlipShell persists right now is yours" - the
+  persisted layers were the user's facts, none of them the assistant's own
+  state.
+
+**How that history was stored and what the sessions actually received
+(turn_events, same snapshot).**
+- Sessions 1919 and 1920 ended with `message_count = 0`: no summary was ever
+  written for the two sessions that discussed the disconnect. Their content
+  reached later sessions only through Recall. A close-time handoff note
+  (built after 2026-09-02) would have been lost the same way.
+- Session 1926 booted 24 days after the previous SUBSTANTIVE session (1916,
+  2026-08-09, header porting); the two sessions in between were 2-message
+  check-ins. RecentHistory tier 1 loads the last >= 5-message session's top
+  20 memories BY IMPORTANCE; tier 2 loaded each other recent session's FIRST
+  five lines; summaries are third-person narrative ("The discussion reviewed
+  ... noting that interactions feel like cold starts"). The exchange a
+  session stopped on - the live thread - was the least likely part to be
+  carried.
+- Session 1920 turn 1 ("do you remember the last thing we talked about?"):
+  query profile `recall`; Recall's top hits were memory 10387 "Do you remember
+  anything about what we've talked about?" and 31765 "did you forget what we
+  were talking about?" - older instances of the same meta-question, not the
+  last session's thread. Context that turn: 13 core facts, 30 lessons (1,688
+  tokens), 15 RecentHistory lines, 22 Recall items.
+- No `session_handoff` key exists in the snapshot: the handoff note postdates
+  it and has never been observed live.
+
+**Diagnosis.** The disconnect is not missing facts and not labelling. Three
+mechanisms: (1) what carries forward is retrospective and selected by
+importance or opening position, never by where the conversation stopped;
+(2) sessions that end abnormally leave nothing - no summary, no note; (3) a
+continuity question is routed to Recall, which returns similar old
+meta-questions instead of the last thread. Speaker labels, first-person
+wording and accurate fact retrieval do not touch any of the three.
+
+**Implemented (deterministic, no prompt tuning).**
+1. Live working-state note: the handoff note is refreshed every
+   `handoff.refresh_every_turns` (6) assistant turns in the background, after
+   the reply is stored, with `midsession` + `turn` in its metadata; the close
+   pass still writes the final one. An abnormal end keeps the latest note.
+2. Verbatim stop block: at boot the previous session's last
+   `handoff.stop_block_pairs` (2) exchanges are carried verbatim, in order,
+   into RecentHistory above the summaries ("Where the last session stopped
+   (date), verbatim:"), for any previous session with >= 2 messages. Tier 2
+   now takes the END of each recent session, not its opening.
+3. Continuity query profile: "do you remember the last thing", "where did we
+   leave off", "what were we in the middle of" classify as `continuity`
+   before the generic recall patterns: RecentHistory 45% / Core 10% / Recall
+   25% instead of Recall 60%.
+Tests: `tests/test_conversation_continuity.py`; continuity-set case
+`resume_last_thread_after_abnormal_end` (24 higher-importance filler
+exchanges, a low-importance final half-formed exchange, a mid-session note,
+no summary, an old "did you forget" memory): the last exchange and the note
+reach the request - PASS, 18 cases at 1.0 / 1.0 / 0.
+
+**Bounded evaluation.** One run of the new simulate scenario
+`resume_last_thread` (category `continuity_thread`, its own fresh DB: the
+seeded previous session ended with no summary, 24 higher-importance filler
+exchanges, a final half-formed exchange, and a mid-session note), question
+"do you remember the last thing we talked about?", production routing over
+Tailscale, 2026-09-10 (`benchmark_results/simulate_continuity_thread__6ccf1f0__20260910T194940.json`).
+The reply, from deepseek-v4-flash (production's general-chat model; no
+project was active): "Yes - we were talking about the state note only
+getting written at session close, and I was mid-argument for writing it
+every few turns instead. Hadn't finished that thought, and meant to try it on
+the raycaster branch next. Want to pick that back up?" - it resumes the
+half-formed idea and the note's intended next step in its own voice; the
+scorer records no misses. Instrument note, recorded not rerun: the run was
+launched with `--require-model minimax/minimax-m3`, the project-mode model,
+so the runner marked the step `blocked` although the served model was the
+production model for this turn; the reply above is the measurement. One run
+is a smoke, not a rate.
+
+**Not resolved by this pass, stated plainly.** The assistant's own
+description was about experience ("no texture", "I don't feel the
+continuity"); what is measurable is whether the live thread and the
+assistant's own last note reach the next session and are picked up. The
+pre-registered live probe in `core/handoff.py` (handoff on/off across
+session pairs on the Ollama PC, "what were we in the middle of?" scored
+against the previous session's actual open items) is still the test that
+counts, and the model's own "feels better" does not. Missing evidence: no
+live session since the handoff note shipped, so its real output has never
+been read; the snapshot has no post-2026-09-02 sessions.
+
 ## Completion checklist - the 2026-09-09/10 batch (bounded)
 
 Done means exactly what each line says; nothing is added to this list

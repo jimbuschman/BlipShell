@@ -428,6 +428,17 @@ blipshell/
   completion detection, guardrails gating, dedup validated deterministically
   (`tests/test_loop_integration.py`). `conftest.py` gives real in-memory SQLite +
   canned router.
+- **Conversation continuity across sessions is the OUTSTANDING requirement
+  and the next active task** (2026-09-10; V3_PLAN "Outstanding requirement").
+  Diagnosis from the corpus: what carried forward was retrospective and
+  importance/opening-selected, abnormally ended sessions left nothing, and a
+  continuity question went to Recall (which returns old "did you forget"
+  memories). Shipped: mid-session refresh of the handoff note
+  (`handoff.refresh_every_turns`), a verbatim stop block of the previous
+  session's last exchanges at boot (`handoff.stop_block_pairs`), tier 2 takes
+  the END of a session, and a `continuity` query profile. The live A/B probe
+  in `core/handoff.py` is still the test that counts; the model's own "feels
+  better" does not.
 - **Continuity set** (2026-09-09, V3 Stage C): `python -m blipshell.benchmark.continuity`
   boots a REAL agent per case with no network (`Agent._build_subsystems`, the
   DB-only half of initialize, + the deterministic embedder in `tests/fakes.py`
