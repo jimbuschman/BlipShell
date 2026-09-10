@@ -304,7 +304,11 @@ blipshell/
   2026-09-09 on the gpt-oss FALLBACK (5 runs): the records are used (ids,
   reasons, next action, no re-proposal) but every resume reply stated the
   "claimed, not verified" completion as fact - the label does not survive
-  into the reply. Production model not yet measured. V3_PLAN Stage E gate.
+  into the reply. Production (minimax-m3, 2026-09-09, 5 runs): same, 10/10.
+  After the record-layer fix (dossier carries the reporting rule, 2026-09-10,
+  frozen batch, 5 runs): 9/10 resume replies report it as unverified, 1
+  states it as fact; frozen batch verdict still FAIL on other clauses.
+  Decision pending on the last case. V3_PLAN Stage E gate + completion batch.
 
 ## LLM routing
 
