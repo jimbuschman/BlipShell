@@ -122,6 +122,7 @@ class ProjectMixin:
         self.memory_manager.active_project = None
         self._dossier_followup_ids = set()
         self._dossier_claims = []
+        self._pending_follow_ups_unfiltered = ""
         self._pending_follow_ups = await self._load_follow_ups()
         self._repo_map = None
         # Re-register file tools without root
@@ -284,6 +285,7 @@ class ProjectMixin:
         self._dossier_followup_ids = set(followup_ids)
         self._dossier_claims = list(claims)
         self._pending_follow_ups = await self._load_follow_ups()
+        self._pending_follow_ups_unfiltered = await self._load_follow_ups(include_dossier_items=True)
         logger.info("Injected project dossier for '%s' (%d chars)", project["name"], len(md))
         return (
             "\n=== Project Dossier (auto-maintained) ===\n"

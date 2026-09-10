@@ -262,7 +262,8 @@ class MemoryManager:
         pool.add(item)
 
     def gather_memory(self, token_budget: int | None = None,
-                      pool_budgets: dict[str, int] | None = None) -> list[PoolItem]:
+                      pool_budgets: dict[str, int] | None = None,
+                      rendered_elsewhere: set | None = None) -> list[PoolItem]:
         """Gather memory items from all pools within budget.
 
         If pool_budgets is provided, each pool's effective cap is overridden
@@ -281,7 +282,10 @@ class MemoryManager:
         # (continuity baseline 2026-09-09: 16 duplicated renders / 13 cases).
         order = sorted(self._pools.values(), key=lambda p: 0 if p.name == "Recall" else 1)
         recalled_keys: set[tuple] = set()
-        elsewhere = self.rendered_elsewhere or None
+        # `rendered_elsewhere` overrides the standing set for THIS call (an
+        # empty set = nothing is carried elsewhere this turn, e.g. the dossier
+        # was cut to fit the window - follow-up review F2).
+        elsewhere = (rendered_elsewhere if rendered_elsewhere is not None else self.rendered_elsewhere) or None
         for pool in order:
             cap = pool_budgets.get(pool.name) if pool_budgets else None
             exclude = recalled_keys if pool.name != "Recall" else None

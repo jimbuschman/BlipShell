@@ -234,10 +234,8 @@ class ProjectDigestManager:
         project = await self.sqlite.get_project(project_name)
         if not project:
             return
-        meta = json.loads(project.get("metadata_json") or "{}")
-        meta["digest"] = digest
-        meta["digest_updated_at"] = datetime.now(timezone.utc).isoformat()
-        meta["digest_session_ids"] = session_ids
-        await self.sqlite.update_project(
-            project_name, metadata_json=json.dumps(meta),
+        # field-level: the dossier cache / reconcile cursor written meanwhile survive (review F4)
+        await self.sqlite.set_project_metadata(
+            project_name, digest=digest, digest_updated_at=datetime.now(timezone.utc).isoformat(),
+            digest_session_ids=session_ids,
         )

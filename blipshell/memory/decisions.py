@@ -188,18 +188,32 @@ async def reopen_decision(sqlite, decision_id: int, *, reason: str = "",
         )
         return await get_decision(sqlite, decision_id)
 
-    # restore: retire the replacement(s) that are still governing
+    # restore: retire whatever GOVERNS at the end of the revision chain
+    # (follow-up review F3: A -> B -> C, restoring A must retire C, not B).
+    # The chain is the `superseded_by` links from this decision; a link that
+    # loops back is ambiguous history and is refused rather than resolved
+    # by guessing. Intermediate revisions keep their history untouched.
+    head = dec
+    seen = {dec.id}
+    while head.superseded_by:
+        if head.superseded_by in seen:
+            raise ValueError(f"decision #{decision_id}: revision chain loops at #{head.superseded_by}; "
+                             f"refusing to pick a governing decision from ambiguous history")
+        nxt = await get_decision(sqlite, head.superseded_by)
+        if nxt is None:
+            break
+        seen.add(nxt.id)
+        head = nxt
     for rec in await supersession.history_of(sqlite, "memory", decision_id):
         if rec.old_id == decision_id and rec.undone_at is None:
             await supersession.undo(sqlite, rec.id)
-            repl = await get_decision(sqlite, rec.new_id)
-            if repl is not None and repl.status in ("active", "reopened"):
-                await _update_meta(sqlite, repl.id, status="superseded", superseded_by=decision_id)
-                await supersession.record(
-                    sqlite, old_kind="memory", old_id=repl.id, new_kind="memory", new_id=decision_id,
-                    scope=dec.project, relation="revises", detected_by="decision_tool",
-                    evidence=(reason or f"restored #{decision_id}")[:300], source_type="user_statement",
-                )
+    if head.id != decision_id and head.status in ("active", "reopened"):
+        await _update_meta(sqlite, head.id, status="superseded", superseded_by=decision_id)
+        await supersession.record(
+            sqlite, old_kind="memory", old_id=head.id, new_kind="memory", new_id=decision_id,
+            scope=dec.project, relation="revises", detected_by="decision_tool",
+            evidence=(reason or f"restored #{decision_id}")[:300], source_type="user_statement",
+        )
     await _update_meta(sqlite, decision_id, status="active", superseded_by=None,
                        reopened_reason=reason, reopened_at=now)
     await project_events.record_event(

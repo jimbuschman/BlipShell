@@ -205,11 +205,10 @@ async def refresh(sqlite, project: str) -> Optional[str]:
         return None
     d = await build(sqlite, project)
     md = render(d)
-    meta = json.loads(row.get("metadata_json") or "{}")
-    meta["dossier_md"] = md
-    meta["dossier_updated_at"] = datetime.now(timezone.utc).isoformat()
-    meta["dossier_stale"] = 0
-    await sqlite.update_project(project, metadata_json=json.dumps(meta))
+    # field-level write: never clobbers a digest or cursor written meanwhile
+    await sqlite.set_project_metadata(project, dossier_md=md,
+                                      dossier_updated_at=datetime.now(timezone.utc).isoformat(),
+                                      dossier_stale=0)
     return md
 
 
@@ -281,6 +280,12 @@ async def reconcile(sqlite, router, project: str) -> dict:
         await refresh(sqlite, project)
         return stats
 
+    # Compare-and-swap basis (follow-up review F4): the update the model
+    # produces is derived from THIS digest. If another writer changes the
+    # digest while the model works (a session close, a concurrent
+    # reconcile), the derived text is stale and must not replace it.
+    basis_digest = meta["digest"]
+    basis_stamp = meta.get("digest_updated_at")
     lines = "\n".join(f"- [{e['kind']}] {e['summary']}" for e in batch)
     system, user = update_digest_with_sessions(meta["digest"], f"[Project events since last reconcile]\n{lines}")
     try:
@@ -298,16 +303,22 @@ async def reconcile(sqlite, router, project: str) -> dict:
         await refresh(sqlite, project)
         return stats
 
-    # Persist digest + cursor together, on a FRESH read of the metadata so a
-    # concurrent writer (a session close during the call) is not overwritten
-    # from this stale snapshot.
+    # Compare-and-swap: write only if the digest the update was derived from
+    # is still the stored one. Otherwise nothing is written and every event
+    # stays pending for the next run, which will fold them into the NEW digest.
     fresh_row = await sqlite.get_project(project)
     fresh = json.loads((fresh_row or {}).get("metadata_json") or "{}")
-    fresh["digest"] = updated.strip()
-    fresh["digest_updated_at"] = datetime.now(timezone.utc).isoformat()
-    fresh["dossier_reconciled_event_id"] = int(batch[-1]["id"])
-    fresh["dossier_reconciled_at"] = fresh["digest_updated_at"]
-    await sqlite.update_project(project, metadata_json=json.dumps(fresh))
+    if fresh.get("digest") != basis_digest or fresh.get("digest_updated_at") != basis_stamp:
+        logger.info("Dossier reconcile for '%s': digest changed during the call; %d events left pending",
+                    project, len(batch))
+        stats["reason"] = "digest changed during the call (another writer) - nothing written, events left pending"
+        stats["pending"] = await pe.pending_count(sqlite, project, cursor)
+        await refresh(sqlite, project)
+        return stats
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await sqlite.set_project_metadata(project, digest=updated.strip(), digest_updated_at=now_iso,
+                                      dossier_reconciled_event_id=int(batch[-1]["id"]),
+                                      dossier_reconciled_at=now_iso)
     stats["folded"] = len(batch)
     stats["digest_updated"] = True
     stats["pending"] = await pe.pending_count(sqlite, project, int(batch[-1]["id"]))

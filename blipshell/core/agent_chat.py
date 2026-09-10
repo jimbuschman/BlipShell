@@ -40,6 +40,7 @@ MESSAGE_STAMP_MIN_AGE_SECONDS = 600  # 10 minutes
 # (it is logged at WARNING when it happens).
 RESPONSE_RESERVE_MAX_TOKENS = 2048
 MIN_MEMORY_TOKENS = 512
+DOSSIER_MARKER = "\n=== Project Dossier (auto-maintained) ==="
 
 
 def format_relative_time(ts, now=None, min_age_seconds: float = 0) -> str:
@@ -709,16 +710,25 @@ class ChatMixin:
         if self._last_context_stats:
             await self._log_event("context_built", self._last_context_stats)
 
-        tools = self.tool_registry.get_all_ollama_tools() or None
+        # The tools the request carries are the tools the BUDGET selected
+        # (follow-up review F1, 2026-09-10): when _build_messages dropped the
+        # schemas to fit the window, none go to the provider and no tool
+        # rounds run - the estimate and the request agree.
+        tools_omitted = bool(getattr(self, "_tools_omitted_this_turn", False))
+        tools = None if tools_omitted else (self.tool_registry.get_all_ollama_tools() or None)
+        self._last_tools_sent = tools
         max_iterations = self.config.agent.max_tool_iterations if tools else 0
         # Research mode gets 3x budget for thorough exploration
         if research_mode and max_iterations > 0:
             max_iterations = max(max_iterations * 3, 30)
-        logger.info("Passing %d tools (max_iterations=%d)",
-                     len(tools) if tools else 0, max_iterations)
+        logger.info("Passing %d tools (max_iterations=%d)%s",
+                     len(tools) if tools else 0, max_iterations,
+                     " - schemas omitted to fit the window" if tools_omitted else "")
 
         # Dynamic tool provider — switches tools mid-loop when plan mode toggles
         def _get_current_tools():
+            if tools_omitted:
+                return None  # the budget dropped the schemas this turn
             if self.tool_registry.in_plan_mode:
                 return self.tool_registry.get_plan_mode_tools() or None
             return tools
@@ -1364,6 +1374,7 @@ class ChatMixin:
         and the model-specific instructions are mandatory and never cut here.
         `drop_files_list` removes the files-read list from the tail."""
         omissions: list[str] = []
+        self._dossier_trimmed_this_turn = False  # per request; never leaks into later turns
         system_prompt = self.config.agent.system_prompt
 
         # Get per-model settings for the active model
@@ -1398,15 +1409,31 @@ class ChatMixin:
 
             project_context = self._project_context
             if max_head_tokens is not None:
-                room = max_head_tokens - estimate_tokens(system_prompt)
-                pc_tokens = estimate_tokens(project_context)
-                if pc_tokens > max(room, 0):
-                    keep_tokens = max(room, 0)
-                    keep_chars = int(len(project_context) * keep_tokens / pc_tokens * 0.9) if pc_tokens else 0
-                    dropped = pc_tokens - estimate_tokens(project_context[:keep_chars])
-                    project_context = (project_context[:keep_chars]
-                                       + f"\n[project context truncated: ~{dropped} tokens omitted to fit the window]\n")
-                    omissions.append(f"project context truncated (~{dropped} tokens)")
+                # Structured cut (follow-up review F2): the repo scan goes
+                # first, the dossier - the record a return needs - last. If
+                # the dossier itself must be cut, its decisions and follow-ups
+                # are no longer excluded from the pools and the follow-ups
+                # block THIS turn, so a trimmed record is offered somewhere.
+                room = max(max_head_tokens - estimate_tokens(system_prompt), 0)
+                scan, sep, rest = project_context.partition(DOSSIER_MARKER)
+                dossier_block = (sep + rest) if sep else ""
+                scan_tokens, dossier_tokens = estimate_tokens(scan), estimate_tokens(dossier_block)
+                if scan_tokens + dossier_tokens > room:
+                    scan_room = max(room - dossier_tokens, 0)
+                    if scan_tokens > scan_room:
+                        keep_chars = int(len(scan) * scan_room / scan_tokens * 0.9) if scan_tokens else 0
+                        dropped = scan_tokens - estimate_tokens(scan[:keep_chars])
+                        scan = scan[:keep_chars] + f"\n[project context truncated: ~{dropped} tokens omitted to fit the window]\n"
+                        omissions.append(f"project context truncated (~{dropped} tokens)")
+                    if dossier_tokens > room:
+                        keep_chars = int(len(dossier_block) * room / dossier_tokens * 0.9) if dossier_tokens else 0
+                        dropped = dossier_tokens - estimate_tokens(dossier_block[:keep_chars])
+                        dossier_block = (dossier_block[:keep_chars]
+                                         + f"\n[dossier truncated: ~{dropped} tokens omitted; its decisions and "
+                                         f"follow-ups are offered through the memory pools this turn]\n")
+                        omissions.append(f"dossier truncated (~{dropped} tokens): its exclusions lifted this turn")
+                        self._dossier_trimmed_this_turn = True
+                    project_context = scan + dossier_block
             system_prompt += project_context
         else:
             # Plain chat mode — apply chat-specific behavioral instructions
@@ -1425,9 +1452,12 @@ class ChatMixin:
         head = system_prompt
 
         tail = ""
-        # Inject pending follow-ups from previous sessions
-        if getattr(self, "_pending_follow_ups", "") and self._pending_follow_ups.strip():
-            tail += f"\n\n{self._pending_follow_ups}"
+        # Inject pending follow-ups from previous sessions. When the dossier was
+        # cut this turn, the UNFILTERED block (dossier items included) is used.
+        follow_ups_block = (getattr(self, "_pending_follow_ups_unfiltered", "")
+                            if self._dossier_trimmed_this_turn else getattr(self, "_pending_follow_ups", ""))
+        if follow_ups_block and follow_ups_block.strip():
+            tail += f"\n\n{follow_ups_block}"
 
         if self._files_read and not drop_files_list:
             files_list = "\n".join(f"  - {f}" for f in sorted(self._files_read))
@@ -1580,6 +1610,8 @@ class ChatMixin:
         # Gather memory from all pools with dynamic budgets
         memory_items = self.memory_manager.gather_memory(
             token_budget=max(available - history_tokens, 0), pool_budgets=pool_budgets,
+            # a cut dossier no longer carries its records: the pools may (F2)
+            rendered_elsewhere=set() if self._dossier_trimmed_this_turn else None,
         )
 
         # Record what actually survived the budget so the caller can charge
@@ -1650,6 +1682,7 @@ class ChatMixin:
             "usage_pct": usage_pct,
             "omitted_fixed": list(omitted_fixed),
             "tools_omitted": tools_omitted,
+            "dossier_trimmed": bool(self._dossier_trimmed_this_turn),
         }
 
         memory_text = ""

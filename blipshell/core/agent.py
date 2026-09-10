@@ -156,6 +156,9 @@ class Agent(
         self._project_context: str = ""
         self._dossier_followup_ids: set = set()  # follow-ups the active project's dossier lists (E2)
         self._dossier_claims: list = []  # task_completed summaries with no verification event (claim check)
+        self._pending_follow_ups_unfiltered: str = ""  # follow-ups block WITH the dossier's items (F2)
+        self._dossier_trimmed_this_turn: bool = False
+        self._last_tools_sent = None  # the tool list the last chat request actually carried (F1)
         self._last_claim_check = None
         # Authorization rule (2026-09-10): question | instruction | declarative
         # per turn; a standing mandate (the executor path) authorizes acting on

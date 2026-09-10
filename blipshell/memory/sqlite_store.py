@@ -2509,6 +2509,25 @@ class SQLiteStore:
         row = await cursor.fetchone()
         return dict(row) if row else None
 
+    async def set_project_metadata(self, name: str, **fields) -> None:
+        """Set individual keys of a project's metadata_json atomically
+        (SQLite json_set), so concurrent writers of DIFFERENT keys never
+        overwrite each other. Whole-document `update_project(metadata_json=)`
+        is a read-modify-write and lost the dossier cache / a concurrent
+        digest (follow-up review F4, 2026-09-10)."""
+        if not fields:
+            return
+        expr = "COALESCE(metadata_json, '{}')"
+        values: list = []
+        for key, value in fields.items():
+            if not key.replace("_", "").isalnum():
+                raise ValueError(f"metadata key {key!r} must be alphanumeric/underscore")
+            expr = f"json_set({expr}, '$.{key}', json(?))"
+            values.append(json.dumps(value))
+        values.append(name)
+        await self._db.execute(f"UPDATE projects SET metadata_json = {expr} WHERE name = ?", values)
+        await self._db.commit()
+
     async def update_project(self, name: str, **fields) -> None:
         """Update project fields by name."""
         allowed = {"description", "root_path", "git_url", "language", "settings_json", "metadata_json"}
