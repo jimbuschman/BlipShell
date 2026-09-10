@@ -61,6 +61,28 @@ fixing - code moves.
 - Nothing in this plan changes model routing. No new model is justified by a
   code review.
 
+## Release readiness (2026-09-09)
+
+Everything below Stage F is on `main` (through the commit that carries this
+section), suite green (2300+), nothing pushed. Verified against a copy of
+the 2026-09-02 production corpus (515 MB, 42,397 memories, 1,087 lessons):
+all five new tables and the provenance columns migrate in under two
+seconds, `quick_check` ok, counts intact, and a real session start, project
+activation (dossier rendered), chat turn (Core, Recall, Lessons,
+RecentHistory, follow-ups all present in the request) and close run clean.
+`.blipshell/DIGEST.md` export now writes the dossier.
+
+**Verdict: usable, with two conditions and one caveat.** Conditions: push
+`main` and pull on the Ollama PC (the live instance runs off `main`); on
+first start the migrations run once against the real DB - take a backup
+first, as for any schema change (the nightly `backup` job does this). Caveat:
+the Stage E behavioural gate has been measured only on the fallback model
+(gpt-oss); the production model's readout (minimax-m3) is still owed and
+needs the Ollama PC. Deliberately deferred and not blocking: lesson
+attribution (judge off by default; D1/D2/phase 2 gated), E3, the model half
+of the continuity set, the scorer blind spots (a new scorer version), and
+`nightly.py`'s repo-root `scripts.*` imports (editable install only).
+
 ## Progress
 
 | Stage | Status |
@@ -723,6 +745,23 @@ needs are not in this history.** Labels are the user's to give (`show` /
 `label`); the gate cannot be meaningful until phase 1 accumulates live
 `corrections` rows, so D1 stays blocked by the sequence above.
 
+**Phase 1 rollout, specified (2026-09-09).** Two toggles in `config.yaml`
+(`attribution:`), so collection and judging ship separately:
+
+| setting | default | writes | model calls | changes behaviour |
+|---|---|---|---|---|
+| `attribution.enabled` | true | `lesson_uses` (one row per lesson per request: lesson id, turn, how it got there); `corrections` (one row per correction the EXISTING two-stage detector accepts: text, previous reply excerpt, lesson ids present, `attribution = unattributed`) | none | none - nothing reads these rows |
+| `attribution.judge_enabled` | **false** | the `attribution`, `lesson_id`, `confidence`, raw reply on the `corrections` row | one LOCAL reasoning call per accepted correction, in the background | none - the verdict has no authority (phase 2, gated) |
+
+Both paths are wrapped so a failure is a WARNING, never a broken turn
+(`tests/test_attribution_rollout.py`: defaults are collection-only, the
+judge runs only when enabled, disabled writes nothing, and no path moves a
+lesson's importance). The correction DETECTOR itself is unchanged and was
+already live; phase 1 only records what it accepts. Recommended rollout:
+ship with the defaults (collection only), let `corrections` accumulate,
+then enable the judge on the Ollama PC once the labelled set exists to
+evaluate it against.
+
 ### D3. Two creation paths, two promotion rules
 
 Lessons are created from two places with different trust:
@@ -1013,7 +1052,12 @@ the code the run loaded (`e6c9c88`). **Unfixed:** `blipshell simulate`
 hangs at process exit when the memory worker is still mid-call at close
 (the agent defers the vector-store close "to process exit" and exit never
 comes); the run driver kills the process 120s after the JSON exists. Same
-shutdown path as live BlipShell - trace on the Ollama PC.
+shutdown path as live BlipShell - trace on the Ollama PC. **Traced and
+fixed 2026-09-09 (after the runs):** not the shutdown path - simulate's
+cleanup called `end_session` but never `force_cleanup`, so the agent's
+SQLite was never closed, and aiosqlite's connection worker is a NON-daemon
+thread. The CLI always called `force_cleanup`, so live BlipShell was never
+affected. `tests/test_simulate_cleanup.py` keeps the negative control.
 
 ---
 

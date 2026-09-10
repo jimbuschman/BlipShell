@@ -234,7 +234,12 @@ blipshell/
   request; an accepted correction becomes a `corrections` row with the
   lessons present on the corrected turn, and a background LOCAL judge stores
   an attribution (lesson_wrong | lesson_ignored | lesson_misapplied |
-  unrelated | unattributed, strict parse, confidence floor 0.7). **No code
+  unrelated | unattributed, strict parse, confidence floor 0.7). Two
+  toggles (`config.yaml` `attribution:`): `enabled` (default true) is the
+  logging - no model call, no behaviour change; `judge_enabled` (default
+  FALSE) adds the background local judge call per correction. Ship with
+  the defaults; enable the judge only once a labelled set exists to
+  evaluate it. **No code
   reads these to change a lesson**, and none may until the hand-labelled
   evaluation (`python -m scripts.attribution_readout`, >= 10-15 genuine
   lesson_wrong positives, agreement >= 0.8, FP <= 0.1) passes and the user
@@ -439,11 +444,12 @@ blipshell/
   instrument here; the gate is a real-model measurement over several runs,
   never one reply. Run 2026-09-09 x5 from the dev box over Tailscale
   (fallback model; results `benchmark_results/simulate_continuity__*`).
-  Two things a run needs: results persist BEFORE the console report
-  (`e5c74e7`), and a driver that kills the process once its JSON exists -
-  **`blipshell simulate` hangs at exit when the memory worker is mid-call
-  at close** (agent defers the vector-store close "to process exit"; exit
-  never comes). Unfixed; same shutdown path as live BlipShell.
+  Results persist BEFORE the console report (`e5c74e7`). Every run that
+  day hung at exit: simulate's cleanup called `end_session` but never
+  `force_cleanup`, so SQLite stayed open and aiosqlite's NON-daemon
+  connection thread kept the interpreter alive. Fixed in the runner; the
+  CLI always did both. `tests/test_simulate_cleanup.py` keeps the negative
+  control. When you bootstrap an Agent anywhere else, close it the same way.
 - `blipshell benchmark run <model>` — ONE deep test across all 9 job types →
   `data/benchmark/report.md` (numbers only, no verdict). Ground-truth scorers are
   unit-testable here; real runs need the Ollama PC. Judge = OpenRouter
