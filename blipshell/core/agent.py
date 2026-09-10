@@ -157,6 +157,14 @@ class Agent(
         self._dossier_followup_ids: set = set()  # follow-ups the active project's dossier lists (E2)
         self._dossier_claims: list = []  # task_completed summaries with no verification event (claim check)
         self._last_claim_check = None
+        # Authorization rule (2026-09-10): question | instruction | declarative
+        # per turn; a standing mandate (the executor path) authorizes acting on
+        # declarative requirements; a write tool on a declarative turn without
+        # one is logged, never blocked.
+        self._last_turn_kind: str = ""
+        self._standing_mandate: bool = False
+        self._turn_authorization_note: str = ""
+        self._last_mutation_without_mandate: list = []
         self._file_changes: list[dict] = []
         self._files_read: set[str] = set()  # tracks files/dirs already read this session
         self._file_mtimes: dict[str, float] = {}  # path → mtime at last read (for external edit detection)

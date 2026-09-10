@@ -292,6 +292,9 @@ class ProjectMixin:
             "its reason, do not change it. An explicit INSTRUCTION to change it ('make it X', 'set that up') "
             "is authorization - before acting, say which decision it overrides and why that decision was "
             "made, then record the change with revise_decision. Never override a decision silently. "
+            "A stated REQUIREMENT or new fact ('CI now needs X') is neither: record it (follow-up, decision "
+            "revision with disclosure) and propose; do not change files or run commands unless an "
+            "implementation task is already in progress or the user asks for the work. "
             "Completed work marked 'claimed by assistant, not verified' is reported as unverified.\n"
             f"{md}"
         )

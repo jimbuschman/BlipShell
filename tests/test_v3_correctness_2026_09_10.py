@@ -144,7 +144,7 @@ class TestScorerV4:
         assert not any("superseded decision" in m for m in misses), "'moved off hourly' is history"
 
     def test_version(self):
-        assert sc.SCORER_VERSION == 4
+        assert sc.SCORER_VERSION == 5
 
 
 class TestScenarioIsolation:

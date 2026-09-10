@@ -588,6 +588,17 @@ class ChatMixin:
         if recall_pool:
             recall_pool.clear()
 
+        # Authorization rule for this turn (core/turn_kind.py): a declarative
+        # requirement updates state and proposes; it does not authorize file
+        # or command mutations unless a standing mandate (the executor path)
+        # already covers the task. Recorded per turn; the rule is injected only
+        # when it applies, at the tail so the cacheable prefix is untouched.
+        from blipshell.core.turn_kind import DECLARATIVE, DECLARATIVE_RULE, classify_turn
+        self._last_turn_kind = classify_turn(user_message)
+        self._turn_authorization_note = (
+            DECLARATIVE_RULE if (self._last_turn_kind == DECLARATIVE and not self._standing_mandate) else ""
+        )
+
         # Search relevant memories for recall
         await self._search_relevant_memories(user_message)
 
@@ -747,6 +758,20 @@ class ChatMixin:
 
         full_response = result.response if result else "Error: No available LLM endpoint."
 
+        # Instrumentation for the authorization rule: a write tool on a
+        # declarative turn with no standing mandate is an observable event.
+        from blipshell.core.turn_kind import mutations_in
+        self._last_mutation_without_mandate = []
+        if (result is not None and self._last_turn_kind == DECLARATIVE and not self._standing_mandate):
+            written = mutations_in(result.tool_call_names)
+            if written:
+                self._last_mutation_without_mandate = written
+                logger.warning("Mutation without mandate on a declarative turn: %s", ", ".join(written))
+                await self._log_event("mutation_without_mandate", {
+                    "tools": written, "turn_kind": self._last_turn_kind,
+                    "project": self.active_project["name"] if self.active_project else None,
+                })
+
         # Deterministic backstop for "claim nothing unverified" (V3 Stage E):
         # an unhedged statement of one of the active project's unverified
         # completions gets an appended note. Narrow: only the dossier's
@@ -855,6 +880,10 @@ class ChatMixin:
         try:
             # Forward pause callback to executor
             self.task_executor.pause_check_callback = self._pause_check_callback
+            # The executor path IS an explicit implementation mandate: the user
+            # asked for planned execution. Declarative requirements inside it
+            # may be acted on; the authorization comes from the standing task.
+            self._standing_mandate = True
             result = await self.task_executor.execute_dynamic(
                 user_message,
                 on_step_complete=on_step_complete,
@@ -869,10 +898,13 @@ class ChatMixin:
             )
         except Exception as e:
             logger.error("Dynamic execution failed: %s", e)
+            self._standing_mandate = False
             # Fallback to simple chat
             if on_token:
                 on_token("[Execution failed, falling back to direct chat]\n")
             return await self._chat_simple(user_message, on_token=on_token, on_tool_display=on_tool_display)
+        finally:
+            self._standing_mandate = False
 
         # Extract tool call names from executor transcript for programmatic access
         tool_names = []
@@ -1405,6 +1437,12 @@ class ChatMixin:
             )
         elif self._files_read:
             omissions.append(f"files-read list omitted ({len(self._files_read)} files)")
+
+        # Per-turn authorization rule (declarative turn, no mandate) - tail,
+        # so the cacheable prefix is untouched on the turns it does not apply to.
+        note = getattr(self, "_turn_authorization_note", "")
+        if note:
+            tail += "\n\n" + note
 
         # Derived capability block — keeps the model's self-knowledge in sync
         # with what's actually true this turn (e.g. vision availability) instead
