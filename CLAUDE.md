@@ -308,7 +308,14 @@ blipshell/
   After the record-layer fix (dossier carries the reporting rule, 2026-09-10,
   frozen batch, 5 runs): 9/10 resume replies report it as unverified, 1
   states it as fact; frozen batch verdict still FAIL on other clauses.
-  Decision pending on the last case. V3_PLAN Stage E gate + completion batch.
+  A deterministic backstop now exists (`core/claim_check.py`, wired in
+  `_chat_simple`): an unhedged statement of a dossier claim gets an appended
+  `[Unverified: ...]` note; narrow to the dossier's claims, never rewrites.
+  Project scope is enforced at SELECTION (2026-09-10): while a project is
+  active, RecentHistory items and Recall results belonging to a DIFFERENT
+  project are omitted ("other project"); global items stay. Scorer v4;
+  continuity scenarios run on a fresh DB each (`SimScenario.fresh_db`).
+  V3_PLAN Stage E gate + completion batch + v3 correctness closures.
 
 ## LLM routing
 

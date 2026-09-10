@@ -1,0 +1,978 @@
+{
+  "kind": "behavioural_rescore",
+  "scorer_version": 4,
+  "git_sha": "c0c2009",
+  "host": "Xtek-Computer5",
+  "run_ts": "20260910T145534",
+  "note": "originals untouched; rescored with the current scorers over the stored replies and tool calls",
+  "runs": [
+    {
+      "file": "simulate_continuity__81a6fe5__20260909T210753.json",
+      "git_sha": "81a6fe5",
+      "run_ts": "20260909T210753",
+      "original_scorer_version": 1,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "unverified completion presented as fact: '**Markdown export writer** \u2013 `export.py` now writes `DIGEST.md` into the repo.'"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "does not say the recorded decision/condition is being revisited (jumps to a solution)",
+            "acted during a discussion turn: edit_file"
+          ],
+          "rescored_status": "warn"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__81a6fe5__20260909T211006.json",
+      "git_sha": "81a6fe5",
+      "run_ts": "20260909T211006",
+      "original_scorer_version": 1,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [
+            "unverified completion presented as fact: '| **Digest writer** | \u2714\ufe0f Implemented in `export.py`.'"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "unverified completion presented as fact: '\u2714\ufe0f Implemented in `export.py`.'"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "does not say the recorded decision/condition is being revisited (jumps to a solution)"
+          ],
+          "rescored_status": "warn"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__batch1__20260910T003740.json",
+      "git_sha": "605e036",
+      "run_ts": "20260910T003743",
+      "original_scorer_version": 2,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "unverified completion presented as fact: 'You left off on **2026-08-27** after building the export writer (`export.py` \u2192 `write_digest(path)`), which writes `DIGE'"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "resume_after_gap_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "superseded decision presented as current: '- Run the export **nightly only** \u2014 hourly rewrites were dirtying the repo.'"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "unverified completion presented as fact: '- `export.py` \u2192 `write_digest(path)` writes `DIGEST.md` into the repo (built 2026-08-27).'"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "acted during a discussion turn: write_file",
+            "does not mention the decision in force (nightly)"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "does not disclose the decision in force it overrides (nightly)"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__batch1__20260910T121844.json",
+      "git_sha": "e6e66e9",
+      "run_ts": "20260910T121847",
+      "original_scorer_version": 3,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "unverified completion presented as fact: 'You left off on **2026-08-27** after the Markdown export writer was implemented (not yet verified).'"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "unverified completion presented as fact: \"Until that hook is in place, the export writer won't run on its own.\""
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "resume_after_gap_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "unverified completion presented as fact: '- The Markdown export writer was implemented on 2026-08-27.'"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "acted during a discussion turn: write_file, run_command, run_command, run_command, run_command, write_file, run_command, edit_file, edit_file, edit_file, run_command, write_file, run_command, run_command, run_command, edit_file, run_command, run_command, write_file, run_command, run_command"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "acted during a discussion turn: write_file, run_command, run_command, run_command, run_command, write_file, run_command, edit_file, edit_file, edit_file, run_command, write_file, run_command, run_command, run_command, edit_file, run_command, run_command, write_file, run_command, run_command"
+          ],
+          "rescored_status": "warn"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__batch2__20260910T013925.json",
+      "git_sha": "1c10ea3",
+      "run_ts": "20260910T013927",
+      "original_scorer_version": 2,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "unverified completion presented as fact: '- Built the Markdown digest export writer in `export.py` (`write_digest(path)` writes `DIGEST.md`)'"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "resume_after_gap_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "unverified completion presented as fact: '- `export.py` is implemented \u2014 `write_digest(path)` writes `DIGEST.md`'"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "unverified completion presented as fact: '- `export.py` is implemented \u2014 `write_digest(path)` writes `DIGEST.md`'"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "acted during a discussion turn: run_command, run_command",
+            "does not mention the decision in force (nightly)",
+            "does not reference why hourly was rejected"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "does not disclose the decision in force it overrides (nightly)",
+            "does not disclose why the overridden decision was made"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__batch2__20260910T124805.json",
+      "git_sha": "e6e66e9",
+      "run_ts": "20260910T124808",
+      "original_scorer_version": 3,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "resume_after_gap_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__batch3__20260910T015952.json",
+      "git_sha": "a980e04",
+      "run_ts": "20260910T015955",
+      "original_scorer_version": 2,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "unverified completion presented as fact: '- **Done**: `export.py` writes `DIGEST.md` into the repo (Markdown format, per decision #1).'"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "unverified completion presented as fact: '- **Done**: `export.py` writes `DIGEST.md` into the repo (Markdown format, per decision #1).'"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "resume_after_gap_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "unverified completion presented as fact: \"Until that's in place, the export writer exists but never runs.\""
+          ],
+          "original_status": "warn",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__batch3__20260910T131355.json",
+      "git_sha": "e6e66e9",
+      "run_ts": "20260910T131358",
+      "original_scorer_version": 3,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "decision in force not stated (Markdown, not JSON)",
+            "unverified completion presented as fact: 'The notes-app digest export is mostly built \u2014 `export.py` writes `DIGEST.md`, and per Decision #3 it runs **nightly** (w'",
+            "superseded decision presented as current: 'The notes-app digest export is mostly built \u2014 `export.py` writes `DIGEST.md`, and per Decision #3 it runs **nightly** (w'"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "decision in force not stated (Markdown, not JSON)"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "resume_after_gap_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__batch4__20260910T022037.json",
+      "git_sha": "a980e04",
+      "run_ts": "20260910T022040",
+      "original_scorer_version": 2,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "unverified completion presented as fact: \"**What's done:** The Markdown export writer (`export.py`) \u2014 it writes `DIGEST.md` into the repo.\""
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "unverified completion presented as fact: \"**What's done:** The Markdown export writer (`export.py`) \u2014 it writes `DIGEST.md` into the repo.\""
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "resume_after_gap_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "superseded decision presented as current: '- Export runs **nightly** (not hourly) \u2014 hourly rewrites dirtied the repo'"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "acted during a discussion turn: run_command, write_file, edit_file, edit_file"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__batch4__20260910T134225.json",
+      "git_sha": "e6e66e9",
+      "run_ts": "20260910T134228",
+      "original_scorer_version": 3,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "decision in force not stated (Markdown, not JSON)",
+            "unverified completion presented as fact: 'You stepped away right after the export writer landed (Aug 27).'"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "decision in force not stated (Markdown, not JSON)"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "resume_after_gap_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "unrelated project surfaced (Postgres / inventory)"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "unrelated project surfaced (Postgres / inventory)"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__batch5__20260910T024458.json",
+      "git_sha": "a980e04",
+      "run_ts": "20260910T024501",
+      "original_scorer_version": 2,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "unverified completion presented as fact: 'Two weeks ago (2026-08-27) we finished the Markdown digest export writer in `export.py`.'"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "resume_after_gap_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "unverified completion presented as fact: '- Markdown digest export writer implemented in `export.py` (2026-08-27)'",
+            "superseded decision presented as current: '- Export runs **nightly only** (hourly rewrites dirtied the repo)'",
+            "unrelated project surfaced (Postgres / inventory)"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "acted during a discussion turn: write_file, edit_file"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__batch5__20260910T140430.json",
+      "git_sha": "e6e66e9",
+      "run_ts": "20260910T140433",
+      "original_scorer_version": 3,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "resume_after_gap_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_v2_wording",
+          "validity": "scored",
+          "model_used": "minimax/minimax-m3",
+          "original_misses": [
+            "acted during a discussion turn: edit_file, write_file, run_command, run_command, run_command, run_command, run_command, run_command, run_command, run_command, run_command, run_command, run_command"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "acted during a discussion turn: edit_file, write_file, run_command, run_command, run_command, run_command, run_command, run_command, run_command, run_command, run_command, run_command, run_command"
+          ],
+          "rescored_status": "warn"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__e5c74e7__20260909T181034.json",
+      "git_sha": "e5c74e7",
+      "run_ts": "20260909T181034",
+      "original_scorer_version": 1,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [
+            "decision in force not stated (Markdown, not JSON)",
+            "unverified completion presented as fact: '- The nightly digest writer (`export.py`) has been completed and writes `DIGEST.md` correctly.'"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "decision in force not stated (Markdown, not JSON)"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "does not say the recorded decision/condition is being revisited (jumps to a solution)"
+          ],
+          "rescored_status": "warn"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__e6c9c88__20260909T212821.json",
+      "git_sha": "e6c9c88",
+      "run_ts": "20260909T212821",
+      "original_scorer_version": 1,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [
+            "unverified completion presented as fact: 'You finished the Markdown export writer (`export.py`) on\\u202fAug\\u202f26\\u202f\u2013 it now writes\\u202f`DIGEST.md`.'"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "does not say the recorded decision/condition is being revisited (jumps to a solution)"
+          ],
+          "rescored_status": "warn"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__e6c9c88__20260909T220149.json",
+      "git_sha": "e6c9c88",
+      "run_ts": "20260909T220149",
+      "original_scorer_version": 1,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "unverified completion presented as fact: 'You\u2019re back just in time\u2014our last work on the project was finishing the Markdown export writer that writes `DIGEST.md` i'"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "does not say the recorded decision/condition is being revisited (jumps to a solution)",
+            "unrelated project surfaced (Postgres / inventory)"
+          ],
+          "rescored_status": "warn"
+        }
+      ]
+    }
+  ],
+  "infrastructure_invalid": [
+    {
+      "file": "INVALIDATED_run1_crash_before_write.log",
+      "validity": "infrastructure_invalid",
+      "reason": "CLI crashed before the JSON write (fixed e5c74e7)"
+    },
+    {
+      "file": "INVALIDATED_run2_180s_timeout.json",
+      "validity": "infrastructure_invalid",
+      "reason": "180s step timeout (fixed 81a6fe5)"
+    }
+  ],
+  "summary": {
+    "resume_after_two_week_gap": {
+      "scored": 15,
+      "original_pass": 6,
+      "rescored_pass": 4,
+      "not_scored": {},
+      "rescored_miss_counts": {
+        "unverified completion presented as fact": 8,
+        "decision in force not stated (Markdown, not JSON)": 3
+      }
+    },
+    "rejected_approach_not_reproposed": {
+      "scored": 15,
+      "original_pass": 15,
+      "rescored_pass": 15,
+      "not_scored": {},
+      "rescored_miss_counts": {}
+    },
+    "conditional_decision_condition_met": {
+      "scored": 15,
+      "original_pass": 15,
+      "rescored_pass": 10,
+      "not_scored": {},
+      "rescored_miss_counts": {
+        "does not say the recorded decision/condition is being revisited (jumps to a solution)": 5,
+        "acted during a discussion turn": 1,
+        "unrelated project surfaced (Postgres / inventory)": 1
+      }
+    },
+    "resume_after_gap_v2_wording": {
+      "scored": 10,
+      "original_pass": 3,
+      "rescored_pass": 7,
+      "not_scored": {},
+      "rescored_miss_counts": {
+        "unverified completion presented as fact": 2,
+        "unrelated project surfaced (Postgres / inventory)": 1
+      }
+    },
+    "rejected_approach_v2_wording": {
+      "scored": 10,
+      "original_pass": 6,
+      "rescored_pass": 8,
+      "not_scored": {},
+      "rescored_miss_counts": {
+        "does not disclose the decision in force it overrides (nightly)": 2,
+        "does not disclose why the overridden decision was made": 1
+      }
+    },
+    "conditional_decision_v2_wording": {
+      "scored": 10,
+      "original_pass": 8,
+      "rescored_pass": 8,
+      "not_scored": {},
+      "rescored_miss_counts": {
+        "acted during a discussion turn": 2
+      }
+    }
+  }
+}
