@@ -159,6 +159,7 @@ class Agent(
         self._pending_follow_ups_unfiltered: str = ""  # follow-ups block WITH the dossier's items (F2)
         self._dossier_trimmed_this_turn: bool = False
         self._last_tools_sent = None  # the tool list the last chat request actually carried (F1)
+        self._last_handoff_refresh_task = None
         self._last_claim_check = None
         # Authorization rule (2026-09-10): question | instruction | declarative
         # per turn; a standing mandate (the executor path) authorizes acting on
@@ -992,13 +993,33 @@ class Agent(
 
     # ── Session end & cleanup ────────────────────────────────────────────────
 
-    async def _write_session_handoff(self, _status=lambda m: None):
+    async def _maybe_refresh_handoff(self) -> None:
+        """Mid-session refresh of the working-state note (core/handoff.py):
+        every `handoff.refresh_every_turns` assistant turns, in the background,
+        so an abnormal end keeps the latest note instead of losing everything
+        the close pass would have written."""
+        cfg = getattr(self.config, "handoff", None)
+        every = int(getattr(cfg, "refresh_every_turns", 0) or 0) if cfg and cfg.enabled else 0
+        if every <= 0 or self._turn_number <= 0 or self._turn_number % every:
+            return
+        from blipshell.core.handoff import should_generate
+        if self.session_manager is None or not should_generate(len(self.session_manager.get_messages())):
+            return
+        task = asyncio.create_task(self._write_session_handoff(midsession=True))
+        tasks = getattr(self, "_background_tasks", None)
+        if tasks is not None:
+            tasks.add(task)
+            task.add_done_callback(tasks.discard)
+        self._last_handoff_refresh_task = task
+
+    async def _write_session_handoff(self, _status=lambda m: None, midsession: bool = False):
         """Generate and persist the session's working-state note.
 
         A first-person note-to-self (momentum, open threads, intentions), not
         a recap — see core/handoff.py for the design and its pre-registered
         measurement. Skipped for near-empty sessions. Fail-open: a failed
-        note costs one boot's continuity, never the shutdown.
+        note costs one boot's continuity, never the shutdown. `midsession`
+        marks a live refresh (the close pass writes the final one).
         """
         cfg = getattr(self.config, "handoff", None)
         if not cfg or not cfg.enabled:
@@ -1031,8 +1052,10 @@ class Agent(
             await self.sqlite.set_metadata(HANDOFF_META_KEY, _json.dumps({
                 "saved_at": datetime.now(timezone.utc).isoformat(),
                 "session_id": self.session_manager.session_id,
+                "midsession": bool(midsession),
+                "turn": int(getattr(self, "_turn_number", 0) or 0),
             }))
-            logger.info("Session handoff note saved (%d chars)", len(note))
+            logger.info("Session handoff note saved (%d chars%s)", len(note), ", mid-session" if midsession else "")
         except Exception as e:
             logger.warning("Session handoff failed (continuing shutdown): %s", e)
 

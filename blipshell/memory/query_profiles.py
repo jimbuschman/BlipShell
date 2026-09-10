@@ -39,7 +39,34 @@ PROFILES: dict[str, dict[str, float]] = {
         "RecentHistory": 0.15,
         "Recall": 0.50,
     },
+    # A continuity question ("do you remember the last thing we talked
+    # about?", "where did we leave off?") is answered by where the last
+    # session stopped - RecentHistory (the stop block, the last session's
+    # lines) and Core (the handoff note) - not by Recall, which for these
+    # questions returns semantically similar OLD meta-questions ("did you
+    # forget what we were talking about?", session 1920 turn 1, 2026-08-11).
+    "continuity": {
+        "Core": 0.10,
+        "Lessons": 0.05,
+        "ActiveSession": 0.15,
+        "RecentHistory": 0.45,
+        "Recall": 0.25,
+    },
 }
+
+_CONTINUITY_PATTERNS = re.compile(
+    r"(?:"
+    r"\b(?:do you )?remember (?:the )?(?:last|what we)\b"
+    r"|\bwhere (?:were|did|are) we\b"
+    r"|\b(?:left|leave) off\b"
+    r"|\bpick(?:ing)? (?:back )?up (?:where|from)\b"
+    r"|\bwhat were we (?:talking about|working on|in the middle of|discussing|doing)\b"
+    r"|\blast (?:time|session|conversation|thing we)\b"
+    r"|\bcontinue (?:where|from where)\b"
+    r"|\bwhere we (?:stopped|ended|got to)\b"
+    r")",
+    re.IGNORECASE,
+)
 
 # --- Classification patterns ---
 
@@ -86,9 +113,14 @@ _CODING_PATTERNS = re.compile(
 def classify_query(message: str) -> str:
     """Classify a user message into a query profile. No LLM call.
 
-    Returns one of: "recall", "session", "coding", "balanced".
+    Returns one of: "continuity", "recall", "session", "coding", "balanced".
     """
     stripped = message.strip()
+
+    # A continuity question first: it must win over the generic recall
+    # patterns ("do you remember...") and over the short-message rule.
+    if _CONTINUITY_PATTERNS.search(stripped):
+        return "continuity"
 
     # Short messages (<15 chars) that aren't code are likely follow-ups
     if len(stripped) < 15 and "```" not in stripped:

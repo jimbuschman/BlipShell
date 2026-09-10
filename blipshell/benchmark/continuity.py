@@ -192,7 +192,8 @@ async def seed_case(agent, case, now: Optional[datetime] = None) -> None:
         elif seed.kind == "memory":
             mid = await agent.sqlite.create_memory(Memory(
                 session_id=sid, role=seed.role, content=seed.content,
-                summary=seed.content[:200], timestamp=ts, rank=3, importance=0.6,
+                summary=seed.content[:200], timestamp=ts, rank=3,
+                importance=float(getattr(seed, "importance", 0.6)),
                 memory_type=MemoryType.CONVERSATION,
             ))
             agent.vectors.add_memory(mid, seed.content, {"session_id": str(sid), "role": seed.role})
@@ -233,6 +234,14 @@ async def seed_case(agent, case, now: Optional[datetime] = None) -> None:
             await project_events.record_event(agent.sqlite, project=seed.project, kind="task_completed",
                                               summary=seed.content, session_id=sid,
                                               source_type="assistant_inference")
+        elif seed.kind == "handoff":
+            # the previous session's working-state note, as the close (or a
+            # mid-session refresh) would have written it
+            import json as _json
+            from blipshell.core.handoff import HANDOFF_KEY, HANDOFF_META_KEY
+            await agent.sqlite.set_metadata(HANDOFF_KEY, seed.content)
+            await agent.sqlite.set_metadata(HANDOFF_META_KEY, _json.dumps(
+                {"saved_at": ts.isoformat(), "session_id": sid, "midsession": True}))
         else:
             raise ValueError(f"unknown seed kind {seed.kind!r}")
     if case.active_project:

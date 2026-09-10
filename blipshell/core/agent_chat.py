@@ -191,11 +191,25 @@ class ChatMixin:
         # Add assistant response to session
         if response and response.strip():
             self.session_manager.add_message(MessageRole.ASSISTANT, response)
+            # Live working-state note (continuity): refreshed every N turns in
+            # the background, after the reply is stored, so an abnormal end
+            # does not lose where we were.
+            try:
+                await self._maybe_refresh_handoff()
+            except Exception as e:
+                logger.debug("Handoff refresh not scheduled: %s", e)
         else:
             # Empty response — add placeholder so session continuity isn't broken
             logger.warning("LLM returned empty response for: %s", user_message[:80])
             response = "[No response generated]"
             self.session_manager.add_message(MessageRole.ASSISTANT, response)
+            # Live working-state note (continuity): refreshed every N turns in
+            # the background, after the reply is stored, so an abnormal end
+            # does not lose where we were.
+            try:
+                await self._maybe_refresh_handoff()
+            except Exception as e:
+                logger.debug("Handoff refresh not scheduled: %s", e)
 
         # Background: dump to memory periodically (tracked for clean shutdown)
         task = asyncio.create_task(self._background_memory_processing())

@@ -13,12 +13,13 @@ from blipshell.simulate.scenarios.chat_workflows import get_scenarios as _chat
 from blipshell.simulate.scenarios.project_workflows import get_scenarios as _project
 from blipshell.simulate.scenarios.error_recovery import get_scenarios as _errors
 from blipshell.simulate.scenarios.continuity import get_scenarios as _continuity
+from blipshell.simulate.scenarios.continuity_thread import get_scenarios as _continuity_thread
 
 
 def collect_all_scenarios() -> list[SimScenario]:
     """Collect all scenarios from all modules."""
     all_scenarios: list[SimScenario] = []
-    for getter in [_tool_reg, _slash, _modes, _regression, _chat, _project, _errors, _continuity]:
+    for getter in [_tool_reg, _slash, _modes, _regression, _chat, _project, _errors, _continuity, _continuity_thread]:
         all_scenarios.extend(getter())
     return all_scenarios
 

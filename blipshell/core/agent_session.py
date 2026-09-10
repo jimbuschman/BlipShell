@@ -312,6 +312,13 @@ class SessionMixin:
         current_id = self.session_manager.session_id
         now = datetime.now(timezone.utc)
 
+        # Where the previous session STOPPED, verbatim (core/handoff.py). The
+        # live thread is the state a return needs; summaries and importance-
+        # ranked lines are retrospective and never carried it (the 2026-09-02
+        # "clean cold start" session got the previous session's top-importance
+        # lines and a third-person summary; the idea it stopped on was absent).
+        stop_ids = await self._load_stop_block(sessions, current_id)
+
         loaded_substantive = False
         for s in sessions:
             if s.id == current_id:
@@ -335,7 +342,7 @@ class SessionMixin:
                 ]
                 good_memories.sort(key=lambda m: m.importance, reverse=True)
 
-                for m in good_memories[:20]:
+                for m in [m for m in good_memories if m.id not in stop_ids][:20]:
                     ts = m.timestamp
                     if ts and ts.tzinfo is None:
                         ts = ts.replace(tzinfo=timezone.utc)
@@ -402,7 +409,9 @@ class SessionMixin:
             if not memories:
                 continue
             superseded_ids = await self._superseded_ids([m.id for m in memories])
-            for m in [m for m in memories if m.id not in superseded_ids][:5]:
+            # the END of the session, not its opening: that is where the live
+            # threads were (the old [:5] carried each session's first lines)
+            for m in [m for m in memories if m.id not in superseded_ids and m.id not in stop_ids][-5:]:
                 if m.is_archived:
                     continue
                 text = m.content if m.content and len(m.content) > len(m.summary or "") else (m.summary or m.content or "")
@@ -472,6 +481,42 @@ class SessionMixin:
                 logger.warning(
                     "Failed to summarize orphaned session %d: %s", s.id, e,
                 )
+
+    async def _load_stop_block(self, sessions, current_id) -> set:
+        """Add the last exchanges of the most recent previous session, verbatim,
+        to RecentHistory above the summaries (handoff.stop_block). Returns the
+        memory ids it carries so the tier loaders do not render them again."""
+        cfg = getattr(self.config, "handoff", None)
+        pairs = int(getattr(cfg, "stop_block_pairs", 0) or 0) if cfg else 0
+        if pairs <= 0:
+            return set()
+        try:
+            from blipshell.core.handoff import stop_block
+            for s in sessions:
+                if s.id == current_id:
+                    continue
+                memories = await self.sqlite.get_memories_by_session(s.id)
+                # conversation turns only: decisions and other RECORD rows live in
+                # the dossier and their own pools, not in "where we stopped"
+                record_types = ("decision", "session_summary", "core", "lesson")
+                live = [m for m in memories if not m.is_archived and (m.content or "").strip()
+                        and not str(getattr(m, "memory_type", "")).lower().endswith(record_types)]
+                if len(live) < 2:
+                    continue
+                when = s.created_at.strftime("%Y-%m-%d") if getattr(s, "created_at", None) else None
+                text = stop_block(live, saved_when=when, max_pairs=pairs)
+                if not text:
+                    continue
+                self.memory_manager.add_memory("RecentHistory", PoolItem(
+                    text=text, session_role="system", priority_score=3.5,
+                    session_id=s.id, source="history", project=s.project,
+                ))
+                logger.info("Loaded the previous session's stop block (session %d)", s.id)
+                carried = [m for m in live if m.role in ("user", "assistant")][-(2 * pairs):]
+                return {m.id for m in carried if m.id}
+        except Exception as e:
+            logger.warning("Stop block not loaded (continuing without): %s", e)
+        return set()
 
     async def _load_follow_ups(self, include_dossier_items: bool = False) -> str:
         """Load pending follow-ups and format for injection into first turn.
