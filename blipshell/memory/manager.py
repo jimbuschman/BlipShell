@@ -59,6 +59,7 @@ class PoolItem:
     memory_id: int = 0
     source: str = ""     # memory | core | lesson | history | thought | user_model | summary
     speaker: str = ""    # user | assistant | "" (system-authored)
+    project: str | None = None  # the project the record belongs to (None = global / unknown)
 
     def __post_init__(self):
         if self.estimated_tokens == 0:
@@ -113,7 +114,8 @@ class Pool:
 
     def get_top_entries(self, available_tokens: int, max_override: int | None = None,
                         exclude_keys: set[tuple] | None = None,
-                        rendered_elsewhere: set[tuple] | None = None) -> list[PoolItem]:
+                        rendered_elsewhere: set[tuple] | None = None,
+                        active_project: str | None = None) -> list[PoolItem]:
         """Get top entries that fit within available tokens and item count cap.
 
         Both exclusion sets hold typed record keys, `(record_kind, id)` as
@@ -135,6 +137,9 @@ class Pool:
                 omitted.append((item, "item cap"))
                 continue
             key = item.record_key
+            if active_project and item.project and item.project != active_project:
+                omitted.append((item, "other project"))
+                continue
             if exclude_keys and key and key in exclude_keys:
                 omitted.append((item, "already sent via Recall"))
                 continue
@@ -190,6 +195,13 @@ class MemoryManager:
         # Every pool skips them, Recall included: the dossier is their
         # canonical, structured place.
         self.rendered_elsewhere: set[tuple] = set()
+        # The active project. Items that belong to a DIFFERENT project are
+        # not selected while it is active: project-scoped state of another
+        # project reached the request through RecentHistory (last 10 sessions
+        # regardless of project) - 2026-09-10 production gate, run 4, "the
+        # inventory service runs on Postgres" listed among this project's
+        # decisions. Global items (no project) are always eligible.
+        self.active_project: str | None = None
 
         self._configure_pools()
 
@@ -274,7 +286,7 @@ class MemoryManager:
             cap = pool_budgets.get(pool.name) if pool_budgets else None
             exclude = recalled_keys if pool.name != "Recall" else None
             entries = pool.get_top_entries(remaining, max_override=cap, exclude_keys=exclude,
-                                           rendered_elsewhere=elsewhere)
+                                           rendered_elsewhere=elsewhere, active_project=self.active_project)
             for entry in entries:
                 if remaining >= entry.estimated_tokens:
                     entry.pool_name = pool.name

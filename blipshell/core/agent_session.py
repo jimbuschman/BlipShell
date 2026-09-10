@@ -364,6 +364,7 @@ class SessionMixin:
                         memory_id=m.id or 0,
                         source="history",
                         speaker=speaker,
+                        project=s.project,
                     ))
 
                 if s.summary:
@@ -372,6 +373,7 @@ class SessionMixin:
                         session_role="system",
                         priority_score=3.0,
                         session_id=s.id,
+                        project=s.project,
                     ))
                 loaded_substantive = True
                 logger.info(
@@ -421,6 +423,7 @@ class SessionMixin:
                     memory_id=m.id or 0,
                     source="history",
                     speaker=speaker,
+                    project=s.project,
                 ))
 
     async def _summarize_orphaned_sessions(self):

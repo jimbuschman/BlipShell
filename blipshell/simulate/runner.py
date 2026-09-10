@@ -204,7 +204,7 @@ class SimRunner:
 
         # Bootstrap agent
         try:
-            agent, config, config_manager = await self._bootstrap_agent()
+            agent, config, config_manager = await self._bootstrap_agent(fresh_db=scenario.fresh_db)
         except Exception as e:
             result.status = ResultStatus.FAIL
             result.error = f"Bootstrap failed: {type(e).__name__}: {e}"
@@ -342,8 +342,15 @@ class SimRunner:
             self.on_status(f"  Pre-flight OK: {len(all_known)} tools validated")
         return errors
 
-    def _resolve_db_path(self, config: BlipShellConfig) -> str | None:
-        """Which database this run should use. None = leave config alone."""
+    def _resolve_db_path(self, config: BlipShellConfig, fresh: bool = False) -> str | None:
+        """Which database this run should use. None = leave config alone.
+        `fresh`: a new throwaway database (its own directory under the run's
+        temp dir), for scenarios that must not see each other's state."""
+        if fresh and not self.use_real_db and not self.db_path:
+            import tempfile
+            if self._temp_db_dir is None:
+                self._temp_db_dir = tempfile.mkdtemp(prefix="blipshell_sim_")
+            return str(Path(tempfile.mkdtemp(prefix="scenario_", dir=self._temp_db_dir)) / "sim.db")
         if self.use_real_db:
             self.on_status(
                 "  [db] WARNING: running against the REAL database — scenarios "
@@ -359,13 +366,13 @@ class SimRunner:
             self._temp_db_dir = tempfile.mkdtemp(prefix="blipshell_sim_")
         return str(Path(self._temp_db_dir) / "sim.db")
 
-    async def _bootstrap_agent(self) -> tuple[Agent, BlipShellConfig, ConfigManager]:
+    async def _bootstrap_agent(self, fresh_db: bool = False) -> tuple[Agent, BlipShellConfig, ConfigManager]:
         """Bootstrap a real Agent instance (same pattern as run_executor.py)."""
         config_manager = ConfigManager(self.config_path)
         config = config_manager.load()
 
         # Point the agent at an isolated database BEFORE it initializes.
-        db_path = self._resolve_db_path(config)
+        db_path = self._resolve_db_path(config, fresh=fresh_db)
         if db_path:
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
             config.database.path = db_path

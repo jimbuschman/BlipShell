@@ -747,6 +747,23 @@ class ChatMixin:
 
         full_response = result.response if result else "Error: No available LLM endpoint."
 
+        # Deterministic backstop for "claim nothing unverified" (V3 Stage E):
+        # an unhedged statement of one of the active project's unverified
+        # completions gets an appended note. Narrow: only the dossier's
+        # claims; never rewrites the model's text. See core/claim_check.py.
+        claims = getattr(self, "_dossier_claims", None) or []
+        if claims and result is not None:
+            from blipshell.core.claim_check import annotate_reply
+            check = annotate_reply(full_response, claims)
+            self._last_claim_check = check
+            if check.annotated:
+                logger.info("Reply check: %d unverified completion(s) stated as fact - note appended", len(check.notes))
+                full_response = check.reply
+                if on_token:
+                    on_token("\n\n" + "\n".join(check.notes))
+        else:
+            self._last_claim_check = None
+
         # Store tool call info for programmatic access (used by simulation runner)
         self._last_tool_calls = [
             {"name": n} for n in (result.tool_call_names if result else [])

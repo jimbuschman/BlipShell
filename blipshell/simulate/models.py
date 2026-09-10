@@ -94,6 +94,11 @@ class SimScenario:
     # seeded state (follow-ups, dossier, memories) loads the way a real return
     # would. Receives the SimContext. A raising setup fails the scenario.
     setup: Optional[Callable[[Any], Awaitable[None]]] = None
+    # A fresh throwaway database for THIS scenario (default: the run shares
+    # one). Seeded worlds accumulate otherwise - the gate's decisions were
+    # re-recorded once per scenario ("overrides #1, #8, #15, #22, #30, #37")
+    # and one scenario's file edits and decision changes reached the next.
+    fresh_db: bool = False
     requires_project: str | None = None
     requires_project_path: str | None = None
     fresh_session: bool = True

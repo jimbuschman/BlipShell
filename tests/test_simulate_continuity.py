@@ -179,7 +179,7 @@ class TestWiring:
             async def deactivate_project(self):
                 pass
 
-        async def fake_bootstrap(self):
+        async def fake_bootstrap(self, fresh_db=False):
             return FakeAgent(), object(), object()
 
         async def setup(ctx):

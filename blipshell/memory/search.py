@@ -473,6 +473,29 @@ class MemorySearch:
                     superseded_dropped += 1
             results = kept
 
+        # Step 6d: Project scope (2026-09-10). While a project is active,
+        # memories that belong to a DIFFERENT project are not selected: a
+        # project's decisions and facts are that project's state, not
+        # evidence for another. Global memories (no project) stay eligible.
+        # Selection correctness, not prompting: the model listed another
+        # project's decision among the active project's in the production gate.
+        other_project_dropped = 0
+        if active_project and results:
+            try:
+                from blipshell.memory import supersession as _sup
+                owners = await _sup.memory_projects(self.sqlite, [r.memory_id for r in results])
+            except Exception as e:
+                logger.warning("Project lookup for results failed (keeping all): %s", e)
+                owners = {}
+            kept = []
+            for r in results:
+                owner = owners.get(r.memory_id)
+                if owner and owner != active_project:
+                    other_project_dropped += 1
+                else:
+                    kept.append(r)
+            results = kept
+
         # Step 7: Sort by boosted score. When the query named a time range,
         # partition-prefer: in-range results rank ahead of out-of-range ones,
         # each partition ordered by boosted score. A partition (rather than a

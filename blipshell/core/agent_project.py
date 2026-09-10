@@ -119,7 +119,9 @@ class ProjectMixin:
         self.active_project = None
         self._project_context = ""
         self.memory_manager.rendered_elsewhere = set()
+        self.memory_manager.active_project = None
         self._dossier_followup_ids = set()
+        self._dossier_claims = []
         self._pending_follow_ups = await self._load_follow_ups()
         self._repo_map = None
         # Re-register file tools without root
@@ -270,14 +272,17 @@ class ProjectMixin:
         pools skip those memory ids and the follow-ups block skips those items."""
         try:
             from blipshell.memory import dossier
-            md, decision_ids, followup_ids = await dossier.get_dossier(self.sqlite, project["name"])
+            md, decision_ids, followup_ids, claims = await dossier.get_dossier(self.sqlite, project["name"])
         except Exception as e:
             logger.error("Failed to load project dossier: %s", e)
             return ""
+        # Selection scope follows the active project even without a dossier.
+        self.memory_manager.active_project = project["name"]
         if not md:
             return ""
         self.memory_manager.rendered_elsewhere = {("memory", int(i)) for i in decision_ids}
         self._dossier_followup_ids = set(followup_ids)
+        self._dossier_claims = list(claims)
         self._pending_follow_ups = await self._load_follow_ups()
         logger.info("Injected project dossier for '%s' (%d chars)", project["name"], len(md))
         return (

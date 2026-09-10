@@ -224,15 +224,22 @@ async def get_dossier_md(sqlite, project: str) -> Optional[str]:
     return await refresh(sqlite, project)
 
 
-async def get_dossier(sqlite, project: str) -> tuple[Optional[str], set[int], set[int]]:
-    """(markdown, decision ids carried, follow-up ids carried) for activation.
-    The ids come from a fresh build so they match the records even when the
-    cached render is served."""
+def claimed_completions(d: Dossier) -> list[str]:
+    """Summaries of task_completed events with no verification event - the
+    items the deterministic reply check (core/claim_check.py) guards."""
+    return [e["summary"] for e in d.completed if e["kind"] != "verification" and e.get("summary")]
+
+
+async def get_dossier(sqlite, project: str) -> tuple[Optional[str], set[int], set[int], list[str]]:
+    """(markdown, decision ids carried, follow-up ids carried, unverified
+    completion claims) for activation. The ids come from a fresh build so
+    they match the records even when the cached render is served."""
     md = await get_dossier_md(sqlite, project)
     if md is None:
-        return None, set(), set()
-    decision_ids, followup_ids = listed_ids(await build(sqlite, project))
-    return md, decision_ids, followup_ids
+        return None, set(), set(), []
+    d = await build(sqlite, project)
+    decision_ids, followup_ids = listed_ids(d)
+    return md, decision_ids, followup_ids, claimed_completions(d)
 
 
 RECONCILE_BATCH = 200
