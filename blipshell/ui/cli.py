@@ -1458,11 +1458,17 @@ def review_cmd(ctx, lessons, reflections, limit, quiet):
               help="Move mentions/aliases/relationships left on merged-away entities to their canonical.")
 @click.option("--unarchive-memory", "unarchive_ids", type=int, multiple=True,
               help="Reverse a dedup archive: restore memory ID, re-embed it, keep its history. Repeatable.")
+@click.option("--supersessions", "supersession_refs", multiple=True, metavar="KIND:ID",
+              help="List every supersession touching a record, e.g. memory:123 or core_memory:7. Repeatable.")
+@click.option("--undo-supersession", "undo_supersession_ids", type=int, multiple=True,
+              help="Undo supersession ID: the old record is current again; a core memory is reactivated "
+                   "and re-embedded. Never deletes. Repeatable.")
 @click.option("--dry-run", is_flag=True, help="Show counts without making changes.")
 @click.option("--all", "do_all", is_flag=True,
               help="Run all repairs.")
 @click.pass_context
-def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds, repoint_husks, unarchive_ids, dry_run, do_all):
+def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds, repoint_husks, unarchive_ids,
+               supersession_refs, undo_supersession_ids, dry_run, do_all):
     """Repair common DB issues.
 
     --restore-imports unarchives memories from imported sessions.
@@ -1474,8 +1480,9 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
       and restores it. Not part of --all: it names specific rows.
     """
     if not (restore_imports or sweep_orphans or fix_sessions or fix_pii_embeds
-            or repoint_husks or unarchive_ids or do_all):
-        console.print("[yellow]Nothing to do. Pass --restore-imports, --sweep-orphans, --fix-sessions, --fix-pii-embeds, --repoint-husks, --unarchive-memory ID, or --all.[/yellow]")
+            or repoint_husks or unarchive_ids or supersession_refs or undo_supersession_ids or do_all):
+        console.print("[yellow]Nothing to do. Pass --restore-imports, --sweep-orphans, --fix-sessions, --fix-pii-embeds, "
+                      "--repoint-husks, --unarchive-memory ID, --supersessions KIND:ID, --undo-supersession ID, or --all.[/yellow]")
         return
     if do_all:
         restore_imports = True
@@ -1626,6 +1633,25 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
                     )
                 elif dry_run:
                     console.print("[dim](dry-run; no changes)[/dim]")
+
+            if supersession_refs or undo_supersession_ids:
+                from blipshell.memory import supersession as _sup
+                for ref in supersession_refs:
+                    kind, _, rid = ref.partition(":")
+                    if not rid.isdigit():
+                        console.print(f"[red]Bad reference {ref!r}: expected KIND:ID[/red]")
+                        continue
+                    rows = await _sup.history_of(sqlite, kind, int(rid))
+                    console.print(f"[cyan]{kind} {rid}:[/cyan] {len(rows)} supersession record(s)")
+                    for rec in rows:
+                        console.print("  " + _sup.describe(rec))
+                for sid in undo_supersession_ids:
+                    if dry_run:
+                        console.print(f"[dim](dry-run) would undo supersession {sid}[/dim]")
+                        continue
+                    ok = await _sup.undo(sqlite, sid, vectors=vectors)
+                    console.print(f"[green]Undone[/green] supersession {sid}" if ok
+                                  else f"[yellow]Supersession {sid}: no active record with that id[/yellow]")
 
             if unarchive_ids:
                 from blipshell.memory.dedup_decision import unarchive_memory

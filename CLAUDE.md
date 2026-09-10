@@ -466,7 +466,13 @@ blipshell/
   `superseded(..., for_project=)` scope-aware reads; event-id cursor for
   the dossier reconcile; reopen = discussion vs `restore=True`; kind-aware
   `undo` for core memories; hard whole-request bound with trim-then-refuse
-  via `ContextOverflowError`). Table with evidence in V3_PLAN.
+  via `ContextOverflowError`). Table with evidence in V3_PLAN. The two
+  incomplete contracts were then integrated: `blipshell repair
+  --supersessions KIND:ID` / `--undo-supersession ID` make the kind-aware
+  undo reachable (with the vector store), and the executor's first request
+  goes through `core/request_bound.py` - same trim order as chat, same
+  refusal. Historical core-memory retrieval is still undefined (repair
+  listing only).
 - `blipshell benchmark run <model>` — ONE deep test across all 9 job types →
   `data/benchmark/report.md` (numbers only, no verdict). Ground-truth scorers are
   unit-testable here; real runs need the Ollama PC. Judge = OpenRouter

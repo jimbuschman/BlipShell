@@ -106,6 +106,25 @@ clean checkout (production config with `require_existing: true`) are the
 known clean-checkout limitation, not a regression; they pass here because
 `data/blipshell.db` exists. Not changed in this batch.
 
+**Integration of the two incomplete contracts, checked after the fixes
+(2026-09-10).** Finding 5: `supersession.undo(vectors=)` had NO production
+caller for the core-memory kind - the fix was unreachable. `blipshell repair
+--supersessions KIND:ID` now lists every record touching a memory or core
+memory and `--undo-supersession ID` performs the kind-aware undo with the
+vector store attached (`--dry-run` honoured). Historical core-memory
+RETRIEVAL stays undefined: a contradicted core memory is deactivated and
+does not reach Recall; its history is reachable through the repair listing
+only. Finding 6: the executor path (`!plan`) composed its first request from
+base prompt + memory block + continuity block + chat history + task and
+relied on the loop's compaction, which trims old tool results and never the
+system message - so an oversized first request went out over the limit.
+`core/request_bound.py::bound_initial_request` now applies the chat path's
+policy before the first send (memory -> oldest history -> continuity ->
+tool schemas, each recorded in the `context_built` event as `omitted_fixed`;
+`ContextOverflowError` when the mandatory parts cannot fit, which the
+planned path already catches by falling back to chat, where the same bound
+returns the explicit error). `tests/test_request_bound.py`.
+
 **Observed production impact vs synthetic reproduction.** All six were
 reproduced synthetically. Production exposure: finding 1 would have dropped
 lessons whose id collided with a recalled memory id on any turn (the live

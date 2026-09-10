@@ -226,6 +226,14 @@ async def undo(sqlite, supersession_id: int, *, vectors=None) -> bool:
     return True
 
 
+def describe(rec: Supersession) -> str:
+    """One line for the repair CLI / audit output."""
+    state = f"undone {rec.undone_at[:10]}" if rec.undone_at else "active"
+    return (f"supersession #{rec.id} [{state}] {rec.old_kind} {rec.old_id} -{rec.relation}-> "
+            f"{rec.new_kind} {rec.new_id} | scope {rec.scope} | by {rec.detected_by} at {(rec.at or '')[:10]}"
+            + (f" | evidence {rec.evidence[:60]!r}" if rec.evidence else ""))
+
+
 async def memory_projects(sqlite, memory_ids: Iterable[int]) -> dict[int, Optional[str]]:
     """memory_id -> project of its session (None when the session has none)."""
     ids = [int(i) for i in memory_ids if i is not None]

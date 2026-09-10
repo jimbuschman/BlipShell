@@ -478,33 +478,11 @@ class TaskExecutor:
         # Derived capability block (e.g. vision availability) — kept in sync with
         # what's actually true this turn rather than a hand-written claim. Built by
         # the caller (agent_chat._build_capability_block) so derivation lives in one place.
-        if capability_context:
-            sys_prompt += f"\n\n{capability_context}"
-        if memory_context:
-            sys_prompt += f"\n\n--- RELEVANT MEMORIES ---\n{memory_context}"
-        # Cross-session continuity (scratchpad, session notes, follow-ups, time
-        # anchor). Simple chat has always had this; the executor got none of it
-        # until 2026-08-06, so the path used for HARD tasks carried less
-        # context than ordinary conversation. Same builder feeds both.
-        if continuity_context:
-            sys_prompt += continuity_context
-        messages = [
-            {"role": "system", "content": sys_prompt},
-        ]
-
-        # Inject recent chat history so executor has design discussion context
-        if chat_history:
-            messages.extend(chat_history)
-
         # The actual task instruction. Image refs go HERE so vision survives
         # history truncation; _run_chat_loop reads them to gate endpoints.
         task_message: dict = {"role": "user", "content": task_prompt}
         if images:
             task_message["_image_refs"] = images
-        messages.append(task_message)
-
-        if on_step_start:
-            on_step_start(1)
 
         # Get context limit from the endpoint that will handle this request
         task_type = "coding" if self.active_project else "tool_calling"
@@ -513,6 +491,31 @@ class TaskExecutor:
             effective_context = ep.context_tokens if ep and ep.context_tokens else 65536
         except Exception:
             effective_context = 65536
+
+        # The first request is bounded as a WHOLE (review finding 6, executor
+        # integration): memory block, then oldest chat history, then the
+        # continuity block (scratchpad, session notes, follow-ups, time
+        # anchor - the executor has carried it since 2026-08-06, same builder
+        # as chat), then tool schemas are trimmed, each cut recorded; the
+        # mandatory parts that still do not fit raise ContextOverflowError
+        # instead of being sent. The loop's compaction only trims OLD tool
+        # results and never the system message, so it could not do this.
+        from blipshell.core.request_bound import bound_initial_request
+        bounded = bound_initial_request(
+            base_prompt=sys_prompt, capability_context=capability_context or "",
+            memory_context=memory_context or "", continuity_context=continuity_context or "",
+            chat_history=chat_history, task_message=task_message, tools=tools,
+            context_limit=effective_context,
+        )
+        messages = bounded.messages
+        tools = bounded.tools
+        self._last_request_omissions = list(bounded.omissions)
+        if bounded.omissions:
+            logger.warning("Executor request trimmed to fit %d tokens: %s", effective_context,
+                           "; ".join(bounded.omissions))
+
+        if on_step_start:
+            on_step_start(1)
 
         # Log executor context info for /flow observability
         if log_event:
@@ -523,6 +526,8 @@ class TaskExecutor:
                     "query_profile": "executor",
                     "context_limit": effective_context,
                     "available_tokens": effective_context - msg_tokens,
+                    "omitted_fixed": list(bounded.omissions),
+                    "tools_omitted": tools is None and bool(bounded.omissions),
                     "total_context_items": memory_count + len(chat_history or []),
                     "pool_budgets": {"memory": memory_count, "chat_history": len(chat_history or [])},
                     "pool_usage": {
