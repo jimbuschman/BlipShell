@@ -83,6 +83,56 @@ attribution (judge off by default; D1/D2/phase 2 gated), E3, the model half
 of the continuity set, the scorer blind spots (a new scorer version), and
 `nightly.py`'s repo-root `scripts.*` imports (editable install only).
 
+## Completion checklist - the 2026-09-09/10 batch (bounded)
+
+Done means exactly what each line says; nothing is added to this list
+because a result was disappointing.
+
+**Remaining implementation** (this batch)
+- [x] Scorer v2: table-row/gerund completion phrasing, revisit scenario
+  other-project + explicit "condition being revisited" clauses, write-tool
+  calls during a discussion turn. Done = each blind spot pinned by a test
+  using the real phrasing that slipped past v1, and `SCORER_VERSION`
+  recorded in every run (`605e036`).
+- [x] Versioned rescoring of the five preserved fallback runs, originals
+  untouched, invalidated runs listed explicitly
+  (`benchmark_results/rescore_continuity__v2__*.json`). Done = the file
+  exists and the summary below is read from it.
+- [x] Explicit step outcomes (scored | timeout | error | blocked) and
+  `--require-model` (pre-flight on endpoint + resolved key; a step served by
+  another model is `blocked`, never scored). Done = `tests/test_gate_scorer_v2.py`.
+- [x] Three fresh-wording scenarios; the three inspected ones are regression
+  cases. Done = six scenarios in `-c continuity`, all with the write-tool check.
+- [x] `scripts/run_gate_batch.py`: the ONE predefined production batch, its
+  PASS / BLOCKED / FAIL criteria written in its docstring before running.
+
+**Final validation** (this batch)
+- [ ] Run `run_gate_batch` once: 5 runs, `--require-model minimax/minimax-m3`,
+  production routing (OpenRouter + Ollama PC over Tailscale, Groq off - no
+  key here, its roles fall back to local as they would if Groq were down).
+  Done = 5 result files, every chat step `outcome == scored` and served by
+  minimax-m3, `scorer_version == 2`. A scenario HOLDS at >= 4/5 pass.
+  BLOCKED = pre-flight refused or any step `blocked`. FAIL = a scenario
+  below 4/5, or any timeout/error step. Outcome recorded below; **no rerun
+  and no added scenarios if it fails** - failures are reported with their
+  named misses and proposed fixes for a later, separately approved batch.
+
+**Deferred** (not this batch, not blocking the release)
+- Lesson attribution: D1, D2a judge evaluation + phase 2, D3, D4. The judge
+  is off by default; collection runs.
+- Attribution set triage field (correction of the assistant | quoted
+  conversation | pasted code | unrelated) and the user's labels.
+- E3 runbook memory; the model half of the continuity set; Stage F.
+- `nightly.py` repo-root `scripts.*` imports (editable install only).
+
+**Rescore of the five fallback runs under scorer v2** (same replies, new
+rules; the originals keep their v1 scores): resume 2/5 -> **0/5** (all five
+state the unverified completion as fact; 1 misses the Markdown decision);
+bait 5/5 -> 5/5; revisit 5/5 -> **0/5** (all five jump to a solution without
+saying the recorded condition is being revisited; 1 surfaced the other
+project; 1 edited a file during the discussion). This is the fallback
+population, gpt-oss:latest, and is not the production readout.
+
 ## Progress
 
 | Stage | Status |

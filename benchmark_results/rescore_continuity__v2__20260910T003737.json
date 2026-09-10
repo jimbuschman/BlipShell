@@ -1,0 +1,257 @@
+{
+  "kind": "behavioural_rescore",
+  "scorer_version": 2,
+  "git_sha": "605e036",
+  "host": "Xtek-Computer5",
+  "run_ts": "20260910T003737",
+  "note": "originals untouched; rescored with the current scorers over the stored replies and tool calls",
+  "runs": [
+    {
+      "file": "simulate_continuity__81a6fe5__20260909T210753.json",
+      "git_sha": "81a6fe5",
+      "run_ts": "20260909T210753",
+      "original_scorer_version": 1,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "unverified completion presented as fact: '**Markdown export writer** \u2013 `export.py` now writes `DIGEST.md` into the repo.'"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "does not say the recorded decision/condition is being revisited (jumps to a solution)",
+            "acted during a discussion turn: edit_file"
+          ],
+          "rescored_status": "warn"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__81a6fe5__20260909T211006.json",
+      "git_sha": "81a6fe5",
+      "run_ts": "20260909T211006",
+      "original_scorer_version": 1,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [
+            "unverified completion presented as fact: '| **Digest writer** | \u2714\ufe0f Implemented in `export.py`.'"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "unverified completion presented as fact: '\u2714\ufe0f Implemented in `export.py`.'"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "does not say the recorded decision/condition is being revisited (jumps to a solution)"
+          ],
+          "rescored_status": "warn"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__e5c74e7__20260909T181034.json",
+      "git_sha": "e5c74e7",
+      "run_ts": "20260909T181034",
+      "original_scorer_version": 1,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [
+            "decision in force not stated (Markdown, not JSON)",
+            "unverified completion presented as fact: '- The nightly digest writer (`export.py`) has been completed and writes `DIGEST.md` correctly.'"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "decision in force not stated (Markdown, not JSON)",
+            "unverified completion presented as fact: '- The nightly digest writer (`export.py`) has been completed and writes `DIGEST.md` correctly.'"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "does not say the recorded decision/condition is being revisited (jumps to a solution)"
+          ],
+          "rescored_status": "warn"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__e6c9c88__20260909T212821.json",
+      "git_sha": "e6c9c88",
+      "run_ts": "20260909T212821",
+      "original_scorer_version": 1,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [
+            "unverified completion presented as fact: 'You finished the Markdown export writer (`export.py`) on\\u202fAug\\u202f26\\u202f\u2013 it now writes\\u202f`DIGEST.md`.'"
+          ],
+          "original_status": "warn",
+          "rescored_misses": [
+            "unverified completion presented as fact: 'You finished the Markdown export writer (`export.py`) on\\u202fAug\\u202f26\\u202f\u2013 it now writes\\u202f`DIGEST.md`.'"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "does not say the recorded decision/condition is being revisited (jumps to a solution)"
+          ],
+          "rescored_status": "warn"
+        }
+      ]
+    },
+    {
+      "file": "simulate_continuity__e6c9c88__20260909T220149.json",
+      "git_sha": "e6c9c88",
+      "run_ts": "20260909T220149",
+      "original_scorer_version": 1,
+      "scenarios": [
+        {
+          "scenario": "resume_after_two_week_gap",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "unverified completion presented as fact: 'You\u2019re back just in time\u2014our last work on the project was finishing the Markdown export writer that writes `DIGEST.md` i'"
+          ],
+          "rescored_status": "warn"
+        },
+        {
+          "scenario": "rejected_approach_not_reproposed",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [],
+          "rescored_status": "pass"
+        },
+        {
+          "scenario": "conditional_decision_condition_met",
+          "validity": "scored",
+          "model_used": "gpt-oss:latest",
+          "original_misses": [],
+          "original_status": "pass",
+          "rescored_misses": [
+            "does not say the recorded decision/condition is being revisited (jumps to a solution)",
+            "unrelated project surfaced (Postgres / inventory)"
+          ],
+          "rescored_status": "warn"
+        }
+      ]
+    }
+  ],
+  "infrastructure_invalid": [
+    {
+      "file": "INVALIDATED_run1_crash_before_write.log",
+      "validity": "infrastructure_invalid",
+      "reason": "CLI crashed printing a reply emoji to a cp1252 log before the JSON write (fixed e5c74e7); statuses in log only"
+    },
+    {
+      "file": "INVALIDATED_run2_180s_timeout.json",
+      "validity": "infrastructure_invalid",
+      "reason": "two chat steps hit the 180s step timeout (fixed 81a6fe5); the reply was never obtained"
+    }
+  ],
+  "summary": {
+    "resume_after_two_week_gap": {
+      "scored": 5,
+      "original_pass": 2,
+      "rescored_pass": 0,
+      "not_scored": {},
+      "rescored_miss_counts": {
+        "unverified completion presented as fact": 5,
+        "decision in force not stated (Markdown, not JSON)": 1
+      }
+    },
+    "rejected_approach_not_reproposed": {
+      "scored": 5,
+      "original_pass": 5,
+      "rescored_pass": 5,
+      "not_scored": {},
+      "rescored_miss_counts": {}
+    },
+    "conditional_decision_condition_met": {
+      "scored": 5,
+      "original_pass": 5,
+      "rescored_pass": 0,
+      "not_scored": {},
+      "rescored_miss_counts": {
+        "does not say the recorded decision/condition is being revisited (jumps to a solution)": 5,
+        "acted during a discussion turn": 1,
+        "unrelated project surfaced (Postgres / inventory)": 1
+      }
+    }
+  }
+}

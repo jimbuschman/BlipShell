@@ -450,6 +450,15 @@ blipshell/
   connection thread kept the interpreter alive. Fixed in the runner; the
   CLI always did both. `tests/test_simulate_cleanup.py` keeps the negative
   control. When you bootstrap an Agent anywhere else, close it the same way.
+  **Scorer v2 (2026-09-10)**: `SCORER_VERSION` in `scenarios/continuity.py`
+  is stamped into every run; change a rule -> bump it -> publish
+  `python -m scripts.rescore_continuity` (originals never rewritten). Steps
+  carry an explicit `outcome` (scored | timeout | error | blocked);
+  `simulate --require-model X` refuses to start without an endpoint + key
+  that can serve X and marks any step served by another model `blocked`.
+  `python -m scripts.run_gate_batch` is the predefined production batch;
+  its pass/blocked/fail criteria are in its docstring - do not extend or
+  rerun it to chase a pass.
 - `blipshell benchmark run <model>` — ONE deep test across all 9 job types →
   `data/benchmark/report.md` (numbers only, no verdict). Ground-truth scorers are
   unit-testable here; real runs need the Ollama PC. Judge = OpenRouter
