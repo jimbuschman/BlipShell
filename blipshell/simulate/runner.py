@@ -348,6 +348,15 @@ class SimRunner:
         except Exception:
             pass
 
+        # Release the stores, exactly as the CLI does after end_session.
+        # aiosqlite's connection thread is NOT a daemon: an agent whose SQLite
+        # was never closed keeps the interpreter alive after main returns -
+        # every gate run on 2026-09-09 hung at exit until killed.
+        try:
+            await agent.force_cleanup()
+        except Exception as e:
+            logger.warning("Agent cleanup after scenario failed: %s", e)
+
         # Clean up files created during scenario
         for fpath in scenario.cleanup_files:
             p = Path(fpath)
