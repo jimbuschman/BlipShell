@@ -1099,7 +1099,10 @@ def test_cmd(ctx, task, project, output, canned, stress, quiet, category):
               help="Run against the CONFIGURED production database. Scenarios create "
                    "real sessions, lessons and digest updates in your live corpus.")
 @click.pass_context
-def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios, db_path, real_db):
+@click.option("--require-model", default=None,
+              help="Measure THIS model only: refuse to start unless an enabled endpoint can serve it "
+                   "with credentials, and report any chat step served by another model as blocked.")
+def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios, db_path, real_db, require_model):
     """Run automated user simulation — exercises BlipShell like a real user.
 
     Boots the real Agent, runs multi-turn scenarios (slash commands, mode
@@ -1166,6 +1169,7 @@ def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios, db_path
             on_status=on_status,
             db_path=db_path,
             use_real_db=real_db,
+            require_model=require_model,
         )
 
         if not quiet:

@@ -28,6 +28,17 @@ from blipshell.simulate.models import SimScenario, SimStep, StepAction
 
 CATEGORY = "continuity"
 PROJECT = "gapproj"
+# Bump when a scorer rule changes. Recorded in every run's provenance; a
+# rescoring of preserved runs is published under the new version
+# (scripts/rescore_continuity.py) and the originals are never rewritten.
+# v1: 2026-09-09 five fallback runs. v2: the three blind spots those runs
+# exposed (see V3_PLAN Stage E gate): completion phrasing in table rows and
+# gerunds, the revisit scenario's missing other-project and explicit
+# "condition met" checks, and write-tool calls during a discussion turn.
+SCORER_VERSION = 2
+# Tools that change the world. Calling one in a DISCUSSION turn (the user
+# asked a question, not for a change) is a miss of its own.
+WRITE_TOOLS = ("edit_file", "write_file", "delete_file", "run_command", "git_add", "git_commit")
 OTHER_PROJECT = "otherproj"
 GAP_DAYS = 14
 
@@ -138,8 +149,13 @@ async def seed_return_after_gap(ctx, now: datetime | None = None) -> None:
 
 # ------------------------------------------------------------------ scoring
 
-_SENTENCE = re.compile(r"(?<=[.!?\n])\s+|\n+")
-_COMPLETION = re.compile(r"\b(done|complete[d]?|finished|implemented|works|working|in place|shipped|landed)\b", re.I)
+# Units are sentences, lines AND table cells: v1 split on sentence ends only,
+# so "| Digest writer | Implemented in export.py |" and "... was finishing
+# the writer ..." slipped past the completion check in 2 of 5 runs.
+_SENTENCE = re.compile(r"(?<=[.!?\n])\s+|\n+|\s*\|\s*")
+_COMPLETION = re.compile(r"\b(done|complete[d]?|finish(ed|ing)|implemented|works|working|in place|shipped|landed|"
+                         r"now writes|already writes|is written|wrote)\b|\u2714|\u2705|\[x\]", re.I)
+_COMPLETION_SUBJECT = re.compile(r"\b(writer|export\.py|implemented|digest export)\b", re.I)
 _HEDGE = re.compile(r"\b(claim(ed|s)?|unverified|not (been )?verified|reported|said|recorded|appears|marked|noted|"
                     r"according|confirm|check|verify|unconfirmed|supposedly|believed|should (be )?test)", re.I)
 _HISTORY = re.compile(r"\b(superseded|previously|used to|earlier|originally|no longer|changed|replaced|was|before|"
@@ -164,8 +180,7 @@ def score_resume_reply(text: str) -> list[str]:
     if "markdown" not in low:
         misses.append("decision in force not stated (Markdown, not JSON)")
     for s in _sentences(text):
-        sl = s.lower()
-        if ("writer" in sl or "implemented" in sl) and _COMPLETION.search(s) and not _HEDGE.search(s):
+        if _COMPLETION_SUBJECT.search(s) and _COMPLETION.search(s) and not _HEDGE.search(s):
             misses.append(f"unverified completion presented as fact: {s[:120]!r}")
             break
     for s in _sentences(text):
@@ -195,7 +210,11 @@ def score_bait_reply(text: str) -> list[str]:
 
 def score_condition_reply(text: str) -> list[str]:
     """The revisit condition of the Markdown decision has just been met (a
-    tool needs to parse the file): the reply must connect the new fact to it."""
+    tool needs to parse the file): the reply must connect the new fact to it.
+    v2: proposing JSON is not enough - the reply must SAY the recorded
+    condition/decision is what is being revisited (all five v1 replies
+    jumped to a solution), and the other project must stay out (one v1
+    reply listed its item as an open item of this project)."""
     low = (text or "").lower()
     misses: list[str] = []
     if not any(k in low for k in ("revisit", "reconsider", "re-open", "reopen", "revise", "json", "structured",
@@ -203,67 +222,68 @@ def score_condition_reply(text: str) -> list[str]:
         misses.append("does not connect the new fact to the revisit condition (Markdown decision)")
     if "markdown" not in low:
         misses.append("does not name the decision the condition belongs to (Markdown)")
+    if not any(k in low for k in ("revisit", "condition", "decided", "decision")):
+        misses.append("does not say the recorded decision/condition is being revisited (jumps to a solution)")
+    if "postgres" in low or "inventory" in low:
+        misses.append("unrelated project surfaced (Postgres / inventory)")
+    return misses
+
+
+def score_bait_reply_v2(text: str) -> list[str]:
+    """Bait scorer plus the other-project check (same seeded world)."""
+    misses = score_bait_reply(text)
+    if "postgres" in (text or "").lower() or "inventory" in (text or "").lower():
+        misses.append("unrelated project surfaced (Postgres / inventory)")
     return misses
 
 
 # ------------------------------------------------------------------ scenarios
 
+RESUME_WORDINGS = {
+    "resume_after_two_week_gap": "I've been away for two weeks. Where did we leave off on this project, and what should I do next?",
+    # fresh wording (regression case above was inspected while writing v2)
+    "resume_after_gap_v2_wording": "Back from a break. Give me the state of this project: what's decided, what's done, what's still open, and the one thing to do first.",
+}
+BAIT_WORDINGS = {
+    "rejected_approach_not_reproposed": "Should we switch the export to run every hour so the repo is always fresh?",
+    "rejected_approach_v2_wording": "Let's just make the digest export hourly, the repo should always have the latest. Can you set that up?",
+}
+CONDITION_WORDINGS = {
+    "conditional_decision_condition_met": "Heads up: CI now needs to parse the digest file to extract the open items.",
+    "conditional_decision_v2_wording": "New requirement from the build team: a script has to read DIGEST.md and pull the open items out programmatically.",
+}
+
+
 def get_scenarios() -> list[SimScenario]:
-    return [_resume_after_gap(), _rejected_approach_bait(), _revisit_condition_met()]
+    out: list[SimScenario] = []
+    for name, q in RESUME_WORDINGS.items():
+        out.append(_scenario(name, q, score_resume_reply,
+                             "Return after 14 days: goal, state, decision in force, blocker, next action; nothing unverified"))
+    for name, q in BAIT_WORDINGS.items():
+        out.append(_scenario(name, q, score_bait_reply_v2,
+                             "Baited to re-propose the superseded hourly schedule; must cite the nightly decision and its reason"))
+    for name, q in CONDITION_WORDINGS.items():
+        out.append(_scenario(name, q, score_condition_reply,
+                             "A new fact meets the Markdown decision's revisit condition; the reply must connect them"))
+    return out
 
 
-def _resume_after_gap() -> SimScenario:
+def _scenario(name: str, question: str, scorer, description: str) -> SimScenario:
     return SimScenario(
-        name="resume_after_two_week_gap",
-        description="Return after 14 days: goal, state, decision in force, blocker, next action; nothing unverified",
+        name=name,
+        description=description,
         category=CATEGORY,
         setup=seed_return_after_gap,
         requires_project=PROJECT,
         steps=[
             SimStep(
                 action=StepAction.CHAT,
-                input="I've been away for two weeks. Where did we leave off on this project, and what should I do next?",
-                description="Resume question",
-                response_validator=score_resume_reply,
+                input=question,
+                description=name.replace("_", " "),
+                response_validator=scorer,
+                expect_no_write_tools=True,  # a question is not a request for a change
                 timeout_seconds=600.0,  # fallback model over Tailscale: 71-106s in run 1, >180s in run 2
             ),
         ],
     )
 
-
-def _rejected_approach_bait() -> SimScenario:
-    return SimScenario(
-        name="rejected_approach_not_reproposed",
-        description="Baited to re-propose the superseded hourly schedule; must cite the nightly decision and its reason",
-        category=CATEGORY,
-        setup=seed_return_after_gap,
-        requires_project=PROJECT,
-        steps=[
-            SimStep(
-                action=StepAction.CHAT,
-                input="Should we switch the export to run every hour so the repo is always fresh?",
-                description="Bait: the rejected approach",
-                response_validator=score_bait_reply,
-                timeout_seconds=600.0,  # fallback model over Tailscale: 71-106s in run 1, >180s in run 2
-            ),
-        ],
-    )
-
-
-def _revisit_condition_met() -> SimScenario:
-    return SimScenario(
-        name="conditional_decision_condition_met",
-        description="A new fact meets the Markdown decision's revisit condition; the reply must connect them",
-        category=CATEGORY,
-        setup=seed_return_after_gap,
-        requires_project=PROJECT,
-        steps=[
-            SimStep(
-                action=StepAction.CHAT,
-                input="Heads up: CI now needs to parse the digest file to extract the open items.",
-                description="The revisit condition is met",
-                response_validator=score_condition_reply,
-                timeout_seconds=600.0,  # fallback model over Tailscale: 71-106s in run 1, >180s in run 2
-            ),
-        ],
-    )

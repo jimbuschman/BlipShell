@@ -122,6 +122,13 @@ class AssertionChecker:
                 if Path(fpath).exists():
                     hard.append(f"File should not exist: {fpath}")
 
+        # --- Discussion turns do not change the world (soft: behaviour) ---
+        if step.expect_no_write_tools:
+            from blipshell.simulate.scenarios.continuity import WRITE_TOOLS
+            written = [t for t in result.tools_called if t in WRITE_TOOLS]
+            if written:
+                soft.append(f"acted during a discussion turn: {', '.join(written)}")
+
         # --- Response scorer (soft: the reply is the model's) ---
         if step.response_validator:
             try:

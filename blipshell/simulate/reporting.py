@@ -123,6 +123,8 @@ def run_provenance(config=None, started: dict | None = None) -> dict:
     import subprocess
     from datetime import datetime, timezone
 
+    from blipshell.simulate.scenarios.continuity import SCORER_VERSION
+
     if started:
         prov = dict(started)
     else:
@@ -136,6 +138,7 @@ def run_provenance(config=None, started: dict | None = None) -> dict:
             "git_sha": sha,
             "host": platform.node(),
             "run_ts": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S"),
+            "scorer_version": SCORER_VERSION,
         }
     if config is not None:
         try:
@@ -198,6 +201,7 @@ def export_json(suite: SimSuiteResult, file: IO[str] | None = None, provenance: 
                 "soft_failures": sr.soft_failures,
                 "error": sr.error,
                 "model_used": sr.model_used,
+                "outcome": sr.outcome,
                 "response": (sr.response or "")[:RESPONSE_EXCERPT_CHARS],
             })
         data["scenarios"].append(scenario_data)

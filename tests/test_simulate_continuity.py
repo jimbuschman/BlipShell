@@ -140,14 +140,15 @@ class TestConditionScorer:
 
     def test_ignoring_the_condition_is_named(self):
         misses = sc.score_condition_reply("Okay, noted. Anything else?")
-        assert len(misses) == 2
+        assert len(misses) == 3  # v2 added the explicit "condition being revisited" clause
 
 
 class TestWiring:
     def test_scenarios_registered_with_setup_and_scorer(self):
         scen = filter_by_category(collect_all_scenarios(), sc.CATEGORY)
-        assert {s.name for s in scen} == {"resume_after_two_week_gap", "rejected_approach_not_reproposed",
-                                          "conditional_decision_condition_met"}
+        assert {s.name for s in scen} == set(sc.RESUME_WORDINGS) | set(sc.BAIT_WORDINGS) | set(sc.CONDITION_WORDINGS)
+        assert len(scen) == 6  # three inspected regression cases + three fresh wordings
+        assert all(st.expect_no_write_tools for s in scen for st in s.steps)
         for s in scen:
             assert s.setup is sc.seed_return_after_gap and s.requires_project == sc.PROJECT
             assert all(st.response_validator is not None for st in s.steps)

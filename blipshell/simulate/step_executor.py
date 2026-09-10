@@ -71,6 +71,19 @@ class SimStepExecutor:
             elapsed_seconds=round(elapsed, 2),
         )
 
+        # Outcome classification (explicit, never inferred from a status)
+        if error and error.startswith("Step timed out"):
+            step_result.outcome = "timeout"
+        elif error:
+            step_result.outcome = "error"
+        required = getattr(ctx, "require_model", None)
+        if (step.action == StepAction.CHAT and required and step_result.outcome == "scored"
+                and (model_used or {}).get("model") != required):
+            step_result.outcome = "blocked"
+            served = (model_used or {}).get("model")
+            error = f"blocked: required model {required!r}, served {served!r}"
+            step_result.error = error
+
         # Run assertions
         hard_failures, soft_failures = _checker.check(step, step_result, ctx.agent)
         step_result.hard_failures = hard_failures

@@ -43,10 +43,40 @@ class SimContext:
         self.step_results: list[SimStepResult] = []
         self.responses: list[str] = []
         self.all_tool_calls: list[dict] = []
+        self.require_model: str | None = None  # set by SimRunner when the run demands one served model
 
     @property
     def last_response(self) -> str:
         return self.responses[-1] if self.responses else ""
+
+
+def required_model_blocker(config, model: str) -> str | None:
+    """Why `model` cannot be served by this config, or None if it can.
+    An endpoint serves `model` when one of ITS roles maps to that name
+    (its own `models` override, else the global `models` config), and an
+    `openai`-provider endpoint additionally needs a resolved API key -
+    `${VAR}` is expanded here the way the clients expand it, so an unset
+    variable (empty) means the credential is absent on this machine."""
+    from blipshell.models.config import resolve_env_vars
+
+    global_models = config.models.model_dump() if hasattr(config.models, "model_dump") else {}
+    candidates = []
+    for ep in config.endpoints:
+        if not ep.enabled:
+            continue
+        overrides = getattr(ep, "models", None) or {}
+        served = {overrides.get(role) or global_models.get(role) for role in (getattr(ep, "roles", None) or [])}
+        if model in served:
+            candidates.append(ep)
+    if not candidates:
+        return f"no enabled endpoint is configured to serve {model!r}"
+    for ep in candidates:
+        needs_key = (getattr(ep, "provider", "") or "").lower() == "openai"
+        key = resolve_env_vars(getattr(ep, "api_key", None))
+        if needs_key and not key:
+            continue
+        return None
+    return f"{model!r} is configured on {[ep.name for ep in candidates]} but no API key is resolved on this machine"
 
 
 class SimRunner:
@@ -59,10 +89,17 @@ class SimRunner:
         on_status: Optional[Callable[[str], None]] = None,
         db_path: str | None = None,
         use_real_db: bool = False,
+        require_model: str | None = None,
     ):
         """
         db_path:      explicit database to run against (implies no temp DB).
         use_real_db:  run against the configured production database.
+        require_model: the run is a measurement of THIS model only. Before any
+                      scenario the runner checks that an enabled endpoint is
+                      configured to serve it with credentials present, and
+                      every chat step whose reply came from another model is
+                      reported `blocked`, not scored - a fallback reply is a
+                      different population, never a substitute.
 
         By default the suite runs against a fresh throwaway database. It used
         to load the ambient config and write straight to the real one: every
@@ -78,6 +115,7 @@ class SimRunner:
         self._executor = SimStepExecutor()
         self.db_path = db_path
         self.use_real_db = use_real_db
+        self.require_model = require_model
         self._temp_db_dir: str | None = None
         self.last_config = None  # the config the agents booted with (for run provenance)
 
@@ -90,6 +128,17 @@ class SimRunner:
         t0 = time.monotonic()
 
         try:
+            # Pre-flight: a required model must be servable, or nothing runs
+            if self.require_model:
+                blocked = await self._preflight_required_model()
+                if blocked:
+                    self.on_status(f"  BLOCKED: {blocked}")
+                    suite_result.scenario_results.append(SimScenarioResult(
+                        name="__require_model__", category="preflight",
+                        status=ResultStatus.FAIL, error=f"blocked: {blocked}"))
+                    suite_result.elapsed_seconds = round(time.monotonic() - t0, 2)
+                    return suite_result
+
             # Pre-flight: validate scenario tool names against actual registry
             preflight_errors = await self._preflight_validate(scenarios)
             if preflight_errors:
@@ -120,6 +169,16 @@ class SimRunner:
             return suite_result
         finally:
             self._discard_temp_db()
+
+    async def _preflight_required_model(self) -> str | None:
+        """None when some ENABLED endpoint is configured to serve the required
+        model with credentials present; otherwise the reason it cannot."""
+        try:
+            config_manager = ConfigManager(self.config_path)
+            config = config_manager.load()
+        except Exception as e:
+            return f"config could not be loaded: {e}"
+        return required_model_blocker(config, self.require_model)
 
     def _discard_temp_db(self) -> None:
         """Delete the throwaway database created for this run (if any)."""
@@ -154,6 +213,7 @@ class SimRunner:
 
         slash_dispatcher = SlashCommandDispatcher(agent, config)
         ctx = SimContext(agent, config, config_manager, slash_dispatcher)
+        ctx.require_model = self.require_model
 
         try:
             # Seed the world before the session starts (V3 Stage E scenarios)

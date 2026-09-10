@@ -72,6 +72,9 @@ class SimStep:
     # expect_response_contains - the reply is model-dependent - but expressive
     # enough for sentence-level rules (V3 Stage E: "claims nothing unverified").
     response_validator: Optional[Callable[[str], list[str]]] = None
+    # A discussion turn must not change the world: any WRITE tool called
+    # (edit/write/delete file, run_command, git add/commit) is a SOFT miss.
+    expect_no_write_tools: bool = False
 
     # Timeout
     timeout_seconds: float = 120.0
@@ -111,6 +114,10 @@ class SimStepResult:
     tools_called: list[str] = field(default_factory=list)
     tool_call_count: int = 0
     model_used: dict | None = None  # {endpoint, model, fallback} that produced the reply (chat steps)
+    # Why a step is not simply a scored reply, stated explicitly so a report
+    # never conflates them: scored | timeout | error | blocked (the served
+    # model was not the one the run required - see SimRunner.require_model).
+    outcome: str = "scored"
     hard_failures: list[str] = field(default_factory=list)
     soft_failures: list[str] = field(default_factory=list)
     error: str | None = None
