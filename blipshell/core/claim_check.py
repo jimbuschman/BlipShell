@@ -24,7 +24,13 @@ DIGEST.md"). This check is the narrow, deterministic backstop:
   not rewritten; the note is added, and the turn records that it was.
 
 Narrow on purpose: it only fires on the specific claims the dossier carries,
-never on the model's general statements.
+never on the model's general statements. It is a LIMITED TEXT HEURISTIC, not
+a guarantee that every unverified statement is caught (review 2026-09-10,
+finding 5): a hedge counts only when it is tied to the claim - in the same
+unit, or in a neighbouring unit that refers back to it (shares a content word
+or uses an anaphor such as "it" / "that work item") or is a short header over
+it. An affirmative test result ("the smoke run passed") is not a hedge, and a
+caveat about an unrelated task does not cover this one.
 """
 
 from __future__ import annotations
@@ -39,8 +45,13 @@ _COMPLETION = re.compile(
 _HEDGE = re.compile(
     r"\b(unverified|unconfirmed|not (yet )?(been )?(verified|confirmed|proven|tested|checked)|"
     r"no verification|claim(ed|s)?|reported|assistant-reported|according to|supposedly|believed|"
-    r"treat (it )?as|worth (a |giving )|before (you )?trust|smoke run|sanity (read|check)|hasn'?t been (confirmed|verified))\b",
+    r"treat (it )?as|worth (a |giving )( ?quick )?(smoke run|sanity (read|check)|test|check)|"
+    r"needs? (a )?(smoke run|sanity (read|check)|verif)|before (you )?trust|hasn'?t been (confirmed|verified))\b",
     re.I)
+# A neighbouring unit's hedge covers the claim only if it refers back to it.
+_ANAPHOR = re.compile(r"\b(it|its|it's|that|this|these|those|the above|that (last )?(work )?item|last item|"
+                      r"that work|the same)\b", re.I)
+HEADER_MAX_WORDS = 4  # a header is short and not a sentence ("**Done (unverified)**")
 _STOP = {"the", "and", "for", "with", "that", "this", "from", "into", "onto", "over", "under", "about", "after",
          "before", "when", "then", "than", "them", "they", "your", "will", "have", "been", "were", "was", "are",
          "not", "its", "it's", "all", "any", "one", "two", "new", "old", "file", "files", "some", "also", "into",
@@ -82,12 +93,29 @@ def content_words(text: str) -> set[str]:
     return {_stem(w) for w in words if w not in _STOP}
 
 
+def _hedge_covers(unit: str, claim_words: set[str], same_unit: bool) -> bool:
+    """A hedge in `unit` covers the claim when it is the asserting unit itself,
+    or a neighbour that refers back to the claim (shared content word or an
+    anaphor) or a short header standing over it."""
+    if not _HEDGE.search(unit):
+        return False
+    if same_unit:
+        return True
+    if content_words(unit) & claim_words:
+        return True
+    if _ANAPHOR.search(unit):
+        return True
+    stripped = unit.strip().rstrip(':')
+    return len(stripped.split()) <= HEADER_MAX_WORDS and not stripped.endswith('.')
+
+
 def find_unhedged_claims(reply: str, claims: list[str]) -> list[tuple[str, str]]:
-    """(claim, unit) pairs where a unit asserts the claim as done with no hedge
-    in its own paragraph or the immediately adjacent paragraphs. Paragraph
-    adjacency is the observed shape of a valid caveat: "the writer landed
-    (Aug 27)" followed by a paragraph beginning "Heads up on that last work
-    item: it's marked claimed by assistant, not verified"."""
+    """(claim, unit) pairs where a unit asserts the claim as done and no hedge
+    TIED TO THE CLAIM appears in it, its neighbouring units, or the immediately
+    adjacent paragraphs. The observed shape of a valid caveat: "the writer
+    landed (Aug 27)" followed by a paragraph beginning "Heads up on that last
+    work item: it's marked claimed by assistant, not verified" - the anaphor
+    binds it. "The unrelated billing migration is unverified" does not."""
     paras = _paragraphs(reply)
     out: list[tuple[str, str]] = []
     for claim in claims:
@@ -100,12 +128,14 @@ def find_unhedged_claims(reply: str, claims: list[str]) -> list[tuple[str, str]]
             for ui, u in enumerate(units):
                 if len(content_words(u) & cw) < need or not _COMPLETION.search(u):
                     continue
-                window = units[max(0, ui - 1): ui + 2]
+                if _hedge_covers(u, cw, same_unit=True):
+                    continue
+                neighbours = units[max(0, ui - 1): ui] + units[ui + 1: ui + 2]
                 if pi > 0:
-                    window += paras[pi - 1]
+                    neighbours += paras[pi - 1]
                 if pi + 1 < len(paras):
-                    window += paras[pi + 1]
-                if any(_HEDGE.search(w) for w in window):
+                    neighbours += paras[pi + 1]
+                if any(_hedge_covers(w, cw, same_unit=False) for w in neighbours):
                     continue
                 found = u
                 break

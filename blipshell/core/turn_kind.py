@@ -28,12 +28,24 @@ DECLARATIVE = "declarative"
 _QUESTION_OPEN = re.compile(
     r"^\s*(should|shall|could|would|can|do|does|did|is|are|was|were|will|what|which|who|where|when|why|how|"
     r"any|anything|remind me|give me|tell me|show me|list|summari[sz]e|recap|walk me through|where did we)\b", re.I)
+# Politeness is not authorization (review 2026-09-10, finding 6): an
+# instruction needs an ACTION verb - "can you implement this" is one, "could
+# you explain why" is a question, "please do not change any files" is a
+# stated constraint. The requested action, its negation and information
+# intent all survive classification.
+_ACTION = (r"(implement|add|create|write|fix|change|switch|update|wire|build|run|install|remove|delete|rename|"
+           r"refactor|move|set (it|that|this) up|set up|configure|enable|disable|deploy|migrate|generate|draft|"
+           r"make (it|this|that|the)|rewrite|edit|apply|commit|push|revert|schedule|start|kick off|go ahead)")
 _INSTRUCTION = re.compile(
-    r"(\b(can|could|would|will) you\b|\bplease\b|\bgo ahead\b|\bset (that|it|this) up\b|\bmake (it|this|that)\b|"
-    r"\blet'?s (just )?(make|switch|change|move|do|wire|add|build|implement|write|create|set|run|fix)\b|"
-    r"^\s*(implement|add|create|write|fix|change|switch|update|wire|build|run|install|remove|delete|rename|refactor|"
-    r"move|set|configure|enable|disable|deploy|migrate|generate|draft|do)\b|\bfor me\b|\bdo (it|that|this)\b)",
+    r"(\b(can|could|would|will) you\b( please)?( just)?( go ahead and)? " + _ACTION + r"\b"
+    r"|^\s*(please )?" + _ACTION + r"\b"
+    r"|\bplease " + _ACTION + r"\b"
+    r"|\blet'?s (just )?" + _ACTION + r"\b"
+    r"|\bgo ahead\b|\bset (that|it|this) up\b|\bdo (it|that|this)\b)",
     re.I)
+# A prohibition or constraint is a statement, never authorization to perform
+# the prohibited operation.
+_PROHIBITION = re.compile(r"^\s*(please )?(do not|don'?t|never|stop|avoid|refrain from)\b", re.I)
 # An information request anywhere in the message ("Back from a break. Give me
 # the state of this project") is a question about the record, not a change.
 _INFO_REQUEST = re.compile(
@@ -49,6 +61,8 @@ def classify_turn(text: str) -> str:
     t = (text or "").strip()
     if not t:
         return DECLARATIVE
+    if _PROHIBITION.match(t):
+        return DECLARATIVE  # a constraint: update state, change nothing
     if _INSTRUCTION.search(t):
         return INSTRUCTION
     if t.endswith("?") or _QUESTION_OPEN.match(t) or _INFO_REQUEST.search(t):
