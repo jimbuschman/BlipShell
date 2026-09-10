@@ -158,6 +158,7 @@ class TestAgentWiring:
                 return continuity.canned_generate(task_type, prompt=prompt, system=system, **kw)
             agent.router.generate = AsyncMock(side_effect=gen)
 
+            agent.config.attribution.judge_enabled = True  # this test is about the judge wiring; default is off
             await agent.start_session()
             await agent.chat("did the tests pass?")                       # turn 1: lessons present
             await agent.chat("No, that's wrong - the tests did not pass.")  # turn 2: a correction

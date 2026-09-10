@@ -553,6 +553,24 @@ def get_ollama_url(endpoints: list[EndpointConfig]) -> str:
     return "http://localhost:11434"
 
 
+class AttributionConfig(BaseModel):
+    """V3 D2a phase 1 - RECORD ONLY. Nothing here changes lesson importance,
+    status or selection (that is phase 2, gated on the labelled evaluation
+    and explicit approval).
+
+    `enabled`: write `lesson_uses` (which lessons were in each request) and
+    `corrections` (each accepted correction with the lessons present). Pure
+    logging - no model call, no behaviour change; the rows are what the
+    pre-D1 evaluation set is built from, so collection should run early.
+    `judge_enabled`: additionally ask the LOCAL reasoning model, in the
+    background, which present lesson (if any) explains each correction and
+    store its verdict on the row. One GPU call per accepted correction; the
+    verdict is a record nobody reads yet. Off by default so the first
+    rollout is collection only."""
+    enabled: bool = True
+    judge_enabled: bool = False
+
+
 class BlipShellConfig(BaseModel):
     """Root configuration model."""
     models: ModelsConfig = ModelsConfig()
@@ -586,4 +604,5 @@ class BlipShellConfig(BaseModel):
     robotics: RoboticsConfig = RoboticsConfig()
     reflection: ReflectionConfig = ReflectionConfig()
     handoff: HandoffConfig = HandoffConfig()
+    attribution: AttributionConfig = AttributionConfig()
     model_settings: dict[str, dict] = Field(default_factory=dict)

@@ -1081,8 +1081,14 @@ class ChatMixin:
             **search_stats,
         })
 
+    def _attribution_setting(self, name: str, default: bool) -> bool:
+        cfg = getattr(getattr(self, "config", None), "attribution", None)
+        return bool(getattr(cfg, name, default)) if cfg is not None else default
+
     async def _record_lesson_uses(self) -> None:
         """D2a phase 1, record only. Never raises into the turn."""
+        if not self._attribution_setting("enabled", True):
+            return
         uses = getattr(self, "_last_lessons_sent", None) or []
         if not uses or getattr(self, "sqlite", None) is None:
             return
@@ -1098,7 +1104,7 @@ class ChatMixin:
     async def _record_correction_for_attribution(self, user_message: str, prev_assistant: str) -> None:
         """D2a phase 1: store the correction with the lessons that were present,
         then judge it in the background. Record only - see memory/attribution.py."""
-        if getattr(self, "sqlite", None) is None:
+        if getattr(self, "sqlite", None) is None or not self._attribution_setting("enabled", True):
             return
         try:
             from blipshell.memory import attribution
@@ -1111,6 +1117,8 @@ class ChatMixin:
         except Exception as e:
             logger.warning("Correction not recorded for attribution: %s", e)
             return
+        if not self._attribution_setting("judge_enabled", False):
+            return  # collection-only rollout: the row stays `unattributed`
 
         async def _judge():
             try:

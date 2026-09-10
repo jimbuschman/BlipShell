@@ -155,3 +155,13 @@ model_settings:
   glm4:
     max_tool_calls: 5
     use_repo_map: false
+
+# V3 D2a phase 1 - RECORD ONLY (see CLAUDE.md "Correction attribution").
+# enabled: log which lessons were in each request and each accepted
+#   correction with the lessons present. No model call, no behaviour change.
+# judge_enabled: also ask the local reasoning model to attribute each
+#   correction to a present lesson (one GPU call per correction; a record
+#   nobody reads yet). Off until the labelled evaluation exists.
+attribution:
+  enabled: true
+  judge_enabled: false
