@@ -436,18 +436,9 @@ blipshell/
   memories). Shipped: mid-session refresh of the handoff note
   (`handoff.refresh_every_turns`), a verbatim stop block of the previous
   session's last exchanges at boot (`handoff.stop_block_pairs`), tier 2 takes
-  the END of a session, and a `continuity` query profile. Survivability
-  verified after restart (`tests/test_handoff_survivability.py`): note +
-  metadata are one transaction (`set_metadata_many`), `last_active` is
-  touched per turn, the orphan sweep judges by persisted memories (the
-  August orphans had `message_count 0` because `end_session` never ran, and
-  the sweep keyed on that field), and an older note is framed as older. Two
-  real notes were generated through the production path from replayed
-  transcripts and read; the prompt was not tuned on them. The pre-registered
-  live A/B probe is `docs/CONTINUITY_PROBE.md` (three arms, 12 pairs,
-  deterministic scorer `scripts/continuity_probe.py`, general-chat model =
-  deepseek-v4-flash, NOT minimax); it is the test that counts and has not
-  been run. The model's own "feels better" does not count.
+  the END of a session, and a `continuity` query profile. The live A/B probe
+  in `core/handoff.py` is still the test that counts; the model's own "feels
+  better" does not.
 - **Continuity set** (2026-09-09, V3 Stage C): `python -m blipshell.benchmark.continuity`
   boots a REAL agent per case with no network (`Agent._build_subsystems`, the
   DB-only half of initialize, + the deterministic embedder in `tests/fakes.py`
