@@ -3682,6 +3682,21 @@ class SQLiteStore:
         )
         await self._db.commit()
 
+    async def set_metadata_many(self, values: dict[str, str]) -> None:
+        """Set several app metadata keys in ONE transaction: all or none. A
+        note and its metadata written as two commits could be split by a
+        cancelled background task (handoff survivability, 2026-09-10)."""
+        if not values:
+            return
+        try:
+            for key, value in values.items():
+                await self._db.execute(
+                    "INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)", (key, value))
+            await self._db.commit()
+        except BaseException:
+            await self._db.rollback()
+            raise
+
     # --- Tool Approval Audit Trail ---
 
     async def log_tool_approval(self, session_id: int | None, tool_name: str,

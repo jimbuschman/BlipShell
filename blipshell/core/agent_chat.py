@@ -158,6 +158,14 @@ class ChatMixin:
         # Event: turn_start
         self._turn_number += 1
         session_id = self.session_manager.session_id
+        # Keep the session's last_active current per turn, not only at close:
+        # an orphaned session must still sort as the most recent one.
+        try:
+            if session_id and getattr(self, "sqlite", None) is not None:
+                from datetime import datetime as _dt, timezone as _tz
+                await self.sqlite.update_session(session_id, last_active=_dt.now(_tz.utc).isoformat())
+        except Exception as e:
+            logger.debug("last_active touch skipped: %s", e)
         await self._log_event("turn_start", {
             "query_length": len(user_message),
             "route": "planned" if needs_planning else "simple",
