@@ -34,19 +34,6 @@ from typing import Optional
 HANDOFF_KEY = "session_handoff"
 HANDOFF_META_KEY = "session_handoff_meta"
 
-# The note is refreshed DURING the session every N assistant turns, not only
-# at close (2026-09-10, the continuity investigation): the sessions where
-# BlipShell described the disconnect (1919, 1920 on 2026-08-11) ended with
-# message_count 0 - no summary, and a close-only note would have been lost
-# too. A live note is where the momentum actually is; the close pass refines it.
-REFRESH_EVERY_TURNS_DEFAULT = 6
-# How many of the last exchanges are carried VERBATIM at the next boot. The
-# thread the conversation stopped on is the state; summaries and
-# importance-ranked lines are not (session 1926: the previous substantive
-# session's top-by-importance lines and a third-person summary were loaded,
-# the half-formed idea it stopped on was not).
-STOP_BLOCK_PAIRS_DEFAULT = 2
-
 # A note from too long ago is not momentum, it's history — the digests
 # already cover history. Skip loading it.
 MAX_AGE_DAYS = 14
@@ -120,26 +107,6 @@ def is_stale(saved_at_iso: Optional[str],
         saved = saved.replace(tzinfo=timezone.utc)
     now = now or datetime.now(timezone.utc)
     return (now - saved).days > MAX_AGE_DAYS
-
-
-def stop_block(memories, saved_when: Optional[str] = None, max_pairs: int = STOP_BLOCK_PAIRS_DEFAULT,
-               max_chars: int = 400) -> Optional[str]:
-    """The last exchanges of a session, verbatim and in order - where it
-    stopped. `memories` are chronological rows with `.role` and `.content`.
-    Returns None when there is less than one exchange."""
-    rows = [m for m in memories if (getattr(m, "content", "") or "").strip()
-            and getattr(m, "role", "") in ("user", "assistant")]
-    tail = rows[-(2 * max_pairs):]
-    if len(tail) < 2:
-        return None
-    when = f" ({saved_when})" if saved_when else ""
-    lines = [f"Where the last session stopped{when}, verbatim:"]
-    for m in tail:
-        text = (m.content or "").strip().replace("\n", " ")
-        if len(text) > max_chars:
-            text = text[:max_chars] + "..."
-        lines.append(f"{m.role}: {text}")
-    return "\n".join(lines)
 
 
 def frame_for_boot(note: str, saved_at_iso: Optional[str]) -> str:

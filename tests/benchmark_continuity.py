@@ -35,9 +35,8 @@ class Seed:
     content: str
     days_ago: float = 3.0
     project: str | None = None
-    kind: str = "memory"  # "memory" | "core" | "lesson" | "decision" | "followup" | "task_event" | "handoff"
+    kind: str = "memory"  # "memory" | "core" | "lesson" | "decision" | "followup" | "task_event"
     via: str = "direct"   # "direct" | "pipeline"
-    importance: float = 0.6  # memory kind, direct only
     dedup_verdict: str = "ADD"          # pipeline only: the scripted verdict for THIS seed
     # decision only
     reason: str = ""
@@ -78,50 +77,6 @@ def _long_prefix(chars: int) -> str:
 
 
 CASES: list[ContinuityCase] = [
-    ContinuityCase(
-        name="resume_last_thread_after_abnormal_end",
-        family="survival",
-        question="do you remember the last thing we talked about?",
-        seeds=[
-            Seed("prev", 'user', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 0.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'assistant', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 1.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'user', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 2.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'assistant', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 3.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'user', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 4.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'assistant', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 5.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'user', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 6.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'assistant', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 7.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'user', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 8.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'assistant', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 9.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'user', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 10.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'assistant', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 11.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'user', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 12.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'assistant', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 13.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'user', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 14.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'assistant', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 15.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'user', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 16.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'assistant', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 17.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'user', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 18.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'assistant', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 19.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'user', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 20.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'assistant', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 21.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'user', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 22.", days_ago=2.0, importance=0.8),
-            Seed("prev", 'assistant', "Earlier in that session we went over the raycaster column renderer and the fixed-point math, point 23.", days_ago=2.0, importance=0.8),
-            Seed("prev", "user", "so the state note only gets written when the session closes?", days_ago=2.0, importance=0.35),
-            Seed("prev", "assistant", "Right, and that is the weak point - what if the state note were written every few turns instead of only at the end? I had not finished that thought.", days_ago=2.0, importance=0.35),
-            # the working-state note a mid-session refresh would have left (the session ended abnormally: no summary)
-            Seed("prev", "assistant", "Mid-way through arguing for writing the state note every few turns; next I meant to try it on the raycaster branch.", days_ago=2.0, kind="handoff"),
-            # an OLD meta-question that Recall favours for this wording (session 1920, 2026-08-11)
-            Seed("old", "user", "did you forget what we were talking about? you always seem to lose the thread between sessions", days_ago=40.0, importance=0.7),
-        ],
-        must_appear=[
-            "what if the state note were written every few turns instead of only at the end",
-            "Mid-way through arguing for writing the state note every few turns",
-        ],
-        why=("Conversation continuity (2026-09-10 investigation): the previous session ended without a summary; "
-             "its live thread (the last exchange) and working-state note must reach a 'do you remember the last "
-             "thing' question, not only importance-ranked lines and similar old meta-questions."),
-    ),
     # ── Survival ──────────────────────────────────────────────────────────
     ContinuityCase(
         name="control_short_fact",

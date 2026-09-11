@@ -101,7 +101,7 @@ def test_dataset_is_well_formed():
         assert c.question and c.seeds, c.name
         assert c.must_appear or c.forbidden_unless_labelled or c.must_not_appear, c.name
         for s in c.seeds:
-            assert s.role in ("user", "assistant") and s.kind in ("memory", "core", "lesson", "decision", "followup", "task_event", "handoff"), c.name
+            assert s.role in ("user", "assistant") and s.kind in ("memory", "core", "lesson", "decision", "followup", "task_event"), c.name
             assert s.via in ("direct", "pipeline"), c.name
             if s.via == "pipeline":
                 # the production noise filter must not eat a pipeline seed, or

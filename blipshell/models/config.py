@@ -445,11 +445,6 @@ class HandoffConfig(BaseModel):
     matters.' The toggle doubles as the pre-registered A/B switch for the
     continuity probe (see core/handoff.py)."""
     enabled: bool = True
-    # Refresh the note during the session every N assistant turns (0 = only
-    # at close). A session that ends abnormally keeps its last refreshed note.
-    refresh_every_turns: int = 6
-    # Exchanges of the previous session carried verbatim at boot (0 = none).
-    stop_block_pairs: int = 2
 
 
 class CompactionConfig(BaseModel):
