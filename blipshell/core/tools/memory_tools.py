@@ -40,22 +40,11 @@ class SearchMemoriesTool(Tool):
                                            "(for 'how did X change' questions). Default false: "
                                            "only current facts."),
                               required=False),
-                ToolParameter(name="memory_ids", type=ToolParameterType.STRING,
-                              description=("Fetch these memories in FULL by id instead of "
-                                           "searching, e.g. '4821' or '4821,4822'. Use it when "
-                                           "context shows an excerpt naming a memory id (the "
-                                           "previous session's stop block does) and you need the "
-                                           "whole turn. Still pass `query` (a short label); it is "
-                                           "ignored when memory_ids is set."),
-                              required=False),
             ],
         )
 
-    async def execute(self, query: str = "", max_results: int = 5,
-                      include_superseded: bool = False, memory_ids: str = "",
-                      **kwargs) -> str:
-        if memory_ids:
-            return await self._fetch_by_id(memory_ids)
+    async def execute(self, query: str, max_results: int = 5,
+                      include_superseded: bool = False, **kwargs) -> str:
         results = await self.search.search(
             query=query,
             current_session_id=self.current_session_id,
@@ -85,30 +74,6 @@ class SearchMemoriesTool(Tool):
                 f"{text}\n"
             )
         return "\n---\n".join(output)
-
-
-    async def _fetch_by_id(self, memory_ids: str) -> str:
-        """The full text of specific memories. The stop block excerpts a long
-        turn and names its memory id (core/handoff.py); this is what makes
-        that pointer redeemable rather than decorative."""
-        ids = []
-        for part in str(memory_ids).replace(" ", ",").split(","):
-            if part.strip().isdigit():
-                ids.append(int(part.strip()))
-        if not ids:
-            return ToolFailure("Error: memory_ids must be one or more numeric ids, e.g. '4821,4822'.")
-        ids = ids[:10]
-        found = await self.search.sqlite.get_memories_batch(ids)
-        out = []
-        for mid in ids:
-            m = found.get(mid)
-            if m is None:
-                out.append(f"[memory {mid}: not found]")
-                continue
-            ts = m.timestamp.strftime("%Y-%m-%d") if getattr(m, "timestamp", None) else ""
-            who = f" | {m.role}" if getattr(m, "role", "") in ("user", "assistant") else ""
-            out.append(f"[memory {mid}{' | ' + ts if ts else ''}{who}]\n{m.content or m.summary or ''}\n")
-        return "\n---\n".join(out)
 
 
 class SaveCoreMemoryTool(Tool):

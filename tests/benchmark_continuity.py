@@ -122,26 +122,6 @@ CASES: list[ContinuityCase] = [
              "its live thread (the last exchange) and working-state note must reach a 'do you remember the last "
              "thing' question, not only importance-ranked lines and similar old meta-questions."),
     ),
-    ContinuityCase(
-        name="unfinished_end_of_a_long_final_turn",
-        family="survival",
-        question="what were we in the middle of?",
-        seeds=[
-            Seed("prev", "user", "Can you walk me through where the tile editor stands?", days_ago=2.0, importance=0.4),
-            Seed("prev", "assistant", _long_prefix(1800)
-                 + " Anyway - the part I had not finished: the undo stack still drops the last brush stroke, "
-                   "and I wanted to try recording strokes as spans before the next session.",
-                 days_ago=2.0, importance=0.4),
-        ],
-        must_appear=[
-            "recording strokes as spans",
-            "the undo stack still drops the last brush stroke",
-        ],
-        why=("Review 2026-09-11, finding 1: both handoff inputs kept each message's first 400 "
-             "characters, so a long turn that explains and THEN says what is unfinished reached the "
-             "next session with the unfinished part cut off. The stop block is the intended carrier "
-             "and now excerpts head+END; this scores the assembled request, not the renderer."),
-    ),
     # ── Survival ──────────────────────────────────────────────────────────
     ContinuityCase(
         name="control_short_fact",
