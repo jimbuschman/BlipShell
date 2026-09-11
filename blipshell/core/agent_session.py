@@ -507,15 +507,16 @@ class SessionMixin:
                 )
 
     async def _load_stop_block(self, sessions, current_id) -> set:
-        """Add the last exchanges of the most recent previous session, verbatim,
-        to RecentHistory above the summaries (handoff.stop_block). Returns the
-        memory ids it carries so the tier loaders do not render them again."""
+        """Add the last exchanges of the most recent previous session (word for
+        word where they fit, excerpted where not) to RecentHistory above the summaries (handoff.render_stop_block).
+        Returns the memory ids it carried (whole or excerpted) so the tier
+        loaders do not render them again."""
         cfg = getattr(self.config, "handoff", None)
         pairs = int(getattr(cfg, "stop_block_pairs", 0) or 0) if cfg else 0
         if pairs <= 0:
             return set()
         try:
-            from blipshell.core.handoff import stop_block
+            from blipshell.core.handoff import render_stop_block
             for s in sessions:
                 if s.id == current_id:
                     continue
@@ -529,7 +530,7 @@ class SessionMixin:
                     continue
                 started = getattr(s, "timestamp", None) or getattr(s, "created_at", None)
                 when = started.strftime("%Y-%m-%d") if started else None
-                text = stop_block(live, saved_when=when, max_pairs=pairs)
+                text, carried = render_stop_block(live, saved_when=when, max_pairs=pairs)
                 if not text:
                     continue
                 self.memory_manager.add_memory("RecentHistory", PoolItem(
@@ -537,8 +538,9 @@ class SessionMixin:
                     session_id=s.id, source="history", project=s.project,
                 ))
                 logger.info("Loaded the previous session's stop block (session %d)", s.id)
-                carried = [m for m in live if m.role in ("user", "assistant")][-(2 * pairs):]
-                return {m.id for m in carried if m.id}
+                # only what the block actually rendered: a turn the budget
+                # dropped must still be free to reach RecentHistory
+                return carried
         except Exception as e:
             logger.warning("Stop block not loaded (continuing without): %s", e)
         return set()

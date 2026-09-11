@@ -25,6 +25,9 @@ was we were what when where which who why will with would you your yours
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
 _WORD = re.compile(r"[a-z0-9][a-z0-9.\-']*", re.IGNORECASE)
 
+# Below this, one end of a head+tail excerpt carries nothing readable.
+MIN_EXCERPT_SIDE = 60
+
 
 def query_terms(query: str) -> list[str]:
     """Content words of a query: lowercased, stop-words dropped, possessives trimmed."""
@@ -113,3 +116,61 @@ def excerpt(text: str, query: str, max_chars: int = 1200, marker: str = "...") -
     if hi < len(sentences) - 1:
         window = window + " " + marker
     return window
+
+
+def _head_cut(text: str, budget: int) -> str:
+    """At most `budget` chars from the start, ending on a sentence boundary
+    when one falls in the back half of the window, else on a word boundary."""
+    if budget <= 0:
+        return ""
+    window = text[:budget]
+    stop = max(window.rfind(". "), window.rfind("! "), window.rfind("? "),
+               window.rfind(".\n"), window.rfind("\n"))
+    if stop >= budget // 2:
+        return window[:stop + 1]
+    space = window.rfind(" ")
+    return window[:space] if space >= budget // 2 else window
+
+
+def _tail_cut(text: str, budget: int) -> str:
+    """At most `budget` chars from the END, starting on a sentence boundary
+    when one falls in the front half of the window, else on a word boundary.
+    Starting mid-clause is what drops a negation, so the boundary matters."""
+    if budget <= 0:
+        return ""
+    window = text[-budget:]
+    for mark in (". ", "! ", "? ", "\n"):
+        pos = window.find(mark)
+        if 0 <= pos <= budget // 2:
+            return window[pos + len(mark):]
+    space = window.find(" ")
+    return window[space + 1:] if 0 <= space <= budget // 2 else window
+
+
+def head_tail_excerpt(text: str, max_chars: int, marker: str = "...",
+                      head_share: float = 0.35) -> str:
+    """At most `max_chars` of `text`, keeping BOTH the opening and the END.
+
+    For text with no query to centre on whose end carries the state: the last
+    turns of a session (core/handoff.py). A prefix cut drops exactly what a
+    handoff exists for - the unfinished next step at the end of a long turn
+    (review 2026-09-11, finding 1) - and a bare last-N-character cut drops the
+    antecedent that says what the turn is about. The elided middle is marked
+    with its size, so the reader knows the content is a window and how much is
+    missing; neither part is verbatim on its own.
+    """
+    text = text or ""
+    if len(text) <= max_chars:
+        return text
+    gap_reserve = 2 * len(marker) + 22  # "...[12345 chars elided]..." plus spaces
+    body = max_chars - gap_reserve
+    if body < 2 * MIN_EXCERPT_SIDE:
+        # too small to hold both ends: keep the END, which is the state
+        return marker + " " + _tail_cut(text, max(0, max_chars - len(marker) - 1))
+    head = _head_cut(text, max(MIN_EXCERPT_SIDE, int(body * head_share)))
+    tail = _tail_cut(text, body - len(head))
+    elided = len(text) - len(head) - len(tail)
+    if elided <= 0:
+        return text[:max_chars]
+    return (f"{head.rstrip()} {marker}[{elided} chars elided]{marker} "
+            f"{tail.lstrip()}")
