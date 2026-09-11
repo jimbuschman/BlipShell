@@ -65,6 +65,3 @@ reasoning_spike.txt
 # D2a attribution evaluation sets: personal correction text, never committed
 # (summaries with numbers only go to benchmark_results/).
 data/attribution_eval/
-
-# continuity probe texts (real replies are personal; numbers go to benchmark_results/)
-data/continuity_probe/
