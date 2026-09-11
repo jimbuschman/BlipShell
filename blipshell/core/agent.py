@@ -160,7 +160,6 @@ class Agent(
         self._dossier_trimmed_this_turn: bool = False
         self._last_tools_sent = None  # the tool list the last chat request actually carried (F1)
         self._last_handoff_refresh_task = None
-        self._last_handoff_written = False
         self._last_claim_check = None
         # Authorization rule (2026-09-10): question | instruction | declarative
         # per turn; a standing mandate (the executor path) authorizes acting on
@@ -1049,17 +1048,13 @@ class Agent(
             note = clean_note(reply)
             if not note:
                 return
-            # one transaction: the note and its metadata are never split
-            await self.sqlite.set_metadata_many({
-                HANDOFF_KEY: note,
-                HANDOFF_META_KEY: _json.dumps({
-                    "saved_at": datetime.now(timezone.utc).isoformat(),
-                    "session_id": self.session_manager.session_id,
-                    "midsession": bool(midsession),
-                    "turn": int(getattr(self, "_turn_number", 0) or 0),
-                }),
-            })
-            self._last_handoff_written = True
+            await self.sqlite.set_metadata(HANDOFF_KEY, note)
+            await self.sqlite.set_metadata(HANDOFF_META_KEY, _json.dumps({
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+                "session_id": self.session_manager.session_id,
+                "midsession": bool(midsession),
+                "turn": int(getattr(self, "_turn_number", 0) or 0),
+            }))
             logger.info("Session handoff note saved (%d chars%s)", len(note), ", mid-session" if midsession else "")
         except Exception as e:
             logger.warning("Session handoff failed (continuing shutdown): %s", e)

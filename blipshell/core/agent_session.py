@@ -107,31 +107,15 @@ class SessionMixin:
                 return
             if is_stale(meta.get("saved_at")):
                 return
-            # Whose note is this? If the MOST RECENT previous session left no
-            # note (it ended before the first refresh, or its write failed),
-            # the note on file is from an earlier session. Load it, but framed
-            # as exactly that - never as "where you left off" last time.
-            gap_note = ""
-            try:
-                recent = [s for s in await self.sqlite.list_sessions(limit=3)
-                          if s.id != getattr(self.session_manager, "session_id", None)]
-                if recent and recent[0].id != meta.get("session_id"):
-                    last = recent[0]
-                    started = getattr(last, "timestamp", None) or getattr(last, "created_at", None)
-                    when = started.strftime("%Y-%m-%d") if started else "?"
-                    gap_note = (f" Your most recent session ({when}) left no note - it ended before one was "
-                                f"written; this note is from the session before it.")
-            except Exception as e:
-                logger.debug("Handoff recency check skipped: %s", e)
             self.memory_manager.add_memory("Core", PoolItem(
-                text=frame_for_boot(note, meta.get("saved_at")) + gap_note,
+                text=frame_for_boot(note, meta.get("saved_at")),
                 session_role="system",
                 # Between curated core facts (importance+1.0, always >=1.0)
                 # and the user model (0.9): at boot, momentum outranks derived
                 # conclusions, but identity facts win the squeeze.
                 priority_score=0.95,
             ))
-            logger.info("Loaded session handoff note%s", " (from an earlier session)" if gap_note else "")
+            logger.info("Loaded session handoff note")
         except Exception as e:
             logger.warning("Handoff load failed (continuing without): %s", e)
 
@@ -467,18 +451,11 @@ class SessionMixin:
                 continue
             if s.summary:
                 continue
-            # message_count is written by end_session - the very step an
-            # orphan never ran, so it is 0 for exactly the sessions this
-            # sweep exists for (sessions 1919/1920, 2026-08-11: 10 and 12
-            # memories, message_count 0, never summarised). Judge by what WAS
-            # persisted: the memories.
-            memories = await self.sqlite.get_memories_by_session(s.id)
-            live = [m for m in memories if not m.is_archived]
-            if max(s.message_count, len(live)) < 3:
+            if s.message_count < 3:
                 continue
-            # an orphan's memories may never have been processed (killed before
-            # the worker ran): fall back to their raw content
-            summaries = [m.summary or (m.content or "")[:300] for m in live if (m.summary or m.content)]
+
+            memories = await self.sqlite.get_memories_by_session(s.id)
+            summaries = [m.summary for m in memories if m.summary]
             if not summaries:
                 continue
 
@@ -493,10 +470,9 @@ class SessionMixin:
                     generate_session_title(summary),
                 )
                 title = title.strip().strip('"').strip("'")
-                fields = {"summary": summary, "title": title}
-                if s.message_count == 0:
-                    fields["message_count"] = len(live)  # the close that never ran
-                await self.sqlite.update_session(s.id, **fields)
+                await self.sqlite.update_session(
+                    s.id, summary=summary, title=title,
+                )
                 logger.info(
                     "Generated summary for orphaned session %d: %s",
                     s.id, title[:60],
@@ -527,8 +503,7 @@ class SessionMixin:
                         and not str(getattr(m, "memory_type", "")).lower().endswith(record_types)]
                 if len(live) < 2:
                     continue
-                started = getattr(s, "timestamp", None) or getattr(s, "created_at", None)
-                when = started.strftime("%Y-%m-%d") if started else None
+                when = s.created_at.strftime("%Y-%m-%d") if getattr(s, "created_at", None) else None
                 text = stop_block(live, saved_when=when, max_pairs=pairs)
                 if not text:
                     continue
