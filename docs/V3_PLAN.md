@@ -649,16 +649,113 @@ so the runner marked the step `blocked` although the served model was the
 production model for this turn; the reply above is the measurement. One run
 is a smoke, not a rate.
 
-**Not resolved by this pass, stated plainly.** The assistant's own
-description was about experience ("no texture", "I don't feel the
-continuity"); what is measurable is whether the live thread and the
-assistant's own last note reach the next session and are picked up. The
-pre-registered live probe in `core/handoff.py` (handoff on/off across
-session pairs on the Ollama PC, "what were we in the middle of?" scored
-against the previous session's actual open items) is still the test that
-counts, and the model's own "feels better" does not. Missing evidence: no
-live session since the handoff note shipped, so its real output has never
-been read; the snapshot has no post-2026-09-02 sessions.
+**Survivability of the handoff, verified against persisted data after a
+restart (2026-09-10, `tests/test_handoff_survivability.py`; a second agent
+boots on the same database and reads what the first left).**
+- *Session ends before the first six-turn refresh* (killed at turn 3): no
+  note exists and none is invented. What survives: the stop block (the last
+  two exchanges, verbatim, in RecentHistory at the next boot) and the orphan
+  sweep, which now writes the missing summary. Before this pass the sweep
+  skipped exactly these sessions (below).
+- *Session ends after a refresh, before close* (killed at turn 2 with
+  `refresh_every_turns = 2`): the mid-session note and its metadata
+  (`session_id`, `midsession: true`, `turn`) are on disk and load into Core at
+  the next boot, framed as the note from the previous session.
+- *Write fails half-way*: the note and its metadata used to be two commits,
+  so a cancelled background task could leave a new note with the old
+  session's metadata. They are now one transaction
+  (`SQLiteStore.set_metadata_many`, rollback on failure): a failure injected
+  on the second statement leaves BOTH old values. A failed generation (model
+  down) leaves the previous note untouched and `_last_handoff_written`
+  false.
+- *The note on file is from an older session* (A wrote one; B ran three
+  turns and was killed): the note still loads, but framed as "your most
+  recent session (date) left no note - it ended before one was written; this
+  note is from the session before it", and the stop block carries where B
+  actually stopped. Ordering by `last_active` is now reliable because the
+  chat path touches it every turn (it used to be written only by
+  `end_session`).
+
+**Why the August sessions had zero message counts - what the corpus
+establishes.** `end_session` writes `message_count` FIRST, then the summary,
+then `last_active`. Sessions 1919 and 1920 (2026-08-11) have `message_count
+= 0`, no summary, and `last_active == created_at` while their memories run
+for about an hour - all three fields say the same thing: `end_session` never
+ran. The rows carry 10 and 12 persisted memories each, so the per-message
+persistence worked; only the close did not. The corpus does not record HOW
+the process ended (no crash log, no shutdown event in `turn_events`), so
+the cause of the abnormal end is not established; that it was abnormal is.
+The orphan sweep that exists for this case skipped both sessions because it
+keyed on `message_count >= 3`, the very field the missed close would have
+written. It now judges by persisted memories (`max(message_count,
+live_memories) >= 3`), falls back to raw content when the memory worker
+never summarised them, and backfills `message_count` when it writes the
+summary. **Does the new handoff survive that persistence issue?** The
+mid-session note does, because it is written every six turns and does not
+depend on the close; the stop block does, because it is read from the
+per-message memories that DID persist; the close-time note does not (it is
+the close), and a session killed before turn six leaves no note - the stop
+block is what carries the thread then. That is the honest boundary.
+
+**An actual handoff through the production path (2026-09-10).** Disposable
+copies of sessions 1920 and 1926 were replayed into fresh sessions on a
+scratch copy of the 2026-09-02 corpus (`generate_real_handoff.py`, scratch
+only) and `_write_session_handoff(midsession=True)` was called as production
+calls it: `TaskType.REASONING` -> local qwen3:14b on the Ollama PC over
+Tailscale, 37-80 s per note. Two generations each, read in full. Session
+1920's note: "State persistence between sessions is still unresolved - the
+gap between loaded context and actual continuity feels sharp ... Half-formed
+ideas about mid-session state saving linger. Need to clarify if continuity
+is desirable or just a byproduct of memory loops. Next step: test if
+disk-based state carryover could bridge the disconnection without breaking
+the current session's 'fresh start' model." Session 1926's note: "Catacomb
+3-D port and MemoryDB updates ongoing; audit follow-up pending. Experimenting
+with 'live state' note as a midpoint between cold start and continuity. Need
+to test if making the mechanism explicit (with headers, tags) breaks the
+seamless feel." Both preserve the developing thought and the unfinished
+threads; neither claims anything was finished or decided that the transcript
+does not show. Two limits, stated: (a) the notes carry the assistant's
+state, not the user's words - the user's last response is carried by the
+stop block, verbatim, not by the note; (b) 1926's note phrases the open
+question as "need to test", a plan the transcript supports (the session
+proposed exactly that experiment), but a reader should treat "next step"
+lines as the model's framing of an intention, not a record of one. The
+prompt was NOT changed after reading these; changing it would be tuning on
+two samples.
+
+**Smoke run, recorded as blocked.** The one real-model run above stays
+`blocked` under the requirement it was launched with (`--require-model
+minimax/minimax-m3`). It is not re-recorded as a pass.
+
+**Production routing, verified, and the model-requirement correction.**
+General chat with no active project runs `TaskType.TOOL_CALLING` ->
+OpenRouter `deepseek/deepseek-v4-flash` (config.yaml; the smoke's
+`model_used` confirms it). Project mode runs `TaskType.CODING` -> minimax-m3,
+the population the Stage E gate measured. The continuity probe is a
+general-chat measurement, so its requirement is **deepseek-v4-flash**, not
+minimax; the earlier requirement was wrong and is corrected explicitly in
+`docs/CONTINUITY_PROBE.md`.
+
+**The frozen probe, budget and stopping criteria** are in
+`docs/CONTINUITY_PROBE.md` (protocol v1, pre-registered; recorder and
+deterministic scorer `scripts/continuity_probe.py`, tested in
+`tests/test_continuity_probe.py`). Three arms (off / stop block only / note +
+block), 12 session pairs per variant, first turn "what were we in the middle
+of?", scored on shared content words with the prior session's last assistant
+turn and its note plus a disclaimer check; the operator's yes/no is recorded
+and never overrides. Success is decided in the document before any run. Not
+launched: GPT reviews the protocol and the code first.
+
+**Not resolved, stated plainly.** The assistant's own description was
+about experience ("no texture", "I don't feel the continuity"); what is
+measurable is whether the live thread and its own last note reach the next
+session and are picked up on the first turn. First-person phrasing in the
+note and the note's presence in the prompt are not evidence of that; the
+probe is. Missing evidence: no live session since the handoff shipped, so no
+note produced during real use has been read (the two above were generated
+from replayed transcripts); the snapshot has no post-2026-09-02 sessions.
+Conversation continuity stays OUTSTANDING until the probe's evidence supports
+closing it; v3's delivery status is separate.
 
 ## Completion checklist - the 2026-09-09/10 batch (bounded)
 
