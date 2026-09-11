@@ -161,13 +161,6 @@ class Agent(
         self._last_tools_sent = None  # the tool list the last chat request actually carried (F1)
         self._last_handoff_refresh_task = None
         self._last_handoff_written = False
-        # Handoff write ordering (review 2026-09-11, finding 2): every
-        # generation takes a ticket BEFORE it starts, and a result whose
-        # ticket is older than the one already committed is discarded instead
-        # of overwriting newer state with older text and newer metadata.
-        self._handoff_seq = 0
-        self._handoff_committed_seq = 0
-        self._handoff_write_lock = asyncio.Lock()
         self._last_claim_check = None
         # Authorization rule (2026-09-10): question | instruction | declarative
         # per turn; a standing mandate (the executor path) authorizes acting on
@@ -1013,12 +1006,6 @@ class Agent(
         from blipshell.core.handoff import should_generate
         if self.session_manager is None or not should_generate(len(self.session_manager.get_messages())):
             return
-        in_flight = self._last_handoff_refresh_task
-        if in_flight is not None and not in_flight.done():
-            # the previous refresh is still generating: a second one would only
-            # race it, and the ticket check would throw one of the two away
-            logger.debug("Handoff refresh skipped at turn %d: one still in flight", self._turn_number)
-            return
         task = asyncio.create_task(self._write_session_handoff(midsession=True))
         tasks = getattr(self, "_background_tasks", None)
         if tasks is not None:
@@ -1034,14 +1021,6 @@ class Agent(
         measurement. Skipped for near-empty sessions. Fail-open: a failed
         note costs one boot's continuity, never the shutdown. `midsession`
         marks a live refresh (the close pass writes the final one).
-
-        Ordering (review 2026-09-11, finding 2): the session id, turn number
-        and transcript are captured with a ticket BEFORE generation, and the
-        note is persisted with the identity it was written from. A ticket no
-        newer than the committed one is discarded — an older generation that
-        lands late can no longer replace newer state, nor stamp it with the
-        newer turn read after the await. The close pass takes a later ticket
-        than any refresh in flight, so it wins whatever order they finish in.
         """
         cfg = getattr(self.config, "handoff", None)
         if not cfg or not cfg.enabled:
@@ -1058,14 +1037,9 @@ class Agent(
             )
             from blipshell.llm.router import TaskType
 
-            messages = list(self.session_manager.get_messages())
+            messages = self.session_manager.get_messages()
             if not should_generate(len(messages)):
                 return
-            # identity captured WITH the transcript, before the await
-            seq = int(getattr(self, "_handoff_seq", 0) or 0) + 1
-            self._handoff_seq = seq
-            session_id = self.session_manager.session_id
-            turn = int(getattr(self, "_turn_number", 0) or 0)
             _status("Writing handoff note...")
             reply = await self.router.generate(
                 TaskType.REASONING,
@@ -1075,31 +1049,18 @@ class Agent(
             note = clean_note(reply)
             if not note:
                 return
-            lock = getattr(self, "_handoff_write_lock", None)
-            if lock is None:
-                lock = self._handoff_write_lock = asyncio.Lock()
-            async with lock:
-                if seq <= int(getattr(self, "_handoff_committed_seq", 0) or 0):
-                    logger.info(
-                        "Handoff note from an older generation discarded "
-                        "(ticket %d, committed %d; session %s turn %d)",
-                        seq, int(getattr(self, "_handoff_committed_seq", 0) or 0),
-                        session_id, turn)
-                    return
-                # one transaction: the note and its metadata are never split
-                await self.sqlite.set_metadata_many({
-                    HANDOFF_KEY: note,
-                    HANDOFF_META_KEY: _json.dumps({
-                        "saved_at": datetime.now(timezone.utc).isoformat(),
-                        "session_id": session_id,
-                        "midsession": bool(midsession),
-                        "turn": turn,
-                    }),
-                })
-                self._handoff_committed_seq = seq
+            # one transaction: the note and its metadata are never split
+            await self.sqlite.set_metadata_many({
+                HANDOFF_KEY: note,
+                HANDOFF_META_KEY: _json.dumps({
+                    "saved_at": datetime.now(timezone.utc).isoformat(),
+                    "session_id": self.session_manager.session_id,
+                    "midsession": bool(midsession),
+                    "turn": int(getattr(self, "_turn_number", 0) or 0),
+                }),
+            })
             self._last_handoff_written = True
-            logger.info("Session handoff note saved (%d chars%s, session %s turn %d)",
-                        len(note), ", mid-session" if midsession else "", session_id, turn)
+            logger.info("Session handoff note saved (%d chars%s)", len(note), ", mid-session" if midsession else "")
         except Exception as e:
             logger.warning("Session handoff failed (continuing shutdown): %s", e)
 
