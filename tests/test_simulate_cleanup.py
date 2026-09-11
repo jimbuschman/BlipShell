@@ -21,6 +21,27 @@ def _store_threads() -> list[str]:
             if not t.daemon and t is not threading.main_thread() and "connection_worker" in t.name]
 
 
+async def _store_threads_after_release(timeout_s: float = 3.0) -> list[str]:
+    """Store threads still alive once the release has had time to land.
+
+    aiosqlite 0.22's `Connection.close()` awaits a `stop()` future that the
+    worker thread resolves from INSIDE itself (`close_and_stop`); the thread
+    then still has to unwind its run loop and exit, so `threading.enumerate()`
+    can list it for a few milliseconds after `close()` has returned - longer
+    on a loaded machine. The invariant under test is that cleanup RELEASES
+    the thread, not that it is gone within zero milliseconds of `close()`
+    returning. The instant snapshot failed twice in a row under load
+    (2026-09-11) while an instrumented full run found no test leaving a
+    thread behind - the "leak" was this test's own agent, checked too soon."""
+    import asyncio
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    left = _store_threads()
+    while left and asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(0.05)
+        left = _store_threads()
+    return left
+
+
 async def test_end_session_alone_leaves_the_sqlite_thread_alive(tmp_path):
     """Negative control: the failure is real without the cleanup."""
     from blipshell.benchmark.continuity import bootstrap_headless_agent
@@ -39,7 +60,7 @@ async def test_runner_cleanup_releases_the_stores(tmp_path):
     await agent.start_session()
     scenario = SimScenario(name="x", description="", category="t", steps=[])
     await SimRunner(quiet=True)._cleanup(agent, scenario)
-    assert _store_threads() == []
+    assert await _store_threads_after_release() == []
     assert agent.sqlite._db is None or getattr(agent.sqlite, "_closed", True)
 
 
