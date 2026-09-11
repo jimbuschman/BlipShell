@@ -39,6 +39,121 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def summary_or_raw(summary: str | None, text: str) -> str:
+    """An EMPTY summarization reply is a FAILURE, not a summary.
+
+    Both LLM clients return "" for a reply carrying no content (a model that
+    emitted only reasoning tokens, a filtered or truncated cloud response) and
+    raise nothing, so the `except` fallback around the summarize call never
+    fired: "" was written to the memory's summary — the text FTS indexes, that
+    Recall renders, and that the dedup step embeds. Ollama returns NO vector
+    for "" (it drops the input), so dedup died with the bare
+    `IndexError: list index out of range` seen 2026-09-11. An empty reply is
+    handled exactly like a raised one: keep the raw text.
+    """
+    if summary and summary.strip():
+        return summary
+    logger.warning(
+        "Summarization returned an empty reply, using raw text: %s", text[:80],
+    )
+    return text
+
+
+# A memory whose summary is blank: the summarizer answered "" and, before
+# `summary_or_raw`, that empty string was stored. Active rows only - an
+# archived row is out of every pool anyway.
+BLANK_SUMMARY_SQL = "TRIM(COALESCE(summary, '')) = '' AND is_archived = 0"
+
+
+async def find_blank_summaries(sqlite, limit: int = 100) -> list[dict]:
+    """Active memories with no summary at all, oldest first."""
+    cursor = await sqlite._db.execute(
+        f"SELECT id, role, timestamp, content FROM memories "
+        f"WHERE {BLANK_SUMMARY_SQL} ORDER BY id LIMIT ?",
+        (limit,),
+    )
+    return [
+        {"id": r["id"], "role": r["role"], "timestamp": r["timestamp"],
+         "content": r["content"] or ""}
+        for r in await cursor.fetchall()
+    ]
+
+
+async def repair_blank_summaries(
+    sqlite, router, *, dry_run: bool = True, limit: int = 100,
+    on_status=None,
+) -> dict:
+    """Re-summarize memories left with a blank summary (see `summary_or_raw`).
+
+    Rows written before the empty-reply fallback existed keep their content -
+    FTS and the embedding both index that, so they stayed findable - but every
+    pool renders their summary, and it is empty. This asks the real summarizer
+    for each one and applies the rule the pipeline now applies at write time.
+
+    Three deliberate differences from the write path:
+
+    - A SKIP verdict does NOT archive the row. At write time SKIP filters a
+      new message; here the row has existed for months, has been retrievable
+      and may have been recalled. A repair restores a field, it never removes
+      a record - SKIP is counted and treated as "no summary offered", i.e.
+      the content fallback.
+    - A model FAILURE leaves the row blank and is reported. The repair is
+      re-runnable, so an outage must not convert every row into a copy of its
+      own content and call it done.
+    - A row with no content has nothing to summarize from; it is reported,
+      never touched. (There is no text anywhere in it to recover.)
+
+    `dry_run` (the default) lists what would be repaired WITHOUT calling the
+    model, so previewing the scope costs nothing on a shared GPU.
+    """
+    rows = await find_blank_summaries(sqlite, limit=limit)
+    stats = {"found": len(rows), "resummarized": 0, "content_fallback": 0,
+             "no_content": 0, "failed": 0, "skip_verdict": 0}
+
+    def say(msg: str) -> None:
+        if on_status:
+            on_status(msg)
+
+    if dry_run:
+        for row in rows:
+            preview = " ".join((row["content"] or "").split())[:60]
+            say(f"  would repair memory {row['id']} ({row['role']}, "
+                f"{row['timestamp']}): {preview}")
+        return stats
+
+    for row in rows:
+        content = row["content"]
+        if not content.strip():
+            stats["no_content"] += 1
+            say(f"  memory {row['id']}: no content to summarize from, left as is")
+            continue
+        try:
+            sum_system, sum_prompt = summarize_memory(content)
+            reply = await router.generate(
+                TaskType.SUMMARIZATION, sum_prompt, system=sum_system,
+            )
+        except Exception as e:
+            stats["failed"] += 1
+            logger.error("Re-summarize failed for memory %d: %s", row["id"], e)
+            say(f"  memory {row['id']}: summarization FAILED ({e}), left blank for a retry")
+            continue
+
+        reply = (reply or "").strip()
+        if reply.upper() == "SKIP":
+            stats["skip_verdict"] += 1
+            reply = ""
+        summary = summary_or_raw(reply, content)
+        await sqlite.update_memory(row["id"], summary=summary)
+        if summary == content:
+            stats["content_fallback"] += 1
+            say(f"  memory {row['id']}: no summary offered, using raw content")
+        else:
+            stats["resummarized"] += 1
+            say(f"  memory {row['id']}: {summary[:70]}")
+
+    return stats
+
+
 class MemoryProcessor:
     """Background pipeline for processing memories.
 
@@ -118,6 +233,7 @@ class MemoryProcessor:
             except Exception as e:
                 logger.error("Summarization failed, using raw text: %s", e)
                 summary = text
+            summary = summary_or_raw(summary, text)
             t_summarize = _time.monotonic() - t0
             logger.info("process_message: summarize=%.1fs", t_summarize)
 
@@ -173,7 +289,11 @@ class MemoryProcessor:
                         logger.info("Dedup: archived redundant memory %d", memory_id)
                         return None
                 except Exception as e:
-                    logger.error("Dedup check failed (continuing): %s", e)
+                    # exc_info: this catch is fail-open by design, but the bare
+                    # message alone ("list index out of range") named neither
+                    # the layer nor the input. A swallowed failure must still
+                    # be diagnosable.
+                    logger.error("Dedup check failed (continuing): %s", e, exc_info=True)
                 t_dedup = _time.monotonic() - t0
 
             # Step 5: Tag

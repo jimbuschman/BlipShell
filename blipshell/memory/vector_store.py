@@ -295,14 +295,34 @@ class VectorStore:
     # --- Embedding generation ---
 
     def _embed(self, text: str) -> list[float]:
-        """Generate embedding for a single text via Ollama."""
+        """Generate embedding for a single text via Ollama.
+
+        Ollama returns `{"embeddings": []}` for an EMPTY input (verified
+        against the live daemon 2026-09-11) — it drops the input rather than
+        erroring. `response["embeddings"][0]` on that raised
+        `IndexError: list index out of range`, which is the whole of what an
+        empty memory summary reaching the dedup step looked like in the log.
+        There is no vector for "": say which condition failed, so the next
+        occurrence names its own cause.
+        """
         if self._ollama_client is None:
             raise RuntimeError("Ollama client not available — cannot generate embeddings")
+        if not text or not text.strip():
+            raise ValueError(
+                "Cannot embed empty text — no vector exists for it "
+                "(the caller passed a blank summary/query)"
+            )
         response = self._ollama_client.embed(
             model=self.embedding_model,
             input=self._truncate(text),
         )
-        return response["embeddings"][0]
+        embeddings = response["embeddings"] or []
+        if not embeddings:
+            raise RuntimeError(
+                f"Embedding model {self.embedding_model} returned no vector "
+                f"for {len(text)} chars of input"
+            )
+        return embeddings[0]
 
     def embed_text(self, text: str) -> list[float]:
         """Public single-text embedding — same vector space as stored memories.
@@ -333,9 +353,23 @@ class VectorStore:
             return False
 
     def _embed_batch(self, texts: list[str], chunk_size: int = 32) -> list[list[float]]:
-        """Generate embeddings for multiple texts, chunked to avoid overwhelming Ollama."""
+        """Generate embeddings for multiple texts, chunked to avoid overwhelming Ollama.
+
+        The return is POSITIONAL: every caller zips it back against its own id
+        list. Ollama silently DROPS an empty input from the batch (same
+        behaviour as `_embed`), so one blank text used to shorten the reply and
+        shift every later vector onto the wrong rowid — a silent cross-wiring
+        of the vector store, not an error. Blank input is refused up front and
+        a short reply is a hard failure; callers filter what they cannot embed.
+        """
         if self._ollama_client is None:
             raise RuntimeError("Ollama client not available — cannot generate embeddings")
+        blank = [i for i, t in enumerate(texts) if not t or not t.strip()]
+        if blank:
+            raise ValueError(
+                f"Cannot embed empty text at batch position(s) {blank[:5]} "
+                f"of {len(texts)} — filter blanks before batching"
+            )
         truncated = [self._truncate(t) for t in texts]
         all_embeddings: list[list[float]] = []
         for i in range(0, len(truncated), chunk_size):
@@ -344,7 +378,13 @@ class VectorStore:
                 model=self.embedding_model,
                 input=chunk,
             )
-            all_embeddings.extend(response["embeddings"])
+            got = response["embeddings"] or []
+            if len(got) != len(chunk):
+                raise RuntimeError(
+                    f"Embedding model {self.embedding_model} returned {len(got)} "
+                    f"vectors for {len(chunk)} inputs — refusing to misalign ids"
+                )
+            all_embeddings.extend(got)
         return all_embeddings
 
     # --- Write methods (OllamaGate serialized) ---
@@ -1036,14 +1076,29 @@ class VectorStore:
         if not rows:
             return {"processed": 0, "succeeded": 0, "failed": 0}
 
+        # A row whose text is blank has no vector to backfill — it would be
+        # dropped by Ollama mid-batch and shift every later vector onto the
+        # wrong rowid. Drop it here, once, and say how many.
+        blank = [r[0] for r in rows if not (r[1] or "").strip()]
+        if blank:
+            logger.warning(
+                "Backfill: %d %s row(s) have no text to embed, skipping: %s",
+                len(blank), collection, blank[:10],
+            )
+            rows = [r for r in rows if (r[1] or "").strip()]
+
         stats = {"processed": len(rows), "succeeded": 0, "failed": 0}
+        if blank:
+            stats["skipped_blank"] = len(blank)
+        if not rows:
+            return stats
 
         # Embed and insert in batches
         batch_size = 50
         for i in range(0, len(rows), batch_size):
             batch = rows[i:i + batch_size]
             ids = [r[0] for r in batch]
-            texts = [r[1] or "" for r in batch]
+            texts = [r[1] for r in batch]
 
             try:
                 from blipshell.llm.ollama_gate import get_gate

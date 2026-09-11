@@ -24,7 +24,7 @@ from blipshell.llm.prompts import (
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.vector_store import VectorStore
 from blipshell.memory.noise import should_skip_memory
-from blipshell.memory.processor import MemoryProcessor
+from blipshell.memory.processor import MemoryProcessor, summary_or_raw
 from blipshell.memory.sqlite_store import SQLiteStore
 from blipshell.memory.tagger import tag_message
 from blipshell.models.config import MemoryConfig
@@ -347,6 +347,9 @@ async def _import_global_batch(
                     print(f"{prefix}   -> FAILED ({elapsed:.1f}s): {e}", flush=True)
                     logger.error("Summarization failed, using raw text: %s", e)
                     summary = msg.content
+                # Same rule as the live pipeline: an empty reply is a failed
+                # summarization, not a summary (see summary_or_raw).
+                summary = summary_or_raw(summary, msg.content)
                 surviving.append((msg, tags, summary))
             step_elapsed = time.monotonic() - step_start
             print(f"{prefix} Summarized: {len(surviving)} messages ({step_elapsed:.1f}s total)", flush=True)

@@ -1456,6 +1456,8 @@ def review_cmd(ctx, lessons, reflections, limit, quiet):
               help="Re-embed memories whose summaries were PII-sanitized ([PERSON]/[PII]).")
 @click.option("--repoint-husks", is_flag=True,
               help="Move mentions/aliases/relationships left on merged-away entities to their canonical.")
+@click.option("--blank-summaries", is_flag=True,
+              help="Re-summarize memories whose summary is empty (a summarizer that answered nothing).")
 @click.option("--unarchive-memory", "unarchive_ids", type=int, multiple=True,
               help="Reverse a dedup archive: restore memory ID, re-embed it, keep its history. Repeatable.")
 @click.option("--supersessions", "supersession_refs", multiple=True, metavar="KIND:ID",
@@ -1467,7 +1469,8 @@ def review_cmd(ctx, lessons, reflections, limit, quiet):
 @click.option("--all", "do_all", is_flag=True,
               help="Run all repairs.")
 @click.pass_context
-def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds, repoint_husks, unarchive_ids,
+def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds, repoint_husks,
+               blank_summaries, unarchive_ids,
                supersession_refs, undo_supersession_ids, dry_run, do_all):
     """Repair common DB issues.
 
@@ -1476,13 +1479,17 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
     --fix-sessions fixes sessions where end_session() failed (count=0, no title).
     --fix-pii-embeds re-embeds memories with PII-sanitized summaries.
     --repoint-husks moves references stranded on merged-away entities to their canonical.
+    --blank-summaries re-summarizes memories stored with an empty summary.
+      Part of --all; --dry-run lists them without calling the model.
     --unarchive-memory ID prints why the memory was archived (dedup provenance)
       and restores it. Not part of --all: it names specific rows.
     """
     if not (restore_imports or sweep_orphans or fix_sessions or fix_pii_embeds
-            or repoint_husks or unarchive_ids or supersession_refs or undo_supersession_ids or do_all):
+            or repoint_husks or blank_summaries or unarchive_ids or supersession_refs
+            or undo_supersession_ids or do_all):
         console.print("[yellow]Nothing to do. Pass --restore-imports, --sweep-orphans, --fix-sessions, --fix-pii-embeds, "
-                      "--repoint-husks, --unarchive-memory ID, --supersessions KIND:ID, --undo-supersession ID, or --all.[/yellow]")
+                      "--repoint-husks, --blank-summaries, --unarchive-memory ID, --supersessions KIND:ID, "
+                      "--undo-supersession ID, or --all.[/yellow]")
         return
     if do_all:
         restore_imports = True
@@ -1490,6 +1497,7 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
         fix_sessions = True
         fix_pii_embeds = True
         repoint_husks = True
+        blank_summaries = True
 
     from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
@@ -1633,6 +1641,26 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
                     )
                 elif dry_run:
                     console.print("[dim](dry-run; no changes)[/dim]")
+
+            if blank_summaries:
+                from blipshell.memory.processor import repair_blank_summaries
+                from blipshell.llm.endpoints import EndpointManager
+                from blipshell.llm.router import LLMRouter
+
+                router = LLMRouter(cfg.models, EndpointManager(cfg.endpoints, cfg.llm))
+                stats = await repair_blank_summaries(
+                    sqlite, router, dry_run=dry_run,
+                    on_status=lambda m: console.print(f"[dim]{m}[/dim]"),
+                )
+                console.print(
+                    f"[cyan]Blank summaries:[/cyan] [bold]{stats['found']}[/bold] found"
+                    + ("" if dry_run else
+                       f"; re-summarized={stats['resummarized']} "
+                       f"content-fallback={stats['content_fallback']} "
+                       f"skip-verdict={stats['skip_verdict']} "
+                       f"no-content={stats['no_content']} failed={stats['failed']}")
+                    + (" [dim](dry-run; no model calls, no changes)[/dim]" if dry_run else "")
+                )
 
             if supersession_refs or undo_supersession_ids:
                 from blipshell.memory import supersession as _sup
