@@ -67,18 +67,108 @@ def handoff_prompt(transcript_tail: str) -> str:
     )
 
 
+# Per message, before it has to be excerpted. The note is about what was in
+# MOTION, so the transcript must carry enough of each turn to show a thread,
+# not just its opening.
+PER_MESSAGE_CHARS = 800
+
+# Below this an excerpt says nothing; the message is dropped and counted
+# instead of rendered as a stub.
+MIN_EXCERPT_CHARS = 120
+
+# Of an excerpted message, the share given to its END. A long final turn puts
+# the decision, the conclusion and the "next I want to..." last; a head-only
+# truncation drops exactly the part the handoff exists to carry.
+TAIL_SHARE = 0.6
+
+
+def _excerpt(text: str, budget: int) -> str:
+    """`text` in at most `budget` chars, keeping its END.
+
+    Head AND tail, with the omission marked: the head says what the turn was
+    about, the tail says where it landed. An unmarked excerpt is worse than a
+    short one — the model would read a cut-off message as a complete thought.
+    """
+    if len(text) <= budget:
+        return text
+
+    def build(omitted: int):
+        marker = f" [...{omitted} chars omitted...] "
+        room = budget - len(marker)
+        if room < 2:
+            return None
+        tail_len = max(1, int(room * TAIL_SHARE))
+        head_len = room - tail_len
+        excerpt = text[:head_len] + marker + text[len(text) - tail_len:]
+        return excerpt, len(text) - head_len - tail_len
+
+    # The marker states the count, and the count depends on the marker's own
+    # length. A couple of passes settle it; if it will not settle, keep the
+    # end and say so.
+    guess = len(text) - budget
+    for _ in range(3):
+        built = build(guess)
+        if built is None:
+            break
+        excerpt, actual = built
+        if actual == guess:
+            return excerpt
+        guess = actual
+
+    marker = "[...earlier text omitted...] "
+    if budget > len(marker) + 1:
+        return marker + text[-(budget - len(marker)):]
+    return text[-budget:]
+
+
 def transcript_tail(messages, max_messages: int = 30,
                     max_chars: int = 6000) -> str:
-    """The end of the session, where the live threads are."""
-    lines = []
-    for m in messages[-max_messages:]:
+    """The end of the session, where the live threads are.
+
+    Built BACKWARDS from the newest message, because the budget belongs to
+    the most recent turns, and rendered forwards so the model reads it in
+    order. Every line keeps its role label.
+
+    It used to take each message's first 400 characters and then slice the
+    joined text with `text[-max_chars:]`. Two losses: a long final turn was
+    cut at character 400, taking the decision and the next action with it —
+    the note exists to carry exactly that — and the closing slice could land
+    mid-line, handing the model a fragment with no role on it.
+    """
+    lines: list[str] = []
+    used = 0
+    dropped = 0
+
+    for m in reversed(list(messages[-max_messages:])):
         role = getattr(m, "role", None)
         role = getattr(role, "value", role) or "user"
         content = (getattr(m, "content", "") or "").strip()
-        if content:
-            lines.append(f"{role}: {content[:400]}")
-    text = "\n".join(lines)
-    return text[-max_chars:]
+        if not content:
+            continue
+
+        overhead = len(role) + 2 + (1 if lines else 0)   # "role: " and a newline
+        budget = min(PER_MESSAGE_CHARS, max_chars - used - overhead)
+        if budget < MIN_EXCERPT_CHARS:
+            dropped += 1
+            continue
+
+        line = f"{role}: {_excerpt(content, budget)}"
+        used += len(line) + (1 if lines else 0)
+        lines.append(line)
+
+    lines.reverse()
+
+    if dropped:
+        notice = f"[...{dropped} earlier message(s) omitted...]"
+        # The notice is part of the budget, not an addition to it.
+        while lines and used + len(notice) + 1 > max_chars:
+            used -= len(lines[0]) + 1
+            lines.pop(0)
+            dropped += 1
+            notice = f"[...{dropped} earlier message(s) omitted...]"
+        lines.insert(0, notice)
+
+    return "\n".join(lines)
 
 
 def should_generate(message_count: int) -> bool:
