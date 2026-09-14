@@ -23,7 +23,7 @@ from blipshell.memory.blank_text import (
 # Every shape the two definitions used to disagree about.
 BLANK_VALUES = [
     None, "", " ", "  ", "\t", "\n", "\r\n", "\v", "\f",
-    " \t\n ", "\t\t", "\n\n\n", " ", " ", "　",
+    " \t\n ", "\t\t", "\n\n\n", "\u00a0", "\u2003", "\u3000",
 ]
 MEANINGFUL_VALUES = [
     "x", "hello", " padded ", "\tleading tab", "trailing newline\n",
@@ -169,3 +169,19 @@ async def test_repair_finds_a_whitespace_only_summary(tmp_path):
     assert ids["real"] not in found
     for label in ("newline", "tab", "spaces", "mixed", "empty"):
         assert ids[label] in found, f"{label} summary was not selected"
+
+
+def test_coalesce_nonblank_sql_works_with_a_single_column(conn):
+    """SQLite rejects a one-argument COALESCE, and four of the five vector
+    collections have no fallback column at all."""
+    conn.executemany("INSERT INTO t VALUES (?, ?, ?)", [
+        (1, "real", None), (2, "", None), (3, "  ", None), (4, None, None),
+    ])
+    expr = coalesce_nonblank_sql("content")
+    got = dict(conn.execute(f"SELECT id, {expr} FROM t").fetchall())
+    assert got == {1: "real", 2: None, 3: None, 4: None}
+
+
+def test_coalesce_nonblank_sql_refuses_zero_columns():
+    with pytest.raises(ValueError):
+        coalesce_nonblank_sql()

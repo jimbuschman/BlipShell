@@ -76,7 +76,13 @@ def coalesce_nonblank_sql(*columns: str) -> str:
     (untrimmed — the embedder should see the text as stored) or NULL when it
     is blank, and COALESCE picks the first survivor.
     """
+    if not columns:
+        raise ValueError("coalesce_nonblank_sql needs at least one column")
     parts = [
         f"CASE WHEN {nonblank_sql(col)} THEN {col} END" for col in columns
     ]
+    # SQLite rejects a one-argument COALESCE, and several collections have no
+    # fallback column at all (entities, lessons, core_memories, reflections).
+    if len(parts) == 1:
+        return parts[0]
     return f"COALESCE({', '.join(parts)})"
