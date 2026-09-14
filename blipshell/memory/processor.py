@@ -26,6 +26,7 @@ from blipshell.llm.prompts import (
 )
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory import dedup_decision, supersession
+from blipshell.memory.blank_text import blank_sql, is_blank
 from blipshell.memory.manager import estimate_tokens
 from blipshell.memory.noise import should_skip_memory
 from blipshell.memory.sqlite_store import SQLiteStore
@@ -51,7 +52,7 @@ def summary_or_raw(summary: str | None, text: str) -> str:
     `IndexError: list index out of range` seen 2026-09-11. An empty reply is
     handled exactly like a raised one: keep the raw text.
     """
-    if summary and summary.strip():
+    if not is_blank(summary):
         return summary
     logger.warning(
         "Summarization returned an empty reply, using raw text: %s", text[:80],
@@ -62,7 +63,12 @@ def summary_or_raw(summary: str | None, text: str) -> str:
 # A memory whose summary is blank: the summarizer answered "" and, before
 # `summary_or_raw`, that empty string was stored. Active rows only - an
 # archived row is out of every pool anyway.
-BLANK_SUMMARY_SQL = "TRIM(COALESCE(summary, '')) = '' AND is_archived = 0"
+#
+# `blank_sql` is the shared definition. The hand-written predicate here used
+# SQLite one-argument TRIM, which strips SPACES ONLY: a summary of a single
+# newline was blank everywhere in Python and invisible to the repair that
+# exists to find it (memory/blank_text.py).
+BLANK_SUMMARY_SQL = f"{blank_sql('summary')} AND is_archived = 0"
 
 
 async def find_blank_summaries(sqlite, limit: int = 100) -> list[dict]:
@@ -123,7 +129,7 @@ async def repair_blank_summaries(
 
     for row in rows:
         content = row["content"]
-        if not content.strip():
+        if is_blank(content):
             stats["no_content"] += 1
             say(f"  memory {row['id']}: no content to summarize from, left as is")
             continue

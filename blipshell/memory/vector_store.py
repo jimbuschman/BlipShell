@@ -20,6 +20,7 @@ import httpx
 import ollama
 import sqlite_vec
 
+from blipshell.memory.blank_text import coalesce_nonblank_sql, is_blank
 from blipshell.memory.entity_names import husk_sql
 
 logger = logging.getLogger(__name__)
@@ -307,7 +308,7 @@ class VectorStore:
         """
         if self._ollama_client is None:
             raise RuntimeError("Ollama client not available — cannot generate embeddings")
-        if not text or not text.strip():
+        if is_blank(text):
             raise ValueError(
                 "Cannot embed empty text — no vector exists for it "
                 "(the caller passed a blank summary/query)"
@@ -364,7 +365,7 @@ class VectorStore:
         """
         if self._ollama_client is None:
             raise RuntimeError("Ollama client not available — cannot generate embeddings")
-        blank = [i for i, t in enumerate(texts) if not t or not t.strip()]
+        blank = [i for i, t in enumerate(texts) if is_blank(t)]
         if blank:
             raise ValueError(
                 f"Cannot embed empty text at batch position(s) {blank[:5]} "
@@ -1079,13 +1080,13 @@ class VectorStore:
         # A row whose text is blank has no vector to backfill — it would be
         # dropped by Ollama mid-batch and shift every later vector onto the
         # wrong rowid. Drop it here, once, and say how many.
-        blank = [r[0] for r in rows if not (r[1] or "").strip()]
+        blank = [r[0] for r in rows if is_blank(r[1])]
         if blank:
             logger.warning(
                 "Backfill: %d %s row(s) have no text to embed, skipping: %s",
                 len(blank), collection, blank[:10],
             )
-            rows = [r for r in rows if (r[1] or "").strip()]
+            rows = [r for r in rows if not is_blank(r[1])]
 
         stats = {"processed": len(rows), "succeeded": 0, "failed": 0}
         if blank:

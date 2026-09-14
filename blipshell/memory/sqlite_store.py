@@ -14,6 +14,7 @@ import aiosqlite
 # Regex for valid SQL column identifiers — prevents injection via dynamic column names.
 _VALID_COLUMN_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
+from blipshell.memory.blank_text import blank_sql, nonblank_sql
 from blipshell.models.memory import CoreMemory, Lesson, Memory, MemoryType
 from blipshell.models.session import Session, SessionMessage
 from blipshell.models.task import (
@@ -1306,11 +1307,11 @@ class SQLiteStore:
         Returns dicts with {id, title, message_count} ordered oldest first.
         """
         cursor = await self._db.execute(
-            """SELECT s.id, s.title,
+            f"""SELECT s.id, s.title,
                       (SELECT COUNT(*) FROM memories m
                        WHERE m.session_id = s.id AND m.is_archived = 0) as message_count
                FROM sessions s
-               WHERE (s.summary IS NULL OR s.summary = '')
+               WHERE {blank_sql('s.summary')}
                  AND s.is_archived = 0
                GROUP BY s.id
                HAVING message_count > 0
@@ -2409,15 +2410,14 @@ class SQLiteStore:
         at least 1 memory (including archived — consolidated sessions still
         have valid data for reflection).
         """
-        cursor = await self._db.execute("""
+        cursor = await self._db.execute(f"""
             SELECT s.id, s.summary, s.project, s.title,
                    (SELECT COUNT(*) FROM memories m
                     WHERE m.session_id = s.id) as msg_count
             FROM sessions s
             LEFT JOIN session_reflections sr ON sr.session_id = s.id
             WHERE sr.id IS NULL
-              AND s.summary IS NOT NULL
-              AND s.summary != ''
+              AND {nonblank_sql('s.summary')}
               AND s.is_archived = 0
             GROUP BY s.id
             HAVING msg_count >= 1
