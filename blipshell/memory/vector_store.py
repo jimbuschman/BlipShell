@@ -1044,7 +1044,16 @@ class VectorStore:
         """Find items in SQLite without vectors and re-embed them.
 
         Replaces the chroma_retry_queue + reconcile_stores system.
-        Returns stats dict with processed/succeeded/failed counts.
+        Returns stats dict with processed/succeeded/failed counts, plus
+        `skipped_blank` — rows that have no text to embed at all.
+
+        A blank row can never be backfilled: it stays in the
+        `v.rowid IS NULL` set for ever. Filtering blanks in PYTHON, after
+        `LIMIT`, therefore meant a window that happened to be all blanks
+        returned processed=0 — which stops `drain()` cleanly, and stops it
+        BEFORE the first embeddable row. With more blanks than the batch
+        size, no valid record was ever reached. The filter belongs in the
+        query, ahead of the limit, so the window always fills with work.
         """
         self._require_open()
         if self._ollama_client is None:
@@ -1055,42 +1064,53 @@ class VectorStore:
         if not source or not vec_table:
             return {"processed": 0, "succeeded": 0, "failed": 0, "error": "unknown collection"}
 
-        # Find IDs in source table but not in vec table.
-        # Use COALESCE for tables with a fallback text column (memories
-        # uses content with fallback to summary so raw unsanitized text
-        # is preferred for embedding).
-        fallback = source.get("text_col_fallback")
-        if fallback:
-            text_expr = f"COALESCE(s.{source['text_col']}, s.{fallback})"
-        else:
-            text_expr = f"s.{source['text_col']}"
+        # The text to embed. Tables with a fallback column (memories: content,
+        # falling back to summary, so the raw unsanitized text is preferred)
+        # used COALESCE, which falls back only on NULL — a row with
+        # `content = ''` and a good summary resolved to '' and was then thrown
+        # away as unembeddable. BLANKNESS is the condition, not nullness
+        # (memory/blank_text.py).
+        columns = [f"s.{source['text_col']}"]
+        if source.get("text_col_fallback"):
+            columns.append(f"s.{source['text_col_fallback']}")
+        text_expr = coalesce_nonblank_sql(*columns)
+
+        where = "v.rowid IS NULL"
+        if source["active_filter"]:
+            where += f" AND {source['active_filter']}"
+        from_clause = (
+            f"FROM {source['table']} s "
+            f"LEFT JOIN {vec_table} v ON v.rowid = s.id "
+            f"WHERE {where}"
+        )
         with self._lock:
             rows = self._conn.execute(
-                f"SELECT s.id, {text_expr} FROM {source['table']} s "
-                f"LEFT JOIN {vec_table} v ON v.rowid = s.id "
-                f"WHERE v.rowid IS NULL "
-                + (f"AND {source['active_filter']} " if source["active_filter"] else "")
-                + f"LIMIT ?",
+                f"SELECT s.id, {text_expr} AS embed_text {from_clause} "
+                f"AND {text_expr} IS NOT NULL LIMIT ?",
                 [limit],
             ).fetchall()
+            # Reported from the WHOLE backlog, not this window: a caller
+            # draining in batches must see one honest figure, not a count
+            # that changes with the batch size.
+            blank_count = self._conn.execute(
+                f"SELECT COUNT(*) {from_clause} AND {text_expr} IS NULL"
+            ).fetchone()[0]
 
-        if not rows:
-            return {"processed": 0, "succeeded": 0, "failed": 0}
-
-        # A row whose text is blank has no vector to backfill — it would be
-        # dropped by Ollama mid-batch and shift every later vector onto the
-        # wrong rowid. Drop it here, once, and say how many.
-        blank = [r[0] for r in rows if is_blank(r[1])]
-        if blank:
+        if blank_count:
+            with self._lock:
+                blank_ids = [
+                    r[0] for r in self._conn.execute(
+                        f"SELECT s.id {from_clause} AND {text_expr} IS NULL LIMIT 10"
+                    ).fetchall()
+                ]
             logger.warning(
                 "Backfill: %d %s row(s) have no text to embed, skipping: %s",
-                len(blank), collection, blank[:10],
+                blank_count, collection, blank_ids,
             )
-            rows = [r for r in rows if not is_blank(r[1])]
 
         stats = {"processed": len(rows), "succeeded": 0, "failed": 0}
-        if blank:
-            stats["skipped_blank"] = len(blank)
+        if blank_count:
+            stats["skipped_blank"] = blank_count
         if not rows:
             return stats
 
@@ -1108,7 +1128,11 @@ class VectorStore:
                     vectors = self._embed_batch(texts)
 
                 with self._lock:
-                    for item_id, vec in zip(ids, vectors):
+                    # strict: ids and vectors are POSITIONAL. _embed_batch
+                    # already refuses a short reply; this is the second lock
+                    # on the same door, because the failure it prevents is a
+                    # silent cross-wiring of the vector store.
+                    for item_id, vec in zip(ids, vectors, strict=True):
                         self._conn.execute(
                             f"DELETE FROM {vec_table} WHERE rowid = ?", [item_id]
                         )
@@ -1161,7 +1185,7 @@ class VectorStore:
                     vectors = self._embed_batch(texts)
 
                 with self._lock:
-                    for item_id, vec in zip(ids, vectors):
+                    for item_id, vec in zip(ids, vectors, strict=True):
                         self._conn.execute(
                             "DELETE FROM vec_memories WHERE rowid = ?", [item_id]
                         )
