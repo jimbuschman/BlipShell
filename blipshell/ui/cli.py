@@ -1644,10 +1644,11 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
 
             if blank_summaries:
                 from blipshell.memory.processor import repair_blank_summaries
-                from blipshell.llm.endpoints import EndpointManager
-                from blipshell.llm.router import LLMRouter
+                from blipshell.llm.routing import build_routing
 
-                router = LLMRouter(cfg.models, EndpointManager(cfg.endpoints, cfg.llm))
+                # Local mode and the PII settings, same as chat: the repair
+                # re-summarizes real memories through a real endpoint.
+                _endpoints, router = build_routing(cfg)
                 stats = await repair_blank_summaries(
                     sqlite, router, dry_run=dry_run,
                     on_status=lambda m: console.print(f"[dim]{m}[/dim]"),
@@ -1766,8 +1767,7 @@ def import_memories_cmd(ctx, file):
     from pathlib import Path
 
     from blipshell.import_chatgpt import import_memories_as_core
-    from blipshell.llm.endpoints import EndpointManager
-    from blipshell.llm.router import LLMRouter
+    from blipshell.llm.routing import build_routing
     from blipshell.models.config import get_ollama_url
     from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
@@ -1795,8 +1795,7 @@ def import_memories_cmd(ctx, file):
         )
         chroma.initialize()
 
-        endpoint_manager = EndpointManager(cfg.endpoints, cfg.llm)
-        router = LLMRouter(cfg.models, endpoint_manager)
+        endpoint_manager, router = build_routing(cfg)
 
         count = await import_memories_as_core(
             sqlite=sqlite,
@@ -2010,8 +2009,7 @@ def import_conversation(ctx, file, skip_lessons, title):
     from pathlib import Path
 
     from blipshell.import_common import ParsedConversation, ParsedMessage, import_conversations
-    from blipshell.llm.endpoints import EndpointManager
-    from blipshell.llm.router import LLMRouter
+    from blipshell.llm.routing import build_routing
     from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
     from blipshell.models.config import get_ollama_url
@@ -2077,8 +2075,7 @@ def import_conversation(ctx, file, skip_lessons, title):
         )
         chroma.initialize()
 
-        endpoint_manager = EndpointManager(cfg.endpoints, cfg.llm)
-        router = LLMRouter(cfg.models, endpoint_manager)
+        endpoint_manager, router = build_routing(cfg)
 
         with Progress(console=console) as progress:
             task = progress.add_task("Importing...", total=len(parsed))
@@ -2142,8 +2139,7 @@ def reprocess_memories_cmd(ctx, model, batch_size, skip_embed, no_think):
     """Re-summarize, re-rank, re-score, and re-embed all memories."""
     from rich.progress import Progress
 
-    from blipshell.llm.endpoints import EndpointManager
-    from blipshell.llm.router import LLMRouter
+    from blipshell.llm.routing import build_routing
     from blipshell.models.config import get_ollama_url
     from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
@@ -2164,8 +2160,7 @@ def reprocess_memories_cmd(ctx, model, batch_size, skip_embed, no_think):
         )
         chroma.initialize()
 
-        endpoint_manager = EndpointManager(cfg.endpoints, cfg.llm)
-        router = LLMRouter(cfg.models, endpoint_manager)
+        endpoint_manager, router = build_routing(cfg)
 
         # Override models if --model provided
         original_models = None
@@ -2226,8 +2221,7 @@ def reprocess_lessons_cmd(ctx, model, min_messages, no_think):
     """Delete bad lessons and re-extract from conversations."""
     from rich.progress import Progress
 
-    from blipshell.llm.endpoints import EndpointManager
-    from blipshell.llm.router import LLMRouter
+    from blipshell.llm.routing import build_routing
     from blipshell.models.config import get_ollama_url
     from blipshell.memory.vector_store import VectorStore
     from blipshell.memory.sqlite_store import SQLiteStore
@@ -2248,8 +2242,7 @@ def reprocess_lessons_cmd(ctx, model, min_messages, no_think):
         )
         chroma.initialize()
 
-        endpoint_manager = EndpointManager(cfg.endpoints, cfg.llm)
-        router = LLMRouter(cfg.models, endpoint_manager)
+        endpoint_manager, router = build_routing(cfg)
 
         # Override models if --model provided
         original_reasoning = None

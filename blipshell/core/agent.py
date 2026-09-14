@@ -34,6 +34,7 @@ from blipshell.core.repo_map import RepoMap
 from blipshell.core.tools.base import ToolRegistry
 from blipshell.core.workflows import WorkflowExecutor, WorkflowRegistry
 from blipshell.llm.endpoints import EndpointManager
+from blipshell.llm.routing import build_routing
 from blipshell.llm.model_settings import ModelSettingsRegistry
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.memory.vector_store import VectorStore
@@ -234,17 +235,10 @@ class Agent(
         )
         self.vectors.initialize()
 
-        # Endpoint manager
-        self.endpoint_manager = EndpointManager(self.config.endpoints, self.config.llm)
-        # Local mode (/local): hide off-machine endpoints from routing.
-        self.endpoint_manager.local_only = self.config.pii.local_mode_default
-
-        # Router
-        self.router = LLMRouter(
-            self.config.models, self.endpoint_manager,
-            pii_enabled=self.config.pii.enabled,
-            require_ner=self.config.pii.require_ner,
-        )
+        # Endpoint manager + router, with local mode and the PII settings
+        # applied (llm/routing.py — the same factory every maintenance path
+        # now uses, so none of them can drift from this one again).
+        self.endpoint_manager, self.router = build_routing(self.config)
 
         # Memory manager — use endpoint context_tokens for pool sizing
         endpoint_ctx = self.endpoint_manager.get_context_tokens_for_role(

@@ -31,8 +31,7 @@ async def _run_import(
     from blipshell.core.config import ConfigManager
     from blipshell.core.import_lock import import_lock
     from blipshell.import_common import import_conversations
-    from blipshell.llm.endpoints import EndpointManager
-    from blipshell.llm.router import LLMRouter
+    from blipshell.llm.routing import build_routing
     from blipshell.memory.sqlite_store import SQLiteStore
     from blipshell.memory.vector_store import VectorStore
     from blipshell.models.config import get_ollama_url
@@ -63,8 +62,7 @@ async def _run_import(
     )
     vectors.initialize()
 
-    endpoint_manager = EndpointManager(cfg.endpoints, cfg.llm)
-    router = LLMRouter(cfg.models, endpoint_manager)
+    endpoint_manager, router = build_routing(cfg)
 
     try:
         # Signals "something heavy is running" so nightly stands down.

@@ -125,8 +125,7 @@ class MemoryWorker:
 
     async def _run(self, loop: asyncio.AbstractEventLoop):
         """Initialize resources, signal ready, then process loop."""
-        from blipshell.llm.endpoints import EndpointManager
-        from blipshell.llm.router import LLMRouter
+        from blipshell.llm.routing import build_routing
         from blipshell.memory.processor import MemoryProcessor
         from blipshell.memory.sqlite_store import SQLiteStore
 
@@ -139,14 +138,9 @@ class MemoryWorker:
         if self._router_factory is not None:
             router = self._router_factory()
         else:
-            endpoint_mgr = EndpointManager(
-                self._config.endpoints, self._config.llm,
-            )
-            router = LLMRouter(
-                self._config.models, endpoint_mgr,
-                pii_enabled=self._config.pii.enabled,
-                require_ner=self._config.pii.require_ner,
-            )
+            # Local mode too, not just the PII flags: the worker summarizes
+            # and ranks the same messages chat does.
+            endpoint_mgr, router = build_routing(self._config)
 
         # Own MemoryProcessor — uses worker's sqlite + router, shared chroma
         processor = MemoryProcessor(

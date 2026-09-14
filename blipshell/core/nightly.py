@@ -154,8 +154,7 @@ class NightlyRunner:
                 runs that would overwhelm cloud rate limits.
         """
         from blipshell.core.config import ConfigManager
-        from blipshell.llm.endpoints import EndpointManager
-        from blipshell.llm.router import LLMRouter
+        from blipshell.llm.routing import build_routing
         from blipshell.memory.processor import MemoryProcessor
         from blipshell.memory.sqlite_store import SQLiteStore
         from blipshell.memory.vector_store import VectorStore
@@ -184,8 +183,11 @@ class NightlyRunner:
         )
         vectors.initialize()
 
-        endpoint_mgr = EndpointManager(endpoints, config.llm)
-        router = LLMRouter(config.models, endpoint_mgr)
+        # `endpoints` may already have had cloud disabled above (local_only);
+        # the factory adds local mode and the PII settings from config.
+        endpoint_mgr, router = build_routing(
+            config, endpoints=endpoints, local_only=local_only,
+        )
         processor = MemoryProcessor(sqlite, vectors, router, config=config.memory)
 
         return cls(config, sqlite, vectors, router, processor)
