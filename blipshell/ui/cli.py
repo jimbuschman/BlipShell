@@ -1458,6 +1458,9 @@ def review_cmd(ctx, lessons, reflections, limit, quiet):
               help="Move mentions/aliases/relationships left on merged-away entities to their canonical.")
 @click.option("--blank-summaries", is_flag=True,
               help="Re-summarize memories whose summary is empty (a summarizer that answered nothing).")
+@click.option("--blank-summary-limit", type=int, default=None, metavar="N",
+              help="Cap --blank-summaries at N rows this run (default: the whole backlog). "
+                   "An incomplete run says so and reports what is left.")
 @click.option("--unarchive-memory", "unarchive_ids", type=int, multiple=True,
               help="Reverse a dedup archive: restore memory ID, re-embed it, keep its history. Repeatable.")
 @click.option("--supersessions", "supersession_refs", multiple=True, metavar="KIND:ID",
@@ -1470,7 +1473,7 @@ def review_cmd(ctx, lessons, reflections, limit, quiet):
               help="Run all repairs.")
 @click.pass_context
 def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds, repoint_husks,
-               blank_summaries, unarchive_ids,
+               blank_summaries, blank_summary_limit, unarchive_ids,
                supersession_refs, undo_supersession_ids, dry_run, do_all):
     """Repair common DB issues.
 
@@ -1480,7 +1483,9 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
     --fix-pii-embeds re-embeds memories with PII-sanitized summaries.
     --repoint-husks moves references stranded on merged-away entities to their canonical.
     --blank-summaries re-summarizes memories stored with an empty summary.
-      Part of --all; --dry-run lists them without calling the model.
+      Part of --all; --dry-run lists them without calling the model. Walks the
+      WHOLE backlog by ID cursor; --blank-summary-limit N caps one run, and an
+      incomplete run reports what it left behind.
     --unarchive-memory ID prints why the memory was archived (dedup provenance)
       and restores it. Not part of --all: it names specific rows.
     """
@@ -1650,18 +1655,29 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
                 # re-summarizes real memories through a real endpoint.
                 _endpoints, router = build_routing(cfg)
                 stats = await repair_blank_summaries(
-                    sqlite, router, dry_run=dry_run,
+                    sqlite, router, dry_run=dry_run, max_rows=blank_summary_limit,
                     on_status=lambda m: console.print(f"[dim]{m}[/dim]"),
                 )
                 console.print(
-                    f"[cyan]Blank summaries:[/cyan] [bold]{stats['found']}[/bold] found"
+                    f"[cyan]Blank summaries:[/cyan] [bold]{stats['backlog']}[/bold] in backlog, "
+                    f"{stats['scanned']} scanned"
                     + ("" if dry_run else
                        f"; re-summarized={stats['resummarized']} "
                        f"content-fallback={stats['content_fallback']} "
                        f"skip-verdict={stats['skip_verdict']} "
-                       f"no-content={stats['no_content']} failed={stats['failed']}")
+                       f"unrecoverable={stats['unrecoverable']} "
+                       f"failed={stats['failed']}")
                     + (" [dim](dry-run; no model calls, no changes)[/dim]" if dry_run else "")
                 )
+                if stats["incomplete"]:
+                    # Never let an incomplete run read as a finished one.
+                    detail = f"{stats['remaining']} row(s) still blank"
+                    if stats["not_scanned"]:
+                        detail += f", {stats['not_scanned']} not examined this run"
+                    console.print(
+                        f"[yellow]Blank summaries: INCOMPLETE - {detail}. "
+                        f"Re-run to continue.[/yellow]"
+                    )
 
             if supersession_refs or undo_supersession_ids:
                 from blipshell.memory import supersession as _sup

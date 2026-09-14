@@ -236,7 +236,7 @@ class TestRepairBlankSummaries:
         stats = await repair_blank_summaries(
             sqlite_store, canned_router, dry_run=True, on_status=lines.append)
 
-        assert stats["found"] == 1
+        assert stats["backlog"] == 1 and stats["scanned"] == 1
         canned_router.generate.assert_not_awaited()   # a shared GPU costs nothing to preview
         assert any(str(mid) in ln for ln in lines)
         assert (await sqlite_store.get_memory(mid)).summary == ""
@@ -322,6 +322,8 @@ class TestRepairBlankSummaries:
         stats = await repair_blank_summaries(
             sqlite_store, canned_router, dry_run=False)
 
-        assert stats == {"found": 1, "resummarized": 0, "content_fallback": 0,
-                         "no_content": 1, "failed": 0, "skip_verdict": 0}
+        assert stats == {"backlog": 1, "scanned": 1, "resummarized": 0,
+                         "content_fallback": 0, "unrecoverable": 1, "failed": 0,
+                         "skip_verdict": 0, "remaining": 1, "not_scanned": 0,
+                         "incomplete": True}
         assert (await sqlite_store.get_memory(mid)).summary == ""

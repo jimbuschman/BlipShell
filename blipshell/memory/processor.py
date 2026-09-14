@@ -71,12 +71,25 @@ def summary_or_raw(summary: str | None, text: str) -> str:
 BLANK_SUMMARY_SQL = f"{blank_sql('summary')} AND is_archived = 0"
 
 
-async def find_blank_summaries(sqlite, limit: int = 100) -> list[dict]:
-    """Active memories with no summary at all, oldest first."""
+# One page of the repair backlog. Small enough that a page is cheap to hold,
+# large enough that a long backlog is not thousands of round trips.
+BLANK_SUMMARY_PAGE = 100
+
+
+async def find_blank_summaries(sqlite, limit: int = BLANK_SUMMARY_PAGE,
+                               after_id: int = 0) -> list[dict]:
+    """One page of active memories with no summary, oldest first.
+
+    `after_id` is an ID CURSOR, not an offset. The repair cannot use OFFSET:
+    a row it repairs leaves the result set, so the rows shift under it. A row
+    it CANNOT repair stays, and without a cursor the same page comes back
+    every time - which is how a hundred unrecoverable rows at the head of the
+    backlog hid every repairable row behind them, run after run.
+    """
     cursor = await sqlite._db.execute(
         f"SELECT id, role, timestamp, content FROM memories "
-        f"WHERE {BLANK_SUMMARY_SQL} ORDER BY id LIMIT ?",
-        (limit,),
+        f"WHERE {BLANK_SUMMARY_SQL} AND id > ? ORDER BY id LIMIT ?",
+        (after_id, limit),
     )
     return [
         {"id": r["id"], "role": r["role"], "timestamp": r["timestamp"],
@@ -85,9 +98,19 @@ async def find_blank_summaries(sqlite, limit: int = 100) -> list[dict]:
     ]
 
 
+async def count_blank_summaries(sqlite, after_id: int = 0) -> int:
+    """How many rows still need this repair (from `after_id` onward)."""
+    cursor = await sqlite._db.execute(
+        f"SELECT COUNT(*) FROM memories WHERE {BLANK_SUMMARY_SQL} AND id > ?",
+        (after_id,),
+    )
+    row = await cursor.fetchone()
+    return row[0] if row else 0
+
+
 async def repair_blank_summaries(
-    sqlite, router, *, dry_run: bool = True, limit: int = 100,
-    on_status=None,
+    sqlite, router, *, dry_run: bool = True, max_rows: int | None = None,
+    page_size: int = BLANK_SUMMARY_PAGE, on_status=None,
 ) -> dict:
     """Re-summarize memories left with a blank summary (see `summary_or_raw`).
 
@@ -96,7 +119,7 @@ async def repair_blank_summaries(
     pool renders their summary, and it is empty. This asks the real summarizer
     for each one and applies the rule the pipeline now applies at write time.
 
-    Three deliberate differences from the write path:
+    Four deliberate differences from the write path:
 
     - A SKIP verdict does NOT archive the row. At write time SKIP filters a
       new message; here the row has existed for months, has been retrievable
@@ -108,55 +131,97 @@ async def repair_blank_summaries(
       own content and call it done.
     - A row with no content has nothing to summarize from; it is reported,
       never touched. (There is no text anywhere in it to recover.)
+    - Neither of those rows is retried within the run, and neither blocks the
+      rows behind it. The backlog is walked with an ID CURSOR, one page at a
+      time. It used to be a single `ORDER BY id LIMIT 100`: a row that cannot
+      be repaired stays blank, so it stays in the result set, so the SAME 100
+      rows came back on the next call and on the next run. A hundred
+      unrecoverable rows at the head of the backlog hid every repairable row
+      behind them, permanently, and the command reported success.
+
+    `max_rows` caps how many rows this run examines (None = the whole
+    backlog). Whenever work is left over - capped, unrecoverable or failed -
+    `incomplete` is True and `remaining` says how many rows are still blank.
 
     `dry_run` (the default) lists what would be repaired WITHOUT calling the
     model, so previewing the scope costs nothing on a shared GPU.
     """
-    rows = await find_blank_summaries(sqlite, limit=limit)
-    stats = {"found": len(rows), "resummarized": 0, "content_fallback": 0,
-             "no_content": 0, "failed": 0, "skip_verdict": 0}
+    stats = {
+        "backlog": await count_blank_summaries(sqlite),
+        "scanned": 0, "resummarized": 0, "content_fallback": 0,
+        "unrecoverable": 0, "failed": 0, "skip_verdict": 0,
+        "remaining": 0, "not_scanned": 0, "incomplete": False,
+    }
 
     def say(msg: str) -> None:
         if on_status:
             on_status(msg)
 
-    if dry_run:
+    cursor = 0
+    while max_rows is None or stats["scanned"] < max_rows:
+        page = page_size
+        if max_rows is not None:
+            page = min(page_size, max_rows - stats["scanned"])
+        rows = await find_blank_summaries(sqlite, limit=page, after_id=cursor)
+        if not rows:
+            break
+
         for row in rows:
-            preview = " ".join((row["content"] or "").split())[:60]
-            say(f"  would repair memory {row['id']} ({row['role']}, "
-                f"{row['timestamp']}): {preview}")
-        return stats
+            # The cursor advances for EVERY row examined, repaired or not.
+            # That is what stops an unrecoverable row from being retried in
+            # this run and from hiding the rows behind it.
+            cursor = row["id"]
+            stats["scanned"] += 1
+            content = row["content"]
 
-    for row in rows:
-        content = row["content"]
-        if is_blank(content):
-            stats["no_content"] += 1
-            say(f"  memory {row['id']}: no content to summarize from, left as is")
-            continue
-        try:
-            sum_system, sum_prompt = summarize_memory(content)
-            reply = await router.generate(
-                TaskType.SUMMARIZATION, sum_prompt, system=sum_system,
-            )
-        except Exception as e:
-            stats["failed"] += 1
-            logger.error("Re-summarize failed for memory %d: %s", row["id"], e)
-            say(f"  memory {row['id']}: summarization FAILED ({e}), left blank for a retry")
-            continue
+            if dry_run:
+                preview = " ".join((content or "").split())[:60]
+                if is_blank(content):
+                    stats["unrecoverable"] += 1
+                    say(f"  memory {row['id']} ({row['role']}, {row['timestamp']}): "
+                        f"no content to summarize from, would be left as is")
+                else:
+                    say(f"  would repair memory {row['id']} ({row['role']}, "
+                        f"{row['timestamp']}): {preview}")
+                continue
 
-        reply = (reply or "").strip()
-        if reply.upper() == "SKIP":
-            stats["skip_verdict"] += 1
-            reply = ""
-        summary = summary_or_raw(reply, content)
-        await sqlite.update_memory(row["id"], summary=summary)
-        if summary == content:
-            stats["content_fallback"] += 1
-            say(f"  memory {row['id']}: no summary offered, using raw content")
-        else:
-            stats["resummarized"] += 1
-            say(f"  memory {row['id']}: {summary[:70]}")
+            if is_blank(content):
+                stats["unrecoverable"] += 1
+                say(f"  memory {row['id']}: no content to summarize from, left as is")
+                continue
+            try:
+                sum_system, sum_prompt = summarize_memory(content)
+                reply = await router.generate(
+                    TaskType.SUMMARIZATION, sum_prompt, system=sum_system,
+                )
+            except Exception as e:
+                stats["failed"] += 1
+                logger.error("Re-summarize failed for memory %d: %s", row["id"], e)
+                say(f"  memory {row['id']}: summarization FAILED ({e}), left blank for a retry")
+                continue
 
+            reply = (reply or "").strip()
+            if reply.upper() == "SKIP":
+                stats["skip_verdict"] += 1
+                reply = ""
+            summary = summary_or_raw(reply, content)
+            await sqlite.update_memory(row["id"], summary=summary)
+            if summary == content:
+                stats["content_fallback"] += 1
+                say(f"  memory {row['id']}: no summary offered, using raw content")
+            else:
+                stats["resummarized"] += 1
+                say(f"  memory {row['id']}: {summary[:70]}")
+
+    stats["remaining"] = await count_blank_summaries(sqlite)
+    stats["not_scanned"] = await count_blank_summaries(sqlite, after_id=cursor)
+    stats["incomplete"] = stats["remaining"] > 0
+    if stats["not_scanned"]:
+        say(f"  stopped at the {stats['scanned']}-row cap; "
+            f"{stats['not_scanned']} row(s) not examined this run")
+    if not dry_run and stats["remaining"] and not stats["not_scanned"]:
+        say(f"  {stats['remaining']} row(s) still blank "
+            f"({stats['unrecoverable']} unrecoverable, {stats['failed']} failed)")
     return stats
 
 
