@@ -178,3 +178,83 @@ def test_excerpt_states_a_count_that_matches_what_it_dropped():
     stated = int(re.search(r"\[\.\.\.(\d+) chars omitted\.\.\.\]", out).group(1))
     kept = len(out) - len(f" [...{stated} chars omitted...] ")
     assert stated + kept == len(text)
+
+
+# --- small and zero budgets -------------------------------------------------------
+#
+# MIN_EXCERPT_CHARS is a floor on how short an EXCERPT may usefully be. It was
+# applied to every message, so a complete 21-character turn was dropped at
+# max_chars=100 and replaced by a 36-character omission notice — longer than
+# the message it stood in for, and at max_chars=20 longer than the budget.
+
+
+def test_a_complete_short_message_survives_a_small_budget():
+    """THE regression: it fits, so the excerpt floor does not apply to it."""
+    out = transcript_tail([msg("user", "a short complete turn")], max_chars=100)
+    assert out == "user: a short complete turn"
+
+
+@pytest.mark.parametrize("max_chars", [27, 40, 60, 100, 119])
+def test_a_message_that_fits_is_never_traded_for_a_notice(max_chars):
+    """Budgets below MIN_EXCERPT_CHARS, all wide enough for the message."""
+    out = transcript_tail([msg("user", "a short complete turn")], max_chars=max_chars)
+    assert out == "user: a short complete turn"
+    assert len(out) <= max_chars
+
+
+@pytest.mark.parametrize("max_chars", list(range(0, 130)))
+def test_no_budget_however_small_is_ever_exceeded(max_chars):
+    messages = [msg("user", "a short complete turn"),
+                msg("assistant", "z" * 900 + " ENDING")]
+    out = transcript_tail(messages, max_chars=max_chars)
+    assert len(out) <= max_chars
+
+
+def test_a_zero_budget_yields_nothing():
+    assert transcript_tail([msg("user", "anything")], max_chars=0) == ""
+    assert transcript_tail([msg("user", "x" * 5000)], max_chars=0) == ""
+
+
+def test_a_budget_too_small_for_the_notice_yields_nothing_not_an_overflow():
+    """The notice is 36 characters; it is inside the budget or it is absent."""
+    out = transcript_tail([msg("user", "x" * 5000)], max_chars=20)
+    assert out == ""
+
+
+def test_the_notice_never_evicts_content_that_already_fits():
+    """Reserving room beats evicting: a 300-char excerpt is worth more than
+    36 characters of bookkeeping."""
+    messages = [msg("user", "an earlier turn"),
+                msg("assistant", "z" * 900 + " ENDING")]
+    out = transcript_tail(messages, max_chars=300)
+
+    assert "ENDING" in out, "the newest turn was thrown away to fit the notice"
+    assert "omitted" in out
+    assert len(out) <= 300
+
+
+@pytest.mark.parametrize("max_chars", [200, 300, 500, 1000, 2000, 6000])
+def test_a_bigger_budget_never_returns_less_content(max_chars):
+    """Monotonic: evicting content for the notice broke this at 300."""
+    messages = [msg("user", "an earlier turn"),
+                msg("assistant", "z" * 900 + " ENDING")]
+    smaller = transcript_tail(messages, max_chars=max_chars // 2)
+    bigger = transcript_tail(messages, max_chars=max_chars)
+    assert len(bigger) >= len(smaller)
+
+
+def test_the_default_path_is_unchanged_by_the_reserve():
+    messages = [msg("user", f"turn {i} " + "q" * 300) for i in range(5)]
+    out = transcript_tail(messages)
+    assert "omitted" not in out
+    assert all(f"turn {i}" in out for i in range(5))
+
+
+def test_a_short_message_and_a_long_one_at_a_tight_budget():
+    """The long one is dropped, the short one is kept whole and labelled."""
+    messages = [msg("user", "keep me"), msg("assistant", "y" * 4000)]
+    out = transcript_tail(messages, max_chars=60)
+    assert "user: keep me" in out
+    assert len(out) <= 60
+    for line in out.split("\n"):
+        assert line.startswith(("user: ", "assistant: ", "[..."))

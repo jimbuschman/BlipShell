@@ -76,6 +76,10 @@ PER_MESSAGE_CHARS = 800
 # instead of rendered as a stub.
 MIN_EXCERPT_CHARS = 120
 
+# Room held back for the omission notice so a dropped message never evicts a
+# kept one. Comfortably above the longest notice max_messages can produce.
+NOTICE_RESERVE = 48
+
 # Of an excerpted message, the share given to its END. A long final turn puts
 # the decision, the conclusion and the "next I want to..." last; a head-only
 # truncation drops exactly the part the handoff exists to carry.
@@ -135,6 +139,16 @@ def transcript_tail(messages, max_messages: int = 30,
     the note exists to carry exactly that — and the closing slice could land
     mid-line, handing the model a fragment with no role on it.
     """
+    # Room set aside for the omission notice, so a dropped message never
+    # costs a kept one. Evicting content to make room for the notice was
+    # worse than the problem: at max_chars=300 a 300-character excerpt of the
+    # newest turn was thrown away to fit 36 characters of bookkeeping. The
+    # longest possible notice is ~37 chars (max_messages bounds the count),
+    # and at small budgets the reserve is skipped - nothing else fits there
+    # either.
+    reserve = NOTICE_RESERVE if max_chars >= 4 * NOTICE_RESERVE else 0
+    working = max_chars - reserve
+
     lines: list[str] = []
     used = 0
     dropped = 0
@@ -147,12 +161,24 @@ def transcript_tail(messages, max_messages: int = 30,
             continue
 
         overhead = len(role) + 2 + (1 if lines else 0)   # "role: " and a newline
-        budget = min(PER_MESSAGE_CHARS, max_chars - used - overhead)
-        if budget < MIN_EXCERPT_CHARS:
+        available = working - used - overhead
+        if available <= 0:
             dropped += 1
             continue
 
-        line = f"{role}: {_excerpt(content, budget)}"
+        if len(content) <= min(PER_MESSAGE_CHARS, available):
+            # It fits WHOLE. MIN_EXCERPT_CHARS is a floor on how short an
+            # excerpt may usefully be; applying it here dropped complete
+            # short messages and replaced them with an omission notice
+            # longer than the message itself.
+            body = content
+        elif available >= MIN_EXCERPT_CHARS:
+            body = _excerpt(content, min(PER_MESSAGE_CHARS, available))
+        else:
+            dropped += 1
+            continue
+
+        line = f"{role}: {body}"
         used += len(line) + (1 if lines else 0)
         lines.append(line)
 
@@ -160,13 +186,11 @@ def transcript_tail(messages, max_messages: int = 30,
 
     if dropped:
         notice = f"[...{dropped} earlier message(s) omitted...]"
-        # The notice is part of the budget, not an addition to it.
-        while lines and used + len(notice) + 1 > max_chars:
-            used -= len(lines[0]) + 1
-            lines.pop(0)
-            dropped += 1
-            notice = f"[...{dropped} earlier message(s) omitted...]"
-        lines.insert(0, notice)
+        # The notice is part of the budget, not an addition to it — including
+        # when it is the ONLY thing left. A budget too small even for the
+        # notice yields nothing rather than an over-budget string.
+        if used + len(notice) + (1 if lines else 0) <= max_chars:
+            lines.insert(0, notice)
 
     return "\n".join(lines)
 
