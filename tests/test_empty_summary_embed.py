@@ -325,5 +325,6 @@ class TestRepairBlankSummaries:
         assert stats == {"backlog": 1, "scanned": 1, "resummarized": 0,
                          "content_fallback": 0, "unrecoverable": 1, "failed": 0,
                          "skip_verdict": 0, "remaining": 1, "not_scanned": 0,
-                         "incomplete": True}
+                         "incomplete": True, "started_after": 0,
+                         "resume_from": 0}
         assert (await sqlite_store.get_memory(mid)).summary == ""

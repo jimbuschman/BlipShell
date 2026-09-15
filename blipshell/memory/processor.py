@@ -108,9 +108,34 @@ async def count_blank_summaries(sqlite, after_id: int = 0) -> int:
     return row[0] if row else 0
 
 
+# Where the next capped run picks up. A capped run that cannot repair the
+# rows it examines leaves the backlog unchanged, so without a PERSISTED
+# cursor every invocation starts at the same unrecoverable row and makes no
+# progress for ever (`blipshell repair --blank-summary-limit 2` over two
+# contentless rows and one repairable one: three runs, zero repairs). Same
+# mechanism as the consolidation dry-run cursor.
+REPAIR_CURSOR_KEY = "blank_summary_repair_cursor"
+
+
+async def _repair_cursor(sqlite) -> int:
+    try:
+        raw = await sqlite.get_metadata(REPAIR_CURSOR_KEY)
+        return int(raw) if raw else 0
+    except (TypeError, ValueError, AttributeError):
+        return 0
+
+
+async def _set_repair_cursor(sqlite, value: int) -> None:
+    try:
+        await sqlite.set_metadata(REPAIR_CURSOR_KEY, str(value))
+    except Exception as e:
+        logger.warning("Could not persist the blank-summary repair cursor: %s", e)
+
+
 async def repair_blank_summaries(
     sqlite, router, *, dry_run: bool = True, max_rows: int | None = None,
-    page_size: int = BLANK_SUMMARY_PAGE, on_status=None,
+    page_size: int = BLANK_SUMMARY_PAGE, resume: bool = True,
+    start_after: int | None = None, on_status=None,
 ) -> dict:
     """Re-summarize memories left with a blank summary (see `summary_or_raw`).
 
@@ -143,30 +168,82 @@ async def repair_blank_summaries(
     backlog). Whenever work is left over - capped, unrecoverable or failed -
     `incomplete` is True and `remaining` says how many rows are still blank.
 
+    A CAPPED run resumes from a persisted cursor, because the in-run cursor
+    dies with the process and a row it could not repair is still in the
+    backlog next time. Two contentless rows ahead of one repairable row, run
+    three times at `max_rows=2`, repaired nothing and re-examined the same
+    two dead rows every time.
+
+    Reaching the end of the backlog WRAPS the cursor to 0. That is what keeps
+    a failed row retryable: it is skipped for the rest of the sweep and
+    picked up on the next one, instead of being abandoned by a cursor that
+    only ever moves forward. A run that starts past the end wraps
+    immediately, so a stale cursor costs one query, not a whole run.
+
+    An UNCAPPED run ignores the stored cursor and clears it: it covers the
+    whole backlog anyway, so resuming into the middle of it would only risk
+    leaving the head unexamined. `resume=False` keeps the store untouched
+    (the nightly and the tests), and `start_after` overrides the start
+    without persisting anything.
+
     `dry_run` (the default) lists what would be repaired WITHOUT calling the
-    model, so previewing the scope costs nothing on a shared GPU.
+    model, so previewing the scope costs nothing on a shared GPU. It advances
+    the cursor like a real run - a preview of "what is next" that always
+    showed the same first page would be useless.
     """
     stats = {
         "backlog": await count_blank_summaries(sqlite),
         "scanned": 0, "resummarized": 0, "content_fallback": 0,
         "unrecoverable": 0, "failed": 0, "skip_verdict": 0,
         "remaining": 0, "not_scanned": 0, "incomplete": False,
+        "started_after": 0, "resume_from": 0,
     }
 
     def say(msg: str) -> None:
         if on_status:
             on_status(msg)
 
-    cursor = 0
+    persist = resume and start_after is None
+    if start_after is not None:
+        cursor = start_after
+    elif resume and max_rows is not None:
+        cursor = await _repair_cursor(sqlite)
+    else:
+        cursor = 0
+    started_after = cursor
+    stats["started_after"] = started_after
+
+    # A wrap may only happen once per run, and only back to the point the run
+    # began: past that the run would re-examine its own work.
+    wrapped = False
+    swept_to_end = False
+    # Examined this run and still blank afterwards: unrecoverable, failed, or
+    # anything at all under dry_run. The basis for `not_scanned`.
+    left_blank = 0
+
     while max_rows is None or stats["scanned"] < max_rows:
         page = page_size
         if max_rows is not None:
             page = min(page_size, max_rows - stats["scanned"])
         rows = await find_blank_summaries(sqlite, limit=page, after_id=cursor)
         if not rows:
+            if started_after > 0 and not wrapped:
+                # End of the backlog. Wrap to the start so failed rows get
+                # another attempt and so this run still does work.
+                wrapped = True
+                cursor = 0
+                continue
+            swept_to_end = True
             break
 
+        came_full_circle = False
         for row in rows:
+            if wrapped and row["id"] > started_after:
+                # Back where this run began; everything from here was already
+                # examined above.
+                came_full_circle = True
+                swept_to_end = True
+                break
             # The cursor advances for EVERY row examined, repaired or not.
             # That is what stops an unrecoverable row from being retried in
             # this run and from hiding the rows behind it.
@@ -175,6 +252,7 @@ async def repair_blank_summaries(
             content = row["content"]
 
             if dry_run:
+                left_blank += 1
                 preview = " ".join((content or "").split())[:60]
                 if is_blank(content):
                     stats["unrecoverable"] += 1
@@ -187,6 +265,7 @@ async def repair_blank_summaries(
 
             if is_blank(content):
                 stats["unrecoverable"] += 1
+                left_blank += 1
                 say(f"  memory {row['id']}: no content to summarize from, left as is")
                 continue
             try:
@@ -196,6 +275,7 @@ async def repair_blank_summaries(
                 )
             except Exception as e:
                 stats["failed"] += 1
+                left_blank += 1
                 logger.error("Re-summarize failed for memory %d: %s", row["id"], e)
                 say(f"  memory {row['id']}: summarization FAILED ({e}), left blank for a retry")
                 continue
@@ -213,8 +293,28 @@ async def repair_blank_summaries(
                 stats["resummarized"] += 1
                 say(f"  memory {row['id']}: {summary[:70]}")
 
+        if came_full_circle:
+            break
+
+    # A run that stops ON its cap has not seen whether anything follows. Ask,
+    # rather than hand on a cursor that points past the end: the next run
+    # would spend a query discovering the same thing and report a resume
+    # position that does not exist.
+    if not swept_to_end and await count_blank_summaries(sqlite, after_id=cursor) == 0:
+        swept_to_end = True
+
+    # A completed sweep wraps: the next run starts over and retries whatever
+    # is still blank. A truncated one hands on where it stopped.
+    stats["resume_from"] = 0 if swept_to_end else cursor
+    if persist:
+        await _set_repair_cursor(sqlite, stats["resume_from"])
+
     stats["remaining"] = await count_blank_summaries(sqlite)
-    stats["not_scanned"] = await count_blank_summaries(sqlite, after_id=cursor)
+    # Rows still blank that this run never looked at. Counted as a
+    # subtraction rather than `count(id > cursor)`, because a wrapped run
+    # examines rows on BOTH sides of its cursor and an id comparison would
+    # then report rows it had just examined as untouched.
+    stats["not_scanned"] = max(0, stats["remaining"] - left_blank)
     stats["incomplete"] = stats["remaining"] > 0
     if stats["not_scanned"]:
         say(f"  stopped at the {stats['scanned']}-row cap; "

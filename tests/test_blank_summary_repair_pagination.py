@@ -12,6 +12,7 @@ Every test here uses a temp DB and a scripted router. No model is called.
 import pytest
 
 from blipshell.memory.processor import (
+    REPAIR_CURSOR_KEY,
     count_blank_summaries,
     find_blank_summaries,
     repair_blank_summaries,
@@ -306,3 +307,157 @@ async def test_the_old_unpaginated_window_saw_only_the_dead_rows(store):
     reachable = {r["id"] for r in await find_blank_summaries(
         store, limit=100, after_id=window[-1]["id"])}
     assert set(good) <= reachable
+
+
+# --- a capped run resumes ACROSS runs, not just within one ------------------------
+#
+# The in-run cursor dies with the process, and a row the run could not repair
+# is still in the backlog next time. Every invocation therefore restarted at
+# the same unrecoverable row. The earlier resume test only used REPAIRABLE
+# rows, which leave the backlog on their own - it could not see this.
+
+
+async def test_capped_runs_progress_past_unrecoverable_rows(store):
+    """THE regression: 2 contentless rows, 1 repairable, max_rows=2."""
+    await _seed(store, [("", ""), ("", "")])
+    good = await _seed(store, [("real content", "")])
+    router = ScriptedRouter()
+
+    runs = [await repair_blank_summaries(store, router, dry_run=False, max_rows=2)
+            for _ in range(3)]
+
+    assert sum(r["resummarized"] for r in runs) == 1, [r["resummarized"] for r in runs]
+    assert len(router.calls) == 1
+    assert (await store.get_memory(good[0])).summary == "a generated summary"
+
+
+async def test_capped_runs_progress_past_failing_rows(store):
+    await _seed(store, [("POISON one", ""), ("POISON two", "")])
+    good = await _seed(store, [("real content", "")])
+    router = ScriptedRouter(fail_on=["POISON"])
+
+    runs = [await repair_blank_summaries(store, router, dry_run=False, max_rows=2)
+            for _ in range(3)]
+
+    assert sum(r["resummarized"] for r in runs) == 1
+    assert (await store.get_memory(good[0])).summary == "a generated summary"
+
+
+async def test_a_mixed_wall_of_dead_rows_is_walked_through(store):
+    """Unrecoverable and failing rows interleaved, ahead of three good ones."""
+    await _seed(store, [("", ""), ("POISON a", ""), ("", ""), ("POISON b", "")])
+    good = await _seed(store, [(f"real {i}", "") for i in range(3)])
+    router = ScriptedRouter(fail_on=["POISON"])
+
+    for _ in range(6):
+        await repair_blank_summaries(store, router, dry_run=False, max_rows=2)
+
+    for mem_id in good:
+        assert (await store.get_memory(mem_id)).summary == "a generated summary"
+
+
+async def test_a_completed_sweep_wraps_so_failed_rows_are_retried(store):
+    """A cursor that only moves forward would abandon them."""
+    ids = await _seed(store, [("POISON", ""), ("also real", "")])
+    router = ScriptedRouter(fail_on=["POISON"])
+
+    first = await repair_blank_summaries(store, router, dry_run=False, max_rows=2)
+    assert first["failed"] == 1
+    assert first["resume_from"] == 0, "a finished sweep must wrap"
+
+    # The outage clears; the next capped run reaches the failed row again.
+    router._fail_on = set()
+    second = await repair_blank_summaries(store, router, dry_run=False, max_rows=2)
+
+    assert (await store.get_memory(ids[0])).summary == "a generated summary"
+    assert second["remaining"] == 0
+
+
+async def test_the_resume_position_is_persisted_and_reported(store):
+    ids = await _seed(store, [("", ""), ("", ""), ("", "")])
+    router = ScriptedRouter()
+
+    first = await repair_blank_summaries(store, router, dry_run=False, max_rows=2)
+    assert first["started_after"] == 0
+    assert first["resume_from"] == ids[1]
+
+    stored = await store.get_metadata(REPAIR_CURSOR_KEY)
+    assert stored == str(ids[1])
+
+    second = await repair_blank_summaries(store, router, dry_run=False, max_rows=2)
+    assert second["started_after"] == ids[1]
+
+
+async def test_restart_ignores_the_saved_position(store):
+    """`--blank-summary-restart`."""
+    ids = await _seed(store, [("", ""), ("", ""), ("real", "")])
+    router = ScriptedRouter()
+
+    await repair_blank_summaries(store, router, dry_run=False, max_rows=2)
+    restarted = await repair_blank_summaries(store, router, dry_run=False,
+                                             max_rows=2, start_after=0)
+
+    assert restarted["started_after"] == 0
+    assert restarted["unrecoverable"] == 2
+    assert await store.get_metadata(REPAIR_CURSOR_KEY) == str(ids[1]), \
+        "an explicit start_after must not overwrite the saved position"
+
+
+async def test_an_uncapped_run_ignores_and_clears_the_saved_position(store):
+    """It covers everything anyway; resuming into the middle would skip the head."""
+    await _seed(store, [("", ""), ("", "")])
+    good = await _seed(store, [("real one", ""), ("real two", "")])
+    router = ScriptedRouter()
+
+    await repair_blank_summaries(store, router, dry_run=False, max_rows=2)
+    full = await repair_blank_summaries(store, router, dry_run=False)
+
+    assert full["started_after"] == 0
+    assert full["resummarized"] == 2
+    assert full["resume_from"] == 0
+    for mem_id in good:
+        assert (await store.get_memory(mem_id)).summary == "a generated summary"
+
+
+async def test_resume_false_leaves_the_saved_position_untouched(store):
+    await _seed(store, [("", ""), ("", ""), ("", "")])
+    router = ScriptedRouter()
+
+    await repair_blank_summaries(store, router, dry_run=False, max_rows=2,
+                                 resume=False)
+
+    assert await store.get_metadata(REPAIR_CURSOR_KEY) is None
+
+
+async def test_a_stale_cursor_past_the_end_wraps_instead_of_idling(store):
+    """Rows repaired or deleted since the cursor was written."""
+    await _seed(store, [("real one", ""), ("real two", "")])
+    router = ScriptedRouter()
+    await store.set_metadata(REPAIR_CURSOR_KEY, "999999")
+
+    stats = await repair_blank_summaries(store, router, dry_run=False, max_rows=5)
+
+    assert stats["scanned"] == 2, "a stale cursor must not cost a whole run"
+    assert stats["resummarized"] == 2
+
+
+async def test_a_wrapped_run_never_examines_a_row_twice(store):
+    await _seed(store, [("", "") for _ in range(4)])
+    router = ScriptedRouter()
+
+    await repair_blank_summaries(store, router, dry_run=False, max_rows=3)
+    # Now at row 3 of 4; a 10-row cap wraps and must stop at the start point.
+    second = await repair_blank_summaries(store, router, dry_run=False, max_rows=10)
+
+    assert second["scanned"] == 4, "the wrap re-scanned rows it had just examined"
+
+
+async def test_not_scanned_is_accurate_after_a_wrap(store):
+    await _seed(store, [("", "") for _ in range(4)])
+    router = ScriptedRouter()
+
+    await repair_blank_summaries(store, router, dry_run=False, max_rows=3)
+    second = await repair_blank_summaries(store, router, dry_run=False, max_rows=10)
+
+    assert second["remaining"] == 4
+    assert second["not_scanned"] == 0, "every row was examined this run"

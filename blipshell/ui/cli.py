@@ -1460,7 +1460,10 @@ def review_cmd(ctx, lessons, reflections, limit, quiet):
               help="Re-summarize memories whose summary is empty (a summarizer that answered nothing).")
 @click.option("--blank-summary-limit", type=int, default=None, metavar="N",
               help="Cap --blank-summaries at N rows this run (default: the whole backlog). "
-                   "An incomplete run says so and reports what is left.")
+                   "A capped run resumes where the last one stopped and says what is left.")
+@click.option("--blank-summary-restart", is_flag=True,
+              help="Start --blank-summaries from the beginning of the backlog, ignoring "
+                   "the saved resume position.")
 @click.option("--unarchive-memory", "unarchive_ids", type=int, multiple=True,
               help="Reverse a dedup archive: restore memory ID, re-embed it, keep its history. Repeatable.")
 @click.option("--supersessions", "supersession_refs", multiple=True, metavar="KIND:ID",
@@ -1473,7 +1476,7 @@ def review_cmd(ctx, lessons, reflections, limit, quiet):
               help="Run all repairs.")
 @click.pass_context
 def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds, repoint_husks,
-               blank_summaries, blank_summary_limit, unarchive_ids,
+               blank_summaries, blank_summary_limit, blank_summary_restart, unarchive_ids,
                supersession_refs, undo_supersession_ids, dry_run, do_all):
     """Repair common DB issues.
 
@@ -1484,8 +1487,9 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
     --repoint-husks moves references stranded on merged-away entities to their canonical.
     --blank-summaries re-summarizes memories stored with an empty summary.
       Part of --all; --dry-run lists them without calling the model. Walks the
-      WHOLE backlog by ID cursor; --blank-summary-limit N caps one run, and an
-      incomplete run reports what it left behind.
+      WHOLE backlog by ID cursor; --blank-summary-limit N caps one run, which
+      resumes where the last capped run stopped (--blank-summary-restart to
+      start over). An incomplete run reports what it left behind.
     --unarchive-memory ID prints why the memory was archived (dedup provenance)
       and restores it. Not part of --all: it names specific rows.
     """
@@ -1656,6 +1660,7 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
                 _endpoints, router = build_routing(cfg)
                 stats = await repair_blank_summaries(
                     sqlite, router, dry_run=dry_run, max_rows=blank_summary_limit,
+                    start_after=0 if blank_summary_restart else None,
                     on_status=lambda m: console.print(f"[dim]{m}[/dim]"),
                 )
                 console.print(
@@ -1670,13 +1675,18 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
                     + (" [dim](dry-run; no model calls, no changes)[/dim]" if dry_run else "")
                 )
                 if stats["incomplete"]:
-                    # Never let an incomplete run read as a finished one.
+                    # Never let an incomplete run read as a finished one — and
+                    # never promise progress a re-run cannot make: say where
+                    # the next one starts.
                     detail = f"{stats['remaining']} row(s) still blank"
                     if stats["not_scanned"]:
                         detail += f", {stats['not_scanned']} not examined this run"
+                    nxt = ("the beginning of the backlog"
+                           if stats["resume_from"] == 0
+                           else f"memory id > {stats['resume_from']}")
                     console.print(
                         f"[yellow]Blank summaries: INCOMPLETE - {detail}. "
-                        f"Re-run to continue.[/yellow]"
+                        f"Re-run to continue from {nxt}.[/yellow]"
                     )
 
             if supersession_refs or undo_supersession_ids:
