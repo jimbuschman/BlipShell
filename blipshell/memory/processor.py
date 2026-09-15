@@ -135,7 +135,7 @@ async def _set_repair_cursor(sqlite, value: int) -> None:
 async def repair_blank_summaries(
     sqlite, router, *, dry_run: bool = True, max_rows: int | None = None,
     page_size: int = BLANK_SUMMARY_PAGE, resume: bool = True,
-    start_after: int | None = None, on_status=None,
+    restart: bool = False, start_after: int | None = None, on_status=None,
 ) -> dict:
     """Re-summarize memories left with a blank summary (see `summary_or_raw`).
 
@@ -182,30 +182,47 @@ async def repair_blank_summaries(
 
     An UNCAPPED run ignores the stored cursor and clears it: it covers the
     whole backlog anyway, so resuming into the middle of it would only risk
-    leaving the head unexamined. `resume=False` keeps the store untouched
-    (the nightly and the tests), and `start_after` overrides the start
-    without persisting anything.
+    leaving the head unexamined.
+
+    Three ways to control the start, and they differ in what they SAVE:
+
+    - `restart=True` begins at the head of the backlog and saves where it got
+      to, like any other run. This is `--blank-summary-restart`.
+    - `start_after=N` begins after N and saves nothing - a caller driving the
+      walk itself, and the tests.
+    - `resume=False` reads nothing and saves nothing.
 
     `dry_run` (the default) lists what would be repaired WITHOUT calling the
-    model, so previewing the scope costs nothing on a shared GPU. It advances
-    the cursor like a real run - a preview of "what is next" that always
-    showed the same first page would be useless.
+    model, so previewing the scope costs nothing on a shared GPU. It READS
+    the resume position and never writes it. An earlier version advanced the
+    cursor on a preview, reasoning that a preview which always showed the
+    same first page would be useless; that was the wrong trade. A preview
+    that moves the position is not a preview of the next run - it REPLACES
+    it. Previewing two rows and then applying the same command repaired the
+    two rows AFTER the ones previewed, and an uncapped preview wiped the
+    saved position entirely, both under a CLI line promising "no changes".
+    A preview shows what the next apply will do, and the way to see the page
+    after it is to apply this one.
     """
     stats = {
         "backlog": await count_blank_summaries(sqlite),
         "scanned": 0, "resummarized": 0, "content_fallback": 0,
         "unrecoverable": 0, "failed": 0, "skip_verdict": 0,
         "remaining": 0, "not_scanned": 0, "incomplete": False,
-        "started_after": 0, "resume_from": 0,
+        "started_after": 0, "resume_from": 0, "resume_saved": False,
     }
 
     def say(msg: str) -> None:
         if on_status:
             on_status(msg)
 
-    persist = resume and start_after is None
+    # A dry run reads the position and never writes it: a preview that moves
+    # the cursor is not a preview of the next run, it replaces it.
+    persist = resume and start_after is None and not dry_run
     if start_after is not None:
         cursor = start_after
+    elif restart:
+        cursor = 0
     elif resume and max_rows is not None:
         cursor = await _repair_cursor(sqlite)
     else:
@@ -305,9 +322,19 @@ async def repair_blank_summaries(
 
     # A completed sweep wraps: the next run starts over and retries whatever
     # is still blank. A truncated one hands on where it stopped.
-    stats["resume_from"] = 0 if swept_to_end else cursor
+    #
+    # `resume_from` is the SAVED continuation position as it stands after this
+    # run, not wherever this run happened to stop. A run that saves nothing
+    # (a preview, `start_after`, `resume=False`) leaves the stored position
+    # alone, so that is what the next run will start from and that is what it
+    # must report. Reporting its own end position instead is how restart came
+    # to announce a continuation point it had not written.
+    stats["resume_saved"] = persist
     if persist:
+        stats["resume_from"] = 0 if swept_to_end else cursor
         await _set_repair_cursor(sqlite, stats["resume_from"])
+    else:
+        stats["resume_from"] = await _repair_cursor(sqlite)
 
     stats["remaining"] = await count_blank_summaries(sqlite)
     # Rows still blank that this run never looked at. Counted as a

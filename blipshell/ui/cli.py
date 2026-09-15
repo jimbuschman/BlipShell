@@ -1463,7 +1463,7 @@ def review_cmd(ctx, lessons, reflections, limit, quiet):
                    "A capped run resumes where the last one stopped and says what is left.")
 @click.option("--blank-summary-restart", is_flag=True,
               help="Start --blank-summaries from the beginning of the backlog, ignoring "
-                   "the saved resume position.")
+                   "the saved resume position (and then saving the new one).")
 @click.option("--unarchive-memory", "unarchive_ids", type=int, multiple=True,
               help="Reverse a dedup archive: restore memory ID, re-embed it, keep its history. Repeatable.")
 @click.option("--supersessions", "supersession_refs", multiple=True, metavar="KIND:ID",
@@ -1489,7 +1489,8 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
       Part of --all; --dry-run lists them without calling the model. Walks the
       WHOLE backlog by ID cursor; --blank-summary-limit N caps one run, which
       resumes where the last capped run stopped (--blank-summary-restart to
-      start over). An incomplete run reports what it left behind.
+      start over). An incomplete run reports what it left behind. --dry-run
+      previews the rows the next run would take and never moves that position.
     --unarchive-memory ID prints why the memory was archived (dedup provenance)
       and restores it. Not part of --all: it names specific rows.
     """
@@ -1660,7 +1661,7 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
                 _endpoints, router = build_routing(cfg)
                 stats = await repair_blank_summaries(
                     sqlite, router, dry_run=dry_run, max_rows=blank_summary_limit,
-                    start_after=0 if blank_summary_restart else None,
+                    restart=blank_summary_restart,
                     on_status=lambda m: console.print(f"[dim]{m}[/dim]"),
                 )
                 console.print(
@@ -1686,7 +1687,7 @@ def repair_cmd(ctx, restore_imports, sweep_orphans, fix_sessions, fix_pii_embeds
                            else f"memory id > {stats['resume_from']}")
                     console.print(
                         f"[yellow]Blank summaries: INCOMPLETE - {detail}. "
-                        f"Re-run to continue from {nxt}.[/yellow]"
+                        f"A capped re-run continues from {nxt}.[/yellow]"
                     )
 
             if supersession_refs or undo_supersession_ids:

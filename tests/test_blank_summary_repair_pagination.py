@@ -461,3 +461,183 @@ async def test_not_scanned_is_accurate_after_a_wrap(store):
 
     assert second["remaining"] == 4
     assert second["not_scanned"] == 0, "every row was examined this run"
+
+
+# --- a preview never moves the position it previews -------------------------------
+#
+# The cursor was advanced by dry runs too, on the reasoning that a preview
+# which always showed the same first page would be useless. That was the wrong
+# trade: a preview that moves the position does not preview the next run, it
+# REPLACES it. Previewing two rows and then applying the same command repaired
+# the two rows AFTER the ones previewed, under a CLI line promising
+# "no changes".
+
+
+async def _cursor(store):
+    return await store.get_metadata(REPAIR_CURSOR_KEY)
+
+
+async def test_preview_then_apply_processes_the_rows_that_were_previewed(store):
+    """THE regression: preview alpha+beta, apply repaired gamma+delta."""
+    await _seed(store, [(f"content for {n}", "")
+                        for n in ("alpha", "beta", "gamma", "delta")])
+    previewed: list[str] = []
+    await repair_blank_summaries(store, ScriptedRouter(), dry_run=True,
+                                 max_rows=2, on_status=previewed.append)
+
+    router = ScriptedRouter()
+    await repair_blank_summaries(store, router, dry_run=False, max_rows=2)
+
+    assert [p for p in router.calls if "alpha" in p]
+    assert [p for p in router.calls if "beta" in p]
+    assert not [p for p in router.calls if "gamma" in p]
+    assert not [p for p in router.calls if "delta" in p]
+    # ...and the preview named those same two rows.
+    assert sum("would repair" in line for line in previewed) == 2
+
+
+async def test_a_capped_preview_leaves_the_stored_position_untouched(store):
+    await _seed(store, [("", "") for _ in range(6)])
+    await store.set_metadata(REPAIR_CURSOR_KEY, "2")
+
+    stats = await repair_blank_summaries(store, ScriptedRouter(), dry_run=True,
+                                         max_rows=2)
+
+    assert await _cursor(store) == "2"
+    assert stats["resume_saved"] is False
+
+
+async def test_an_uncapped_preview_does_not_clear_the_stored_position(store):
+    """It used to reset it to 0 — the whole saved sweep, wiped by a preview."""
+    await _seed(store, [("", "") for _ in range(4)])
+    await store.set_metadata(REPAIR_CURSOR_KEY, "3")
+
+    await repair_blank_summaries(store, ScriptedRouter(), dry_run=True)
+
+    assert await _cursor(store) == "3"
+
+
+async def test_a_preview_with_no_stored_position_writes_none(store):
+    await _seed(store, [("", "") for _ in range(4)])
+    assert await _cursor(store) is None
+
+    await repair_blank_summaries(store, ScriptedRouter(), dry_run=True, max_rows=2)
+
+    assert await _cursor(store) is None
+
+
+async def test_a_preview_reads_the_stored_position_so_it_previews_the_right_rows(store):
+    ids = await _seed(store, [(f"content for row{i}", "") for i in range(4)])
+    await store.set_metadata(REPAIR_CURSOR_KEY, str(ids[1]))
+    said: list[str] = []
+
+    await repair_blank_summaries(store, ScriptedRouter(), dry_run=True,
+                                 max_rows=2, on_status=said.append)
+
+    text = "\n".join(said)
+    assert "row2" in text and "row3" in text
+    assert "row0" not in text and "row1" not in text
+
+
+async def test_repeated_previews_are_idempotent(store):
+    await _seed(store, [(f"content for row{i}", "") for i in range(6)])
+    router = ScriptedRouter()
+
+    first: list[str] = []
+    second: list[str] = []
+    await repair_blank_summaries(store, router, dry_run=True, max_rows=2,
+                                 on_status=first.append)
+    await repair_blank_summaries(store, router, dry_run=True, max_rows=2,
+                                 on_status=second.append)
+
+    assert first == second
+    assert router.calls == []
+
+
+# --- restart saves the position it reports ----------------------------------------
+
+
+async def test_restart_begins_at_zero_and_saves_where_it_got_to(store):
+    """THE regression: restart reported resume_from=2 and left the store at 4."""
+    ids = await _seed(store, [("", ""), ("", ""), ("", ""), ("", ""), ("", "")])
+    await store.set_metadata(REPAIR_CURSOR_KEY, str(ids[3]))
+
+    stats = await repair_blank_summaries(store, ScriptedRouter(), dry_run=False,
+                                         max_rows=2, restart=True)
+
+    assert stats["started_after"] == 0
+    assert stats["resume_saved"] is True
+    assert stats["resume_from"] == ids[1]
+    assert await _cursor(store) == str(ids[1])
+
+
+async def test_the_reported_continuation_is_where_the_next_run_starts(store):
+    """Unrecoverable rows keep the backlog intact, so nothing else moves it."""
+    ids = await _seed(store, [("", "") for _ in range(6)])
+    await store.set_metadata(REPAIR_CURSOR_KEY, str(ids[4]))
+    router = ScriptedRouter()
+
+    restarted = await repair_blank_summaries(store, router, dry_run=False,
+                                             max_rows=2, restart=True)
+    following = await repair_blank_summaries(store, router, dry_run=False,
+                                             max_rows=2)
+
+    assert following["started_after"] == restarted["resume_from"]
+    assert restarted["remaining"] == 6, "unrecoverable rows stay in the backlog"
+    assert following["started_after"] == ids[1]
+
+
+async def test_restart_then_normal_runs_walk_the_whole_backlog_in_order(store):
+    ids = await _seed(store, [("", "") for _ in range(6)])
+    await store.set_metadata(REPAIR_CURSOR_KEY, str(ids[5]))
+    router = ScriptedRouter()
+
+    starts = []
+    for _ in range(3):
+        stats = await repair_blank_summaries(
+            store, router, dry_run=False, max_rows=2,
+            restart=(len(starts) == 0),
+        )
+        starts.append(stats["started_after"])
+
+    assert starts == [0, ids[1], ids[3]]
+
+
+async def test_explicit_start_after_still_saves_nothing(store):
+    """The non-persisting override, kept for callers driving the walk."""
+    ids = await _seed(store, [("", "") for _ in range(5)])
+    await store.set_metadata(REPAIR_CURSOR_KEY, str(ids[3]))
+
+    stats = await repair_blank_summaries(store, ScriptedRouter(), dry_run=False,
+                                         max_rows=2, start_after=0)
+
+    assert stats["resume_saved"] is False
+    assert await _cursor(store) == str(ids[3]), "start_after must not write"
+
+
+async def test_a_run_that_saves_nothing_reports_the_stored_position(store):
+    """Not where it happened to stop — that is what misled the restart report."""
+    ids = await _seed(store, [("", "") for _ in range(5)])
+    await store.set_metadata(REPAIR_CURSOR_KEY, str(ids[3]))
+
+    preview = await repair_blank_summaries(store, ScriptedRouter(), dry_run=True,
+                                           max_rows=2, start_after=0)
+    explicit = await repair_blank_summaries(store, ScriptedRouter(), dry_run=False,
+                                            max_rows=2, start_after=0)
+
+    assert preview["resume_from"] == ids[3]
+    assert explicit["resume_from"] == ids[3]
+
+
+async def test_restart_under_dry_run_previews_from_zero_and_saves_nothing(store):
+    ids = await _seed(store, [(f"content for row{i}", "") for i in range(5)])
+    await store.set_metadata(REPAIR_CURSOR_KEY, str(ids[3]))
+    said: list[str] = []
+
+    stats = await repair_blank_summaries(store, ScriptedRouter(), dry_run=True,
+                                         max_rows=2, restart=True,
+                                         on_status=said.append)
+
+    assert stats["started_after"] == 0
+    assert "row0" in "\n".join(said)
+    assert await _cursor(store) == str(ids[3])
