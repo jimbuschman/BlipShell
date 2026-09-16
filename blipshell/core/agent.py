@@ -1149,12 +1149,21 @@ class Agent(
         if self._friction_probe_task:
             self._friction_probe_task.cancel()
             self._friction_probe_task = None
-        # 2. Close vector store before SQLite
+        # 3. Close vector store before SQLite - unless the worker is still
+        # alive, which after shutdown() means a blocking vector/model call on
+        # one of its pool threads has not returned. Closing under it would
+        # tear the connection out of a running call; leave it to process exit.
         if self.vectors:
-            try:
-                self.vectors.close()
-            except Exception as e:
-                logger.debug("Vector store close error: %s", e)
+            if self._memory_worker and self._memory_worker.is_alive:
+                logger.warning(
+                    "Memory worker still alive (blocking call in flight); "
+                    "leaving the vector store open for process exit",
+                )
+            else:
+                try:
+                    self.vectors.close()
+                except Exception as e:
+                    logger.debug("Vector store close error: %s", e)
         # 4. Close SQLite last
         if self.sqlite:
             try:

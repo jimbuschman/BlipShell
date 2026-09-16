@@ -651,6 +651,14 @@ hard-delete — do not use them.
   the queue at 15 s per item with no bound and could not stop an in-flight
   extraction; a worker stuck in a model call kept the interpreter alive (its
   aiosqlite thread is not a daemon). `tests/test_memory_worker.py::TestBoundedShutdown`.
+  Two review closures (same day): a row-less PROCESS_MESSAGE is persisted raw
+  by `_make_durable` BEFORE it enters the cancellable task, so cancellation
+  cannot lose it; and cancellation cannot stop a blocking call already on a
+  pool thread (`asyncio.to_thread` embed/vector write), so `_run` awaits
+  `loop.shutdown_default_executor()` before exiting - the thread stays alive
+  while that call runs, the report says `executor_busy`, and neither
+  `end_session` nor `force_cleanup` closes the VectorStore over a live
+  worker. `TestShutdownReviewFindings`.
 - qwen3 models degrade with think=False (hybrid-thinking architecture).
 - `context_tokens` is set at endpoint level and passed as num_ctx.
 - Windows console: keep script output ASCII-safe (cp1252 crashes).

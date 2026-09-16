@@ -56,6 +56,11 @@ class ShutdownReport:
     deferred: dict = field(default_factory=dict)
     interrupted: Optional[str] = None
     waited_s: float = 0.0
+    # The cancelled item had handed a blocking call (embedding, vector write)
+    # to a pool thread and that call has not returned. Cancellation cannot
+    # reach it; the worker thread stays alive until it does, and the stores
+    # it uses are NOT safe to close until then.
+    executor_busy: bool = False
 
     def describe(self) -> str:
         parts = []
@@ -66,7 +71,9 @@ class ShutdownReport:
             parts.append(f"interrupted {self.interrupted} (retryable)")
         if not parts:
             parts.append("queue empty, nothing in flight")
-        if not self.exited:
+        if self.executor_busy:
+            parts.append("a blocking call on a pool thread has not returned; stores left open")
+        elif not self.exited:
             parts.append("thread still alive")
         return "; ".join(parts) + f" ({self.waited_s:.1f}s)"
 
@@ -129,6 +136,7 @@ class MemoryWorker:
         self._current_task: Optional[asyncio.Task] = None  # the in-flight item
         self._deferred: dict[str, int] = {}
         self._interrupted: Optional[str] = None
+        self._executor_busy = threading.Event()  # set while draining pool threads at exit
         self.last_shutdown: Optional[ShutdownReport] = None
 
     def start(self):
@@ -197,6 +205,17 @@ class MemoryWorker:
         try:
             await self._process_loop(loop, processor, sqlite, router)
         finally:
+            # A cancelled item may have a blocking call (embedding HTTP, vector
+            # write under the gate) still running on a pool thread: cancelling
+            # the awaiting task does not stop it. Wait for it here so the
+            # thread's liveness is the truth about whether the shared
+            # VectorStore is still in use. loop.close() alone would abandon
+            # the pool thread mid-call.
+            self._executor_busy.set()
+            try:
+                await loop.shutdown_default_executor()
+            finally:
+                self._executor_busy.clear()
             await sqlite.close()
 
     async def _process_loop(self, loop, processor, sqlite, router):
@@ -239,6 +258,7 @@ class MemoryWorker:
                     await self._defer_queued(sqlite)
                     break
 
+                await self._make_durable(item, sqlite)
                 await self._run_cancellable(
                     item.work_type.value,
                     self._process_item(item, processor, sqlite, router),
@@ -279,6 +299,47 @@ class MemoryWorker:
         finally:
             self._current_task = None
 
+    @staticmethod
+    def _needs_row(item: WorkItem) -> bool:
+        """The one kind of work that is NOT durable by construction: a message
+        whose raw persist never landed, so no row names it yet.
+
+        Noise is excluded with the processor's own deterministic filter: a
+        short signal-less message never becomes a row BY DESIGN (pinned in
+        test_memory_worker_pipeline), so dropping it at shutdown loses nothing.
+        """
+        from blipshell.memory.noise import should_skip_memory
+        return (item.work_type == WorkType.PROCESS_MESSAGE
+                and item.memory_id is None and bool(item.text.strip())
+                and not should_skip_memory(item.text))
+
+    async def _persist_raw(self, item: WorkItem, sqlite) -> Optional[int]:
+        """Give the message its is_processed=0 row; None if even that failed."""
+        try:
+            return await sqlite.save_raw_memory(
+                item.session_id, item.role, item.text, metadata=item.metadata,
+            )
+        except Exception as e:
+            logger.error(
+                "Memory worker: could not persist a message raw: %s "
+                "(session_id=%s text=%r)", e, item.session_id, item.text[:60],
+            )
+            return None
+
+    async def _make_durable(self, item: WorkItem, sqlite) -> None:
+        """Persist a row-less message BEFORE it enters the cancellable task.
+
+        Runs outside `_run_cancellable`, so shutdown's cancel cannot land in
+        the middle of it. The processor then updates that row (the same path
+        a live-session message takes), and a cancellation mid-pipeline leaves
+        a raw row with is_processed=0 for the startup sweep instead of nothing.
+        """
+        if not self._needs_row(item):
+            return
+        mem_id = await self._persist_raw(item, sqlite)
+        if mem_id is not None:
+            item.memory_id = mem_id
+
     async def _defer_queued(self, sqlite) -> None:
         """Hand the remaining queue to the startup sweep instead of running it.
 
@@ -294,17 +355,8 @@ class MemoryWorker:
                 break
             if item.work_type == WorkType.SHUTDOWN:
                 continue
-            if (item.work_type == WorkType.PROCESS_MESSAGE
-                    and item.memory_id is None and item.text.strip()):
-                try:
-                    await sqlite.save_raw_memory(
-                        item.session_id, item.role, item.text, metadata=item.metadata,
-                    )
-                except Exception as e:
-                    logger.error(
-                        "Memory worker: could not persist a deferred message raw: %s "
-                        "(session_id=%s text=%r)", e, item.session_id, item.text[:60],
-                    )
+            if self._needs_row(item):
+                await self._persist_raw(item, sqlite)
             kind = item.work_type.value
             self._deferred[kind] = self._deferred.get(kind, 0) + 1
         if self._deferred:
@@ -427,14 +479,23 @@ class MemoryWorker:
                 self._request_cancel()
                 self._thread.join(timeout=_CANCEL_GRACE)
                 if self._thread.is_alive():
-                    logger.warning(
-                        "Memory worker did not exit within %.0fs", timeout + _CANCEL_GRACE,
-                    )
+                    if self._executor_busy.is_set():
+                        logger.warning(
+                            "Memory worker: a blocking call on a pool thread has not "
+                            "returned after %.0fs; the thread stays alive until it does "
+                            "and the vector store must not be closed yet",
+                            timeout + _CANCEL_GRACE,
+                        )
+                    else:
+                        logger.warning(
+                            "Memory worker did not exit within %.0fs", timeout + _CANCEL_GRACE,
+                        )
         report = ShutdownReport(
             exited=not self.is_alive,
             deferred=dict(self._deferred),
             interrupted=self._interrupted,
             waited_s=round(time.monotonic() - t0, 1),
+            executor_busy=self.is_alive and self._executor_busy.is_set(),
         )
         self.last_shutdown = report
         if report.exited:

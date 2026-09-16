@@ -491,19 +491,25 @@ class TestBoundedShutdown:
                 w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, role="user",
                                    text=f"deferred message {i} about the gate design",
                                    session_id=sid, memory_id=None))
+            # Noise is dropped by design (never a row), at shutdown too.
+            w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, role="user",
+                               text="ok sounds good", session_id=sid, memory_id=None))
             report = w.shutdown(timeout=0.5)
         finally:
             w.shutdown(timeout=2.0)
-        assert report.deferred == {"process_message": 3}
+        assert report.deferred == {"process_message": 4}
         conn = sqlite3.connect(config.database.path)
         try:
             rows = conn.execute(
                 "SELECT content, is_processed FROM memories WHERE content LIKE 'deferred message%' "
                 "ORDER BY id").fetchall()
+            noise_rows = conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE content = 'ok sounds good'").fetchone()[0]
         finally:
             conn.close()
         assert [r[1] for r in rows] == [0, 0, 0], rows
         assert [r[0] for r in rows] == [f"deferred message {i} about the gate design" for i in range(3)]
+        assert noise_rows == 0, "a noise message was given a row at shutdown"
 
     def test_in_flight_item_gets_the_grace_period(self, config, patched, monkeypatch):
         SlowProcessor.delay = 0.3
@@ -562,3 +568,146 @@ class TestBoundedShutdown:
         text = report.describe()
         assert "2 process_message" in text and "interrupted extract_entities" in text
         assert "thread still alive" in text
+
+
+# --- review findings on the bounded shutdown ---------------------------------
+
+
+class RecordThenHangProcessor(RecordingProcessor):
+    """Records the call it was given, then hangs (cancellable) - so a test can
+    see WHICH memory_id the pipeline received before shutdown cancels it."""
+
+    async def process_message(self, **kw):
+        self._record("process_message", kw)
+        await asyncio.sleep(1000)
+
+
+class BlockingVectors:
+    """A vector store whose write blocks on a pool thread until released -
+    the shape of an embedding HTTP call or a gated vector write."""
+
+    def __init__(self):
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.finished = threading.Event()
+
+    def add_memory(self, *_a, **_k):
+        self.entered.set()
+        self.release.wait(30.0)
+        self.finished.set()
+
+
+class ToThreadVectorProcessor(RecordingProcessor):
+    """process_message does what the real pipeline does at its embed step:
+    hands the vector write to a pool thread with asyncio.to_thread."""
+
+    def __init__(self, sqlite, vectors, router, *a, **kw):
+        super().__init__()
+        self.vectors = vectors
+
+    async def process_message(self, **kw):
+        await asyncio.to_thread(self.vectors.add_memory, kw.get("memory_id"), kw.get("text"), {})
+        self._record("process_message", kw)
+
+
+class TestShutdownReviewFindings:
+    def test_in_flight_rowless_message_is_durable_before_it_can_be_cancelled(
+            self, config, patched, monkeypatch):
+        """Finding 1. A raw-persist failure leaves a PROCESS_MESSAGE with
+        memory_id=None; if shutdown cancelled it mid-pipeline before the
+        processor created a row, the message was gone. The worker now gives
+        it a row BEFORE the cancellable task starts and processes it as an
+        update to that row."""
+        sid = _make_session(config.database.path)
+        monkeypatch.setattr("blipshell.memory.processor.MemoryProcessor", RecordThenHangProcessor)
+        w = MemoryWorker(config, vectors=object())
+        w.start()
+        try:
+            w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, role="user",
+                               text="We decided the entity-graph version guard blocks merges of projectecho_v1 and _v2; this row-less message must survive a shutdown that cancels the pipeline",
+                               session_id=sid, memory_id=None))
+            assert _wait(lambda: RecordingProcessor.instances
+                         and RecordingProcessor.instances[0].calls)
+            received = RecordingProcessor.instances[0].calls[0][1]
+            report = w.shutdown(timeout=0.3)
+        finally:
+            w.shutdown(timeout=2.0)
+        assert report.exited and report.interrupted == "process_message"
+
+        conn = sqlite3.connect(config.database.path)
+        try:
+            row = conn.execute(
+                "SELECT id, is_processed FROM memories WHERE content = ?",
+                ("We decided the entity-graph version guard blocks merges of projectecho_v1 and _v2; this row-less message must survive a shutdown that cancels the pipeline",)).fetchone()
+        finally:
+            conn.close()
+        assert row is not None, "the cancelled in-flight message left no row"
+        assert row[1] == 0, "row must stay is_processed=0 for the startup sweep"
+        assert received["memory_id"] == row[0], (
+            "the pipeline was not handed the row it must update"
+        )
+
+    def test_shutdown_reports_live_executor_work_and_keeps_the_thread_alive(
+            self, config, patched, monkeypatch):
+        """Finding 2. Cancelling the awaiting task does not stop a blocking
+        call already running on a pool thread. The worker must not exit (and
+        shutdown() must not report the stores safe to close) while that call
+        is alive; once it returns, the thread exits on its own."""
+        monkeypatch.setattr(worker_mod, "_CANCEL_GRACE", 0.5)
+        monkeypatch.setattr("blipshell.memory.processor.MemoryProcessor", ToThreadVectorProcessor)
+        vectors = BlockingVectors()
+        w = MemoryWorker(config, vectors=vectors)
+        w.start()
+        try:
+            w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, text="embed me",
+                               session_id=1, memory_id=7))
+            assert vectors.entered.wait(5.0), "the blocking vector write never started"
+
+            report = w.shutdown(timeout=0.3)
+
+            assert report.exited is False, "reported exited while a pool thread was mid-call"
+            assert report.executor_busy is True
+            assert "pool thread" in report.describe() and "stores left open" in report.describe()
+            assert w.is_alive
+            assert not vectors.finished.is_set()
+            assert report.interrupted == "process_message"
+
+            vectors.release.set()
+            assert _wait(lambda: not w.is_alive), "thread did not exit once the call returned"
+            assert vectors.finished.is_set()
+            second = w.shutdown(timeout=1.0)
+            assert second.exited and second.executor_busy is False
+        finally:
+            vectors.release.set()
+            w.shutdown(timeout=2.0)
+
+    async def test_force_cleanup_does_not_close_the_vector_store_over_a_live_worker(self):
+        """The consumer side of finding 2: Agent.force_cleanup used to close
+        the VectorStore unconditionally after shutdown(); with executor work
+        alive that tears the connection out of a running call."""
+        from unittest.mock import MagicMock
+
+        from blipshell.core.agent import Agent
+
+        def bare_agent(worker_alive: bool):
+            a = Agent.__new__(Agent)
+            a._background_tasks = set()
+            a._nightly_scheduler_task = None
+            a._memory_flush_task = None
+            a._health_check_task = None
+            a._friction_probe_task = None
+            a.sqlite = None
+            a.vectors = MagicMock()
+            worker = MagicMock()
+            worker.is_alive = worker_alive
+            a._memory_worker = worker
+            return a
+
+        alive = bare_agent(worker_alive=True)
+        await alive.force_cleanup()
+        alive._memory_worker.shutdown.assert_called_once()
+        alive.vectors.close.assert_not_called()
+
+        dead = bare_agent(worker_alive=False)
+        await dead.force_cleanup()
+        dead.vectors.close.assert_called_once()

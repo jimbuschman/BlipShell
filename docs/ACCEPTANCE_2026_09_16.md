@@ -214,6 +214,19 @@ the four messages were deferred to the startup sweep, and the earlier "Memory
 worker did not exit within 5s" warning did not recur. Scheduling verdict on
 that run: PASS again (0 background grants after either turn began).
 
+Review closures (same day). (1) The in-flight item was the one place a
+row-less message could still be lost: a raw-persist failure followed by a
+shutdown that cancelled the pipeline before it created a row. The worker now
+persists such a message raw before it enters the cancellable task and
+processes it as an update to that row. (2) Cancelling the awaiting task does
+not stop a blocking call already running on a pool thread (an embedding HTTP
+call, a vector write under the gate). The worker's loop now waits for its
+executor threads before exiting, so the thread stays alive exactly while such
+a call runs; the shutdown report says so (`executor_busy`), and neither close
+path closes the vector store over a live worker. Tests:
+`TestShutdownReviewFindings` (3), one of them driving a real
+`asyncio.to_thread` vector write that blocks until released.
+
 Not changed: the session's own close steps (summary, lessons, digest) still
 run to completion with no timeout, per the standing design decision. Whether
 those should also be deferred to the nightly is a separate decision.
