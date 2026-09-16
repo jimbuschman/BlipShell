@@ -16,7 +16,7 @@ import logging
 import queue
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Optional
 from blipshell.llm.ollama_gate import background_model_work, get_gate
@@ -37,6 +37,38 @@ _START_TIMEOUT = 10.0
 # the same reason — a test can't wait 60s to reach the idle branch.
 _IDLE_EXTRACT_INTERVAL = 60.0
 _IDLE_EXTRACT_BATCH = 10
+
+# After shutdown()'s grace period, how long to wait for the cancelled
+# in-flight item to unwind before reporting the thread still alive.
+_CANCEL_GRACE = 5.0
+
+
+@dataclass
+class ShutdownReport:
+    """What shutdown() did.
+
+    `deferred` counts the queued items handed to the startup sweep instead of
+    being run, by work type; `interrupted` names the in-flight item cancelled
+    at the deadline (its work is left retryable); `exited` says whether the
+    thread is actually gone.
+    """
+    exited: bool
+    deferred: dict = field(default_factory=dict)
+    interrupted: Optional[str] = None
+    waited_s: float = 0.0
+
+    def describe(self) -> str:
+        parts = []
+        if self.deferred:
+            parts.append("deferred to the startup sweep: " + ", ".join(
+                f"{n} {kind}" for kind, n in sorted(self.deferred.items())))
+        if self.interrupted:
+            parts.append(f"interrupted {self.interrupted} (retryable)")
+        if not parts:
+            parts.append("queue empty, nothing in flight")
+        if not self.exited:
+            parts.append("thread still alive")
+        return "; ".join(parts) + f" ({self.waited_s:.1f}s)"
 
 
 class WorkType(Enum):
@@ -93,6 +125,11 @@ class MemoryWorker:
         self._thread: Optional[threading.Thread] = None
         self._started = threading.Event()
         self._shutting_down = threading.Event()  # signal to skip idle work
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._current_task: Optional[asyncio.Task] = None  # the in-flight item
+        self._deferred: dict[str, int] = {}
+        self._interrupted: Optional[str] = None
+        self.last_shutdown: Optional[ShutdownReport] = None
 
     def start(self):
         """Start the worker thread. Call from the main thread."""
@@ -118,6 +155,7 @@ class MemoryWorker:
         """Entry point for the worker thread."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        self._loop = loop
         try:
             loop.run_until_complete(self._run(loop))
         except Exception as e:
@@ -162,31 +200,49 @@ class MemoryWorker:
             await sqlite.close()
 
     async def _process_loop(self, loop, processor, sqlite, router):
-        """Main processing loop. Polls the thread-safe queue."""
+        """Main processing loop. Polls the thread-safe queue.
+
+        Shutdown is BOUNDED (2026-09-16): once `_shutting_down` is set the
+        loop takes no further items - whatever is still queued is handed to
+        the startup sweep by `_defer_queued`, and the one in-flight item is
+        given shutdown()'s grace period before it is cancelled. Draining the
+        whole queue at session close used to cost several model calls per
+        queued message with no upper bound.
+        """
         last_idle_extract = time.monotonic()
 
         while True:
+            if self._shutting_down.is_set():
+                await self._defer_queued(sqlite)
+                break
             try:
                 item = await loop.run_in_executor(
                     None, self._queue_get,
                 )
                 if item is None:
                     # Queue empty — chip away at unextracted entities during idle,
-                    # but ONLY if we're not shutting down. Entity extraction is
-                    # slow and uses the shared VectorStore which gets closed
-                    # shortly after shutdown.
+                    # but ONLY if we're not shutting down and no chat turn is
+                    # open. Entity extraction is slow and uses the shared
+                    # VectorStore which gets closed shortly after shutdown.
                     if (not self._shutting_down.is_set()
                             and not get_gate().interactive_active
                             and time.monotonic() - last_idle_extract > self._idle_extract_interval):
-                        await self._idle_extract_entities(sqlite, router, _IDLE_EXTRACT_BATCH)
+                        await self._run_cancellable(
+                            "idle_extract_entities",
+                            self._idle_extract_entities(sqlite, router, _IDLE_EXTRACT_BATCH),
+                        )
                         last_idle_extract = time.monotonic()
                     continue
 
                 if item.work_type == WorkType.SHUTDOWN:
                     logger.info("Memory worker received shutdown signal")
+                    await self._defer_queued(sqlite)
                     break
 
-                await self._process_item(item, processor, sqlite, router)
+                await self._run_cancellable(
+                    item.work_type.value,
+                    self._process_item(item, processor, sqlite, router),
+                )
                 last_idle_extract = time.monotonic()  # reset after real work
 
             except RuntimeError as e:
@@ -204,6 +260,58 @@ class MemoryWorker:
             return self._queue.get(timeout=self._poll_interval)
         except queue.Empty:
             return None
+
+    async def _run_cancellable(self, label: str, coro) -> None:
+        """Run one unit of work as a task shutdown() can cancel at its deadline.
+
+        A cancelled unit is recorded as `interrupted`, never re-raised: every
+        unit is retryable by construction (a message row stays is_processed=0,
+        an extraction stays unmarked), so cancellation loses time, not work.
+        """
+        self._current_task = asyncio.ensure_future(coro)
+        try:
+            await self._current_task
+        except asyncio.CancelledError:
+            if not self._shutting_down.is_set():
+                raise
+            self._interrupted = label
+            logger.info("Memory worker: %s interrupted at shutdown; its work stays retryable", label)
+        finally:
+            self._current_task = None
+
+    async def _defer_queued(self, sqlite) -> None:
+        """Hand the remaining queue to the startup sweep instead of running it.
+
+        Every queued item is already durable - a PROCESS_MESSAGE names a raw
+        row with is_processed=0, and unextracted memories are re-found - with
+        one exception: a message whose raw persist never landed (memory_id
+        None) would vanish with the queue, so it is persisted raw here.
+        """
+        while True:
+            try:
+                item = self._queue.get_nowait()
+            except queue.Empty:
+                break
+            if item.work_type == WorkType.SHUTDOWN:
+                continue
+            if (item.work_type == WorkType.PROCESS_MESSAGE
+                    and item.memory_id is None and item.text.strip()):
+                try:
+                    await sqlite.save_raw_memory(
+                        item.session_id, item.role, item.text, metadata=item.metadata,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Memory worker: could not persist a deferred message raw: %s "
+                        "(session_id=%s text=%r)", e, item.session_id, item.text[:60],
+                    )
+            kind = item.work_type.value
+            self._deferred[kind] = self._deferred.get(kind, 0) + 1
+        if self._deferred:
+            logger.info(
+                "Memory worker: %s deferred to the startup sweep",
+                ", ".join(f"{n} {k}" for k, n in sorted(self._deferred.items())),
+            )
 
     async def _process_item(self, item: WorkItem, processor, sqlite, router):
         """Process a single work item."""
@@ -295,21 +403,59 @@ class MemoryWorker:
         """Enqueue a work item. Thread-safe, non-blocking."""
         self._queue.put_nowait(item)
 
-    def shutdown(self, timeout: float = 30.0):
-        """Signal shutdown and wait for the worker thread to finish.
+    def shutdown(self, timeout: float = 30.0) -> ShutdownReport:
+        """Stop the worker within about `timeout` seconds; nothing is lost.
 
         Sets _shutting_down first so idle entity extraction stops immediately
-        (it checks this flag every loop iteration). Then sends the SHUTDOWN
-        work item so the loop breaks after its current task finishes.
+        (it checks this flag every loop iteration), then sends the SHUTDOWN
+        item to wake the queue poll. The loop takes no further items: the
+        queue is deferred to the startup sweep (see `_defer_queued`), and the
+        in-flight item gets `timeout` seconds to finish before it is
+        cancelled and left retryable. The returned report says what happened;
+        `describe()` is the status line for the user.
         """
+        t0 = time.monotonic()
         self._shutting_down.set()
         self._queue.put(WorkItem(work_type=WorkType.SHUTDOWN, text=""))
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=timeout)
             if self._thread.is_alive():
-                logger.warning(
-                    "Memory worker did not exit within %.0fs", timeout,
+                logger.info(
+                    "Memory worker: in-flight item still running after %.0fs; cancelling it",
+                    timeout,
                 )
+                self._request_cancel()
+                self._thread.join(timeout=_CANCEL_GRACE)
+                if self._thread.is_alive():
+                    logger.warning(
+                        "Memory worker did not exit within %.0fs", timeout + _CANCEL_GRACE,
+                    )
+        report = ShutdownReport(
+            exited=not self.is_alive,
+            deferred=dict(self._deferred),
+            interrupted=self._interrupted,
+            waited_s=round(time.monotonic() - t0, 1),
+        )
+        self.last_shutdown = report
+        if report.exited:
+            logger.info("Memory worker stopped: %s", report.describe())
+        return report
+
+    def _request_cancel(self) -> None:
+        """Cancel the in-flight item from another thread, via the worker's loop."""
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+
+        def _cancel():
+            task = self._current_task
+            if task is not None and not task.done():
+                task.cancel()
+
+        try:
+            loop.call_soon_threadsafe(_cancel)
+        except RuntimeError:
+            pass  # the loop closed between the check and the call
 
     @property
     def queue_depth(self) -> int:

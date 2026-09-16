@@ -639,6 +639,18 @@ hard-delete — do not use them.
 - Session-close operations deliberately have NO timeouts (session/manager.py) —
   OllamaGate serializes them behind background work; artificial timeouts lose
   work. Ctrl+C to bail. (Design decision, not an oversight.)
+  **The memory-worker stop at close IS bounded (2026-09-16)** and that is not
+  a contradiction: `MemoryWorker.shutdown(timeout)` takes no further queue
+  items (they are deferred to the startup sweep - every PROCESS_MESSAGE names
+  a raw row with `is_processed=0`, unextracted memories are re-found, and a
+  message whose raw persist never landed is persisted raw by `_defer_queued`),
+  gives the in-flight item `timeout` seconds, then cancels it and leaves it
+  retryable. It returns a `ShutdownReport` (`deferred`, `interrupted`,
+  `exited`; `describe()` is the status line). `Agent.end_session` uses
+  `WORKER_CLOSE_GRACE` (30 s); `force_cleanup` 5 s. Before this, close drained
+  the queue at 15 s per item with no bound and could not stop an in-flight
+  extraction; a worker stuck in a model call kept the interpreter alive (its
+  aiosqlite thread is not a daemon). `tests/test_memory_worker.py::TestBoundedShutdown`.
 - qwen3 models degrade with think=False (hybrid-thinking architecture).
 - `context_tokens` is set at endpoint level and passed as num_ctx.
 - Windows console: keep script output ASCII-safe (cp1252 crashes).

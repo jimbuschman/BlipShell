@@ -179,6 +179,45 @@ separate "improve shutdown" item). The gate is process-local, so a separate
 stage itself has not been rerun on the Ollama PC since this change; the
 scheduling script above is the isolated-copy check that was run.
 
+## Follow-up 2026-09-16: bounded shutdown
+
+The "initial 30-second worker-shutdown wait was exceeded" above had two
+causes in `MemoryWorker.shutdown`: the SHUTDOWN item was appended AFTER the
+queue, so close drained every queued message (several model calls each, 15 s
+per item budgeted, no upper bound), and an in-flight item (an entity
+extraction batch of up to ten memories) could not be stopped at all. A worker
+stuck in a model call also kept the interpreter alive, because its aiosqlite
+connection thread is not a daemon.
+
+Change (`memory/worker.py`, `core/agent.py`): shutdown takes no further queue
+items; the remainder is deferred to the existing startup sweep, which is
+sound because every queued item is durable already - a `PROCESS_MESSAGE`
+names a raw row with `is_processed=0`, unextracted memories are re-found - and
+the one exception (a message whose raw persist never landed) is persisted raw
+at deferral. The in-flight item gets the grace period (`WORKER_CLOSE_GRACE`,
+30 s at session close; 5 s in `force_cleanup`), then is cancelled via its own
+loop and left retryable (an interrupted message stays `is_processed=0`, an
+interrupted extraction stays unmarked). `shutdown()` returns a report
+(`deferred` by kind, `interrupted`, `exited`) and close shows it to the user.
+
+Tests: `tests/test_memory_worker.py::TestBoundedShutdown` (6, real worker
+thread): deferral instead of draining, raw persistence of the non-durable
+case, grace period honoured, cancellation of a worker parked behind an open
+chat turn, cancellation of an in-flight idle extraction, and the report text.
+The pipeline test that asserted a full drain now asserts the invariant that
+survives: every enqueued message has a row, processed or raw.
+
+Live (second `validate_live_scheduling` run, same setup as above): cleanup
+was called with an entity-extraction batch in flight and four messages queued.
+The worker stopped in 5.0 s: the extraction was cancelled and left retryable,
+the four messages were deferred to the startup sweep, and the earlier "Memory
+worker did not exit within 5s" warning did not recur. Scheduling verdict on
+that run: PASS again (0 background grants after either turn began).
+
+Not changed: the session's own close steps (summary, lessons, digest) still
+run to completion with no timeout, per the standing design decision. Whether
+those should also be deferred to the nightly is a separate decision.
+
 ## Commands
 
 Use the development environment with dependencies installed:

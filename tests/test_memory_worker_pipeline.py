@@ -172,9 +172,12 @@ class TestMessageProcessing:
         row = db.one("SELECT summary, is_processed FROM memories")
         assert row["summary"], "processed memory has no summary"
 
-    def test_queue_drains_before_shutdown(self, worker_env):
-        """shutdown() appends SHUTDOWN after pending work, so everything
-        already enqueued must complete — no lost messages."""
+    def test_shutdown_never_loses_an_enqueued_message(self, worker_env):
+        """shutdown() no longer drains the queue (2026-09-16): whatever has
+        not run is deferred to the startup sweep. The invariant that survives
+        the change - and the race between the canned pipeline and shutdown -
+        is that every enqueued message has a row: processed, or raw with
+        is_processed=0 for the sweep to find."""
         w, db, sid = worker_env()
         w.start()
         for i in range(4):
@@ -184,12 +187,17 @@ class TestMessageProcessing:
                 role="user", session_id=sid,
             ))
 
-        w.shutdown(timeout=30.0)
+        report = w.shutdown(timeout=30.0)
 
-        assert not w.is_alive
-        assert db.val("SELECT COUNT(*) FROM memories WHERE is_processed = 1") == 4, (
-            "shutdown dropped enqueued work"
+        assert not w.is_alive and report.exited
+        processed = db.val("SELECT COUNT(*) FROM memories WHERE is_processed = 1")
+        raw = db.val("SELECT COUNT(*) FROM memories WHERE is_processed = 0")
+        assert processed + raw == 4, (
+            f"shutdown lost work: {processed} processed + {raw} raw != 4 enqueued"
         )
+        assert raw == report.deferred.get("process_message", 0) + (
+            1 if report.interrupted == "process_message" else 0
+        ), (report, processed, raw)
 
 
 class TestNoiseFilter:

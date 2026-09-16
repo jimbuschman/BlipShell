@@ -11,12 +11,14 @@ faked, because those are the LLM-dependent parts; everything about the
 threading, dispatch, isolation and shutdown ordering is the production code.
 """
 
+import asyncio
+import sqlite3
 import threading
 import time
 
 import pytest
 
-from blipshell.llm.ollama_gate import get_gate
+from blipshell.llm.ollama_gate import BACKGROUND, get_gate
 from blipshell.memory import worker as worker_mod
 from blipshell.memory.worker import MemoryWorker, WorkItem, WorkType
 from blipshell.models.config import BlipShellConfig
@@ -395,3 +397,168 @@ class TestIdleExtractionDefersToChat:
             if not released:
                 turn.__exit__(None, None, None)
             w.shutdown(timeout=5.0)
+
+
+# --- bounded shutdown ---------------------------------------------------------
+
+
+class SlowProcessor(RecordingProcessor):
+    """process_message takes `delay` seconds (cancellable sleep) before recording."""
+
+    delay = 0.3
+
+    async def process_message(self, **kw):
+        await asyncio.sleep(type(self).delay)
+        self._record("process_message", kw)
+
+
+class GateWaitingProcessor(RecordingProcessor):
+    """process_message wants the model at BACKGROUND priority - and parks
+    behind an open chat turn, exactly where a real summarisation would."""
+
+    async def process_message(self, **kw):
+        async with get_gate().async_gate(BACKGROUND):
+            self._record("process_message", kw)
+
+
+class HangingExtractor(RecordingExtractor):
+    async def extract_batch(self):
+        HangingExtractor.runs += 1
+        await asyncio.sleep(1000)
+        return {"triples": 0, "extracted": 0, "errors": 0}
+
+
+def _make_session(db_path) -> int:
+    """memories.session_id is a FOREIGN KEY: a deferred raw persist needs one."""
+    from blipshell.memory.sqlite_store import SQLiteStore
+
+    async def seed():
+        s = SQLiteStore(str(db_path))
+        await s.initialize()
+        sid = await s.create_session("bounded-shutdown")
+        await s.close()
+        return sid
+
+    return asyncio.run(seed())
+
+
+class TestBoundedShutdown:
+    """Session close used to DRAIN the queue (15 s per item, no upper bound)
+    and had no way to stop an in-flight item; the 2026-09-16 acceptance run
+    overran its 30 s wait with one extraction batch in flight, and a worker
+    stuck in a model call kept the interpreter alive (its aiosqlite thread is
+    not a daemon). Now shutdown() is bounded and nothing is lost: queued
+    items are deferred to the startup sweep, the in-flight item is cancelled
+    at the deadline and stays retryable."""
+
+    def test_queued_items_are_deferred_not_drained(self, config, patched, monkeypatch):
+        SlowProcessor.delay = 1000.0
+        monkeypatch.setattr("blipshell.memory.processor.MemoryProcessor", SlowProcessor)
+        w = MemoryWorker(config, vectors=object())
+        w.start()
+        try:
+            for i in range(5):
+                w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, text=f"msg {i}",
+                                   session_id=1, memory_id=100 + i))
+            assert _wait(lambda: w.queue_depth <= 4)      # first item in flight
+            t0 = time.monotonic()
+            report = w.shutdown(timeout=0.5)
+            elapsed = time.monotonic() - t0
+            assert w.last_shutdown is report
+        finally:
+            w.shutdown(timeout=2.0)
+        assert not w.is_alive
+        assert report.exited
+        assert elapsed < 10.0, f"shutdown took {elapsed:.1f}s: it drained instead of deferring"
+        assert report.deferred == {"process_message": 4}, report
+        assert report.interrupted == "process_message"
+        assert "4 process_message" in report.describe()
+
+    def test_deferred_message_without_a_row_is_persisted_raw(self, config, patched, monkeypatch):
+        """The one queued item that is NOT durable by construction: a message
+        whose raw persist never landed. Dropping it would lose the message;
+        it must reach the table as is_processed=0 so the sweep finds it."""
+        sid = _make_session(config.database.path)
+        SlowProcessor.delay = 1000.0
+        monkeypatch.setattr("blipshell.memory.processor.MemoryProcessor", SlowProcessor)
+        w = MemoryWorker(config, vectors=object())
+        w.start()
+        try:
+            w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, text="in flight",
+                               session_id=sid, memory_id=None))
+            assert _wait(lambda: w.queue_depth == 0)
+            for i in range(3):
+                w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, role="user",
+                                   text=f"deferred message {i} about the gate design",
+                                   session_id=sid, memory_id=None))
+            report = w.shutdown(timeout=0.5)
+        finally:
+            w.shutdown(timeout=2.0)
+        assert report.deferred == {"process_message": 3}
+        conn = sqlite3.connect(config.database.path)
+        try:
+            rows = conn.execute(
+                "SELECT content, is_processed FROM memories WHERE content LIKE 'deferred message%' "
+                "ORDER BY id").fetchall()
+        finally:
+            conn.close()
+        assert [r[1] for r in rows] == [0, 0, 0], rows
+        assert [r[0] for r in rows] == [f"deferred message {i} about the gate design" for i in range(3)]
+
+    def test_in_flight_item_gets_the_grace_period(self, config, patched, monkeypatch):
+        SlowProcessor.delay = 0.3
+        monkeypatch.setattr("blipshell.memory.processor.MemoryProcessor", SlowProcessor)
+        w = MemoryWorker(config, vectors=object())
+        w.start()
+        try:
+            w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, text="quick",
+                               session_id=1, memory_id=7))
+            assert _wait(lambda: w.queue_depth == 0)
+            report = w.shutdown(timeout=5.0)
+        finally:
+            w.shutdown(timeout=2.0)
+        assert report.exited and report.interrupted is None and report.deferred == {}
+        assert [c[0] for c in RecordingProcessor.instances[0].calls] == ["process_message"]
+        assert report.describe().startswith("queue empty, nothing in flight")
+
+    def test_shutdown_cancels_a_worker_parked_behind_a_chat_turn(self, config, patched, monkeypatch):
+        """Ctrl+C mid-turn: the worker is parked at the gate (interactive_turn
+        open). Cancelling it must withdraw the waiter and exit the thread."""
+        monkeypatch.setattr("blipshell.memory.processor.MemoryProcessor", GateWaitingProcessor)
+        gate = get_gate()
+        w = MemoryWorker(config, vectors=object())
+        turn = gate.interactive_turn()
+        turn.__enter__()
+        try:
+            w.start()
+            w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, text="parked",
+                               session_id=1, memory_id=7))
+            assert _wait(lambda: gate.waiter_count == 1), "worker never reached the gate"
+            report = w.shutdown(timeout=0.5)
+            assert report.exited and report.interrupted == "process_message"
+            assert gate.waiter_count == 0, "cancelled worker left a waiter parked at the gate"
+        finally:
+            turn.__exit__(None, None, None)
+            w.shutdown(timeout=2.0)
+        assert not gate.is_active
+
+    def test_idle_extraction_in_flight_is_cancelled_at_the_deadline(self, seeded_config, patched, monkeypatch):
+        monkeypatch.setattr(worker_mod, "_IDLE_EXTRACT_INTERVAL", 0.1)
+        monkeypatch.setattr("blipshell.memory.entity_extractor.EntityExtractor", HangingExtractor)
+        HangingExtractor.runs = 0
+        w = MemoryWorker(seeded_config, vectors=object())
+        w.start()
+        try:
+            assert _wait(lambda: HangingExtractor.runs >= 1)
+            report = w.shutdown(timeout=0.5)
+        finally:
+            w.shutdown(timeout=2.0)
+        assert report.exited
+        assert report.interrupted == "idle_extract_entities"
+
+    def test_report_describes_a_thread_that_would_not_exit(self):
+        report = worker_mod.ShutdownReport(exited=False, deferred={"process_message": 2},
+                                           interrupted="extract_entities", waited_s=35.0)
+        text = report.describe()
+        assert "2 process_message" in text and "interrupted extract_entities" in text
+        assert "thread still alive" in text

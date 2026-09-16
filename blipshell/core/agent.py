@@ -49,6 +49,12 @@ from blipshell.session.manager import SessionManager
 
 logger = logging.getLogger(__name__)
 
+# How long session close gives the memory worker's IN-FLIGHT item before it
+# is cancelled (queued items are deferred immediately). One local model call
+# under load measured 20-75 s in the 2026-09 acceptance runs; a cancelled
+# item is retried by the startup sweep, so this bounds the wait, not the work.
+WORKER_CLOSE_GRACE = 30.0
+
 
 class Agent(
     ToolsMixin,
@@ -335,7 +341,6 @@ class Agent(
             # when embeddings are unavailable (the store treats that gracefully).
             if not getattr(self, "vectors", None):
                 return None
-            loop = asyncio.get_running_loop()
             return await asyncio.to_thread(self.vectors.embed_text, text)
 
         _refl = self.config.reflection
@@ -1088,27 +1093,26 @@ class Agent(
         # Enqueue any remaining undumped messages to worker before shutdown
         await self._enqueue_undumped_messages()
 
-        # Drain memory worker FIRST — must finish all DB writes before
-        # end_session runs summary/lessons on the main loop's connection.
-        # Without this ordering, worker and main loop compete for the SQLite
-        # write lock, causing "database is locked" errors and lesson timeouts.
+        # Stop the memory worker FIRST — before end_session runs summary and
+        # lessons on the main loop's connection, so the two never compete for
+        # the SQLite write lock. BOUNDED since 2026-09-16: queued items are
+        # deferred to the startup sweep (each is durable - a raw row with
+        # is_processed=0, or an unextracted memory) and the in-flight item
+        # gets WORKER_CLOSE_GRACE before it is cancelled and left retryable.
+        # Draining used to cost 15 s per queued item with no upper bound, and
+        # the acceptance run overran its wait with one extraction in flight.
         if self._memory_worker and self._memory_worker.is_alive:
             depth = self._memory_worker.queue_depth
-            if depth > 0:
-                _status(f"Draining memory queue ({depth} items)...")
-            # Scale timeout: 15s per queued item, minimum 30s
-            drain_timeout = max(30.0, depth * 15.0)
-            self._memory_worker.shutdown(timeout=drain_timeout)
+            _status(
+                f"Stopping memory worker ({depth} queued item(s) resume at next start)..."
+                if depth else "Stopping memory worker..."
+            )
+            report = self._memory_worker.shutdown(timeout=WORKER_CLOSE_GRACE)
+            if report.deferred or report.interrupted or not report.exited:
+                _status(f"  memory worker: {report.describe()}")
 
         if self.session_manager:
             await self.session_manager.end_session(on_status=on_status)
-
-        # Second shutdown attempt if worker is still alive (entity extraction
-        # may have been running during first shutdown). Give it one more try
-        # before closing the VectorStore it depends on.
-        if self._memory_worker and self._memory_worker.is_alive:
-            logger.info("Worker still alive after session close, waiting 10s more...")
-            self._memory_worker.shutdown(timeout=10.0)
 
         # Close vector store after worker is confirmed dead.
         if self.vectors:
