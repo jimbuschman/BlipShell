@@ -14,6 +14,22 @@ logger = logging.getLogger(__name__)
 
 # Track background processes across all ShellTool instances
 _background_processes: dict[int, asyncio.subprocess.Process] = {}
+_background_output: dict[int, asyncio.Task] = {}
+
+
+async def _collect_output(process):
+    """Drain both pipes continuously; retain a bounded tail per stream."""
+    async def drain(stream):
+        tail = bytearray()
+        if stream is not None:
+            while chunk := await stream.read(65536):
+                tail.extend(chunk)
+                if len(tail) > 1048576:
+                    del tail[:-1048576]
+        return bytes(tail)
+    output = await asyncio.gather(drain(process.stdout), drain(process.stderr))
+    await process.wait()
+    return output
 
 # Patterns that indicate destructive or dangerous commands.
 # When matched, approval is forced even if session-auto-approved.
@@ -151,6 +167,7 @@ class ShellTool(Tool):
 
             if run_in_background:
                 _background_processes[process.pid] = process
+                _background_output[process.pid] = asyncio.create_task(_collect_output(process))
                 return (
                     f"Started in background (PID: {process.pid}).\n"
                     f"Use check_process(pid={process.pid}) to see output and status."
@@ -203,7 +220,7 @@ class ShellTool(Tool):
                 else:
                     result += f"\n... [truncated — {len(output) + len(errors)} total chars]"
 
-            return result
+            return ToolFailure(result) if process.returncode != 0 else result
 
         except Exception as e:
             return ToolFailure(f"Error executing command: {e}")
@@ -316,8 +333,12 @@ class CheckProcessTool(Tool):
 
         # Process has finished — collect output and clean up
         try:
-            stdout = await process.stdout.read() if process.stdout else b""
-            stderr = await process.stderr.read() if process.stderr else b""
+            collector = _background_output.pop(pid, None)
+            if collector is not None:
+                stdout, stderr = await collector
+            else:
+                stdout = await process.stdout.read() if process.stdout else b""
+                stderr = await process.stderr.read() if process.stderr else b""
         except Exception:
             stdout = stderr = b""
 
@@ -350,7 +371,7 @@ class CheckProcessTool(Tool):
 
         # Clean up
         del _background_processes[pid]
-        return result
+        return ToolFailure(result) if process.returncode != 0 else result
 
 
 async def cleanup_background_processes():
@@ -363,3 +384,9 @@ async def cleanup_background_processes():
         except Exception:
             pass
     _background_processes.clear()
+    collectors = list(_background_output.values())
+    _background_output.clear()
+    for collector in collectors:
+        collector.cancel()
+    if collectors:
+        await asyncio.gather(*collectors, return_exceptions=True)

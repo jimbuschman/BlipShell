@@ -277,7 +277,7 @@ async def _save_feedback(agent: Agent, feedback: str):
 
     # Embed so it surfaces in semantic search
     try:
-        agent.vectors.add_lesson(lesson_id, lesson.content)
+        await asyncio.to_thread(agent.vectors.add_lesson, lesson_id, lesson.content)
     except Exception as e:
         logging.getLogger(__name__).debug("Feedback embed failed: %s", e)
 

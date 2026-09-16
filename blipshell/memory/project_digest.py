@@ -7,6 +7,8 @@ then processes them in batches. Incremental updates fold a single new session su
 
 from __future__ import annotations
 
+import asyncio
+
 import json
 import logging
 from datetime import datetime, timezone
@@ -98,9 +100,7 @@ class ProjectDigestManager:
 
             for query in queries:
                 try:
-                    chroma_results = self.vectors.search_memories(
-                        query=query, n_results=30,
-                    )
+                    chroma_results = await asyncio.to_thread(self.vectors.search_memories, query=query, n_results=30)
                     for cr in chroma_results:
                         doc = cr.get("document", "")
                         sim = cr.get("similarity", 0.0)

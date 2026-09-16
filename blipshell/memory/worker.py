@@ -19,6 +19,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Optional
+from blipshell.llm.ollama_gate import background_model_work, get_gate
 
 if TYPE_CHECKING:
     from blipshell.memory.vector_store import VectorStore
@@ -65,7 +66,7 @@ class MemoryWorker:
     """
 
     def __init__(self, config: BlipShellConfig, vectors: VectorStore, *,
-                 router_factory=None,
+                 router_factory=None, local_policy=None,
                  start_timeout: Optional[float] = None,
                  idle_extract_interval: Optional[float] = None,
                  poll_interval: float = 1.0):
@@ -81,6 +82,7 @@ class MemoryWorker:
         self._config = config
         self._vectors = vectors
         self._router_factory = router_factory
+        self._local_policy = local_policy
         self._start_timeout = start_timeout if start_timeout is not None else _START_TIMEOUT
         self._idle_extract_interval = (
             idle_extract_interval if idle_extract_interval is not None
@@ -123,6 +125,7 @@ class MemoryWorker:
         finally:
             loop.close()
 
+    @background_model_work
     async def _run(self, loop: asyncio.AbstractEventLoop):
         """Initialize resources, signal ready, then process loop."""
         from blipshell.llm.routing import build_routing
@@ -141,6 +144,8 @@ class MemoryWorker:
             # Local mode too, not just the PII flags: the worker summarizes
             # and ranks the same messages chat does.
             endpoint_mgr, router = build_routing(self._config)
+            if self._local_policy is not None:
+                endpoint_mgr.local_policy = self._local_policy
 
         # Own MemoryProcessor — uses worker's sqlite + router, shared chroma
         processor = MemoryProcessor(
@@ -171,6 +176,7 @@ class MemoryWorker:
                     # slow and uses the shared VectorStore which gets closed
                     # shortly after shutdown.
                     if (not self._shutting_down.is_set()
+                            and not get_gate().interactive_active
                             and time.monotonic() - last_idle_extract > self._idle_extract_interval):
                         await self._idle_extract_entities(sqlite, router, _IDLE_EXTRACT_BATCH)
                         last_idle_extract = time.monotonic()

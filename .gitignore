@@ -4,6 +4,7 @@
 
 /.vs
 __pycache__/
+.venv-review/
 *.pyc
 
 # Database files — never overwrite local data on pull

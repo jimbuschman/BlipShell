@@ -8,6 +8,8 @@ Scratch tier is handled separately (see fs_scratch.py).
 
 from __future__ import annotations
 
+import asyncio
+
 import json
 import logging
 from dataclasses import dataclass
@@ -266,7 +268,7 @@ class MemoryFSBackend:
         # is invisible to semantic search until the nightly vector backfill.
         if self.vectors is not None:
             try:
-                self.vectors.add_core_memory(new_id, content.strip())
+                await asyncio.to_thread(self.vectors.add_core_memory, new_id, content.strip())
             except Exception as e:
                 logger.warning("Core memory %s embed failed: %s", new_id, e)
         filename = build_filename(new_id, path.slug or content[:60])
@@ -300,7 +302,7 @@ class MemoryFSBackend:
             # Re-embed so the vector index reflects the edited content.
             if self.vectors is not None:
                 try:
-                    self.vectors.add_core_memory(core.id, new_content)
+                    await asyncio.to_thread(self.vectors.add_core_memory, core.id, new_content)
                 except Exception as e:
                     logger.warning("Core memory %s re-embed failed: %s", core.id, e)
             return 1

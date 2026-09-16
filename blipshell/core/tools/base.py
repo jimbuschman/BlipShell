@@ -116,6 +116,10 @@ class ToolRegistry:
         self._approval_callback = callback
         self._tools_requiring_approval = tools_requiring_approval
 
+    def configure_approval(self, tools: set[str]):
+        """Install required approval even when an interface cannot ask yet."""
+        self._tools_requiring_approval = set(tools)
+
     def set_audit_callback(self, callback: AuditCallback):
         """Set callback to log tool approval decisions."""
         self._audit_callback = callback
@@ -208,6 +212,11 @@ class ToolRegistry:
             if warning:
                 tool_call.arguments["_destructive_warning"] = warning
                 force_approval = True
+
+        if tool_call.name in self._tools_requiring_approval and not self._approval_callback:
+            return ToolResult(tool_call_id=tool_call.id, name=tool_call.name,
+                              result="Approval required, but this interface cannot request it.",
+                              success=False)
 
         # Check approval for dangerous tools
         if (

@@ -25,6 +25,8 @@ import heapq
 import logging
 import threading
 from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
+from functools import wraps
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,33 @@ logger = logging.getLogger(__name__)
 INTERACTIVE = 0   # User-facing chat, search queries
 EMBEDDING = 1     # Reserved for future explicit embedding priority
 BACKGROUND = 2    # Summarization, ranking, entity extraction
+
+_model_priority: ContextVar[int | None] = ContextVar('model_priority', default=None)
+
+
+def background_model_work(fn):
+    """Keep background priority across awaits and asyncio.to_thread calls."""
+    @wraps(fn)
+    async def wrapped(*args, **kwargs):
+        token = _model_priority.set(BACKGROUND)
+        try:
+            return await fn(*args, **kwargs)
+        finally:
+            _model_priority.reset(token)
+    return wrapped
+
+
+def interactive_model_work(fn):
+    """Reserve foreground scheduling for a complete user turn, including recall."""
+    @wraps(fn)
+    async def wrapped(*args, **kwargs):
+        token = _model_priority.set(INTERACTIVE)
+        try:
+            with get_gate().interactive_turn():
+                return await fn(*args, **kwargs)
+        finally:
+            _model_priority.reset(token)
+    return wrapped
 
 _WORKER_THREAD_NAME = "memory-worker"
 
@@ -82,6 +111,8 @@ class OllamaGate:
         self._active = False
         self._waiters: list[_Waiter] = []
         self._seq = 0  # tie-breaker for same-priority (FIFO)
+        self._interactive_turns = 0
+        self._sync_depth = threading.local()
         # Stats
         self._total_acquisitions = 0
         self._total_waits = 0
@@ -98,7 +129,7 @@ class OllamaGate:
         """
         with self._lock:
             self._total_acquisitions += 1
-            if not self._active:
+            if not self._active and (not self._interactive_turns or priority < BACKGROUND):
                 self._active = True
                 logger.debug("OllamaGate: acquired immediately (P%d)", priority)
                 return True
@@ -143,7 +174,12 @@ class OllamaGate:
             waiter = heapq.heappop(self._waiters)
             if waiter.state is _CANCELLED:
                 continue
+            if self._interactive_turns and waiter.priority >= BACKGROUND:
+                heapq.heappush(self._waiters, waiter)
+                self._active = False
+                return
             waiter.state = _OWNED
+            self._active = True
             try:
                 waiter.wake()
             except Exception as e:
@@ -160,6 +196,8 @@ class OllamaGate:
 
     def infer_priority(self) -> int:
         """Infer priority from current thread name."""
+        if _model_priority.get() is not None:
+            return _model_priority.get()
         if threading.current_thread().name == _WORKER_THREAD_NAME:
             return BACKGROUND
         return INTERACTIVE
@@ -167,11 +205,41 @@ class OllamaGate:
     @contextmanager
     def gate(self, priority: int = BACKGROUND, timeout: float | None = None):
         """Sync context manager for gating Ollama calls."""
+        # Vector writes already hold the gate when their embedding helper runs.
+        # Reentrancy is restricted to synchronous calls on this thread; async
+        # tasks on the same thread must never share ownership this way.
+        if getattr(self._sync_depth, 'depth', 0):
+            self._sync_depth.depth += 1
+            try:
+                yield
+            finally:
+                self._sync_depth.depth -= 1
+            return
         self.acquire(priority, timeout)
+        self._sync_depth.depth = 1
         try:
             yield
         finally:
+            self._sync_depth.depth = 0
             self.release()
+
+    @contextmanager
+    def interactive_turn(self):
+        """Pause new background acquisitions, without interrupting an active call."""
+        with self._lock:
+            self._interactive_turns += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._interactive_turns -= 1
+                if not self._interactive_turns and not self._active:
+                    self._release_locked()
+
+    @property
+    def interactive_active(self) -> bool:
+        with self._lock:
+            return self._interactive_turns > 0
 
     async def async_acquire(self, priority: int = BACKGROUND,
                             timeout: float | None = None) -> bool:
@@ -186,7 +254,7 @@ class OllamaGate:
         loop = asyncio.get_running_loop()
         with self._lock:
             self._total_acquisitions += 1
-            if not self._active:
+            if not self._active and (not self._interactive_turns or priority < BACKGROUND):
                 self._active = True
                 logger.debug("OllamaGate: acquired immediately (P%d)", priority)
                 return True

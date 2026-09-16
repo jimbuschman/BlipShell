@@ -264,7 +264,7 @@ def _local(ctx: CommandContext):
         ctx.console.print(
             "[green]Local mode ON[/green] [dim]— cloud endpoints are invisible "
             "to routing; every call (chat and background) runs on this "
-            "machine. Expect the local model, not minimax.[/dim]"
+            "machine. Requests already sent cannot be recalled.[/dim]"
         )
         ctx.console.print(
             "[dim]Boundary to know: if you switch back with /local off before "

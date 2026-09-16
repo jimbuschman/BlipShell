@@ -37,6 +37,7 @@ from blipshell.llm.endpoints import EndpointManager
 from blipshell.llm.routing import build_routing
 from blipshell.llm.model_settings import ModelSettingsRegistry
 from blipshell.llm.router import LLMRouter, TaskType
+from blipshell.llm.ollama_gate import background_model_work
 from blipshell.memory.vector_store import VectorStore
 from blipshell.memory.manager import MemoryManager, estimate_tokens
 from blipshell.memory.processor import MemoryProcessor
@@ -91,6 +92,8 @@ class Agent(
 
         # Tools
         self.tool_registry = ToolRegistry()
+        if not config.agent.auto_approve_tools:
+            self.tool_registry.configure_approval(set(config.agent.tools_requiring_approval))
 
         # Task execution (Phase 1)
         self.task_executor: Optional[TaskExecutor] = None
@@ -267,7 +270,9 @@ class Agent(
         # Background memory worker (dedicated thread with own event loop +
         # connections). Constructed here, STARTED in _start_background.
         from blipshell.memory.worker import MemoryWorker
-        self._memory_worker = MemoryWorker(self.config, self.vectors)
+        self._memory_worker = MemoryWorker(
+            self.config, self.vectors, local_policy=self.endpoint_manager.local_policy,
+        )
 
         # Session manager
         self.session_manager = SessionManager(
@@ -331,7 +336,7 @@ class Agent(
             if not getattr(self, "vectors", None):
                 return None
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, self.vectors.embed_text, text)
+            return await asyncio.to_thread(self.vectors.embed_text, text)
 
         _refl = self.config.reflection
         self._self_thoughts = SelfThoughtStore(
@@ -454,7 +459,9 @@ class Agent(
         try:
             from scripts.backup_db import get_last_backup_time, run_backup, rotate_backups
 
-            last = get_last_backup_time()
+            backup_args = ({"out_dir": self.config.database.backup_dir}
+                           if self.config.database.backup_dir else {})
+            last = get_last_backup_time(**backup_args)
             if last is not None:
                 hours_ago = (datetime.now() - last).total_seconds() / 3600
                 if hours_ago < 24:
@@ -467,13 +474,14 @@ class Agent(
                 lambda: run_backup(
                     db_path=self.config.database.path,
                     quiet=True,
+                    **backup_args,
                 ),
             )
             if result:
                 logger.info("Auto-backup created: %s", result)
                 # Rotate, keeping last 5
                 await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: rotate_backups(keep=5),
+                    None, lambda: rotate_backups(keep=5, **backup_args),
                 )
             else:
                 logger.warning("Auto-backup failed")
@@ -724,6 +732,7 @@ class Agent(
 
     _RETURN_REFLECTION_MARKER = "return_reflection_marker"
 
+    @background_model_work
     async def _reflect_on_return(self):
         """Form one lingering thought when startup follows a long quiet gap.
 
@@ -756,6 +765,7 @@ class Agent(
         except Exception as e:
             logger.debug("On-return reflection failed: %s", e)
 
+    @background_model_work
     async def _reflection_loop(self):
         """Once per long idle gap, form a self-originated lingering thought.
 
@@ -1282,6 +1292,9 @@ class Agent(
         except Exception as e:
             return f"Compaction failed (LLM error): {e}"
 
+        if not summary or not summary.strip():
+            return "Compaction failed: the model returned an empty summary."
+
         # Replace older messages with a single system summary message
         compacted_msg = SessionMessage(
             role=MessageRole.SYSTEM,
@@ -1291,9 +1304,10 @@ class Agent(
         )
 
         # Replace the session manager's message list
-        self.session_manager._messages = [compacted_msg] + list(recent)
-        # Mark compacted indices as dumped (they were already processed)
-        self.session_manager._dumped_indices = {0}
+        try:
+            await self.session_manager.compact_prefix(len(older), compacted_msg, messages)
+        except ValueError as error:
+            return f"Compaction deferred: {error}"
 
         old_count = len(older)
         old_tokens = sum(getattr(m, "token_count", 0) or 0 for m in older)

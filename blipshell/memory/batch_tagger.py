@@ -15,6 +15,7 @@ memories against a pool of 17,080.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -159,6 +160,8 @@ class BatchTagger:
             "memories_tagged": 0,
             "tags_assigned": 0,
             "memories_marked_skip": 0,
+            "failed": 0,
+            "no_valid_assignment": 0,
             "error": None,
         }
 
@@ -168,6 +171,7 @@ class BatchTagger:
         available_tags = await self._get_available_tags()
         if not available_tags:
             stats["error"] = "No tags in database"
+            stats["failed"] = len(batch_ids)
             return stats
 
         valid_tags = set(available_tags)
@@ -184,12 +188,14 @@ class BatchTagger:
             # memories, and marking them would hide them from the next run.
             logger.error("Batch tagger LLM call failed: %s", e)
             stats["error"] = str(e)
+            stats["failed"] = len(batch_ids)
             return stats
 
         assignments = self._parse_response(
             response, summaries, valid_tags, allow_new_tags=self.allow_new_tags,
         )
 
+        failed_ids = set()
         for memory_id, tags in assignments.items():
             try:
                 await self.sqlite.tag_memory(memory_id, tags)
@@ -197,6 +203,8 @@ class BatchTagger:
                 stats["tags_assigned"] += len(tags)
             except Exception as e:
                 logger.error("Failed to tag memory %d: %s", memory_id, e)
+                failed_ids.add(memory_id)
+                stats["failed"] += 1
 
         # Whatever is still at or under the pool threshold has had its turn:
         # the model returned NONE, invented names outside the vocabulary, or
@@ -205,13 +213,19 @@ class BatchTagger:
         # the nightly — and did not remove the memory from a <=1 pool anyway.)
         counts = await self.sqlite.get_tags_for_memories(batch_ids)
         for mid in batch_ids:
+            # A storage error must stay retryable, just like an endpoint error.
+            if mid in failed_ids:
+                continue
             real = [t for t in counts.get(mid, []) if t != BATCH_TAG_SKIP_MARKER]
             if len(real) <= POOL_MAX_TAGS:
+                if mid not in assignments:
+                    stats["no_valid_assignment"] += 1
                 try:
                     await self.sqlite.tag_memory(mid, [BATCH_TAG_SKIP_MARKER])
                     stats["memories_marked_skip"] += 1
                 except Exception as e:
                     logger.warning("Failed to mark memory %d as skipped: %s", mid, e)
+                    stats["failed"] += 1
 
         return stats
 
@@ -246,9 +260,12 @@ class BatchTagger:
             "memories_tagged": 0,
             "tags_assigned": 0,
             "memories_marked_skip": 0,
+            "failed": 0,
+            "no_valid_assignment": 0,
             "errors": 0,
             "stopped_early": False,
             "stop_reason": None,
+            "interrupted_batches": 0,
             "remaining_pool": None,
             "avg_batch_seconds": None,
             "est_hours_to_drain": None,
@@ -289,7 +306,27 @@ class BatchTagger:
                 )
 
             batch_start = time.monotonic()
-            batch_stats = await self.tag_batch(exclude_ids=attempted)
+            if deadline is None:
+                batch_stats = await self.tag_batch(exclude_ids=attempted)
+            else:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    total_stats["stopped_early"] = True
+                    total_stats["stop_reason"] = "time budget exhausted before next batch"
+                    break
+                try:
+                    batch_stats = await asyncio.wait_for(
+                        self.tag_batch(exclude_ids=attempted), timeout=remaining,
+                    )
+                except asyncio.TimeoutError:
+                    # A previous batch's speed cannot bound the next model call.
+                    # Keep completed-batch statistics instead of letting the outer
+                    # nightly timeout discard the entire report. Writes already
+                    # committed remain valid; unfinished rows stay eligible.
+                    total_stats["interrupted_batches"] += 1
+                    total_stats["stopped_early"] = True
+                    total_stats["stop_reason"] = "time budget reached during a batch; unfinished work remains retryable"
+                    break
             batch_elapsed = time.monotonic() - batch_start
             total_stats["batches"] += 1
 
@@ -303,6 +340,8 @@ class BatchTagger:
             total_stats["memories_tagged"] += batch_stats["memories_tagged"]
             total_stats["tags_assigned"] += batch_stats["tags_assigned"]
             total_stats["memories_marked_skip"] += batch_stats.get("memories_marked_skip", 0)
+            total_stats["failed"] += batch_stats.get("failed", 0)
+            total_stats["no_valid_assignment"] += batch_stats.get("no_valid_assignment", 0)
             if batch_stats["error"]:
                 total_stats["errors"] += 1
 
@@ -320,6 +359,9 @@ class BatchTagger:
             logger.warning("Could not count remaining pool: %s", e)
             remaining = None
         total_stats["remaining_pool"] = remaining
+        if remaining == 0:
+            total_stats["stopped_early"] = False
+            total_stats["stop_reason"] = None
         if avg_batch_seconds > 0.0:
             total_stats["avg_batch_seconds"] = round(avg_batch_seconds, 1)
             if remaining is not None:

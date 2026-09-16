@@ -103,6 +103,7 @@ class Worker:
             if claim_resp.status_code != 200:
                 logger.debug("Could not claim task #%d", task_id)
                 continue
+            claim_token = claim_resp.json()['claim_token']
 
             logger.info(
                 "Claimed task #%d: %s", task_id, task_data.get("title", ""),
@@ -110,25 +111,26 @@ class Worker:
 
             # Execute
             try:
-                await self._report_progress(task_id, 0.1, "Starting execution...")
+                await self._report_progress(task_id, 0.1, "Starting execution...", claim_token)
 
                 result = await self._execute_task(task_data)
 
-                await self._report_progress(task_id, 0.9, "Completing...")
+                await self._report_progress(task_id, 0.9, "Completing...", claim_token)
 
                 # Report success
-                await self._http.post(
+                completion = await self._http.post(
                     f"{self.main_url}/api/worker/complete/{task_id}",
-                    json={"status": "completed", "result": result},
+                    json={"status": "completed", "result": result, "claim_token": claim_token},
                     headers=self._headers(),
                 )
+                completion.raise_for_status()
                 logger.info("Task #%d completed", task_id)
 
             except Exception as e:
                 logger.error("Task #%d failed: %s", task_id, e)
                 await self._http.post(
                     f"{self.main_url}/api/worker/complete/{task_id}",
-                    json={"status": "failed", "error_message": str(e)},
+                    json={"status": "failed", "error_message": str(e), "claim_token": claim_token},
                     headers=self._headers(),
                 )
 
@@ -152,13 +154,13 @@ class Worker:
         return str(response)
 
     async def _report_progress(
-        self, task_id: int, pct: float, message: str,
+        self, task_id: int, pct: float, message: str, claim_token: str,
     ):
         """Report progress back to main instance."""
         try:
             await self._http.post(
                 f"{self.main_url}/api/worker/progress/{task_id}",
-                json={"progress_pct": pct, "progress_message": message},
+                json={"progress_pct": pct, "progress_message": message, "claim_token": claim_token},
                 headers=self._headers(),
             )
         except Exception as e:

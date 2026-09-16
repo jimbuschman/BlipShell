@@ -21,6 +21,7 @@ from blipshell.memory.centroid_tagger import CentroidTagger
 from blipshell.memory.consolidation import MemoryConsolidator
 from blipshell.memory.tag_discovery import TagDiscovery
 from blipshell.memory.tagger import register_topic_patterns
+from blipshell.llm.ollama_gate import background_model_work
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +193,7 @@ class NightlyRunner:
 
         return cls(config, sqlite, vectors, router, processor)
 
+    @background_model_work
     async def run(
         self,
         on_status: Optional[Callable[[str], None]] = None,
@@ -206,6 +208,17 @@ class NightlyRunner:
         run_jobs = jobs or JOB_ORDER
         started_at = time.time()
         results = {}
+        tagging_before = await self._tagging_snapshot()
+
+        async def checkpoint(status="running", active_job=None, **extra):
+            from blipshell.core.nightly_history import save_run
+            record = {"started_at": started_at, "status": status,
+                      "active_job": active_job, "jobs": dict(results),
+                      "tagging": {"before": tagging_before}, **extra}
+            try:
+                await save_run(self.sqlite, record)
+            except Exception as e:
+                logger.warning("Could not save nightly history: %s", e)
 
         def _status(msg: str):
             if on_status:
@@ -219,6 +232,7 @@ class NightlyRunner:
             info = read_lock_info(db_path) or {}
             op = info.get("operation", "import")
             _status(f"Skipping nightly: {op} in progress (use force=True to override)")
+            await checkpoint("skipped", reason=f"{op} in progress", completed_at=time.time())
             return {
                 "skipped": True,
                 "reason": f"{op} in progress",
@@ -227,6 +241,7 @@ class NightlyRunner:
             }
 
         _status(f"Starting nightly run ({len(run_jobs)} jobs)...")
+        await checkpoint()
 
         # Pre-flight: check if Ollama is responsive before running LLM jobs.
         # If it's down, skip LLM-dependent jobs instead of timing out on each.
@@ -238,17 +253,20 @@ class NightlyRunner:
             if job_name not in JOB_ORDER:
                 _status(f"Unknown job: {job_name}, skipping.")
                 results[job_name] = {"status": "skipped", "error": "unknown job"}
+                await checkpoint()
                 continue
 
             # Skip LLM jobs if Ollama is down
             if not ollama_ok and job_name in _OLLAMA_JOBS:
                 _status(f"  {job_name} skipped (Ollama down)")
                 results[job_name] = {"status": "skipped", "error": "Ollama not responding"}
+                await checkpoint()
                 continue
 
             _status(f"Running job: {job_name}...")
             t0 = time.monotonic()
             job_timeout = _JOB_TIMEOUTS.get(job_name, _JOB_TIMEOUT)
+            await checkpoint(active_job=job_name)
             try:
                 job_result = await asyncio.wait_for(
                     self.run_job(job_name, on_status=on_status),
@@ -278,6 +296,8 @@ class NightlyRunner:
                 }
                 _status(f"  {job_name} FAILED: {e}")
 
+            await checkpoint()
+
         completed_at = time.time()
         total_elapsed = completed_at - started_at
 
@@ -299,7 +319,10 @@ class NightlyRunner:
             "completed_at": completed_at,
             "elapsed_s": round(total_elapsed, 1),
             "jobs": results,
+            "tagging": {"before": tagging_before, "after": await self._tagging_snapshot()},
         }
+        await checkpoint("completed", completed_at=completed_at,
+                         elapsed_s=round(total_elapsed, 1), tagging=full_results["tagging"])
 
         # Build and store structured report for startup notification
         try:
@@ -308,6 +331,14 @@ class NightlyRunner:
             logger.warning("Failed to build nightly report: %s", e)
 
         return full_results
+
+    async def _tagging_snapshot(self):
+        from blipshell.memory.tag_health import tag_health_async
+        try:
+            return await tag_health_async(self.sqlite)
+        except Exception as e:
+            logger.warning("Could not measure tagging health: %s", e)
+            return None
 
     async def run_job(
         self,
@@ -356,6 +387,9 @@ class NightlyRunner:
             result = backup_before_destructive(
                 "nightly",
                 db_path=self.config.database.path,
+                quiet=True,
+                **({"out_dir": self.config.database.backup_dir}
+                   if getattr(self.config.database, "backup_dir", None) else {}),
             )
             return {"backup_path": str(result) if result else None}
         except Exception as e:
@@ -372,7 +406,7 @@ class NightlyRunner:
         total = {"succeeded": 0, "failed": 0}
         for collection in ("memories", "core_memories", "lessons", "entities",
                            "reflections"):
-            stats = self.vectors.backfill_missing_vectors(collection, limit=500)
+            stats = await asyncio.to_thread(self.vectors.backfill_missing_vectors, collection, limit=500)
             total["succeeded"] += stats.get("succeeded", 0)
             total["failed"] += stats.get("failed", 0)
             if stats.get("succeeded", 0) > 0:
@@ -463,7 +497,7 @@ class NightlyRunner:
                     await self.sqlite.update_memory(mem.id, summary=summary.strip())
                     # Update vector store embedding with proper summary
                     try:
-                        self.vectors.add_memory(mem.id, summary.strip())
+                        await asyncio.to_thread(self.vectors.add_memory, mem.id, summary.strip())
                     except Exception as e:
                         logger.debug("vector store update failed for memory %d: %s", mem.id, e)
                     resummarized += 1
@@ -493,7 +527,11 @@ class NightlyRunner:
     async def _job_centroid_tag(self, on_status) -> dict:
         """Run centroid-based tag assignment."""
         tagger = CentroidTagger(self.sqlite, self.vectors, self.config.memory)
-        return await tagger.run(on_status=on_status)
+        before = await self._tagging_snapshot()
+        result = await tagger.run(on_status=on_status)
+        result["tagging_before"] = before
+        result["tagging_after"] = await self._tagging_snapshot()
+        return result
 
     async def _job_batch_tag(self, on_status) -> dict:
         """Run LLM batch tag assignment.
@@ -508,11 +546,14 @@ class NightlyRunner:
         # were then handed out as tags. Idempotent; usually removes nothing.
         purged = await self.sqlite.purge_tags(sorted(JUNK_TAG_NAMES))
         tagger = BatchTagger(self.sqlite, self.router, self.config.memory)
+        before = await self._tagging_snapshot()
         result = await tagger.tag_all(
             on_status=on_status,
-            time_budget_seconds=_JOB_TIMEOUT - 30,
+            time_budget_seconds=max(0, _JOB_TIMEOUTS.get("batch_tag", _JOB_TIMEOUT) - 30),
         )
         result["junk_tags_purged"] = purged
+        result["tagging_before"] = before
+        result["tagging_after"] = await self._tagging_snapshot()
         return result
 
     async def _job_prune(self, on_status) -> dict:
@@ -879,7 +920,7 @@ class NightlyRunner:
             if lesson.id in seen_ids:
                 continue
             try:
-                similar = self.vectors.search_lessons(lesson.content, n_results=5)
+                similar = await asyncio.to_thread(self.vectors.search_lessons, lesson.content, n_results=5)
                 for s in similar:
                     other_id = s.get("id")
                     if other_id == lesson.id or other_id in seen_ids:
@@ -1072,7 +1113,7 @@ class NightlyRunner:
             if self.vectors is None:
                 return None
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, self.vectors.embed_text, text)
+            return await asyncio.to_thread(self.vectors.embed_text, text)
 
         store = SelfThoughtStore(
             self.sqlite,
@@ -1508,8 +1549,8 @@ class NightlyRunner:
             skip_vectors=False,
             skip_endpoints=True,  # endpoints may not be available during nightly
         )
-        warnings = [f for f in result.findings if f["severity"] == "WARNING"]
-        errors = [f for f in result.findings if f["severity"] == "ERROR"]
+        warnings = [f for f in result.findings if f["severity"].lower() in ("warn", "warning")]
+        errors = [f for f in result.findings if f["severity"].lower() == "error"]
         return {
             "total_findings": len(result.findings),
             "warnings": len(warnings),
@@ -1555,11 +1596,11 @@ class NightlyRunner:
             # Collect health check findings
             if job_name == "health_check" and status == "ok":
                 for finding in job_result.get("findings", []):
-                    if finding["severity"] == "ERROR":
+                    if finding["severity"].lower() == "error":
                         errors.append(
                             f"[health] {finding['check']}: {finding['message']}"
                         )
-                    elif finding["severity"] == "WARNING":
+                    elif finding["severity"].lower() in ("warn", "warning"):
                         warnings.append(
                             f"[health] {finding['check']}: {finding['message']}"
                         )
@@ -1567,6 +1608,8 @@ class NightlyRunner:
             # Flag jobs with failures
             if job_result.get("failed", 0) > 0:
                 warnings.append(f"{job_name}: {job_result['failed']} failures")
+            if job_result.get("errors", 0) and job_name != "health_check":
+                warnings.append(f"{job_name}: {job_result['errors']} errors")
             # Per-item timeouts inside a job that itself finished (friction
             # analysis reports these as `timed_out`, NOT `failed`, so the
             # check above misses them entirely).
@@ -1592,12 +1635,25 @@ class NightlyRunner:
                 f"{len(jobs)} job(s) skipped ({reason}): {', '.join(sorted(jobs))}"
             )
 
+        from blipshell.core.nightly_history import HISTORY_KEY, decode_history, growing_pool_warning
+        from blipshell.memory.tag_health import tag_health_warnings
+        snapshot = results.get("tagging", {}).get("after")
+        if snapshot:
+            warnings.extend(tag_health_warnings(snapshot))
+        try:
+            trend = growing_pool_warning(decode_history(await self.sqlite.get_metadata(HISTORY_KEY)))
+            if trend:
+                warnings.append(trend)
+        except Exception as e:
+            warnings.append(f"Could not read nightly trend history: {e}")
+
         report = {
             "timestamp": results.get("completed_at"),
             "elapsed_s": results.get("elapsed_s"),
             "warnings": warnings,
             "errors": errors,
             "job_statuses": statuses,
+            "tagging": results.get("tagging", {}),
             "summary": {
                 job: {k: v for k, v in data.items() if k != "findings"}
                 for job, data in results.get("jobs", {}).items()

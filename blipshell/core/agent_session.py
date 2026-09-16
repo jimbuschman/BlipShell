@@ -123,7 +123,7 @@ class SessionMixin:
         """Backfill any missing vectors at session start."""
         try:
             for collection in ("core_memories", "lessons"):
-                stats = self.vectors.backfill_missing_vectors(collection, limit=100)
+                stats = await asyncio.to_thread(self.vectors.backfill_missing_vectors, collection, limit=100)
                 if stats.get("succeeded", 0) > 0:
                     logger.info("Startup vector backfill %s: %s", collection, stats)
         except Exception as e:
@@ -280,7 +280,7 @@ class SessionMixin:
                 names = [r["name"] for r in chunk]
                 types = [r["entity_type"] for r in chunk]
                 try:
-                    self.vectors.upsert_entities_batch(ids, names, types)
+                    await asyncio.to_thread(self.vectors.upsert_entities_batch, ids, names, types)
                 except Exception as e:
                     logger.warning("Entity backfill batch failed: %s", e)
 

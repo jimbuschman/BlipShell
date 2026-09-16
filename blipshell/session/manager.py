@@ -78,10 +78,16 @@ class SessionManager:
         self, project: Optional[str] = None, resume_session_id: Optional[int] = None
     ) -> int:
         """Start a new session or resume an existing one."""
+        await self.flush_pending_persists()
+        self._messages.clear()
+        self._dumped_indices.clear()
+        self._memory_db_ids.clear()
+        self.history_summarized_upto = 0
         if resume_session_id:
             session = await self.sqlite.get_session(resume_session_id)
             if session:
                 self.session_id = session.id
+                self._ended_sessions.discard(session.id)
                 self.project = session.project
                 # Load existing messages into memory manager
                 memories = await self.sqlite.get_memories_by_session(session.id)
@@ -100,6 +106,7 @@ class SessionManager:
                         images=images,
                     ))
                     self._dumped_indices.add(len(self._messages) - 1)
+                    self._memory_db_ids[len(self._messages) - 1] = mem.id
                 logger.info("Resumed session %d (%d messages)", session.id, len(memories))
                 return session.id
 
@@ -183,6 +190,25 @@ class SessionManager:
     def get_messages(self) -> list[SessionMessage]:
         """Get all messages in the current session."""
         return list(self._messages)
+
+    async def compact_prefix(self, count: int, summary: SessionMessage,
+                             expected: list[SessionMessage]) -> None:
+        """Replace a prefix while preserving surviving message identities."""
+        await self.flush_pending_persists()
+        if (len(self._messages) != len(expected)
+                or any(a is not b for a, b in zip(self._messages, expected))):
+            raise ValueError("Conversation changed during compaction; retry it.")
+        # Persist/process excluded turns before discarding their queue state.
+        # Undumped prefixes must remain available to the background pipeline.
+        if any(i not in self._dumped_indices and msg.role in
+               (MessageRole.USER, MessageRole.ASSISTANT)
+               for i, msg in enumerate(self._messages[:count])):
+            raise ValueError("Older messages are still awaiting memory processing; retry shortly.")
+        self._messages = [summary] + self._messages[count:]
+        self._memory_db_ids = {i - count + 1: mid for i, mid in self._memory_db_ids.items()
+                               if i >= count}
+        self._dumped_indices = {0} | {i - count + 1 for i in self._dumped_indices if i >= count}
+        self.history_summarized_upto = max(1, self.history_summarized_upto - count + 1)
 
     def get_ollama_messages(self) -> list[dict]:
         """Get messages formatted for Ollama API."""
@@ -316,7 +342,8 @@ class SessionManager:
 
         self._ended_sessions.add(self.session_id)
 
-        failed = {k: v for k, v in outcomes.items() if v != "ok"}
+        failed = {k: v for k, v in outcomes.items()
+                  if v != "ok" and not v.startswith("skipped:")}
         if failed:
             logger.warning(
                 "Session %d ended with %d failed step(s): %s",
@@ -347,6 +374,12 @@ class SessionManager:
         """Update the project digest with this session's summary."""
         if not self.project or not self.session_id:
             return
+        # start_session accepts an ad-hoc project label. Without a registered
+        # project there is nowhere to save a digest: bootstrapping first can
+        # spend many model calls on broad keyword matches, then discard it.
+        if not await self.sqlite.get_project(self.project):
+            logger.info("Skipping digest for unregistered project %r", self.project)
+            return "skipped: unregistered project"
         session = await self.sqlite.get_session(self.session_id)
         if not session or not session.summary:
             return

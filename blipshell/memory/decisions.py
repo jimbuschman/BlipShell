@@ -16,6 +16,8 @@ that supersession and marks the row reopened, with the reason.
 
 from __future__ import annotations
 
+import asyncio
+
 import json
 import logging
 from dataclasses import dataclass
@@ -96,8 +98,7 @@ async def record_decision(sqlite, vectors, *, decision: str, reason: str = "",
     mid = await sqlite.create_memory(mem)
     if vectors is not None:
         try:
-            vectors.add_memory(mid, content, {"session_id": str(session_id), "role": decided_by,
-                                              "memory_type": "decision"})
+            await asyncio.to_thread(vectors.add_memory, mid, content, {'session_id': str(session_id), 'role': decided_by, 'memory_type': 'decision'})
         except Exception as e:
             logger.warning("Decision %d embed failed (FTS still finds it): %s", mid, e)
     logger.info("Decision %d recorded (%s): %s", mid, decided_by, decision[:80])

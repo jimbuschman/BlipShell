@@ -7,6 +7,7 @@ and load balancing by active requests.
 import asyncio
 import logging
 import time
+import threading
 from dataclasses import dataclass, field
 from typing import Optional, Collection
 
@@ -141,7 +142,7 @@ class EndpointManager:
         # This is THE chokepoint: interactive chat, the router's background
         # calls and context sizing all pick endpoints here, so one flag covers
         # every path without touching call sites.
-        self.local_only = False
+        self.local_policy = threading.Event()
         llm_cfg = llm_config or LLMConfig()
         for cfg in configs:
             client = self._create_client(cfg, llm_cfg)
@@ -162,6 +163,14 @@ class EndpointManager:
                 client=client,
             )
             self._endpoints.append(ep)
+
+    @property
+    def local_only(self) -> bool:
+        return self.local_policy.is_set()
+
+    @local_only.setter
+    def local_only(self, enabled: bool):
+        self.local_policy.set() if enabled else self.local_policy.clear()
 
     @staticmethod
     def _create_client(cfg: EndpointConfig, llm_cfg: LLMConfig):

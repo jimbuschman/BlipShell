@@ -295,6 +295,7 @@ class VectorStore:
 
     # --- Embedding generation ---
 
+    @_ollama_gated
     def _embed(self, text: str) -> list[float]:
         """Generate embedding for a single text via Ollama.
 
@@ -353,6 +354,7 @@ class VectorStore:
             )
             return False
 
+    @_ollama_gated
     def _embed_batch(self, texts: list[str], chunk_size: int = 32) -> list[list[float]]:
         """Generate embeddings for multiple texts, chunked to avoid overwhelming Ollama.
 
@@ -521,7 +523,7 @@ class VectorStore:
                 )
             self._conn.commit()
 
-    # --- Search methods (NOT gated — small embedding model runs concurrently) ---
+    # --- Search methods (embedding requests share the model scheduler) ---
 
     def search_memories(
         self,

@@ -29,6 +29,29 @@ from blipshell.llm.router import LLMRouter
 from blipshell.models.config import BlipShellConfig, EndpointConfig, ModelsConfig
 
 
+def local_model_or_fallback(manager, endpoint, model: str, fallback: str | None) -> str:
+    """A local Ollama URL can still proxy a cloud model; check both boundaries.
+
+    Known cloud endpoint model names also cover provider-specific names without
+    a ':cloud' suffix. A configured local fallback is required when rejected.
+    """
+    if not manager.local_only:
+        return model
+    cloud_models = {name for ep in manager.endpoints if ep.should_sanitize_pii
+                    for name in ep.models.values()}
+
+    def allowed(name):
+        return bool(name) and not (
+            name in cloud_models or name.lower().endswith((':cloud', '-cloud'))
+        )
+
+    if not endpoint.should_sanitize_pii and allowed(model):
+        return model
+    if not endpoint.should_sanitize_pii and allowed(fallback):
+        return fallback
+    raise RuntimeError(f"Local mode has no local model configured for '{model}'")
+
+
 def build_endpoint_manager(
     config: BlipShellConfig,
     *,

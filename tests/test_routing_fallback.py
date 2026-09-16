@@ -153,6 +153,7 @@ def _make_models_config(**overrides):
 @pytest.fixture
 def endpoint_manager():
     mgr = AsyncMock()
+    mgr.local_only = False
     return mgr
 
 

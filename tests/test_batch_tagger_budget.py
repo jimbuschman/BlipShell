@@ -110,6 +110,43 @@ async def test_tag_all_budget_with_quick_drain():
     assert result["memories_tagged"] == 20
 
 
+async def test_budget_boundary_after_last_batch_reports_drained():
+    tagger = _StubBatchTagger(per_batch_seconds=0.01, total_available=10)
+    result = await tagger.tag_all(time_budget_seconds=0.1)
+    assert result['remaining_pool'] == 0
+    assert result['stopped_early'] is False
+    assert result['stop_reason'] is None
+
+
+async def test_inflight_batch_deadline_keeps_completed_progress():
+    tagger = _StubBatchTagger(per_batch_seconds=0.01, total_available=100)
+    original = tagger.tag_batch
+    calls = 0
+    async def slow_second_batch(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            await asyncio.sleep(30)
+        return await original(**kwargs)
+    tagger.tag_batch = slow_second_batch
+    # The existing between-batch gate reserves five seconds; allow it to start
+    # the second batch, then verify a sudden slowdown cannot overrun the budget.
+    result = await asyncio.wait_for(tagger.tag_all(time_budget_seconds=5.2), timeout=7)
+    assert result['checked'] == 10
+    assert result['memories_tagged'] == 10
+    assert result['remaining_pool'] == 90
+    assert result['interrupted_batches'] == 1
+    assert result['stopped_early'] is True
+
+
+async def test_first_batch_is_also_bounded():
+    tagger = _StubBatchTagger(per_batch_seconds=30, total_available=100)
+    result = await asyncio.wait_for(tagger.tag_all(time_budget_seconds=0.05), timeout=1)
+    assert result['checked'] == 0
+    assert result['remaining_pool'] == 100
+    assert result['interrupted_batches'] == 1
+
+
 @pytest.mark.asyncio
 async def test_stop_reason_reports_remaining_and_eta():
     """'Stopped early' must come with how much is left and how long it takes

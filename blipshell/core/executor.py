@@ -657,6 +657,11 @@ class TaskExecutor:
         if not endpoint:
             return None, "", "", False
         model = endpoint.models.get(task_type) or self.router.get_model(task_type)
+        from blipshell.llm.routing import local_model_or_fallback
+        model = local_model_or_fallback(
+            self.router._endpoint_manager, endpoint, model,
+            self.router.get_fallback_model(task_type),
+        )
 
         chat_kwargs: dict = {}
         if endpoint.context_tokens:

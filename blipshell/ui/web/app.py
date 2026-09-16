@@ -5,6 +5,7 @@ memory browser, data export, and API key auth.
 """
 
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import logging
 import time
@@ -63,7 +64,7 @@ async def verify_auth(
     if not _auth_config or not _auth_config.enabled:
         return  # auth disabled
     if not _auth_config.api_key:
-        return  # no key configured = open
+        raise HTTPException(status_code=503, detail="Authentication enabled but no API key configured")
     if not credentials or credentials.credentials != _auth_config.api_key:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
@@ -72,6 +73,15 @@ def create_app(config_path: str | None = None) -> FastAPI:
     """Create the FastAPI application."""
     from blipshell import __version__
     app = FastAPI(title="BlipShell", version=__version__)
+    # Agent owns mutable session state. Hold this lease for a whole WebSocket
+    # conversation or API request; never silently swap another client's state.
+    conversation_lock = asyncio.Lock()
+
+    async def finish_conversation():
+        # Agent.end_session shuts down shared stores/workers. Keep the server
+        # alive while closing only the conversation that held the lease.
+        await _agent._enqueue_undumped_messages()
+        await _agent.session_manager.end_session()
 
     # Mount static files
     if STATIC_DIR.exists():
@@ -83,6 +93,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
         _config_manager = ConfigManager(config_path)
         config = _config_manager.load()
         _auth_config = config.auth
+        if _auth_config.enabled and not _auth_config.api_key:
+            raise ValueError("Authentication enabled but no API key configured")
         _agent = Agent(config, _config_manager)
         await _agent.initialize()
         logger.info("Web UI agent initialized")
@@ -107,15 +119,17 @@ def create_app(config_path: str | None = None) -> FastAPI:
     async def websocket_chat(ws: WebSocket):
         await ws.accept()
         ws_id = str(uuid.uuid4())
+        owns_conversation = False
+        chat_task = None
 
         try:
             # Receive initial config
             init = await ws.receive_json()
 
             # Auth check for WebSocket
-            if _auth_config and _auth_config.enabled and _auth_config.api_key:
+            if _auth_config and _auth_config.enabled:
                 token = init.get("token", "")
-                if token != _auth_config.api_key:
+                if not _auth_config.api_key or token != _auth_config.api_key:
                     await ws.send_json({"type": "error", "message": "Authentication failed"})
                     await ws.close(code=4001)
                     return
@@ -123,6 +137,13 @@ def create_app(config_path: str | None = None) -> FastAPI:
             project = init.get("project")
             session_id = init.get("session_id")
             resume = init.get("resume", False)
+
+            if conversation_lock.locked():
+                await ws.send_json({"type": "error", "message": "Another conversation is active. Close it before starting this one."})
+                await ws.close(code=1013)
+                return
+            await conversation_lock.acquire()
+            owns_conversation = True
 
             # Each WebSocket gets its own session
             rid = session_id if resume else None
@@ -186,6 +207,15 @@ def create_app(config_path: str | None = None) -> FastAPI:
             except Exception:
                 pass
         finally:
+            if chat_task is not None:
+                if not chat_task.done():
+                    chat_task.cancel()
+                await asyncio.gather(chat_task, return_exceptions=True)
+            if owns_conversation:
+                try:
+                    await finish_conversation()
+                finally:
+                    conversation_lock.release()
             _ws_sessions.pop(ws_id, None)
 
     # --- REST Endpoints (all require auth when enabled) ---
@@ -414,12 +444,10 @@ def create_app(config_path: str | None = None) -> FastAPI:
         task = await _agent.sqlite.get_background_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
-        if task.status != "pending":
+        token = await _agent.sqlite.claim_background_task(task_id)
+        if not token:
             raise HTTPException(status_code=409, detail="Task is not pending")
-        await _agent.sqlite.update_background_task(
-            task_id, status="claimed", progress_message="Claimed by worker",
-        )
-        return {"status": "claimed"}
+        return {"status": "claimed", "claim_token": token}
 
     @app.post("/api/worker/complete/{task_id}", dependencies=[Depends(verify_auth)])
     async def worker_complete(task_id: int, body: dict):
@@ -430,20 +458,22 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
         status = body.get("status", "completed")
         if status == "completed":
-            await _agent.sqlite.update_background_task(
-                task_id,
+            accepted = await _agent.sqlite.update_claimed_background_task(
+                task_id, body.get('claim_token', ''),
                 status="completed",
                 result=body.get("result", ""),
                 progress_pct=1.0,
                 progress_message="Done",
             )
         else:
-            await _agent.sqlite.update_background_task(
-                task_id,
+            accepted = await _agent.sqlite.update_claimed_background_task(
+                task_id, body.get('claim_token', ''),
                 status="failed",
                 error_message=body.get("error_message", "Unknown error"),
                 progress_message="Failed",
             )
+        if not accepted:
+            raise HTTPException(status_code=409, detail="Worker claim is no longer valid")
         return {"status": "ok"}
 
     @app.post("/api/worker/progress/{task_id}", dependencies=[Depends(verify_auth)])
@@ -452,21 +482,41 @@ def create_app(config_path: str | None = None) -> FastAPI:
         task = await _agent.sqlite.get_background_task(task_id)
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
-        await _agent.sqlite.update_background_task(
-            task_id,
+        accepted = await _agent.sqlite.update_claimed_background_task(
+            task_id, body.get('claim_token', ''),
             progress_pct=body.get("progress_pct", task.progress_pct),
             progress_message=body.get("progress_message", task.progress_message),
         )
+        if not accepted:
+            raise HTTPException(status_code=409, detail="Worker claim is no longer valid")
         return {"status": "ok"}
 
     # --- OpenAI-compatible API (for Continue.dev / VS Code) ---
 
-    async def _ensure_api_session() -> int:
-        """Lazily start a session for /v1 API requests."""
-        global _api_session_id
-        if _api_session_id is None:
-            _api_session_id = await _agent.start_session(project="vscode-continue")
-        return _api_session_id
+    @asynccontextmanager
+    async def api_session(request):
+        if conversation_lock.locked():
+            raise HTTPException(status_code=409, detail="Another conversation is active")
+        await conversation_lock.acquire()
+        started = False
+        try:
+            await _agent.start_session(project="vscode-continue")
+            started = True
+            # The compatible API supplies its own history. Replay it in memory
+            # without duplicating old turns in the persistent corpus.
+            from blipshell.models.session import SessionMessage, MessageRole
+            last_user = max(i for i, m in enumerate(request.messages) if m.role == "user")
+            prior = [SessionMessage(role=MessageRole(m.role), content=m.content)
+                     for m in request.messages[:last_user] if m.role in ("user", "assistant")]
+            _agent.session_manager._messages = prior
+            _agent.session_manager._dumped_indices = set(range(len(prior)))
+            yield
+        finally:
+            try:
+                if started:
+                    await finish_conversation()
+            finally:
+                conversation_lock.release()
 
     @app.get("/v1/models", dependencies=[Depends(verify_auth)])
     async def list_models():
@@ -482,7 +532,6 @@ def create_app(config_path: str | None = None) -> FastAPI:
     @app.post("/v1/chat/completions", dependencies=[Depends(verify_auth)])
     async def chat_completions(request: ChatCompletionRequest):
         """OpenAI-compatible chat completions endpoint."""
-        await _ensure_api_session()
 
         # Extract content: prepend system message if present, use last user message
         system_parts = [
@@ -498,12 +547,13 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
         if request.stream:
             return StreamingResponse(
-                _stream_chat(content),
+                _stream_chat(content, request),
                 media_type="text/event-stream",
             )
 
         # Non-streaming: call agent and return full response
-        response = await _agent.chat(content)
+        async with api_session(request):
+            response = await _agent.chat(content)
         response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         return {
             "id": response_id,
@@ -520,55 +570,46 @@ def create_app(config_path: str | None = None) -> FastAPI:
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
 
-    async def _stream_chat(content: str):
-        """SSE generator that yields OpenAI-format chunks from Agent.chat()."""
-        queue: asyncio.Queue[str] = asyncio.Queue()
+    async def _stream_chat(content: str, request):
+        """Own and collect the chat task, including generator cancellation."""
+        queue = asyncio.Queue()
         done = asyncio.Event()
         response_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
-        def on_token(token: str):
-            queue.put_nowait(token)
+        def chunk(delta, finish=None):
+            return "data: " + json.dumps({
+                "id": response_id, "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+            }) + "\n\n"
 
         async def run_chat():
             try:
-                await _agent.chat(content, on_token=on_token)
+                await _agent.chat(content, on_token=queue.put_nowait)
             finally:
                 done.set()
 
-        task = asyncio.create_task(run_chat())
-
-        # First chunk: role declaration
-        first = {
-            "id": response_id,
-            "object": "chat.completion.chunk",
-            "created": int(time.time()),
-            "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
-        }
-        yield f"data: {json.dumps(first)}\n\n"
-
-        # Stream content tokens
-        while not done.is_set() or not queue.empty():
-            try:
-                token = await asyncio.wait_for(queue.get(), timeout=0.1)
-                chunk = {
-                    "id": response_id,
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "choices": [{"index": 0, "delta": {"content": token}, "finish_reason": None}],
-                }
-                yield f"data: {json.dumps(chunk)}\n\n"
-            except asyncio.TimeoutError:
-                continue
-
-        # Final chunk: stop signal
-        final = {
-            "id": response_id,
-            "object": "chat.completion.chunk",
-            "created": int(time.time()),
-            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-        }
-        yield f"data: {json.dumps(final)}\n\n"
-        yield "data: [DONE]\n\n"
+        try:
+            async with api_session(request):
+                task = asyncio.create_task(run_chat())
+                try:
+                    yield chunk({"role": "assistant", "content": ""})
+                    while not done.is_set() or not queue.empty():
+                        try:
+                            token = await asyncio.wait_for(queue.get(), timeout=0.1)
+                            yield chunk({"content": token})
+                        except asyncio.TimeoutError:
+                            continue
+                    await task  # Exceptions must never become a normal stop.
+                    yield chunk({}, "stop")
+                    yield "data: [DONE]\n\n"
+                finally:
+                    if not task.done():
+                        task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+        except Exception:
+            logger.exception("Streaming chat failed")
+            yield 'data: {"error": {"message": "Chat failed; retry the request", "type": "server_error"}}\n\n'
 
     return app
 

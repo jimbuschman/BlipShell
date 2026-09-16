@@ -34,6 +34,8 @@ Rules:
 
 from __future__ import annotations
 
+import asyncio
+
 import json
 import logging
 import re
@@ -242,7 +244,7 @@ async def unarchive_memory(sqlite, vectors, memory_id: int, *, dry_run: bool = F
     embed_text = mem.content or mem.summary or ""
     embed_meta = {"session_id": str(mem.session_id), "role": mem.role}
     try:
-        vectors.add_memory(memory_id, embed_text, embed_meta)
+        await asyncio.to_thread(vectors.add_memory, memory_id, embed_text, embed_meta)
         report["reembedded"] = True
     except Exception as e:  # the row is restored either way; say so
         logger.warning("Unarchived memory %d but re-embed failed: %s", memory_id, e)

@@ -101,15 +101,25 @@ class BackgroundTaskManager:
     ):
         """Execute a background task via LLM.
 
-        If target_endpoint is specified, routes directly to that endpoint's
-        client. Otherwise uses the normal router.
+        A target constrains the router; it never bypasses its privacy policy.
         """
+        token = None
+
+        async def update(_task_id, **fields):
+            if token is None:
+                return False
+            return await self.sqlite.update_claimed_background_task(task_id, token, **fields)
+
         try:
-            await self.sqlite.update_background_task(
+            token = await self.sqlite.claim_background_task(task_id)
+            if not token:
+                return  # Another local/remote runner owns this work.
+            if not await update(
                 task_id,
                 status=BackgroundTaskStatus.RUNNING,
                 progress_message="Starting...",
-            )
+            ):
+                return
 
             # Determine task type for routing
             task = await self.sqlite.get_background_task(task_id)
@@ -121,47 +131,23 @@ class BackgroundTaskManager:
             }
             llm_task_type = task_type_map.get(task.task_type, TaskType.REASONING)
 
-            # When targeting a specific endpoint, use the summarization model
-            # (that's what remote endpoints are configured to run)
-            if target_endpoint:
-                model = self.router.get_model(TaskType.SUMMARIZATION)
-            else:
-                model = self.router.get_model(llm_task_type)
-
-            await self.sqlite.update_background_task(
+            if not await update(
                 task_id, progress_pct=0.5, progress_message="Processing...",
+            ):
+                return
+            result = await self.router.generate(
+                llm_task_type, prompt, target_endpoint=target_endpoint,
             )
 
-            # Route to specific endpoint or use normal routing
-            if target_endpoint:
-                # Look up endpoint to check provider for gate
-                ep = None
-                for _ep in self.router._endpoint_manager._endpoints:
-                    if _ep.name == target_endpoint and _ep.enabled:
-                        ep = _ep
-                        break
-                if not ep or not ep.client:
-                    raise RuntimeError(
-                        f"Endpoint '{target_endpoint}' is not available"
-                    )
-                # Gate local Ollama calls to avoid concurrent access
-                if ep.provider == "ollama":
-                    from blipshell.llm.ollama_gate import get_gate
-                    gate = get_gate()
-                    async with gate.async_gate(gate.BACKGROUND):
-                        result = await ep.client.generate(prompt=prompt, model=model)
-                else:
-                    result = await ep.client.generate(prompt=prompt, model=model)
-            else:
-                result = await self.router.generate(llm_task_type, prompt)
-
-            await self.sqlite.update_background_task(
+            accepted = await update(
                 task_id,
                 status=BackgroundTaskStatus.COMPLETED,
                 progress_pct=1.0,
                 progress_message="Done",
                 result=result,
             )
+            if not accepted:
+                return
             self._completed_ids.append(task_id)
             logger.info("Background task #%d completed", task_id)
 
@@ -177,7 +163,7 @@ class BackgroundTaskManager:
                     logger.error("Background task #%d memory save failed: %s", task_id, mem_err)
 
         except asyncio.CancelledError:
-            await self.sqlite.update_background_task(
+            await update(
                 task_id,
                 status=BackgroundTaskStatus.CANCELLED,
                 progress_message="Cancelled",
@@ -186,7 +172,7 @@ class BackgroundTaskManager:
 
         except Exception as e:
             logger.error("Background task #%d failed: %s", task_id, e)
-            await self.sqlite.update_background_task(
+            await update(
                 task_id,
                 status=BackgroundTaskStatus.FAILED,
                 error_message=str(e),

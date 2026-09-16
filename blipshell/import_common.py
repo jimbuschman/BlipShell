@@ -431,7 +431,7 @@ async def _import_global_batch(
                         {"session_id": str(session_id), "role": msg.role}
                         for msg, _, _ in surviving
                     ]
-                    vectors.add_memories_batch(memory_ids, texts, metadatas)
+                    await asyncio.to_thread(vectors.add_memories_batch, memory_ids, texts, metadatas)
                 except Exception as e:
                     logger.error("Vector batch embed failed: %s", e)
 
@@ -638,7 +638,7 @@ async def _import_single_conversation(
             {"session_id": str(session_id), "role": msg.role}
             for msg, _tags, _summary in surviving
         ]
-        vectors.add_memories_batch(memory_ids, texts, metadatas)
+        await asyncio.to_thread(vectors.add_memories_batch, memory_ids, texts, metadatas)
     except Exception as e:
         logger.error("Vector batch embed failed: %s", e)
     print(f"  [{title_short}] Embedded {len(memory_ids)} memories")

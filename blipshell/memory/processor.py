@@ -6,6 +6,8 @@ noise check -> LLM summarize -> SQLite insert -> ChromaDB embed -> tag -> LLM ra
 
 from __future__ import annotations
 
+import asyncio
+
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -461,7 +463,7 @@ class MemoryProcessor:
             embed_text = text or summary
             embed_meta = {"session_id": str(session_id), "role": role}
             try:
-                self.vectors.add_memory(memory_id, embed_text, embed_meta)
+                await asyncio.to_thread(self.vectors.add_memory, memory_id, embed_text, embed_meta)
             except Exception as e:
                 logger.error("Vector embed failed (will be backfilled): %s", e)
             t_embed = _time.monotonic() - t0
@@ -568,7 +570,7 @@ class MemoryProcessor:
 
         # Embed
         try:
-            self.vectors.add_core_memory(mem_id, text)
+            await asyncio.to_thread(self.vectors.add_core_memory, mem_id, text)
         except Exception as e:
             logger.error("Core memory embed failed (will be backfilled): %s", e)
 
@@ -622,7 +624,7 @@ class MemoryProcessor:
 
         # Dedup: check if a very similar lesson already exists
         try:
-            similar = self.vectors.search_lessons(stripped, n_results=1)
+            similar = await asyncio.to_thread(self.vectors.search_lessons, stripped, n_results=1)
             if similar and similar[0].get("similarity", 0) > 0.92:
                 logger.debug(
                     "Lesson skipped (near-duplicate of lesson %s, sim=%.3f): %s",
@@ -644,7 +646,7 @@ class MemoryProcessor:
         # Embed (include project in metadata for filtered/boosted search)
         try:
             meta = {"project": project} if project else None
-            self.vectors.add_lesson(lesson_id, lesson_text, metadata=meta)
+            await asyncio.to_thread(self.vectors.add_lesson, lesson_id, lesson_text, metadata=meta)
         except Exception as e:
             logger.error("Lesson embed failed (will be backfilled): %s", e)
 
@@ -681,7 +683,7 @@ class MemoryProcessor:
         each pair contradicts. Deactivates older contradicted memories.
         Returns count of deactivated memories.
         """
-        results = self.vectors.search_core_memories(text, n_results=3)
+        results = await asyncio.to_thread(self.vectors.search_core_memories, text, n_results=3)
 
         deactivated = 0
         for r in results:
@@ -733,7 +735,7 @@ class MemoryProcessor:
 
         Returns list of {id, document, similarity} dicts above threshold.
         """
-        results = self.vectors.search_memories(summary, n_results=n_results + 1)
+        results = await asyncio.to_thread(self.vectors.search_memories, summary, n_results=n_results + 1)
         similar = []
         for r in results:
             if r["id"] == exclude_id:
@@ -1025,7 +1027,7 @@ class MemoryProcessor:
             }
             if project:
                 meta["project"] = project
-            self.vectors.add_reflection(reflection_id, embed_text, metadata=meta)
+            await asyncio.to_thread(self.vectors.add_reflection, reflection_id, embed_text, metadata=meta)
         except Exception as e:
             logger.error("Reflection embed failed (will be backfilled): %s", e)
 

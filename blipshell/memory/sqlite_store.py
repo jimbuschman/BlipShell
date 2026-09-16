@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import struct
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -548,6 +549,7 @@ class SQLiteStore:
         await self._db.executescript(SCHEMA_SQL)
         # Schema migrations for existing databases
         for col_sql in (
+            "ALTER TABLE background_tasks ADD COLUMN claim_token TEXT",
             "ALTER TABLE memories ADD COLUMN access_count INTEGER DEFAULT 0",
             "ALTER TABLE memories ADD COLUMN last_accessed DATETIME",
             "ALTER TABLE memories ADD COLUMN consolidated_at DATETIME",
@@ -2780,6 +2782,29 @@ class SQLiteStore:
         )
         await self._db.commit()
 
+    async def claim_background_task(self, task_id: int) -> str | None:
+        """Only one connection can transition a pending task to claimed."""
+        token = uuid.uuid4().hex
+        cursor = await self._db.execute(
+            "UPDATE background_tasks SET status='claimed', progress_message='Claimed by worker', "
+            "updated_at=?, claim_token=? WHERE id=? AND status='pending'",
+            (datetime.now(timezone.utc).isoformat(), token, task_id),
+        )
+        await self._db.commit()
+        return token if cursor.rowcount == 1 else None
+
+    async def update_claimed_background_task(self, task_id: int, token: str, **kwargs) -> bool:
+        """Reject late/foreign worker results, including after cancellation."""
+        allowed = {'status', 'progress_pct', 'progress_message', 'result', 'error_message', 'updated_at'}
+        kwargs['updated_at'] = datetime.now(timezone.utc).isoformat()
+        clause, values = _safe_set_clause(kwargs, allowed)
+        cursor = await self._db.execute(
+            f"UPDATE background_tasks SET {clause} WHERE id=? AND claim_token=? AND status IN ('claimed','running')",
+            [*values, task_id, token],
+        )
+        await self._db.commit()
+        return cursor.rowcount == 1
+
     async def list_background_tasks(
         self,
         session_id: Optional[int] = None,
@@ -3679,6 +3704,25 @@ class SQLiteStore:
         await self._db.execute(
             "INSERT OR REPLACE INTO app_metadata (key, value) VALUES (?, ?)",
             (key, value),
+        )
+        await self._db.commit()
+
+    async def save_nightly_run(self, key: str, record: dict, limit: int) -> None:
+        """Atomic bounded JSON update, including across separate connections."""
+        encoded = json.dumps(record)
+        await self._db.execute(
+            """INSERT INTO app_metadata(key,value) VALUES (?, json_array(json(?)))
+            ON CONFLICT(key) DO UPDATE SET value = (
+                SELECT json_group_array(json(value)) FROM (
+                  SELECT value FROM (
+                    SELECT value FROM (
+                        SELECT value FROM json_each(app_metadata.value)
+                        WHERE json_extract(value, '$.started_at') != json_extract(?, '$.started_at')
+                        UNION ALL SELECT ?
+                    ) ORDER BY json_extract(value, '$.started_at') DESC LIMIT ?
+                  ) ORDER BY json_extract(value, '$.started_at') ASC
+                )
+            )""", (key, encoded, encoded, encoded, limit),
         )
         await self._db.commit()
 

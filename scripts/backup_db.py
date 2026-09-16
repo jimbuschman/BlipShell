@@ -170,6 +170,7 @@ def backup_before_destructive(
     db_path: str | Path = _DEFAULT_DB,
     out_dir: str | Path = _DEFAULT_BACKUP_DIR,
     chroma_path: str | Path | None = None,  # legacy, ignored
+    quiet: bool = False,
 ) -> Path | None:
     """Create a pre-operation backup before a destructive script runs.
 
@@ -181,13 +182,16 @@ def backup_before_destructive(
     Returns:
         Path to the backup directory, or None on failure.
     """
-    console.print(f"[dim]Creating pre-operation backup ({operation_name})...[/dim]")
+    if not quiet:
+        console.print(f"[dim]Creating pre-operation backup ({operation_name})...[/dim]")
     result = run_backup(
         db_path=db_path,
         out_dir=out_dir,
         prefix=f"pre_{operation_name}_",
-        quiet=False,
+        quiet=quiet,
     )
+    if quiet:
+        return result
     if result:
         console.print(f"[dim]Pre-op backup saved: {result}[/dim]\n")
     else:

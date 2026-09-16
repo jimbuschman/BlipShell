@@ -108,6 +108,10 @@ class ConfigManager:
         this is the bug where opting out costs nine days of memory.
         """
         authored = self.config.database.path
+        if self.config.database.backup_dir:
+            self.config.database.backup_dir = resolve_config_relative(
+                self.config.database.backup_dir, self.config_path,
+            )
         resolved = resolve_config_relative(authored, self.config_path)
         if resolved == authored:
             return

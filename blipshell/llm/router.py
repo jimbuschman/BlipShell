@@ -104,6 +104,14 @@ class LLMRouter:
         }
         return model_map.get(task_type, self._models.reasoning)
 
+    def resolve_model(self, endpoint, task_type: str, default: str | None = None) -> str:
+        from blipshell.llm.routing import local_model_or_fallback
+        return local_model_or_fallback(
+            self._endpoint_manager, endpoint,
+            endpoint.models.get(task_type) or default or self.get_model(task_type),
+            self.get_fallback_model(task_type),
+        )
+
     def get_fallback_model(self, task_type: str) -> Optional[str]:
         """Get the fallback model for a task type (used when cloud is down)."""
         fallback_map = {
@@ -163,7 +171,7 @@ class LLMRouter:
         endpoint = await self._endpoint_manager.get_endpoint_for_role(task_type)
         if not endpoint:
             return self.get_model(task_type), None
-        model = endpoint.models.get(task_type) or self.get_model(task_type)
+        model = self.resolve_model(endpoint, task_type)
         return model, endpoint.client
 
     async def get_context_tokens(self, task_type: str, min_context_tokens: int | None = None) -> int:
@@ -185,10 +193,20 @@ class LLMRouter:
     async def _gated_generate(self, endpoint, prompt: str, model: str,
                               system: Optional[str], gen_kwargs: dict) -> str:
         """Call client.generate(), gating local Ollama calls via OllamaGate."""
+        def check_policy():
+            if self._endpoint_manager.local_only and endpoint.should_sanitize_pii:
+                raise RuntimeError("Local mode forbids this endpoint")
+            if self._endpoint_manager.local_only:
+                from blipshell.llm.routing import local_model_or_fallback
+                local_model_or_fallback(self._endpoint_manager, endpoint, model, None)
+            if endpoint.name in self._ner_blocked_endpoints():
+                raise RuntimeError("Privacy policy forbids this endpoint")
+        check_policy()
         if endpoint.provider == "ollama":
             from blipshell.llm.ollama_gate import get_gate
             gate = get_gate()
             async with gate.async_gate(gate.infer_priority()):
+                check_policy()
                 return await endpoint.client.generate(
                     prompt=prompt, model=model, system=system, **gen_kwargs,
                 )
@@ -196,7 +214,7 @@ class LLMRouter:
             prompt=prompt, model=model, system=system, **gen_kwargs,
         )
 
-    async def generate(self, task_type: str, prompt: str, system: Optional[str] = None, think: Optional[bool | str] = None, min_context_tokens: int | None = None, response_format: dict | str | None = None, use_cache: bool = True) -> str:
+    async def generate(self, task_type: str, prompt: str, system: Optional[str] = None, think: Optional[bool | str] = None, min_context_tokens: int | None = None, response_format: dict | str | None = None, use_cache: bool = True, target_endpoint: str | None = None) -> str:
         """Route a generate request to the appropriate model/endpoint.
 
         If the primary model/endpoint fails and a fallback model is configured,
@@ -216,8 +234,13 @@ class LLMRouter:
                 0.0s cache hit (spread 0 by construction).
         """
         ner_blocked = self._ner_blocked_endpoints()
+        excluded = set(ner_blocked)
+        if target_endpoint is not None:
+            excluded |= {ep.name for ep in self._endpoint_manager.endpoints
+                         if ep.name != target_endpoint}
+        allow_fallback = not self._disable_fallback and target_endpoint is None
         endpoint = await self._endpoint_manager.get_endpoint_for_role(
-            task_type, exclude=ner_blocked, min_context_tokens=min_context_tokens,
+            task_type, exclude=excluded, min_context_tokens=min_context_tokens,
         )
         if not endpoint:
             if ner_blocked:
@@ -228,13 +251,13 @@ class LLMRouter:
             raise RuntimeError(f"No available endpoint for task type: {task_type}")
 
         # Use per-endpoint model override if configured
-        model = endpoint.models.get(task_type) or self.get_model(task_type)
+        model = self.resolve_model(endpoint, task_type)
         client = endpoint.client
         use_fallback = False
 
         # Pre-flight token check: skip cloud endpoint if request would exceed TPM
         estimated_tokens = self._estimate_request_tokens(prompt, system)
-        if not self._disable_fallback and endpoint.would_exceed_tpm(estimated_tokens):
+        if allow_fallback and endpoint.would_exceed_tpm(estimated_tokens):
             # min_context_tokens must survive every fallback hop: a 100K-token
             # session review that lands on a 32K endpoint is silently truncated
             # by num_ctx rather than failing.
@@ -255,7 +278,7 @@ class LLMRouter:
                     use_fallback = True
 
         # Skip straight to fallback if primary model is known to be down
-        if not self._disable_fallback and self.is_model_failed(model):
+        if allow_fallback and self.is_model_failed(model):
             # Must also switch endpoint — can't send a local model name to a cloud API
             fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
                 task_type, exclude={endpoint.name, *ner_blocked},
@@ -331,7 +354,7 @@ class LLMRouter:
             else:
                 endpoint.record_failure()
             # Try fallback: get next endpoint (excluding failed one), use its model
-            if not use_fallback and not self._disable_fallback:
+            if not use_fallback and allow_fallback:
                 try:
                     fallback_ep = await self._endpoint_manager.get_endpoint_for_role(
                         task_type, exclude={endpoint.name, *ner_blocked},

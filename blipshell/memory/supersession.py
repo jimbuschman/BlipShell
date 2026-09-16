@@ -26,6 +26,8 @@ project - see `same_scope`.
 
 from __future__ import annotations
 
+import asyncio
+
 import logging
 import re
 from dataclasses import dataclass
@@ -220,7 +222,7 @@ async def undo(sqlite, supersession_id: int, *, vectors=None) -> bool:
             cm = await sqlite.reactivate_core_memory(rec.old_id)
             if cm is not None and vectors is not None:
                 try:
-                    vectors.add_core_memory(cm.id, cm.content)
+                    await asyncio.to_thread(vectors.add_core_memory, cm.id, cm.content)
                 except Exception as e:  # the row is active either way; the index can be rebuilt
                     logger.warning("Undo re-embedded core memory %d failed: %s", rec.old_id, e)
     return True

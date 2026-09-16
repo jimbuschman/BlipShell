@@ -161,6 +161,7 @@ class TestDirectPathStillWorksWithoutAnAgent:
         endpoint.models = {}
         endpoint.context_tokens = 4096
         endpoint.provider = "openai"
+        ex.router._endpoint_manager.local_only = False
         ex.router._endpoint_manager.get_endpoint_for_role = AsyncMock(return_value=endpoint)
         ex.router.get_model.return_value = "model-x"
 

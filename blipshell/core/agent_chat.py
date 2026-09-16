@@ -19,6 +19,7 @@ from blipshell.core.executor import build_executor_narrative
 from blipshell.core.intent_detection import detect_review_intent, REVIEW_GROUNDING_GUIDANCE
 from blipshell.llm.exceptions import is_model_error
 from blipshell.llm.router import TaskType
+from blipshell.llm.ollama_gate import interactive_model_work
 from blipshell.memory.manager import PoolItem, estimate_tokens
 from blipshell.memory.query_profiles import classify_query, compute_pool_budgets
 from blipshell.models.session import MessageRole
@@ -85,6 +86,7 @@ def _prov_tag(prov) -> str:
 class ChatMixin:
     """Chat pipeline methods mixed into Agent."""
 
+    @interactive_model_work
     async def chat(
         self,
         user_message: str,
@@ -281,7 +283,7 @@ class ChatMixin:
             meta = {}
             if self.active_project:
                 meta["project"] = self.active_project["name"]
-            self.vectors.add_lesson(lesson_id, anti_pattern, metadata=meta or None)
+            await asyncio.to_thread(self.vectors.add_lesson, lesson_id, anti_pattern, metadata=meta or None)
 
             # Tag with anti-pattern for identification
             await self.sqlite.tag_lesson(lesson_id, ["anti-pattern"])
@@ -386,6 +388,11 @@ class ChatMixin:
                     return None
 
                 ep_model = endpoint.models.get(task_type) or st["model"]
+                from blipshell.llm.routing import local_model_or_fallback
+                ep_model = local_model_or_fallback(
+                    self.endpoint_manager, endpoint, ep_model,
+                    self.router.get_fallback_model(task_type),
+                )
                 if st["require_vision"] and not self.model_settings.is_vision(ep_model):
                     logger.info("Skipping non-vision endpoint '%s' (model '%s') for image turn",
                                 endpoint.name, ep_model)
@@ -972,7 +979,7 @@ class ChatMixin:
             return format_relative_time(ts, now)
 
         # Run all three searches concurrently — they're independent queries.
-        # With gate removed from search methods, these can hit Ollama in parallel.
+        # Database work can overlap; embedding HTTP calls share the model gate.
         # A historical question ("how did my preference change?") wants the
         # superseded records too, labelled; a current-state one does not (E1).
         from blipshell.memory.supersession import is_historical_question

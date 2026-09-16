@@ -102,10 +102,7 @@ async def reprocess_memories(
 
                 # Re-embed in vector store (upsert handles updates)
                 if not skip_embed:
-                    vectors.add_memory(memory.id, summary, {
-                        "session_id": str(memory.session_id or ""),
-                        "role": memory.role,
-                    })
+                    await asyncio.to_thread(vectors.add_memory, memory.id, summary, {'session_id': str(memory.session_id or ''), 'role': memory.role})
 
                 stats["processed"] += 1
 
@@ -232,7 +229,7 @@ async def reprocess_lessons(
                 lesson_id = await sqlite.create_lesson(lesson)
 
                 try:
-                    vectors.add_lesson(lesson_id, stripped)
+                    await asyncio.to_thread(vectors.add_lesson, lesson_id, stripped)
                 except Exception as e:
                     logger.debug("Lesson embed failed: %s", e)
 

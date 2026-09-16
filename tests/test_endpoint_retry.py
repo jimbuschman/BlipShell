@@ -116,6 +116,7 @@ class _EndpointManager:
 
     def __init__(self, endpoints):
         self._eps = endpoints
+        self.local_only = False
 
     async def get_endpoint_for_role(self, role, exclude=None, min_context_tokens=None):
         # The real manager accepts a name or a set of names (router.generate

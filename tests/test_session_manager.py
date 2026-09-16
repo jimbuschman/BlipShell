@@ -26,6 +26,24 @@ def session_manager(sqlite_store, memory_config, mock_router):
 
 
 class TestSessionManager:
+    async def test_unregistered_project_does_not_bootstrap_unsavable_digest(self, session_manager, mock_router):
+        sid = await session_manager.start_session(project="ad-hoc-project-label")
+        await session_manager.sqlite.update_session(sid, summary="A saved session summary")
+        outcome = await session_manager._update_project_digest()
+        assert outcome == "skipped: unregistered project"
+        mock_router.generate.assert_not_awaited()
+
+    async def test_registered_project_still_updates_digest(self, session_manager, monkeypatch):
+        from blipshell.memory.project_digest import ProjectDigestManager
+        await session_manager.sqlite.create_project("registered-project")
+        sid = await session_manager.start_session(project="registered-project")
+        await session_manager.sqlite.update_session(sid, summary="Project-specific summary")
+        update = AsyncMock(return_value="Updated digest")
+        monkeypatch.setattr(ProjectDigestManager, "update_digest", update)
+        await session_manager._update_project_digest()
+        update.assert_awaited_once()
+        assert update.call_args.args[0] == "registered-project"
+
     async def test_start_new_session(self, session_manager):
         sid = await session_manager.start_session(project="test-project")
         assert sid is not None

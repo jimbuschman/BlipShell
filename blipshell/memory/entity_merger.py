@@ -19,6 +19,8 @@ merged-away husk (reversible). Dry-run reports the plan without touching data.
 
 from __future__ import annotations
 
+import asyncio
+
 import logging
 import time
 from collections import defaultdict
@@ -154,9 +156,7 @@ class EntityMerger:
             if e["id"] in merged_away:
                 continue
             try:
-                candidates = self.vectors.search_similar_entities(
-                    e["name"], n_results=self.max_candidates,
-                )
+                candidates = await asyncio.to_thread(self.vectors.search_similar_entities, e['name'], n_results=self.max_candidates)
             except Exception as ex:
                 logger.warning("Similarity search failed for '%s': %s", e["name"], ex)
                 continue

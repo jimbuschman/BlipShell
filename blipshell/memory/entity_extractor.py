@@ -282,7 +282,7 @@ class EntityExtractor:
             # Upsert into entity embeddings if ChromaDB available
             if self.vectors:
                 try:
-                    self.vectors.upsert_entity(entity_id, name, entity_type)
+                    await asyncio.to_thread(self.vectors.upsert_entity, entity_id, name, entity_type)
                 except Exception as e:
                     logger.warning("Failed to upsert entity embedding: %s", e)
             self._resolution_cache[name] = entity_id
@@ -290,9 +290,7 @@ class EntityExtractor:
 
         # Stage 2: Embedding similarity search
         try:
-            candidates = self.vectors.search_similar_entities(
-                name, n_results=self._max_candidates,
-            )
+            candidates = await asyncio.to_thread(self.vectors.search_similar_entities, name, n_results=self._max_candidates)
         except Exception as e:
             logger.warning("Entity similarity search failed: %s", e)
             candidates = []
@@ -387,7 +385,7 @@ class EntityExtractor:
         # No match — create new entity
         entity_id = await self.sqlite.get_or_create_entity(name, entity_type)
         try:
-            self.vectors.upsert_entity(entity_id, name, entity_type)
+            await asyncio.to_thread(self.vectors.upsert_entity, entity_id, name, entity_type)
         except Exception as e:
             logger.warning("Failed to upsert entity embedding: %s", e)
         self._resolution_cache[name] = entity_id

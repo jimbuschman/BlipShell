@@ -301,6 +301,7 @@ class TaggingConfig(BaseModel):
 class DatabaseConfig(BaseModel):
     """Database paths configuration."""
     path: str = "data/blipshell.db"
+    backup_dir: str | None = None  # None preserves the repository backup default
     embedding_dimensions: int = 1024  # qwen3-embedding:0.6b output size
     # Refuse to run when the database file does not exist. An absent SQLite
     # file is a CREATION, not a failure — which is how 2026-08-11..08-20 put

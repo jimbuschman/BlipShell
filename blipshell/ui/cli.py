@@ -1219,10 +1219,46 @@ def simulate_cmd(ctx, scenario, category, quiet, output, list_scenarios, db_path
 @click.option("--quiet", "-q", is_flag=True, help="JSON output only (for scheduled runs)")
 @click.option("--loop", is_flag=True, help="Repeat until nothing left to process (use with --job)")
 @click.option("--local", is_flag=True, help="Force all LLM calls through local Ollama (avoids cloud rate limits)")
+@click.option("--history", is_flag=True, help="Read the last 120 recorded runs without running jobs or models.")
 @click.pass_context
-def nightly_cmd(ctx, job, quiet, loop, local):
+def nightly_cmd(ctx, job, quiet, loop, local, history):
     """Run nightly maintenance jobs (backup, tagging, pruning, etc.)."""
     import json as _json
+
+    if history:
+        import sqlite3
+        from datetime import datetime, timezone
+        from pathlib import Path
+        from blipshell.core.nightly_history import HISTORY_KEY, decode_history
+        from rich.table import Table
+        cfg = ConfigManager(ctx.obj.get("config_path")).load()
+        path = Path(cfg.database.path).resolve()
+        connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+        try:
+            row = connection.execute("SELECT value FROM app_metadata WHERE key = ?", (HISTORY_KEY,)).fetchone()
+            records = decode_history(row[0] if row else None)
+        finally:
+            connection.close()
+        if quiet:
+            print(_json.dumps(records, indent=2))
+        else:
+            table = Table(title="Nightly history (UTC; running may mean interrupted)")
+            for column in ("Started", "Run", "Last active job", "Pool before", "Pool after", "Job outcomes"):
+                table.add_column(column)
+            for record in records:
+                tagging = record.get("tagging", {})
+                table.add_row(
+                    datetime.fromtimestamp(record['started_at'], timezone.utc).strftime('%Y-%m-%d %H:%M'),
+                    record['status'], record.get('active_job') or '-',
+                    str((tagging.get('before') or {}).get('pending', '-')),
+                    str((tagging.get('after') or {}).get('pending', '-')),
+                    ', '.join(f"{name}: {result.get('status', '?')}"
+                              for name, result in record.get('jobs', {}).items()),
+                )
+            console.print(table)
+            if not records:
+                console.print("No historical runs recorded yet. History starts with the next nightly run.")
+        return
 
     async def _run():
         from blipshell.core.nightly import NightlyRunner

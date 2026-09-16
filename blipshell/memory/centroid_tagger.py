@@ -42,6 +42,11 @@ class CentroidTagger:
         """
         min_members = self.config.centroid_tag_min_members
         tag_counts = await self.sqlite.get_tag_member_counts(min_members)
+        # Control markers are never topic classifiers. In particular, assigning
+        # _skip by similarity would silently remove unexamined rows from batch tagging.
+        from blipshell.memory.batch_tagger import BATCH_TAG_SKIP_MARKER, JUNK_TAG_NAMES
+        tag_counts = {tag: count for tag, count in tag_counts.items()
+                      if tag not in {BATCH_TAG_SKIP_MARKER, 'neutral'} | JUNK_TAG_NAMES}
         if not tag_counts:
             if on_status:
                 on_status("No tags with enough members for centroid computation.")
@@ -130,7 +135,8 @@ class CentroidTagger:
                 # Find tags above threshold that aren't already assigned
                 current_tags = set(existing_tags.get(mid, []))
                 new_tags = []
-                for idx in np.where(similarities >= threshold)[0]:
+                eligible = np.flatnonzero(similarities >= threshold)
+                for idx in eligible[np.argsort(-similarities[eligible], kind='stable')]:
                     tag = tag_names[idx]
                     if tag not in current_tags:
                         new_tags.append(tag)

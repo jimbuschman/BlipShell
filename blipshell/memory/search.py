@@ -203,14 +203,20 @@ class MemorySearch:
         _t_chroma_start = time.monotonic()
         loop = asyncio.get_running_loop()
         chroma_results: list[dict] = []
+        async def vector_pass(**kwargs):
+            try:
+                return await loop.run_in_executor(
+                    None, functools.partial(self.vectors.search_memories, **kwargs),
+                )
+            except Exception as error:
+                logger.warning("Semantic search unavailable; continuing with keyword search: %s", error)
+                return []
+
         if project_session_ids:
             # Pass 1: Project-only memories
             project_filter = {"session_id": {"$in": [str(sid) for sid in project_session_ids]}}
-            project_chroma = await loop.run_in_executor(
-                None, functools.partial(
-                    self.vectors.search_memories,
+            project_chroma = await vector_pass(
                     query=query, n_results=overfetch, where=project_filter,
-                ),
             )
             # Mark project hits for later boosting
             project_chroma_ids = set()
@@ -221,22 +227,16 @@ class MemorySearch:
             project_hits = len(project_chroma)
 
             # Pass 2: General (unfiltered) — backfill, dedup by ID
-            general_chroma = await loop.run_in_executor(
-                None, functools.partial(
-                    self.vectors.search_memories,
+            general_chroma = await vector_pass(
                     query=query, n_results=overfetch,
-                ),
             )
             for cr in general_chroma:
                 if cr["id"] not in project_chroma_ids:
                     chroma_results.append(cr)
         else:
             # No project — single-pass search
-            chroma_results = await loop.run_in_executor(
-                None, functools.partial(
-                    self.vectors.search_memories,
+            chroma_results = await vector_pass(
                     query=query, n_results=overfetch,
-                ),
             )
 
         _t_chroma_ms = (time.monotonic() - _t_chroma_start) * 1000

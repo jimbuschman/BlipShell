@@ -21,6 +21,8 @@ Usage:
   blipshell import-claude memories <path> --dry-run
 """
 
+import asyncio
+
 import logging
 import re
 from dataclasses import dataclass, field
@@ -175,7 +177,7 @@ async def import_memories(
         await sqlite.tag_memory(memory_id, tags)
 
         # Embed for vector search
-        vectors.add_memory(memory_id, summary)
+        await asyncio.to_thread(vectors.add_memory, memory_id, summary)
 
         # Mark as processed
         await sqlite.update_memory(memory_id, is_processed=True)

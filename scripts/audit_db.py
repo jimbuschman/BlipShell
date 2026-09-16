@@ -451,6 +451,20 @@ def check_tags(db_path: str, result: AuditResult):
             result.add("Tags", "memory_coverage", sev,
                        f"{tagged}/{total_active} active memories tagged ({pct:.1f}%)")
 
+        from blipshell.memory.tag_health import tag_health, tag_health_warnings
+        from blipshell.core.nightly_history import HISTORY_KEY, decode_history, growing_pool_warning
+        health = tag_health(conn)
+        result.add("Tags", "tagging_state", "info", json.dumps(health, sort_keys=True))
+        for warning in tag_health_warnings(health):
+            result.add("Tags", "tagging_backlog", "warn", warning)
+        row = conn.execute("SELECT value FROM app_metadata WHERE key = ?", (HISTORY_KEY,)).fetchone()
+        try:
+            trend = growing_pool_warning(decode_history(row[0] if row else None))
+            if trend:
+                result.add("Tags", "tagging_trend", "warn", trend)
+        except (ValueError, KeyError, TypeError) as e:
+            result.add("Tags", "tagging_trend", "warn", f"Cannot read nightly history: {e}")
+
         # Case-insensitive duplicates
         dupes = conn.execute("""
             SELECT LOWER(name), category, COUNT(*) as cnt
@@ -466,26 +480,34 @@ def check_tags(db_path: str, result: AuditResult):
 
 
 def check_fts_sync(db_path: str, result: AuditResult):
-    """Check FTS5 index is in sync with memories table."""
+    """Check indexed row membership, not the external-content table's row count.
+
+    SELECT from an external-content FTS table reads memories itself unless a
+    MATCH is supplied. Its count therefore cannot reveal missing index rows.
+    Our FTS table keeps the default docsize table, including empty documents.
+    This checks membership only; it does not certify token-level integrity.
+    """
     conn = sqlite3.connect(db_path)
     try:
         fts_count = conn.execute(
-            "SELECT COUNT(*) FROM memories_fts"
+            "SELECT COUNT(*) FROM memories_fts_docsize"
         ).fetchone()[0]
         sqlite_count = conn.execute(
-            "SELECT COUNT(*) FROM memories WHERE summary IS NOT NULL"
+            "SELECT COUNT(*) FROM memories"
         ).fetchone()[0]
-
-        diff = abs(fts_count - sqlite_count)
-        if diff == 0:
+        missing = conn.execute(
+            "SELECT COUNT(*) FROM (SELECT id FROM memories EXCEPT SELECT id FROM memories_fts_docsize)"
+        ).fetchone()[0]
+        extra = conn.execute(
+            "SELECT COUNT(*) FROM (SELECT id FROM memories_fts_docsize EXCEPT SELECT id FROM memories)"
+        ).fetchone()[0]
+        if not missing and not extra:
             result.add("FTS5", "sync", "ok",
-                       f"FTS5 in sync ({fts_count} rows)")
-        elif diff < sqlite_count * 0.01:
-            result.add("FTS5", "sync", "info",
-                       f"FTS5={fts_count}, SQLite summaries={sqlite_count} (diff={diff})")
+                       f"FTS5 row membership matches all {sqlite_count} memories")
         else:
             result.add("FTS5", "sync", "warn",
-                       f"FTS5 out of sync: FTS5={fts_count}, SQLite summaries={sqlite_count}")
+                       f"FTS5 row mismatch: {missing} missing, {extra} extra "
+                       f"(indexed={fts_count}, memories={sqlite_count})")
     except Exception as e:
         result.add("FTS5", "sync", "error", f"FTS5 check failed: {e}")
     finally:
