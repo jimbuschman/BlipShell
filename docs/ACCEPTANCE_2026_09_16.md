@@ -128,6 +128,57 @@ This runtime reports regex-only privacy filtering (`presidio_analyzer` absent).
 Private-copy calls are restricted to localhost. Cloud NER sanitization is not
 certified by these runs.
 
+## Follow-up 2026-09-16: scheduling under load
+
+Root cause of the retrieval degradation above, traced in code and then shown
+by the gate event log of a live run. (1) `VectorStore.search_memories` embedded
+the query WITHOUT the model gate (the method was documented "NOT gated"), so
+the turn's embeddings ran on the GPU alongside the worker's entity-extraction
+generations and timed out. (2) The worker judged the system idle from its own
+queue alone, so idle extraction started while a chat turn was generating.
+(3) `loop.run_in_executor` does not copy contextvars, so an embedding requested
+by a background caller reached the gate as interactive.
+
+Change: `_embed`/`_embed_batch` take the gate; `Agent.chat` holds
+`OllamaGate.interactive_turn()` for the whole turn, during which new background
+acquisitions park (a running call is never interrupted) and are woken when the
+turn ends; priority is a contextvar set by `background_model_work` /
+`interactive_model_work`, and every embedding thread hop is
+`asyncio.to_thread`; the worker's idle branch checks `interactive_active`.
+Files: `llm/ollama_gate.py`, `memory/vector_store.py`, `memory/worker.py`,
+`memory/search.py`, `core/agent_chat.py`, `core/nightly.py`, `core/agent.py`.
+
+Tests: `tests/test_gate_scheduling.py` (20) and
+`tests/test_memory_worker.py::TestIdleExtractionDefersToChat` (1); real
+threads and event loops, only the embedding client faked. Full suite after
+the change: **2,799 passed, 3 skipped**.
+
+Live check (`scripts/validate_live_scheduling.py`, driven from the dev box
+against the Ollama PC, on a COPY of the dev-box database: 64 memories, all
+awaiting extraction; not the acceptance snapshot). Local models only:
+`gpt-oss:latest` chat, `qwen3:14b` extraction, `qwen3-embedding:0.6b`.
+
+| Observation | Turn 1 | Turn 2 |
+|---|---|---|
+| Background calls granted after the turn began | 0 | 0 |
+| Background request parked during the turn | 53.2 s, granted at turn end | 38.3 s, granted at turn end |
+| The turn's own gate waits (max) | 1.5 s (three concurrent embeddings serialising) | 24.1 s (in-flight background call from the zero-length gap between turns) |
+| Semantic hits / keyword fallback | 30 / none | 15 / none |
+| Planted fact | acknowledged | recalled correctly |
+| Turn latency | 53 s | 59 s |
+
+Log counts for "Semantic search unavailable", "Core memory search failed",
+"Lesson search failed" and timeouts: all zero. Background extraction resumed
+within 3 s of the last turn ending, with zero gate wait.
+
+Not cleared by this. The 24 s first-call wait in turn 2 is the no-preemption
+design: a background generation that starts between turns runs to completion.
+Worker shutdown still waited past its timeout with a call in flight (the
+separate "improve shutdown" item). The gate is process-local, so a separate
+`blipshell nightly` process is not scheduled by it. The acceptance `lifecycle`
+stage itself has not been rerun on the Ollama PC since this change; the
+scheduling script above is the isolated-copy check that was run.
+
 ## Commands
 
 Use the development environment with dependencies installed:

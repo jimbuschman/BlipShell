@@ -331,9 +331,31 @@ blipshell/
   matters: model errors mark the model failed (endpoint unharmed); bad requests
   penalize nothing; `RateLimitExhaustedError` → next endpoint.
 - **OllamaGate** (llm/ollama_gate.py): serializes local Ollama calls, interactive
-  preempts background. Async waiters are asyncio-cancellable and `acquire`/
-  `async_gate` accept an optional `timeout` (raises `GateTimeout`). Cloud bypasses
-  the gate.
+  preempts QUEUED background (a running call is never interrupted). Async
+  waiters are asyncio-cancellable and `acquire`/`async_gate` accept an optional
+  `timeout` (raises `GateTimeout`). Cloud bypasses the gate.
+  **A chat turn owns the model (2026-09-16, scheduling under load).**
+  `Agent.chat` is wrapped in `interactive_model_work`, which holds
+  `gate.interactive_turn()` for the whole turn; while any turn is open, NEW
+  `BACKGROUND` acquisitions park even on an idle gate and are woken when the
+  last turn ends. Priority is a contextvar (`background_model_work` on
+  `MemoryWorker._run`, `NightlyRunner.run` and the reflection loops;
+  thread-name fallback otherwise). It survives `asyncio.to_thread` and NOT
+  `loop.run_in_executor`, so every embedding thread hop is `to_thread`
+  (`tests/test_gate_scheduling.py` pins the sources). `_embed`/`_embed_batch`
+  are gated - `search_memories` used to embed UNGATED ("small model runs
+  concurrently") and timed out behind background extraction on the shared
+  GPU; `gate()` is reentrant on one thread for the `add_memory -> _embed`
+  pair. The worker's idle extraction also checks `interactive_active`.
+  Live evidence 2026-09-16 (dev box over Tailscale, copy of the dev DB,
+  gpt-oss chat + qwen3:14b extraction): background requests made 0.03 s and
+  21 s into two turns were parked 53 s and 38 s and granted the instant each
+  turn ended; retrieval stayed semantic; background resumed with zero wait.
+  The cost is the no-preemption wait: a background call that starts in the
+  gap between two turns holds the GPU for its duration (21 s measured). The
+  gate is process-local - a separate `blipshell nightly` process is not
+  scheduled by it. `python -m scripts.validate_live_scheduling --url ...`
+  repeats the check on a database copy.
 - PII sanitization (Presidio → regex fallback) fires only on cloud paths;
   local calls keep raw text for search quality. **Presidio + spaCy are an
   optional extra since 2026-09-06** (`pip install -e .[pii]`, then

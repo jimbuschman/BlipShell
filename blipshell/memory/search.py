@@ -4,7 +4,6 @@ Pipeline: noise filter → rephrase query → ChromaDB search → filter by rank
 """
 
 import asyncio
-import functools
 import logging
 import re
 import time
@@ -197,17 +196,15 @@ class MemorySearch:
             overfetch *= 2
         _t_start = time.monotonic()
 
-        # Step 2: ChromaDB semantic search — two-pass when project is active
-        # ChromaDB calls are sync + gated (OllamaGate serializes embedding calls).
-        # Run in executor so the event loop stays responsive (Esc cancel, etc.).
+        # Step 2: sqlite-vec semantic search - two-pass when project is active.
+        # The query embedding is an Ollama call and goes through OllamaGate at
+        # the CALLER's priority. asyncio.to_thread (not run_in_executor) so the
+        # priority contextvar travels with it and the loop stays responsive.
         _t_chroma_start = time.monotonic()
-        loop = asyncio.get_running_loop()
         chroma_results: list[dict] = []
         async def vector_pass(**kwargs):
             try:
-                return await loop.run_in_executor(
-                    None, functools.partial(self.vectors.search_memories, **kwargs),
-                )
+                return await asyncio.to_thread(self.vectors.search_memories, **kwargs)
             except Exception as error:
                 logger.warning("Semantic search unavailable; continuing with keyword search: %s", error)
                 return []
@@ -744,9 +741,8 @@ class MemorySearch:
         if store is None or max_inject <= 0:
             return []
 
-        loop = asyncio.get_running_loop()
         try:
-            qvec = await loop.run_in_executor(None, self.vectors.embed_text, query)
+            qvec = await asyncio.to_thread(self.vectors.embed_text, query)
         except Exception as e:
             logger.warning("Self-thought query embed failed: %s", e)
             return []
@@ -820,10 +816,7 @@ class MemorySearch:
 
     async def search_core_memories(self, query: str, n_results: int = 10) -> list[dict]:
         """Search core memories by semantic similarity."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None, functools.partial(self.vectors.search_core_memories, query, n_results),
-        )
+        return await asyncio.to_thread(self.vectors.search_core_memories, query, n_results)
 
     async def search_lessons(
         self, query: str, n_results: int = 10,
@@ -834,16 +827,11 @@ class MemorySearch:
         Lessons from the active project get a similarity boost, but lessons
         from other projects still appear (they may be universally relevant).
         """
-        loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(
-            None, functools.partial(self.vectors.search_lessons, query, n_results),
-        )
+        results = await asyncio.to_thread(self.vectors.search_lessons, query, n_results)
         # Session reflections search alongside lessons (pre-sqlite-vec they
         # shared one collection; the migration split them, and reflections
         # were silently dropped from this path until 2026-08).
-        reflections = await loop.run_in_executor(
-            None, functools.partial(self.vectors.search_reflections, query, n_results),
-        )
+        reflections = await asyncio.to_thread(self.vectors.search_reflections, query, n_results)
         results = list(results) + list(reflections)
 
         if active_project and results:

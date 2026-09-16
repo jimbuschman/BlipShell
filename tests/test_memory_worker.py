@@ -16,6 +16,7 @@ import time
 
 import pytest
 
+from blipshell.llm.ollama_gate import get_gate
 from blipshell.memory import worker as worker_mod
 from blipshell.memory.worker import MemoryWorker, WorkItem, WorkType
 from blipshell.models.config import BlipShellConfig
@@ -360,4 +361,37 @@ class TestShutdownRace:
                 "VectorStore.close() on the main thread"
             )
         finally:
+            w.shutdown(timeout=5.0)
+
+
+class TestIdleExtractionDefersToChat:
+    """Scheduling under load (2026-09-16 acceptance, "Remaining live findings"):
+    the worker used to judge the system idle from ITS OWN queue alone, so idle
+    entity extraction started while a chat turn was generating and the turn's
+    embeddings timed out behind it. An active interactive turn on the gate is
+    now the other half of "idle"."""
+
+    def test_idle_extraction_waits_for_the_turn_and_resumes_after(
+            self, seeded_config, patched, monkeypatch):
+        monkeypatch.setattr(worker_mod, "_IDLE_EXTRACT_INTERVAL", 0.1)
+        w = MemoryWorker(seeded_config, vectors=object())
+        turn = get_gate().interactive_turn()
+        turn.__enter__()
+        released = False
+        try:
+            w.start()
+            assert _wait(lambda: bool(RecordingProcessor.instances))
+            time.sleep(1.5)             # several idle polls, all due
+            assert RecordingExtractor.runs == 0, (
+                "idle extraction started while a chat turn was active"
+            )
+            turn.__exit__(None, None, None)
+            released = True
+            # The deferred work is not lost: it runs once the turn ends.
+            assert _wait(lambda: RecordingExtractor.runs >= 1), (
+                "idle extraction never resumed after the chat turn ended"
+            )
+        finally:
+            if not released:
+                turn.__exit__(None, None, None)
             w.shutdown(timeout=5.0)

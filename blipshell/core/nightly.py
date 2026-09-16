@@ -8,7 +8,6 @@ or headless via `blipshell nightly`.
 from __future__ import annotations
 
 import asyncio
-import functools
 import json
 import logging
 import time
@@ -1112,7 +1111,6 @@ class NightlyRunner:
         async def _embed(text: str):
             if self.vectors is None:
                 return None
-            loop = asyncio.get_running_loop()
             return await asyncio.to_thread(self.vectors.embed_text, text)
 
         store = SelfThoughtStore(
@@ -1223,17 +1221,16 @@ class NightlyRunner:
                  "confirms": 0, "contradicts": 0, "neutral": 0,
                  "no_verdict": 0, "dry_run": dry_run}
         votes: list[dict] = []
-        loop = asyncio.get_running_loop()
         last_read = since
         for text, created_at in reflections:
             last_read = created_at
             if not text or text.startswith("Session skipped"):
                 continue
             try:
-                similar = await loop.run_in_executor(
-                    None, functools.partial(
-                        self.vectors.search_lessons, text,
-                        n_results=per_reflection),
+                # to_thread, not run_in_executor: the embedding inside must
+                # carry this job's BACKGROUND priority to the gate.
+                similar = await asyncio.to_thread(
+                    self.vectors.search_lessons, text, n_results=per_reflection,
                 )
             except Exception as e:
                 logger.warning("Lesson pairing failed: %s", e)
