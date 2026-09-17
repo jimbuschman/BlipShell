@@ -369,6 +369,14 @@ blipshell/
   raises); chat bypasses `generate()` and is governed by `/local`, not this.
   Check what production actually loads on the Ollama PC:
   `python -c "from blipshell.llm.pii import engine_description; print(engine_description())"`.
+  **The Presidio load is serialized and quiet (2026-09-17)**: the startup PII
+  engine report and the memory worker's first cloud-bound call both reach
+  `_get_presidio_analyzer` on different threads; unlocked, both built an
+  analyzer (spaCy twice) and the setLevel-around-the-constructor suppression
+  raced itself, so the eleven "language is not supported by registry"
+  WARNINGs leaked at every boot and the logger was left muted at ERROR. Now a
+  lock + double-check, and a filter scoped to the constructor that drops
+  ONLY that message. `tests/test_pii_load.py`.
 - Current assignments (see config.yaml `models:` + per-endpoint overrides):
 
 | Task | Primary | Fallback (local) |

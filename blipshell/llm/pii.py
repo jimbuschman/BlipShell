@@ -8,6 +8,7 @@ Local Ollama calls are NOT sanitized — raw text is preserved for search qualit
 """
 
 import logging
+import threading
 import re
 from dataclasses import dataclass
 
@@ -19,10 +20,33 @@ logger = logging.getLogger(__name__)
 
 _presidio_analyzer = None
 _presidio_available = None  # None = not checked yet
+# One construction, ever. The agent's PII engine report and the memory
+# worker's first cloud-bound call both reach the loader at startup on
+# different threads; unlocked, both built an analyzer (spaCy loaded twice)
+# and the noise suppression below raced itself (2026-09-17).
+_load_lock = threading.Lock()
+
+PRESIDIO_LOGGER = "presidio-analyzer"
+# AnalyzerEngine() registers every predefined recognizer and warns, on the
+# presidio-analyzer logger, for each one whose language the en-only registry
+# rejects (es/it/pl credit cards, fiscal codes, ...). Eleven lines of
+# expected behaviour at every startup; nothing else Presidio says is muted.
+_REGISTRY_LANGUAGE_NOISE = "not supported by registry"
+
+
+class _DropRegistryLanguageNoise(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return _REGISTRY_LANGUAGE_NOISE not in record.getMessage()
 
 
 def _get_presidio_analyzer():
-    """Lazy-load Presidio analyzer. Returns None if not installed."""
+    """Lazy-load Presidio analyzer. Returns None if not installed.
+
+    Serialized: concurrent first callers wait for the one construction and
+    share its result (or its failure). The registry-language noise is
+    filtered only for the duration of that construction - the filter is
+    removed afterwards so the logger is left exactly as found.
+    """
     global _presidio_analyzer, _presidio_available
 
     if _presidio_available is False:
@@ -30,22 +54,28 @@ def _get_presidio_analyzer():
     if _presidio_analyzer is not None:
         return _presidio_analyzer
 
-    try:
-        from presidio_analyzer import AnalyzerEngine
-        # Suppress noisy warnings about non-English recognizers (es, it credit cards)
-        # being skipped — we only use English, this is expected behavior
-        presidio_logger = logging.getLogger("presidio-analyzer")
-        prev_level = presidio_logger.level
-        presidio_logger.setLevel(logging.ERROR)
-        _presidio_analyzer = AnalyzerEngine()
-        presidio_logger.setLevel(prev_level)
-        _presidio_available = True
-        logger.info("Presidio PII analyzer loaded (spaCy NER + regex)")
-        return _presidio_analyzer
-    except Exception as e:
-        _presidio_available = False
-        logger.info("Presidio not available, using regex-only PII sanitization: %s", e)
-        return None
+    with _load_lock:
+        # Another thread may have decided while we waited.
+        if _presidio_available is False:
+            return None
+        if _presidio_analyzer is not None:
+            return _presidio_analyzer
+
+        presidio_logger = logging.getLogger(PRESIDIO_LOGGER)
+        noise_filter = _DropRegistryLanguageNoise()
+        presidio_logger.addFilter(noise_filter)
+        try:
+            from presidio_analyzer import AnalyzerEngine
+            _presidio_analyzer = AnalyzerEngine()
+            _presidio_available = True
+            logger.info("Presidio PII analyzer loaded (spaCy NER + regex)")
+            return _presidio_analyzer
+        except Exception as e:
+            _presidio_available = False
+            logger.info("Presidio not available, using regex-only PII sanitization: %s", e)
+            return None
+        finally:
+            presidio_logger.removeFilter(noise_filter)
 
 
 # Presidio entity type → placeholder mapping.
