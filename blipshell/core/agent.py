@@ -1108,7 +1108,8 @@ class Agent(
                 if depth else "Stopping memory worker..."
             )
             report = self._memory_worker.shutdown(timeout=WORKER_CLOSE_GRACE)
-            if report.deferred or report.interrupted or not report.exited:
+            if (report.deferred or report.lost or report.interrupted
+                    or not report.exited):
                 _status(f"  memory worker: {report.describe()}")
 
         if self.session_manager:

@@ -497,7 +497,8 @@ class TestBoundedShutdown:
             report = w.shutdown(timeout=0.5)
         finally:
             w.shutdown(timeout=2.0)
-        assert report.deferred == {"process_message": 4}
+        assert report.deferred == {"process_message": 3}, report
+        assert report.discarded == 1 and report.lost == 0, report
         conn = sqlite3.connect(config.database.path)
         try:
             rows = conn.execute(
@@ -568,6 +569,12 @@ class TestBoundedShutdown:
         text = report.describe()
         assert "2 process_message" in text and "interrupted extract_entities" in text
         assert "thread still alive" in text
+
+    def test_report_names_lost_and_discarded_separately_from_deferred(self):
+        report = worker_mod.ShutdownReport(exited=True, deferred={}, lost=1, discarded=2)
+        text = report.describe()
+        assert "1 message(s) LOST" in text and "2 noise message(s) discarded" in text
+        assert "deferred" not in text and "queue empty" not in text
 
 
 # --- review findings on the bounded shutdown ---------------------------------
@@ -818,3 +825,100 @@ class TestDurabilityBoundary:
         finally:
             conn.close()
         assert row is not None and row[0] == 0, "the deferred message has no raw row"
+
+
+# --- review of ed69fae: outcomes are not all "deferred" ------------------------
+
+
+class TestShutdownOutcomes:
+    def test_a_message_whose_final_persist_fails_is_reported_lost_not_deferred(
+            self, config, patched, monkeypatch):
+        """`deferred` means handed to the startup sweep. A row-less message
+        whose final persist failed has no row, so the sweep cannot find it:
+        it is LOST, and the report must say so instead of counting it as
+        recoverable. Noise is discarded by design and is not deferred either."""
+        from blipshell.memory.sqlite_store import SQLiteStore
+        sid = _make_session(config.database.path)
+
+        async def always_fails(self, *a, **kw):
+            raise RuntimeError("disk full")
+
+        monkeypatch.setattr(SQLiteStore, "save_raw_memory", always_fails)
+        monkeypatch.setattr("blipshell.memory.processor.MemoryProcessor", RecordThenHangProcessor)
+        w = MemoryWorker(config, vectors=object(), poll_interval=0.05)
+        w.start()
+        try:
+            # In flight: has a row, hangs until cancelled.
+            w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, text="in flight",
+                               session_id=sid, memory_id=7))
+            assert _wait(lambda: RecordingProcessor.instances
+                         and RecordingProcessor.instances[0].calls)
+            # Queued behind it: one row-less substantive message, one noise message.
+            w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, role="user",
+                               text=SUBSTANTIVE, session_id=sid, memory_id=None))
+            w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, role="user",
+                               text="ok sounds good", session_id=sid, memory_id=None))
+            report = w.shutdown(timeout=0.3)
+        finally:
+            w.shutdown(timeout=2.0)
+        assert report.exited and report.interrupted == "process_message"
+        assert report.deferred == {}, f"an unrecoverable message was counted as deferred: {report}"
+        assert report.lost == 1 and report.discarded == 1, report
+        text = report.describe()
+        assert "LOST" in text and "discarded" in text and "deferred" not in text
+
+    def test_blocked_final_persist_is_named_and_confirms_nothing(
+            self, config, patched, monkeypatch):
+        """Probe for the reviewer's question: the final persist in
+        _defer_queued is not cancellable. If that write hangs, shutdown()
+        returns with exited=False; the report must say WHICH wait this is and
+        confirm no deferral until the write returns. Agent.end_session then
+        proceeds into summary/lessons with the worker thread still alive -
+        recorded here as the current behaviour, not changed."""
+        from blipshell.memory.sqlite_store import SQLiteStore
+        sid = _make_session(config.database.path)
+        hold = threading.Event()
+        original = SQLiteStore.save_raw_memory
+
+        async def slow(self, *a, **kw):
+            while not hold.is_set():
+                await asyncio.sleep(0.01)
+            return await original(self, *a, **kw)
+
+        monkeypatch.setattr(SQLiteStore, "save_raw_memory", slow)
+        monkeypatch.setattr(worker_mod, "_CANCEL_GRACE", 0.3)
+        monkeypatch.setattr("blipshell.memory.processor.MemoryProcessor", RecordThenHangProcessor)
+        w = MemoryWorker(config, vectors=object(), poll_interval=0.05)
+        w.start()
+        try:
+            w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, text="in flight",
+                               session_id=sid, memory_id=7))
+            assert _wait(lambda: RecordingProcessor.instances
+                         and RecordingProcessor.instances[0].calls)
+            w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, role="user",
+                               text=SUBSTANTIVE, session_id=sid, memory_id=None))
+
+            first = w.shutdown(timeout=0.2)           # cancel lands; final persist then hangs
+
+            assert first.exited is False and w.is_alive
+            assert first.finalizing is True and first.executor_busy is False
+            assert first.deferred == {} and first.lost == 0, (
+                "an outcome was reported before the final persist returned"
+            )
+            assert "final raw persist" in first.describe()
+
+            hold.set()
+            assert _wait(lambda: not w.is_alive), "worker did not exit after the write returned"
+            second = w.shutdown(timeout=1.0)
+            assert second.exited and second.finalizing is False
+            assert second.deferred == {"process_message": 1} and second.lost == 0, second
+        finally:
+            hold.set()
+            w.shutdown(timeout=2.0)
+        conn = sqlite3.connect(config.database.path)
+        try:
+            row = conn.execute("SELECT is_processed FROM memories WHERE content = ?",
+                               (SUBSTANTIVE,)).fetchone()
+        finally:
+            conn.close()
+        assert row is not None and row[0] == 0

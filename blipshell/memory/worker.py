@@ -48,12 +48,17 @@ class ShutdownReport:
     """What shutdown() did.
 
     `deferred` counts the queued items handed to the startup sweep instead of
-    being run, by work type; `interrupted` names the in-flight item cancelled
-    at the deadline (its work is left retryable); `exited` says whether the
-    thread is actually gone.
+    being run, by work type - every one of them has a row or is re-found;
+    `lost` counts messages that have NO row because even the final raw persist
+    failed (their full text is in the log, nowhere else); `discarded` counts
+    noise messages dropped by design; `interrupted` names the in-flight item
+    cancelled at the deadline (its work is left retryable); `exited` says
+    whether the thread is actually gone.
     """
     exited: bool
     deferred: dict = field(default_factory=dict)
+    lost: int = 0
+    discarded: int = 0
     interrupted: Optional[str] = None
     waited_s: float = 0.0
     # The cancelled item had handed a blocking call (embedding, vector write)
@@ -61,18 +66,29 @@ class ShutdownReport:
     # reach it; the worker thread stays alive until it does, and the stores
     # it uses are NOT safe to close until then.
     executor_busy: bool = False
+    # The final raw persist of a deferred row-less message (in _defer_queued,
+    # not cancellable) has not returned. Nothing below is confirmed yet.
+    finalizing: bool = False
 
     def describe(self) -> str:
         parts = []
         if self.deferred:
             parts.append("deferred to the startup sweep: " + ", ".join(
                 f"{n} {kind}" for kind, n in sorted(self.deferred.items())))
+        if self.lost:
+            parts.append(f"{self.lost} message(s) LOST - no row could be written; "
+                         "full text is in the log")
+        if self.discarded:
+            parts.append(f"{self.discarded} noise message(s) discarded")
         if self.interrupted:
             parts.append(f"interrupted {self.interrupted} (retryable)")
         if not parts:
             parts.append("queue empty, nothing in flight")
         if self.executor_busy:
             parts.append("a blocking call on a pool thread has not returned; stores left open")
+        elif self.finalizing:
+            parts.append("the final raw persist of a deferred message has not returned; "
+                         "stores left open")
         elif not self.exited:
             parts.append("thread still alive")
         return "; ".join(parts) + f" ({self.waited_s:.1f}s)"
@@ -136,8 +152,11 @@ class MemoryWorker:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._current_task: Optional[asyncio.Task] = None  # the in-flight item
         self._deferred: dict[str, int] = {}
+        self._lost = 0
+        self._discarded = 0
         self._interrupted: Optional[str] = None
         self._executor_busy = threading.Event()  # set while draining pool threads at exit
+        self._finalizing = threading.Event()     # set while _defer_queued persists row-less items
         self.last_shutdown: Optional[ShutdownReport] = None
 
     def start(self):
@@ -322,18 +341,23 @@ class MemoryWorker:
             self._current_task = None
 
     @staticmethod
-    def _needs_row(item: WorkItem) -> bool:
-        """The one kind of work that is NOT durable by construction: a message
-        whose raw persist never landed, so no row names it yet.
-
-        Noise is excluded with the processor's own deterministic filter: a
-        short signal-less message never becomes a row BY DESIGN (pinned in
-        test_memory_worker_pipeline), so dropping it at shutdown loses nothing.
-        """
+    def _is_rowless_noise(item: WorkItem) -> bool:
+        """A row-less message the pipeline would drop anyway: blank, or noise by
+        the processor's own deterministic filter. A short signal-less message
+        never becomes a row BY DESIGN (pinned in test_memory_worker_pipeline),
+        so discarding it at shutdown loses nothing."""
         from blipshell.memory.noise import should_skip_memory
         return (item.work_type == WorkType.PROCESS_MESSAGE
-                and item.memory_id is None and bool(item.text.strip())
-                and not should_skip_memory(item.text))
+                and item.memory_id is None
+                and (not item.text.strip() or should_skip_memory(item.text)))
+
+    @classmethod
+    def _needs_row(cls, item: WorkItem) -> bool:
+        """The one kind of work that is NOT durable by construction: a message
+        whose raw persist never landed, so no row names it yet."""
+        return (item.work_type == WorkType.PROCESS_MESSAGE
+                and item.memory_id is None
+                and not cls._is_rowless_noise(item))
 
     async def _persist_raw(self, item: WorkItem, sqlite) -> Optional[int]:
         """Give the message its is_processed=0 row; None if even that failed."""
@@ -375,23 +399,33 @@ class MemoryWorker:
         one exception: a message whose raw persist never landed (memory_id
         None) would vanish with the queue, so it is persisted raw here.
         """
-        while True:
-            try:
-                item = self._queue.get_nowait()
-            except queue.Empty:
-                break
-            if item.work_type == WorkType.SHUTDOWN:
-                continue
-            if self._needs_row(item) and await self._persist_raw(item, sqlite) is None:
-                # Explicit, not silent: this message has no row and the queue
-                # dies with the process. The log is its only remaining copy.
-                logger.error(
-                    "Memory worker: message LOST at shutdown - no row could be "
-                    "written (session_id=%s role=%s); full text: %r",
-                    item.session_id, item.role, item.text,
-                )
-            kind = item.work_type.value
-            self._deferred[kind] = self._deferred.get(kind, 0) + 1
+        self._finalizing.set()
+        try:
+            while True:
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if item.work_type == WorkType.SHUTDOWN:
+                    continue
+                if self._is_rowless_noise(item):
+                    self._discarded += 1          # dropped by design, not deferred
+                    continue
+                if self._needs_row(item) and await self._persist_raw(item, sqlite) is None:
+                    # Explicit, not silent: this message has no row and the
+                    # queue dies with the process. The log is its only copy.
+                    # It is LOST, not deferred - the sweep cannot find it.
+                    logger.error(
+                        "Memory worker: message LOST at shutdown - no row could be "
+                        "written (session_id=%s role=%s); full text: %r",
+                        item.session_id, item.role, item.text,
+                    )
+                    self._lost += 1
+                    continue
+                kind = item.work_type.value
+                self._deferred[kind] = self._deferred.get(kind, 0) + 1
+        finally:
+            self._finalizing.clear()
         if self._deferred:
             logger.info(
                 "Memory worker: %s deferred to the startup sweep",
@@ -526,9 +560,12 @@ class MemoryWorker:
         report = ShutdownReport(
             exited=not self.is_alive,
             deferred=dict(self._deferred),
+            lost=self._lost,
+            discarded=self._discarded,
             interrupted=self._interrupted,
             waited_s=round(time.monotonic() - t0, 1),
             executor_busy=self.is_alive and self._executor_busy.is_set(),
+            finalizing=self.is_alive and self._finalizing.is_set(),
         )
         self.last_shutdown = report
         if report.exited:

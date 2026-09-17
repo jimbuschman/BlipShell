@@ -664,7 +664,15 @@ hard-delete — do not use them.
   at shutdown is logged in full at ERROR as LOST), and the loop re-checks
   `_shutting_down` after the durability write, because a cancel issued while
   that write was in progress finds no task and does nothing.
-  `TestDurabilityBoundary`.
+  `TestDurabilityBoundary`. Third review: the report separates outcomes -
+  `deferred` (has a row / re-found), `lost` (final persist failed; full text
+  only in the log), `discarded` (noise, by design) - and names a blocked
+  final persist (`finalizing`) instead of a bare "thread still alive". That
+  final persist is NOT cancellable; if it hangs, `end_session` proceeds into
+  summary/lessons with the worker alive (probed by
+  `test_blocked_final_persist_is_named_and_confirms_nothing`, left as is: a
+  single INSERT hanging past the 60 s busy_timeout means the database itself
+  is unavailable to the close steps too).
 - qwen3 models degrade with think=False (hybrid-thinking architecture).
 - `context_tokens` is set at endpoint level and passed as num_ctx.
 - Windows console: keep script output ASCII-safe (cp1252 crashes).

@@ -238,6 +238,19 @@ after the write and defers the now-durable item instead. Tests:
 `TestDurabilityBoundary` (2), one with a failing worker-side persist, one with
 the shutdown timed inside the write.
 
+Third review (same day). A message whose final persist failed was still
+counted as "deferred", and so was noise, although neither is recoverable by
+the sweep (one is lost, the other dropped by design). The report now carries
+`deferred`, `lost` and `discarded` separately and the close output shows
+them. The reviewer also asked whether a hang in that final persist (not
+cancellable) is worth handling: the probe test shows shutdown() returning
+`exited=False` with the report naming the wait (`finalizing`) and confirming
+no outcome until the write returns, after which the worker exits and the
+item is deferred normally. `Agent.end_session` then proceeds into summary and
+lessons with the worker thread alive. Left as is: a single INSERT hanging
+past SQLite's 60 s busy timeout means the database is unavailable to those
+close steps as well, and the report says what is happening.
+
 Not changed: the session's own close steps (summary, lessons, digest) still
 run to completion with no timeout, per the standing design decision. Whether
 those should also be deferred to the nightly is a separate decision.
