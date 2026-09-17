@@ -293,8 +293,17 @@ acquisition is granted while a turn is open; released-at-turn-end calls are
 reported separately with their parked time, and a `--turn-gap` (default 3 s)
 separates the turns like a user would. `tests/test_validate_live_scheduling_verdict.py`
 replays the recorded events: pass under the corrected rule, and shows a
-genuine mid-turn grant is still a miss. The scheduler was not changed. A
-re-run on the Ollama PC with the corrected validator is the remaining step.
+genuine mid-turn grant is still a miss. The scheduler was not changed.
+
+**Re-run 2026-09-17 05:55 (Ollama PC, corrected validator, real-corpus copy): PASS.**
+Background calls granted while a turn was open: 0 and 0. Background requests
+made during the turns were parked 61.3 s and 13.3 s and released at turn end.
+Semantic search: 59 vector hits in both turns, no fallback, no failures, no
+timeouts; fact recalled; background resumed (3 grants after the turns); gate
+ended with 0 waiters and 0 cancels; cleanup 5.0 s. Turn 1's first four gate
+waits were 6.3 to 9.4 s behind an extraction call that was already running
+when the turn opened (no-preemption cost, as designed); turn 2 waited at most
+0.4 s. This clears the scheduling-under-load finding on the real corpus.
 
 ## Commands
 
