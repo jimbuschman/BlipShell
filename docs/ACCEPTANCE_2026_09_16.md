@@ -255,6 +255,47 @@ Not changed: the session's own close steps (summary, lessons, digest) still
 run to completion with no timeout, per the standing design decision. Whether
 those should also be deferred to the nightly is a separate decision.
 
+## Real-corpus runs 2026-09-16 (Ollama PC, after the scheduling and shutdown fixes)
+
+Both stages ran on the Ollama PC against fresh copies of the production
+database (`data/acceptance_20260916_192346`, `data/live_scheduling_20260916_194004`).
+
+**Lifecycle: PASS on every check.** Startup, web auth routes, tool approval
+denial, three chat turns (65 s, 13 s, 55 s), persist-and-recall, compaction
+identity, session close and restart-and-resume. Session close took **94 s**
+(was 303 s in the first acceptance run). One `isolation_violation: BLOCKED`
+event during agent start is the guard refusing a write outside the run folder;
+the run continued and passed.
+
+**Scheduling: the gate passed; the validator reported a false FAIL.** The two
+"background call(s) granted after the turn began" were:
+
+| | requested | turn open at request | granted | parked |
+|---|---|---|---|---|
+| turn 1 | 20.781 s | yes | 79.531 s (= turn 1 end) | 58.75 s |
+| turn 2 | 93.922 s | yes | 140.781 s (= turn 2 end) | 46.86 s |
+
+Both background requests were parked for the whole turn and woken as the turn
+closed. Semantic search stayed alive (59 vector hits per turn, no keyword
+fallback, no search failures, no timeouts), the planted fact was recalled,
+background work resumed, and the gate ended with zero waiters and zero
+cancels. Turn 1's own gate waits peaked at 0.84 s; turn 2 waited 18 s behind
+the call released at turn 1's end (the no-preemption cost, as designed; the
+turns were back-to-back).
+
+The validator judged "granted after the turn began" by `t_grant <= t_end`,
+but `t_end` is stamped after `agent.chat()` returns and the
+`interactive_model_work` wrapper closes the turn (waking the parked waiter)
+just before that return, so the grant is recorded a few ms early.
+`scripts/validate_live_scheduling.py` now records the gate's own
+`interactive_active` at grant time and fails only when a BACKGROUND
+acquisition is granted while a turn is open; released-at-turn-end calls are
+reported separately with their parked time, and a `--turn-gap` (default 3 s)
+separates the turns like a user would. `tests/test_validate_live_scheduling_verdict.py`
+replays the recorded events: pass under the corrected rule, and shows a
+genuine mid-turn grant is still a miss. The scheduler was not changed. A
+re-run on the Ollama PC with the corrected validator is the remaining step.
+
 ## Commands
 
 Use the development environment with dependencies installed:

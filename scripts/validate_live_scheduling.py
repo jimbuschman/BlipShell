@@ -101,11 +101,16 @@ def instrument_gate():
     orig_acquire, orig_async_acquire, orig_release = gate.acquire, gate.async_acquire, gate.release
 
     def record(kind, priority, t_req, turn_at_request):
+        # turn_at_grant is the gate's OWN state when this acquirer got the gate.
+        # It is the truth for "was a turn open"; timestamps are not - a parked
+        # background waiter woken by the turn CLOSING resumes on the worker
+        # loop and can record before the main thread stamps the turn's end.
         with _ev_lock:
             EVENTS.append({
                 "kind": kind, "priority": priority, "t_req": t_req, "t_grant": now(),
                 "wait_ms": round((now() - t_req) * 1000, 1),
                 "turn_at_request": turn_at_request,
+                "turn_at_grant": gate.interactive_active,
                 "thread": threading.current_thread().name,
             })
 
@@ -132,10 +137,12 @@ def instrument_gate():
 
 
 def grants(priority, *, requested_after=None, requested_before=None,
-           granted_before=None, granted_after=None):
+           granted_before=None, granted_after=None, turn_at_grant=None, events=None):
     out = []
-    for e in EVENTS:
+    for e in (EVENTS if events is None else events):
         if e["kind"] == "release" or e["priority"] != priority:
+            continue
+        if turn_at_grant is not None and e.get("turn_at_grant") is not turn_at_grant:
             continue
         if requested_after is not None and e["t_req"] < requested_after:
             continue
@@ -149,6 +156,37 @@ def grants(priority, *, requested_after=None, requested_before=None,
     return out
 
 
+def classify_turn(events: list[dict], t_start: float, t_end: float) -> dict:
+    """Attribute the gate events of one chat turn.
+
+    The violation is a BACKGROUND acquisition granted WHILE a turn was open -
+    judged by the gate's own state at grant time (`turn_at_grant`), never by
+    timestamps. `t_end` is stamped after `agent.chat()` returns, but the
+    `interactive_model_work` wrapper closes the turn just before returning,
+    which wakes a parked background waiter; on the worker loop that grant can
+    be recorded a few ms BEFORE `t_end`. The real-corpus run of 2026-09-16
+    reported exactly that as two false failures (grants at 79.531 and
+    140.781, the very timestamps of the turn ends, both after 47-59 s parked).
+    """
+    from blipshell.llm.ollama_gate import BACKGROUND, INTERACTIVE
+    bg_while_open = grants(BACKGROUND, granted_after=t_start, granted_before=t_end,
+                           turn_at_grant=True, events=events)
+    bg_released_at_end = grants(BACKGROUND, requested_after=t_start, requested_before=t_end,
+                                granted_after=t_start, turn_at_grant=False, events=events)
+    bg_inflight = grants(BACKGROUND, requested_before=t_start, granted_after=t_start,
+                         granted_before=t_end, events=events)
+    fg_in_turn = grants(INTERACTIVE, requested_after=t_start, granted_before=t_end, events=events)
+    return {
+        "background_grants_while_turn_open": len(bg_while_open),
+        "background_released_at_turn_end": len(bg_released_at_end),
+        "background_parked_ms": [e["wait_ms"] for e in bg_released_at_end],
+        "background_grants_inflight_from_before_turn": len(bg_inflight),
+        "interactive_grants": len(fg_in_turn),
+        "interactive_max_wait_ms": max([e["wait_ms"] for e in fg_in_turn], default=0),
+        "interactive_waits_ms": [e["wait_ms"] for e in fg_in_turn],
+    }
+
+
 async def wait_until(cond, timeout, label):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -159,7 +197,7 @@ async def wait_until(cond, timeout, label):
     return False
 
 
-async def run(out: Path, url: str, idle_interval: float) -> dict:
+async def run(out: Path, url: str, idle_interval: float, turn_gap: float) -> dict:
     from blipshell.core.agent import Agent
     from blipshell.core.config import ConfigManager
     from blipshell.memory import worker as worker_mod
@@ -201,27 +239,28 @@ async def run(out: Path, url: str, idle_interval: float) -> dict:
         ]
         turns = []
         for i, prompt in enumerate(prompts, 1):
+            if i > 1 and turn_gap > 0:
+                # A real user pauses between turns. The gap also lets the
+                # background waiter the previous turn woke start and be
+                # recorded before the next turn opens, so its (accepted)
+                # no-preemption cost shows up as an in-flight wait, not as a
+                # grant inside a turn.
+                await asyncio.sleep(turn_gap)
             mark(f"turn{i}_start")
             t_start = now()
             reply = await asyncio.wait_for(agent.chat(prompt), 600)
             t_end = now()
             mark(f"turn{i}_end")
             stats = dict(agent.search.last_search_stats or {})
-            bg_started_in_turn = grants(BACKGROUND, requested_after=t_start, granted_before=t_end)
-            bg_inflight = grants(BACKGROUND, requested_before=t_start,
-                                 granted_after=t_start, granted_before=t_end)
-            fg_in_turn = grants(INTERACTIVE, requested_after=t_start, granted_before=t_end)
+            with _ev_lock:
+                snapshot = list(EVENTS)
             turns.append({
                 "prompt": prompt,
                 "reply_preview": reply[:200],
                 "elapsed_s": round(t_end - t_start, 1),
                 "contains_marker": bool(MARKER_RE.search(reply)),
                 "search_stats": stats,
-                "background_grants_requested_during_turn": len(bg_started_in_turn),
-                "background_grants_inflight_from_before_turn": len(bg_inflight),
-                "interactive_grants": len(fg_in_turn),
-                "interactive_max_wait_ms": max([e["wait_ms"] for e in fg_in_turn], default=0),
-                "interactive_waits_ms": [e["wait_ms"] for e in fg_in_turn],
+                **classify_turn(snapshot, t_start, t_end),
                 "endpoint": getattr(agent, "last_endpoint_used", None),
             })
             print(json.dumps({k: v for k, v in turns[-1].items()
@@ -251,9 +290,9 @@ def verdict(report: dict) -> list[str]:
     if not report.get("background_live_before_turns"):
         misses.append("background work never started before the turns (nothing was tested)")
     for i, t in enumerate(report.get("turns", []), 1):
-        if t["background_grants_requested_during_turn"]:
-            misses.append(f"turn {i}: {t['background_grants_requested_during_turn']} background call(s) "
-                          "granted after the turn began")
+        if t["background_grants_while_turn_open"]:
+            misses.append(f"turn {i}: {t['background_grants_while_turn_open']} background call(s) "
+                          "granted while the turn was open")
         if t["search_stats"].get("chroma_hits", 0) == 0:
             misses.append(f"turn {i}: no semantic hits (keyword fallback or empty vector search)")
         if i > 1 and not t["contains_marker"]:
@@ -278,6 +317,8 @@ def main(argv=None):
                         help="run folder (default: data/live_scheduling_<timestamp>/)")
     parser.add_argument("--idle-interval", type=float, default=3.0,
                         help="worker idle-extraction interval in seconds for the run (default 3)")
+    parser.add_argument("--turn-gap", type=float, default=3.0,
+                        help="pause between chat turns in seconds, like a user would (default 3; 0 for back-to-back)")
     args = parser.parse_args(argv)
 
     if args.source_db:
@@ -299,7 +340,8 @@ def main(argv=None):
     logging.getLogger("blipshell.llm.ollama_gate").setLevel(logging.DEBUG)
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    report = asyncio.run(run(out, args.url, args.idle_interval))
+    report = asyncio.run(run(out, args.url, args.idle_interval, args.turn_gap))
+    report["turn_gap_s"] = args.turn_gap
 
     log = log_path.read_text(encoding="utf-8", errors="replace")
     report["log_signals"] = {
