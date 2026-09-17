@@ -1260,8 +1260,13 @@ def nightly_cmd(ctx, job, quiet, loop, local, history):
                 console.print("No historical runs recorded yet. History starts with the next nightly run.")
         return
 
+    loop_outcome: dict = {}
+
     async def _run():
         from blipshell.core.nightly import NightlyRunner
+        from blipshell.core.nightly_loop import (
+            MAX_STALLED_PASSES, RETRY_BACKOFF_SECONDS, decide, remaining_by_job,
+        )
 
         runner = await NightlyRunner.create_from_config(
             ctx.obj.get("config_path"), local_only=local,
@@ -1269,6 +1274,8 @@ def nightly_cmd(ctx, job, quiet, loop, local, history):
         try:
             jobs = [job] if job else None
             iteration = 0
+            previous_remaining = None
+            stalled_passes = 0
 
             while True:
                 iteration += 1
@@ -1314,33 +1321,55 @@ def nightly_cmd(ctx, job, quiet, loop, local, history):
                 if not loop:
                     break
 
-                # Check if the job actually did work — stop if nothing left.
-                # "checked" matters as much as the mutation counters:
-                # consolidation examines a batch and usually merges NOTHING
-                # (at a correct threshold most memories aren't duplicates), so
-                # keying only off `merged` made --loop announce "nothing left"
-                # after one pass while thousands of memories were still
-                # unexamined. Consolidation marks what it checks, so the pool
-                # shrinks every pass and this still terminates.
+                # Stop only when the pool is drained or, for jobs that report
+                # no pool, when a pass did no work. A pass that FAILED, or made
+                # no progress against a non-empty pool, is RETRIED (bounded) -
+                # the night of 2026-09-16 the old `checked > 0` rule announced
+                # "done" with 14,515 memories pending after one pass whose
+                # first batch overran the budget. Policy + tests live in
+                # core/nightly_loop.py; this only applies the decision.
                 job_stats = result.get("jobs", {})
-                did_work = False
-                for stats in job_stats.values():
-                    for key in ("resummarized", "scored", "processed", "merged",
-                                "deleted_junk", "deleted_dupes", "pruned", "rebuilt",
-                                "checked"):
-                        if stats.get(key, 0) > 0:
-                            did_work = True
-                            break
-                if not did_work:
+                decision = decide(job_stats, previous_remaining)
+                previous_remaining = remaining_by_job(job_stats) or previous_remaining
+                if decision.action == "continue":
+                    stalled_passes = 0
+                    continue
+                if decision.action == "done":
                     if not quiet:
-                        console.print("[green]Nothing left to process — done.[/green]")
+                        console.print(
+                            f"[green]Nothing left to process — done ({decision.reason}).[/green]"
+                        )
                     break
+                stalled_passes += 1
+                if stalled_passes >= MAX_STALLED_PASSES:
+                    loop_outcome["stalled"] = decision
+                    if not quiet:
+                        console.print(
+                            f"[red]Stopping after {stalled_passes} passes without progress: "
+                            f"{decision.reason}. NOT done.[/red]"
+                        )
+                    break
+                if not quiet:
+                    console.print(
+                        f"[yellow]No progress this pass ({decision.reason}); retrying in "
+                        f"{RETRY_BACKOFF_SECONDS:.0f}s ({stalled_passes}/{MAX_STALLED_PASSES}).[/yellow]"
+                    )
+                await asyncio.sleep(RETRY_BACKOFF_SECONDS)
 
             return result
         finally:
             await runner.close()
 
     result = asyncio.run(_run())
+
+    # A --loop that gave up is not a success: the pool is not drained. Say so
+    # (machine-readably in --quiet) before the per-job exit check below, which
+    # would otherwise exit first and silently when the last pass had failed.
+    if loop_outcome.get("stalled"):
+        if quiet:
+            print(_json.dumps({"loop": "stalled", "reason": loop_outcome["stalled"].reason,
+                               "remaining": loop_outcome["stalled"].remaining}))
+        raise SystemExit(1)
 
     # Exit nonzero when jobs didn't complete, so a scheduled run can be
     # monitored. Without this, a night where every job failed was

@@ -610,9 +610,16 @@ as a tag it never lifted a memory out of a "<=1" pool). Before that the
 pool was re-read newest-first with no cursor and the marker was gated on
 `allow_new_tags` (never on in the nightly), so the Sep 2 run re-sent the same
 ten memories until the 270s budget ran out: 11 touched, 17,080 in the pool.
-"Stopped early" now carries `remaining_pool` + `est_hours_to_drain`; the job
-returns `checked`, which is what `blipshell nightly --job batch_tag --loop`
-keys on, so that command is the drain (ask before tying up the GPU).
+"Stopped early" now carries `remaining_pool` + `est_hours_to_drain`.
+`blipshell nightly --job batch_tag --loop` is the drain (ask before tying up
+the GPU). **Its stop rule is `core/nightly_loop.decide` (2026-09-17)**: done
+only when `remaining_pool == 0` (or, for jobs reporting no pool, when a pass
+did no work); a job timeout/error, or a pass that did not shrink the pool
+(first batch overran the budget so `checked` stayed 0; every batch errored),
+is RETRIED with a 60 s backoff up to 3 times, then the loop stops saying how
+much remains and exits nonzero. Before this it keyed on `checked > 0` and the
+night of 2026-09-16 it announced "done" with 14,515 memories pending.
+`tests/test_nightly_loop_policy.py`.
 Junk vocabulary (`nnone`, from the model writing NONE) is purged each run.
 **Commit evidence for the user model is a durable queue** (2026-09-09, V3 A4,
 `memory/commit_ingest.py`, table `commit_evidence` unique on repo+sha):

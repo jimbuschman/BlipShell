@@ -458,16 +458,19 @@ class TestLoopTerminationSignal:
         )
 
     async def test_checked_is_in_the_cli_progress_keys(self):
-        """Pins the wiring: the CLI must treat `checked` as progress."""
+        """Pins the wiring: the loop policy must treat `checked` as progress
+        for jobs that report no pool (consolidation), and the CLI must apply
+        that policy rather than its own key list (2026-09-17: the inline list
+        moved to core/nightly_loop.py when the loop learned to retry)."""
         import inspect
+        from blipshell.core import nightly_loop
         from blipshell.ui import cli
 
+        assert "checked" in nightly_loop.WORK_KEYS
         # nightly_cmd is a Click Command; the function is its .callback
         src = inspect.getsource(cli.nightly_cmd.callback)
-        start = src.index('"resummarized"')
-        keys_block = src[start:src.index("):", start)]
-        assert '"checked"' in keys_block, (
-            f"'checked' missing from the loop's progress keys: {keys_block}"
+        assert "nightly_loop" in src and "decide(job_stats" in src, (
+            "the CLI loop no longer applies core/nightly_loop.decide"
         )
 
     async def test_pool_shrinks_each_pass_so_the_loop_terminates(self, store):
