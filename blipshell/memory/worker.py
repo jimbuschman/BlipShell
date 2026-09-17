@@ -95,6 +95,7 @@ class WorkItem:
     metadata: str = "{}"
     project: Optional[str] = None  # for process_lesson
     memory_id: Optional[int] = None  # existing memories row ID (live sessions)
+    persist_attempts: int = 0  # worker-side raw persists tried for a row-less message
 
 
 class MemoryWorker:
@@ -258,7 +259,28 @@ class MemoryWorker:
                     await self._defer_queued(sqlite)
                     break
 
-                await self._make_durable(item, sqlite)
+                if not await self._make_durable(item, sqlite):
+                    # No row could be established. NEVER run the pipeline on a
+                    # message nothing names yet - a cancel mid-pipeline would
+                    # lose it. Back off, try again on a later pass; shutdown's
+                    # _defer_queued gets a last attempt and logs the text.
+                    item.persist_attempts += 1
+                    if item.persist_attempts == 3:
+                        logger.error(
+                            "Memory worker: still no row for a message after %d "
+                            "attempts (session_id=%s); full text: %r",
+                            item.persist_attempts, item.session_id, item.text,
+                        )
+                    self._queue.put(item)
+                    await asyncio.sleep(self._poll_interval)
+                    continue
+                if self._shutting_down.is_set():
+                    # shutdown() began while the row was being written: its
+                    # cancel found no task in flight and did nothing. Do not
+                    # start work now. The item is durable, so requeue it and
+                    # let the top of the loop defer it with the rest.
+                    self._queue.put(item)
+                    continue
                 await self._run_cancellable(
                     item.work_type.value,
                     self._process_item(item, processor, sqlite, router),
@@ -326,19 +348,24 @@ class MemoryWorker:
             )
             return None
 
-    async def _make_durable(self, item: WorkItem, sqlite) -> None:
+    async def _make_durable(self, item: WorkItem, sqlite) -> bool:
         """Persist a row-less message BEFORE it enters the cancellable task.
 
         Runs outside `_run_cancellable`, so shutdown's cancel cannot land in
         the middle of it. The processor then updates that row (the same path
         a live-session message takes), and a cancellation mid-pipeline leaves
         a raw row with is_processed=0 for the startup sweep instead of nothing.
+
+        Returns False when the item needs a row and none could be written -
+        the caller must NOT process it in that state.
         """
         if not self._needs_row(item):
-            return
+            return True
         mem_id = await self._persist_raw(item, sqlite)
-        if mem_id is not None:
-            item.memory_id = mem_id
+        if mem_id is None:
+            return False
+        item.memory_id = mem_id
+        return True
 
     async def _defer_queued(self, sqlite) -> None:
         """Hand the remaining queue to the startup sweep instead of running it.
@@ -355,8 +382,14 @@ class MemoryWorker:
                 break
             if item.work_type == WorkType.SHUTDOWN:
                 continue
-            if self._needs_row(item):
-                await self._persist_raw(item, sqlite)
+            if self._needs_row(item) and await self._persist_raw(item, sqlite) is None:
+                # Explicit, not silent: this message has no row and the queue
+                # dies with the process. The log is its only remaining copy.
+                logger.error(
+                    "Memory worker: message LOST at shutdown - no row could be "
+                    "written (session_id=%s role=%s); full text: %r",
+                    item.session_id, item.role, item.text,
+                )
             kind = item.work_type.value
             self._deferred[kind] = self._deferred.get(kind, 0) + 1
         if self._deferred:

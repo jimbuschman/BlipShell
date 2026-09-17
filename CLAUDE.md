@@ -658,7 +658,13 @@ hard-delete — do not use them.
   `loop.shutdown_default_executor()` before exiting - the thread stays alive
   while that call runs, the report says `executor_busy`, and neither
   `end_session` nor `force_cleanup` closes the VectorStore over a live
-  worker. `TestShutdownReviewFindings`.
+  worker. `TestShutdownReviewFindings`. Second review: durability is a HARD
+  boundary - if the worker-side raw persist fails the item is requeued with
+  a backoff and never enters the pipeline row-less (a message still row-less
+  at shutdown is logged in full at ERROR as LOST), and the loop re-checks
+  `_shutting_down` after the durability write, because a cancel issued while
+  that write was in progress finds no task and does nothing.
+  `TestDurabilityBoundary`.
 - qwen3 models degrade with think=False (hybrid-thinking architecture).
 - `context_tokens` is set at endpoint level and passed as num_ctx.
 - Windows console: keep script output ASCII-safe (cp1252 crashes).

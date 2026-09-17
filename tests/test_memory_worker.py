@@ -711,3 +711,110 @@ class TestShutdownReviewFindings:
         dead = bare_agent(worker_alive=False)
         await dead.force_cleanup()
         dead.vectors.close.assert_called_once()
+
+
+# --- review of 1ef97d6: durability is a hard boundary ------------------------
+
+
+SUBSTANTIVE = ("We decided the entity-graph version guard blocks merges of projectecho_v1 "
+               "and _v2; this row-less message must never be processed without a row")
+
+
+class TestDurabilityBoundary:
+    def test_message_is_never_processed_while_its_raw_persist_fails(
+            self, config, patched, monkeypatch):
+        """Finding 1. When the worker-side raw persist itself fails, the item
+        must not enter the cancellable pipeline with memory_id=None (the
+        original loss case). It is retried; once a row exists it is processed
+        as an update to that row."""
+        from blipshell.memory.sqlite_store import SQLiteStore
+        sid = _make_session(config.database.path)
+        state = {"fail": True, "attempts": 0}
+        original = SQLiteStore.save_raw_memory
+
+        async def flaky(self, *a, **kw):
+            state["attempts"] += 1
+            if state["fail"]:
+                raise RuntimeError("disk full")
+            return await original(self, *a, **kw)
+
+        monkeypatch.setattr(SQLiteStore, "save_raw_memory", flaky)
+        monkeypatch.setattr("blipshell.memory.processor.MemoryProcessor", RecordThenHangProcessor)
+        w = MemoryWorker(config, vectors=object(), poll_interval=0.05)
+        w.start()
+        try:
+            w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, role="user",
+                               text=SUBSTANTIVE, session_id=sid, memory_id=None))
+            assert _wait(lambda: state["attempts"] >= 3), "persist was not retried"
+            assert _wait(lambda: bool(RecordingProcessor.instances))
+            assert not RecordingProcessor.instances[0].calls, (
+                "the pipeline ran on a message that has no row"
+            )
+            state["fail"] = False
+            assert _wait(lambda: RecordingProcessor.instances[0].calls), (
+                "the message was not processed once a row could be written"
+            )
+            received = RecordingProcessor.instances[0].calls[0][1]
+        finally:
+            w.shutdown(timeout=1.0)
+        conn = sqlite3.connect(config.database.path)
+        try:
+            row = conn.execute("SELECT id FROM memories WHERE content = ?", (SUBSTANTIVE,)).fetchone()
+        finally:
+            conn.close()
+        assert row is not None and received["memory_id"] == row[0]
+
+    def test_shutdown_during_the_durability_write_starts_no_processing(
+            self, config, patched, monkeypatch):
+        """Finding 2. shutdown() can issue its cancel while `_make_durable` is
+        still awaiting the row write - there is no task in flight, so the
+        cancel is a no-op. When the write completes, the worker must not
+        start the pipeline; the (now durable) item is deferred instead."""
+        from blipshell.memory.sqlite_store import SQLiteStore
+        sid = _make_session(config.database.path)
+        hold = threading.Event()
+        original = SQLiteStore.save_raw_memory
+
+        async def slow(self, *a, **kw):
+            while not hold.is_set():
+                await asyncio.sleep(0.01)
+            return await original(self, *a, **kw)
+
+        monkeypatch.setattr(SQLiteStore, "save_raw_memory", slow)
+        monkeypatch.setattr(worker_mod, "_CANCEL_GRACE", 0.3)
+        monkeypatch.setattr("blipshell.memory.processor.MemoryProcessor", RecordThenHangProcessor)
+        w = MemoryWorker(config, vectors=object(), poll_interval=0.05)
+        w.start()
+        outcome = {}
+        try:
+            w.enqueue(WorkItem(work_type=WorkType.PROCESS_MESSAGE, role="user",
+                               text=SUBSTANTIVE, session_id=sid, memory_id=None))
+            assert _wait(lambda: w.queue_depth == 0)      # taken; durability write in progress
+            time.sleep(0.2)
+
+            shutter = threading.Thread(
+                target=lambda: outcome.update(first=w.shutdown(timeout=0.2)))
+            shutter.start()
+            shutter.join(5.0)                              # timeout + grace both elapse
+            first = outcome["first"]
+            # Honest while the write is still in progress: not exited.
+            assert first.exited is False and w.is_alive
+            assert not RecordingProcessor.instances[0].calls
+
+            hold.set()                                     # the row write completes
+            assert _wait(lambda: not w.is_alive), "worker did not exit after the write"
+            assert not RecordingProcessor.instances[0].calls, (
+                "processing started after shutdown had begun"
+            )
+            second = w.shutdown(timeout=1.0)
+            assert second.exited and second.deferred == {"process_message": 1}, second
+        finally:
+            hold.set()
+            w.shutdown(timeout=2.0)
+        conn = sqlite3.connect(config.database.path)
+        try:
+            row = conn.execute("SELECT is_processed FROM memories WHERE content = ?",
+                               (SUBSTANTIVE,)).fetchone()
+        finally:
+            conn.close()
+        assert row is not None and row[0] == 0, "the deferred message has no raw row"

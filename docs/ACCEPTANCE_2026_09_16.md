@@ -227,6 +227,17 @@ path closes the vector store over a live worker. Tests:
 `TestShutdownReviewFindings` (3), one of them driving a real
 `asyncio.to_thread` vector write that blocks until released.
 
+Second review (same day). Durability was not yet a hard boundary: when the
+worker-side raw persist itself failed, the item still entered the cancellable
+pipeline row-less. Now it is requeued with a backoff and never processed
+without a row; a message still row-less at shutdown is logged in full at
+ERROR as lost rather than counted as deferred. And a shutdown that began while
+the durability write was in progress issued a cancel into an empty slot, so
+processing could start after shutdown had begun; the loop re-checks the flag
+after the write and defers the now-durable item instead. Tests:
+`TestDurabilityBoundary` (2), one with a failing worker-side persist, one with
+the shutdown timed inside the write.
+
 Not changed: the session's own close steps (summary, lessons, digest) still
 run to completion with no timeout, per the standing design decision. Whether
 those should also be deferred to the nightly is a separate decision.
