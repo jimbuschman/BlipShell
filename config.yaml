@@ -52,9 +52,11 @@ endpoints:
     pii_sanitize: true         # data leaves the machine (chat = credentials only; background = full — see llm/pii.py)
     enabled: true
     models:
-      coding: "minimax/minimax-m3"
-      tool_calling: "deepseek/deepseek-v4-flash"     # measured 2026-09-02 post-parser-fix: 0.973 tool_calling (best in corpus) + agent eval 28/30 — see MODEL_DECISIONS.md
-      session_review: "deepseek/deepseek-v4-flash"   # measured 2026-09-02: 0.887/0.537 lessons vs gemma's 0.887/0.386 — see MODEL_DECISIONS.md
+      # ":floor" = OpenRouter routes each request to the cheapest provider serving the model (2026-09-27:
+      # requests were landing on pricier providers such as Parasail at several times the cheapest rate).
+      coding: "minimax/minimax-m3:floor"
+      tool_calling: "deepseek/deepseek-v4-flash:floor"     # measured 2026-09-02 post-parser-fix: 0.973 tool_calling (best in corpus) + agent eval 28/30 — see MODEL_DECISIONS.md
+      session_review: "deepseek/deepseek-v4-flash:floor"   # measured 2026-09-02: 0.887/0.537 lessons vs gemma's 0.887/0.386 — see MODEL_DECISIONS.md
   - name: "groq"
     url: "https://api.groq.com/openai/v1"
     provider: "openai"
