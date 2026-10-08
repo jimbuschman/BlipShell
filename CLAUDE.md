@@ -521,11 +521,13 @@ blipshell/
   goes through `core/request_bound.py` - same trim order as chat, same
   refusal. Historical core-memory retrieval is still undefined (repair
   listing only).
-- `blipshell benchmark run <model>` — ONE deep test across all 9 job types →
-  `data/benchmark/report.md` (numbers only, no verdict). Ground-truth scorers are
-  unit-testable here; real runs need the Ollama PC. Judge = OpenRouter
-  (claude-opus-4.8), graceful-fail.
-- **Results are COMMITTED files in `benchmark_results/`** (one JSON per run),
+- `blipshell benchmark run <model>` — judge-free, versioned model evaluation.
+  Tiers are `smoke` (1 repeat), `compare` (3), and `decision` (5 plus every
+  suite). Objective jobs score locally. Open-ended outputs are reviewed offline
+  through `blipshell benchmark review export/import`; a run never calls an
+  OpenRouter or Ollama judge. The portable report is
+  `benchmark_results/reports/report.md`; see `docs/BENCHMARKING.md`.
+- **Results are COMMITTED files under `benchmark_results/`** (one JSON per run),
   not the gitignored `benchmark.db` — that DB now holds only the refetchable
   discovery catalog. Rationale: a gitignored store can't sync across the two-PC
   split, so the comparison corpus never accumulated and reports silently omitted
@@ -533,7 +535,10 @@ blipshell/
   cloud models and left out `qwen3:14b`, which serves half the jobs). One file
   per run means two machines never conflict — merging results is `git pull`.
   **Commit the result file after a run**, or the other box never sees it.
-  Each run records `git_sha` + `host`; the report's Provenance table shows them,
+  New runs use separated `model-runs/`, `transcripts/`, `review-sources/`,
+  `external-reviews/`, `reports/`, and `continuity/` directories. Each run
+  records the benchmark/dataset/scorer version, exact settings, `git_sha`, and
+  `host`; the report's Provenance table shows them,
   because scores from different commits are not strictly comparable.
   `python -m scripts.migrate_benchmark_results` moves pre-2026-08-03 rows out of
   an old DB (run once, on the machine holding the history).
@@ -596,8 +601,8 @@ blipshell/
     chat_loop.py:520 through TaskType.REASONING.
   Advice is now noise-aware: `MEANINGFUL_DELTA` (0.03) is only the fallback for
   unreplicated runs; with repeats, a gain must clear the MEASURED spread
-  (`advice._noise_floor`). `--repeats` defaults to 5 — a single run cannot
-  separate two close models and will invert rankings.
+  (`advice._noise_floor`). The `decision` tier uses 5 repeats; the default
+  `smoke` tier uses 1 and must not be used for a routing decision.
 - `python scripts/run_executor.py --canned|--stress` — headless executor harness
   (Ollama PC).
 

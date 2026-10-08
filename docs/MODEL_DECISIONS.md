@@ -75,9 +75,10 @@ one `ConfigManager.save()` away from deletion — programmatic saves rewrite the
 file without comments. Config comments now stay terse and point here.
 
 **The rule, unchanged:** model choices are decided on measured evidence —
-`blipshell benchmark run <model> --repeats 5` for the job keys, the agent-eval
-harness (`scripts/agent_eval/`) for the main model — and a key is judged on
-EVERY job it controls.
+`blipshell benchmark run <model> --tier decision` for the job keys, the
+external-review packet for open-ended outputs, and the agent-eval harness
+(`scripts/agent_eval/`) for the main model — and a key is judged on EVERY job
+it controls. See `docs/BENCHMARKING.md` for the current workflow.
 
 ---
 
@@ -188,8 +189,9 @@ that's already resident.
   already loaded.
 - **embedding → qwen3-embedding:0.6b**: ~10% better similarity than nomic on
   our corpus; understands domain terms. Local always.
-- **Benchmark judge → anthropic/claude-opus-4.8 via OpenRouter**: strong,
-  neutral (never a candidate), graceful-fail when unreachable.
+- **Benchmark judge → anthropic/claude-opus-4.8 via OpenRouter (retired
+  2026-09-23)**: historical scores used this judge. Benchmark v2 makes no
+  judge API call; blinded output packets are reviewed externally and imported.
 
 ## Standing config facts worth knowing (not decisions)
 

@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-RESULTS = REPO / "benchmark_results"
+RESULTS = REPO / "benchmark_results" / "continuity" / "behavioural"
 HOLD_THRESHOLD = 4  # of 5
 MAX_RUN_SECS = 3600      # six scenarios at up to 600s each, plus session closes
 EXIT_GRACE_SECS = 120    # after the JSON exists
@@ -89,6 +89,7 @@ def aggregate(files: list[Path]) -> dict:
 
 
 def main(argv=None) -> int:
+    RESULTS.mkdir(parents=True, exist_ok=True)
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=5)
     ap.add_argument("--model", default=None, help="default: config models.coding (project-mode chat)")

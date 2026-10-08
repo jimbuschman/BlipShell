@@ -1,0 +1,1144 @@
+{
+  "schema": 2,
+  "model": "lfm2.5:latest",
+  "run_group": "lfm2.5_latest@2026-09-25T08:33:50.258194+00:00",
+  "run_ts": "2026-09-25T08:33:50.258194+00:00",
+  "tier": "compare",
+  "judge_model": null,
+  "jobs": [
+    "pipeline",
+    "reasoning",
+    "session_review"
+  ],
+  "git_sha": "d1e355a",
+  "host": "HPBENDERTWO",
+  "benchmark_manifest": {
+    "benchmark_version": "2.0",
+    "dataset_version": "2026-09-23",
+    "scorer_version": "2",
+    "source_fingerprint": "b821993265074d47",
+    "required_categories": [
+      "rank_importance",
+      "ranking",
+      "importance",
+      "contradiction",
+      "dedup",
+      "entity",
+      "summarization",
+      "lessons",
+      "reasoning",
+      "code_gen",
+      "coding_agentic",
+      "tool_calling",
+      "session_review",
+      "session_review_chunked",
+      "embedding"
+    ],
+    "open_ended_categories": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "tiers": {
+      "smoke": {
+        "jobs": [
+          "dedup",
+          "reasoning"
+        ],
+        "repeats": 1,
+        "description": "Fast plumbing/capability check; not sufficient for routing decisions."
+      },
+      "compare": {
+        "jobs": [
+          "pipeline",
+          "reasoning",
+          "session_review"
+        ],
+        "repeats": 3,
+        "description": "Comparable routing-job run without the slow coding/embedding suites."
+      },
+      "decision": {
+        "jobs": [
+          "coding",
+          "embedding",
+          "pipeline",
+          "realdata",
+          "reasoning",
+          "session_review"
+        ],
+        "repeats": 5,
+        "description": "Full evidence run for a production model decision."
+      }
+    }
+  },
+  "run_settings": {
+    "provider": "ollama",
+    "endpoint_names": [
+      "local",
+      "local-cloud"
+    ],
+    "context_tokens": 32768,
+    "timeout_s": 300.0,
+    "repeats": 3,
+    "tier": "compare",
+    "jobs": [
+      "pipeline",
+      "reasoning",
+      "session_review"
+    ]
+  },
+  "rows": [
+    {
+      "suite": "pipeline",
+      "task_type": "ranking",
+      "metric": "accuracy",
+      "value": 0.5149,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.5149,
+        0.5149,
+        0.5149
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "ranking",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "importance",
+      "metric": "accuracy",
+      "value": 0.6369,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.6354,
+        0.6377,
+        0.6377
+      ],
+      "spread": 0.0023
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "importance",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "rank_importance",
+      "metric": "accuracy",
+      "value": 0.582,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.5171,
+        0.6084,
+        0.6206
+      ],
+      "spread": 0.1035
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "rank_importance",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "contradiction",
+      "metric": "accuracy",
+      "value": null,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "contradiction",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "accuracy",
+      "value": 0.5555,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "<think>\nThe user says: \"You decide what action should be taken?\" They give a new memory: \"User's cat is named Luna and is 3 years old\". Existing similar memories: \"User has a dog named Max\" and \"User works at Xanatek\". The question: what action should be taken? Possibly they want to store this new memory, but we need to consider if it's redundant or not. Since the existing similar memories are about a dog and work location, there is no contradictory info. So adding a new fact about cat is appropriate. According to instructions, if new memory adds any new information not in existing memory, choose ADD, not NONE. So answer: ADD (and maybe number? There's no existing memory number for this fact; it's a new fact, so we can assign a number like 3? But the instruction says \"ADD \u2014 The new memory contains UNIQUE information not in any existing memory.\" It doesn't require numbering. Usually you would just output \"ADD\". So answer: ADD.\n\nThus final: ADD\n</think>\nADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 1.37
+        },
+        {
+          "raw": "<think>\nThe user says: \"You decide what action should be taken?\" They give a new memory: \"The desk robot's speaker is 4 ohm, 3 watt\". Existing similar memories: (1) The desk robot uses an ESP32; (2) The desk robot uses JST connectors.\n\nWe need to determine if the new memory adds any new information not in existing ones. It mentions speaker specs: 4 ohm, 3 watts. That's presumably a new piece of info about the robot's speaker. There's no mention of ESP32 or JST connectors in that memory. So it's new and unique. According to instructions, if new memory adds any new information not in existing memory, we should ADD it.\n\nThus answer: ADD (the new memory). No other action needed. Provide just \"ADD\". Ensure no extra text.\n</think>\nADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 1.16
+        },
+        {
+          "raw": "<think>\nWe need to interpret the instruction: \"You decide what to do with a new memory given similar existing memories.\" There's a new memory: \"User is learning Rust on weekends\". Existing similar memories: \"User knows Python well\" and \"User dislikes Java\". The question: What action should be taken? According to guidelines, we have ADD, NONE, UPDATE, DELETE.\n\nWe need to decide if the new memory adds any new information not in existing ones. It says user is learning Rust on weekends. Does that conflict or add info relative to \"User knows Python well\" and \"User dislikes Java\"? There's no mention of Python knowledge or dislike for Java. The new memory does not contradict or provide additional detail about those existing facts. However, the instruction: \"If the new memory adds ANY new information, choose ADD, not NONE.\" So we should add it as a new memory. But is there any risk that this might be redundant? It's not identical to an existing memory; it's distinct. So we should use ADD.\n\nThus answer: ADD (and number if needed). There's no existing memory about learning Rust on weekends, so it's new. So output:\n\nADD\n\nBut the instruction says \"Respond with ONLY the action (and number if UPDATE or DELETE), on its own line, with no explanation.\" So just \"ADD\". No extra text.\n\nThus final answer: ADD.\n</think>\nADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 1.77
+        },
+        {
+          "raw": "<think>\nWe need to interpret the problem: The user says \"You decide what action should be taken?\" given a new memory and existing similar memories.\n\nWe have:\n\nNew memory: \"User prefers dark mode\"\n\nExisting similar memories:\n1. User prefers dark mode in all editors\n2. User prefers tabs over spaces\n\nWe need to determine if we should ADD, UPDATE, or DELETE something? The instruction says:\n\n- If the new memory adds ANY new information not in any existing memory, choose ADD.\n- Only choose NONE if the new memory is exactly same as an existing one.\n- UPDATE means the new memory is a better/more detailed version of an existing one.\n- DELETE means the existing memory is factually wrong or outdated.\n\nWe have a new memory: \"User prefers dark mode\". Existing similar memories already state that. So it's not adding any new information; it's exactly same as #1. Therefore, we should treat this as NONE (redundant). According to rule: \"Only choose NONE if the new memory is REDUNDANT \u2014 it says the exact same thing as an existing memory.\"\n\nThus answer: NONE.\n\nBut check if there might be nuance: The new memory could be considered a separate memory entry, but since it's identical to an existing one, we should not add another. So \"NONE\". Provide just that line.\n\nThus final output:\n\nNONE\n</think>\nNONE",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 1.78
+        },
+        {
+          "raw": "<think>\nWe need to interpret the instruction: \"You decide what to do with a new memory given similar existing memories.\" There's a new memory: \"The vector store is sqlite-vec\". Existing similar memories:\n\n1. \"BlipShell uses sqlite-vec as its vector store\"\n2. \"Ranking runs on Groq\"\n\nWe have to determine if the new memory adds any new information, or is redundant, or contradictory.\n\nThe new memory says \"The vector store is sqlite-vec\". The existing memory #1 says \"BlipShell uses sqlite-vec as its vector store\". So they are related but not identical. The new memory does not mention BlipShell; it's a more general statement that the vector store is sqlite-vec. That could be considered an addition of information: we now know that the vector store used by something (maybe BlipShell) is sqlite-vec, but we don't have context about which system uses it. However, existing memory #1 says \"BlipShell uses sqlite-vec as its vector store\". So the new memory adds a statement that the vector store is sqlite-vec, but does not specify which entity uses it. It's a more general claim.\n\nWe need to decide if this is redundant (NONE), or an update (if we have a more detailed version of existing memory). There's no existing memory about \"vector store is sqlite-vec\". So there is no prior memory that says that. The new memory adds a fact: the vector store is sqlite-vec. That seems like a unique piece of information, not previously stored. However, it might be considered redundant if we already have something similar? Let's examine.\n\nExisting memories:\n\n1. \"BlipShell uses sqlite-vec as its vector store\" \u2013 this says that BlipShell uses sqlite-vec.\n2. \"Ranking runs on Groq\" \u2013 unrelated.\n\nThe new memory: \"The vector store is sqlite-vec\". This could be a statement about the vector store used by some system, but it's not specifying which system. It might be considered an extension or generalization of #1? Actually #1 says BlipShell uses sqlite-vec as its vector store. The new memory does not mention BlipShell, so it's not directly contradictory. It could be a separate fact: the vector store is sqlite-vec (maybe for some other system). So it adds information that there exists a vector store named sqlite-vec, but we didn't have that before.\n\nThus, according to the rules:\n\n- If new memory adds ANY new information, choose ADD, not NONE.\n- Only choose NONE if the new memory is exactly same as existing. It's not identical because #1 mentions BlipShell and \"uses\". So it's a different statement: \"The vector store is sqlite-vec\" vs \"BlipShell uses sqlite-vec as its vector store\". So they are not identical.\n\nThus we should add this as a new memory, i.e., ADD.\n\nTherefore answer: ADD\n\nBut need to consider if there might be any nuance: The instruction says \"You decide what to do with a new memory given similar existing memories.\" It doesn't say we have to check for contradictions. So we just see that the new memory is not contradictory and adds new info, so we add it.\n\nThus answer: ADD\n\nWe must output only the action (and number if UPDATE or DELETE). Since it's a new memory, we use \"ADD\". No number needed because it's new. So:\n\nADD\n\nThat's it.\n</think>\nADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 4.15
+        },
+        {
+          "raw": "<think>\nWe need to interpret the instruction: \"You decide what to do with a new memory given similar existing memories.\" There's a new memory: \"User works at Xanatek\". Existing similar memories: \"1. User is employed at Xanatek\" and \"2. User lives in Ohio\". The question: \"What action should be taken?\" We need to decide if we add, update, delete, or do nothing based on the rules.\n\nWe have a new memory that says user works at Xanatek. There's already an existing memory that says exactly that: \"User is employed at Xanatek\". According to rule: \"If the new memory is REDUNDANT \u2014 it says the same thing as an existing memory. Skip it.\" So we should not add a duplicate; it's redundant. Therefore, action: NONE.\n\nThus answer: NONE\n\nBut check if any nuance: The instruction says \"Only choose NONE if the new memory is truly saying the exact same thing as an existing memory.\" Yes, that matches. So output:\n\nNONE\n\nNo extra text.\n</think>\nNONE",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 1.43
+        },
+        {
+          "raw": "<think>\nWe need to understand the task: The user says \"You decide what action should be taken?\" and provides a new memory: \"User's dog Max is a 5-year-old golden retriever\". There are existing similar memories: \"User prefers dark mode\" and \"User has a dog named Max\". We have to determine which action (ADD, NONE, UPDATE, DELETE) based on the guidelines.\n\nWe need to see if the new memory adds any new information not already in existing memories. The existing similar memories include that the user has a dog named Max. That's exactly what the new memory says: \"User's dog Max is a 5-year-old golden retriever\". It includes both the fact that they have a dog named Max and details about the dog (age, breed). So does this add any new information? The existing memory only says \"User has a dog named Max\". That doesn't include age or breed. So the new memory adds more detail: it's not just repeating that they have a dog named Max; it also includes specifics. According to rule: \"If the new memory adds ANY new information, choose ADD, not NONE.\" So we should add this as a new memory.\n\nBut is there any conflict? The existing memory says \"User has a dog named Max\". That's consistent with the new memory. There's no contradictory info. So it's an addition of detail. Therefore action: ADD.\n\nThus answer: ADD (no number needed because it's a new memory). However, guidelines say respond with only the action and number if UPDATE or DELETE. For ADD, we just output \"ADD\". No extra text.\n\nThus final answer: ADD.\n</think>\nADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 2.08
+        },
+        {
+          "raw": "<think>\nWe need to interpret the question. The user says:\n\n\"You decide what to do with a new memory given similar existing memories.\n\nActions: ADD \u2014 The new memory contains UNIQUE information not in any existing memory.\nUPDATE \u2014 The new memory REFINES or adds detail to an existing memory. Return UPDATE and the number of the existing memory to update (e.g., UPDATE 1).\nDELETE \u2014 The new memory CONTRADICTS an existing memory (the existing is now stale). Return DELETE and the number of the existing memory to remove (e.g., DELETE 2).\nNONE \u2014 The new memory is REDUNDANT \u2014 it says the same thing as an existing memory. Skip it.\n\nRules:\n- If the new memory adds ANY new information, choose ADD, not NONE.\n- Only choose NONE if the new memory is truly saying the exact same thing.\n- UPDATE means the new memory is a better/more detailed version of an existing one.\n- DELETE means the existing memory is factually wrong or outdated.\n\nRespond with ONLY the action (and number if UPDATE or DELETE), on its own line, with no explanation.\"\n\nWe have a \"New memory\": \"Summarization runs on glm4:latest locally with a Groq fallback\". There are similar existing memories:\n\n1. \"Ranking runs on Groq\"\n2. \"Summarization runs on a local model\"\n\nThus we need to decide what action regarding the new memory relative to these existing ones.\n\nWe have three pieces of information:\n\n- Existing: Summarization runs on Groq (maybe meaning summarization uses Groq? Or maybe it's that summarization runs on Groq). Actually \"Summarization runs on Groq\" is a statement. There's also \"Ranking runs on Groq\". And \"Summarization runs on a local model\".\n\nThe new memory says: Summarization runs on glm4:latest locally with a Groq fallback.\n\nThus it's about summarization, but the platform used for summarization is glm4:latest locally, and there is a fallback to Groq. So this is similar to \"Summarization runs on a local model\" (which presumably means local model). But also \"Ranking runs on Groq\". The new memory mentions \"glm4:latest\" which might be a specific local model name. It's not exactly the same as \"Summarization runs on a local model\", because it adds more detail: the model name and mention of fallback to Groq.\n\nThus we need to see if this is redundant (NONE), or an update (if there is an existing memory that can be refined). There's no exact duplicate. The new memory includes \"glm4:latest\" which wasn't mentioned before, but it's a specific model name. It also mentions \"Groq fallback\". That might be similar to \"Ranking runs on Groq\"? Possibly not exactly same.\n\nThus the best action is to ADD this new memory because it contains unique information (the model name and fallback). So we should add it as a new entry, not update or delete. The existing memories are:\n\n1. Ranking runs on Groq\n2. Summarization runs on a local model\n\nThe new memory is about summarization on glm4:latest locally with Groq fallback. This adds detail to the concept of summarization runs (which already existed in #2). So we should add it as a separate entry.\n\nThus answer: \"ADD\" alone, no number because it's not updating an existing one. The instruction says respond with only the action and number if UPDATE or DELETE. Since we are adding new memory, we use ADD without number. So:\n\nADD\n\nBut check if any nuance: Could this be considered an update? It refines \"Summarization runs on a local model\"? Actually it's more specific: includes model name and fallback. That is an addition of detail, not just refinement. The rule says \"If the new memory adds ANY new information, choose ADD, not NONE.\" So yes, we add.\n\nThus answer: ADD\n\nMake sure no extra text.\n</think>\nADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 4.96
+        },
+        {
+          "raw": "<think>\nWe need to understand the task: The user says \"You decide what action should be taken?\" given a new memory and existing similar memories.\n\nThe new memory is:\n\n- New memory: \"User lives in Columbus, Ohio, near the university\"\n\nExisting similar memories:\n1. User lives in Ohio\n2. User has a cat\n\nWe need to determine if we should ADD, UPDATE, or DELETE something? The instructions say:\n\n- If the new memory adds ANY new information not in any existing memory, choose ADD.\n- Only choose NONE if it's exactly same as an existing memory (i.e., redundant).\n- UPDATE means the new memory is a better/more detailed version of an existing one. That would be when we have some existing memory that can be refined by adding more detail.\n\nWe have two existing similar memories: \"User lives in Ohio\" and \"User has a cat\". The new memory adds location (Columbus, Ohio) which is more specific than just Ohio. It also says \"near the university\", which could be additional info not present before. So it's adding new information beyond what's already known. Therefore we should ADD this new memory.\n\nThus answer: ADD\n\nBut need to check if any of the existing memories might be superseded? No, they are separate facts; no conflict. So we add a new memory entry.\n\nThus output:\n\nADD\n\nMake sure only that line.\n</think>\nADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": false,
+          "time": 1.76
+        },
+        {
+          "raw": "<think>\nWe need to interpret the instruction: We have a new memory \"User switched to Linux full-time last month\". There are existing similar memories:\n\n1. User uses Windows 10\n2. User prefers dark mode\n\nWe must decide what action to take regarding these memories, based on the guidelines.\n\nThe guidelines say:\n\n- If the new memory adds ANY new information not in any existing memory, choose ADD, not NONE.\n- Only choose NONE if the new memory is exactly the same as an existing one (i.e., redundant).\n- UPDATE means the new memory is a better/more detailed version of an existing one.\n- DELETE means the existing memory is factually wrong or outdated.\n\nWe have a new memory about switching to Linux full-time last month. The existing similar memories are about using Windows 10 and dark mode preference. There's no direct overlap: the new memory does not mention Windows, nor dark mode. It adds information that the user has switched to Linux full-time. That is new info not present in any existing memory. So we should add it as a new memory.\n\nThus action: ADD (no number). According to format: \"ADD\" on its own line.\n\nBut need to consider if there might be a conflict with existing similar memories? The instruction says \"similar existing memories\". It's ambiguous whether they are just similar categories or exact duplicates. But the guidelines say \"If the new memory adds ANY new information not in any existing memory, choose ADD\". So we add.\n\nThus answer: ADD\n\nBut check if there is any nuance: Could it be considered contradictory? No, because switching to Linux full-time does not contradict using Windows 10 or dark mode preference. It's just a change. So it's new info.\n\nThus final output:\n\nADD\n</think>\nADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": false,
+          "time": 2.17
+        },
+        {
+          "raw": "<think>\nWe need to interpret the instruction: \"You decide what action should be taken?\" The new memory is \"User moved to Texas in June\". Existing similar memories: \"User has a cat named Luna\" and \"User lives in Ohio\". There's no conflict. We have to consider if we need to add this new memory, or update existing ones? According to the rules:\n\n- If the new memory adds ANY new information not in any existing memory, choose ADD.\n- Only choose NONE if it says same thing as an existing memory (i.e., redundant).\n- UPDATE means the new memory is a better/more detailed version of an existing one.\n- DELETE means existing memory is factually wrong or outdated.\n\nHere, we have a new piece of information: \"User moved to Texas in June\". This is not already present. There's no mention of cat or Ohio being changed. So it's new info. Therefore we should ADD this as a new memory.\n\nThus answer: ADD (and number? The instruction says respond with only the action and number if UPDATE or DELETE, but for ADD there is no number. It says \"On its own line\". Example: \"ADD\" alone. Probably just \"ADD\". So output:\n\nADD\n\nBut we need to consider that maybe they want a numeric ID like \"1\"? However the instruction says \"If you add a new memory, choose ADD, not NONE.\" There's no mention of numbering for ADD. The examples show \"UPDATE 1\". For ADD, there is no number. So answer: ADD\n\nThus final.\n</think>\nADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 1.94
+        },
+        {
+          "raw": "<think>\nWe need to interpret the instruction: \"You decide what to do with a new memory given similar existing memories.\" There's a new memory: \"The project's vector store is now sqlite-vec; ChromaDB was removed\". Existing similar memories: 1) The vector store is ChromaDB, 2) User works at Xanatek.\n\nWe need to decide which action (ADD, NONE, UPDATE, DELETE). The new memory says that the vector store is now sqlite-vec and ChromaDB was removed. This contradicts existing memory #1 (\"The vector store is ChromaDB\"). So we have a factual change: previously it was ChromaDB; now it's sqlite-vec. That means the previous statement is outdated, so we should delete the old memory (or update it). According to rules:\n\n- If new memory adds any new information not in existing memory, choose ADD.\n- If new memory contradicts an existing one, then it's a deletion? Actually \"DELETE \u2014 The new memory CONTRADICTS an existing memory (the existing is now stale). Return DELETE and the number of the existing memory to remove.\" So we should delete the old memory that says vector store is ChromaDB. However, there might be also other info: \"User works at Xanatek\" which is not related.\n\nThus we need to delete memory #1 (the one stating vector store is ChromaDB). But do we have a memory number for that? The existing similar memories are numbered 1 and 2. So the first memory is presumably memory #1: \"The vector store is ChromaDB\". So we should DELETE 1.\n\nBut also consider if we need to ADD a new memory about the change? The instruction says \"new memory contains UNIQUE information not in any existing memory.\" Since there's already a memory that says vector store is ChromaDB, but now it's changed. The new memory includes both: \"The project's vector store is now sqlite-vec; ChromaDB was removed\". This includes new info (sqlite-vec) and also contradictory to previous. However the rule for ADD: if new memory adds ANY new information not in any existing memory. That would be true because it says vector store is now sqlite-vec, which wasn't there before. So we could add a new memory with that content. But then we have contradictory info; but the instruction doesn't say to handle contradictions beyond delete old one. However typical approach: if you have an updated fact, you should update the existing memory rather than adding a separate contradictory one. The rule says \"UPDATE means the new memory is a better/more detailed version of an existing one.\" But here we are not providing a more detailed version; it's contradictory. So we cannot use UPDATE because that would be a better version? Actually \"better\" could mean updated info, but if it contradicts, you can't just update to reflect new fact while preserving old contradictory part. The rule says \"If the new memory adds ANY new information not in any existing memory.\" That is true: it adds \"sqlite-vec\". So we could add a new memory (ADD). However then there would be two memories that conflict: one says vector store is ChromaDB, another says it's sqlite-vec. The instruction doesn't say to resolve contradictions beyond delete the old one. But typical approach in these tasks: if you have contradictory info, you should delete the outdated one and add a new one with correct info. However they gave us \"existing similar memories\" as separate items; we need to decide which action.\n\nLet's parse the instruction more thoroughly:\n\n\"You decide what to do with a new memory given similar existing memories.\"\n\nWe have a new memory (the statement). There are existing similar memories (two). We need to determine appropriate action: ADD, NONE, UPDATE, DELETE. The guidelines:\n\n- If the new memory adds ANY new information not in any existing memory \u2192 choose ADD.\n- Only choose NONE if the new memory is REDUNDANT \u2014 same as an existing memory.\n- UPDATE means the new memory is a better/more detailed version of an existing one.\n- DELETE means the new memory CONTRADICTS an existing memory (the existing is now stale). Return DELETE and the number of the existing memory to remove.\n\nThus we need to see if the new memory contradicts any existing memory. It does contradict #1 (vector store is ChromaDB). So that would be a contradiction. According to rule, we should DELETE the existing memory that is contradicted (the one stating vector store is ChromaDB). That's action DELETE 1.\n\nBut also note: The new memory includes \"sqlite-vec\" which wasn't in any existing memory. However the existence of contradictory info means we cannot keep #1; but we could still add a new memory with the updated info, but that would be redundant? Actually if we delete #1 and then add a new memory describing the change, that would satisfy both: remove outdated, add new correct info. But the rule says \"If the new memory adds ANY new information not in any existing memory.\" That is true; but also it contradicts an existing one. The guidelines don't forbid adding after deleting contradictory info. However they might want us to delete the old one and not add a new one because we are updating the fact. But the instruction says \"new memory contains UNIQUE information not in any existing memory.\" Since there is already a memory that says vector store is ChromaDB, the new memory includes that part (which is now false). So it's not entirely unique; but also adds new info. The rule for ADD: \"The new memory contains UNIQUE information not in any existing memory.\" If we interpret strictly, since part of the new memory duplicates an existing one (the vector store being ChromaDB), then it does not contain ANY new information that is not already present? Actually the phrase \"contains UNIQUE information\" might mean that there is some information that no other memory has. The new memory includes \"sqlite-vec\", which is unique, so it's okay to add. However the contradictory part means we have a conflict; but the rule for ADD does not consider contradictions. So we could either ADD or DELETE. Which one is more appropriate? Usually in such tasks, if you have contradictory info, you would delete the old memory and perhaps update the new memory to reflect the correct state (i.e., replace). But they gave us \"existing similar memories\" as separate items; maybe they want us to treat them as separate facts that need to be updated. The instruction: \"You decide what to do with a new memory given similar existing memories.\" So we have a new memory, and there are similar existing ones. We need to decide action based on these guidelines.\n\nGiven the contradictory nature, the correct approach is to delete the outdated memory (the one that says vector store is ChromaDB). That would be DELETE 1. Then you could add a new memory with the updated info, but they didn't ask for adding; they asked \"What action should be taken?\" Possibly just DELETE 1.\n\nBut we need to consider if there is any other nuance: The user works at Xanatek is unrelated. So no effect.\n\nThus answer: DELETE 1\n\nCheck if any other memory might be relevant: There's also \"User works at Xanatek\". That could be a separate fact, but not contradictory. No action needed.\n\nThus final answer: DELETE 1\n\nWe must output only that line.\n</think>\nDELETE 1",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 8.84
+        }
+      ],
+      "values": [
+        0.5,
+        0.5833,
+        0.5833
+      ],
+      "spread": 0.0833
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "valid_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "accuracy",
+      "value": 0.1667,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "{\n  \"action\": \"ADD\",\n  \"target_index\": null,\n  \"reason\": \"New information about the user's cat Luna is being added.\"\n}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.33
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"The new memory provides additional technical specification (impedance and power rating) not covered by existing memories about components.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 0.41
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"User's knowledge of Python is an existing fact; the new memory adds weekend learning context.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 0.37
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"Adds 'prefers dark mode' to existing preference about editor UI.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 0.35
+        },
+        {
+          "raw": "{\n  \"action\": \"ADD\",\n  \"target_index\": 1,\n  \"reason\": \"New memory about vector store is unique and not previously stored.\"\n}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 0.34
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"The existing memory already states the user works at Xanatek, so no change is needed.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 0.39
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"User's preference for dark mode is more specific than the existing general statement.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 0.35
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"The new memory refines the existing one by specifying 'glm4:latest' instead of just 'local', making it more specific.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 0.47
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"The new memory adds specific location information not covered by the existing 'User lives in Ohio' entry.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 0.38
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"User switched to Linux full-time last month, which supersedes previous Windows usage.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": false,
+          "time": 0.36
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 2,\n  \"reason\": \"User's current state (moved to Texas) contradicts previous memory that user lives in Ohio.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 0.38
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"The existing memory states the vector store is ChromaDB, but the new information indicates it has changed to sqlite-vec.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": false,
+          "time": 0.42
+        }
+      ],
+      "values": [
+        0.1667,
+        0.1667,
+        0.1667
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "valid_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "accuracy_think",
+      "value": 0.5,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 1.51
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 1.94
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 1.75
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 3.74
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 1.96
+        },
+        {
+          "raw": "NONE",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 2.06
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 1.12
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 2.63
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": false,
+          "time": 2.32
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": false,
+          "time": 6.48
+        },
+        {
+          "raw": "DELETE 2",
+          "parsed": "DELETE",
+          "parsed_index": 1,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 14.04
+        },
+        {
+          "raw": "UPDATE 1",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": false,
+          "time": 2.21
+        }
+      ],
+      "values": [
+        0.4167,
+        0.5833,
+        0.5
+      ],
+      "spread": 0.1666
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "valid_rate_think",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "accuracy_think",
+      "value": 0.1667,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "{\n  \"action\": \"ADD\",\n  \"target_index\": null,\n  \"reason\": \"New information about the user's cat Luna is being added.\"\n}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 1.72
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"The new memory provides additional technical specification about the speaker impedance and power, which is not covered by existing memories.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 2.52
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"User's knowledge of Python has been updated to reflect weekend learning.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 2.25
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"The new memory is more specific, stating the preference applies to all editors rather than just a general statement.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 6.38
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"The new memory refines the existing one by adding a specific detail about BlipShell's usage.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 6.07
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"The existing memory already states the user works at Xanatek, so no change is needed.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 2.57
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"User's preference for dark mode is more specific than the existing generic statement.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 2.31
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"The new memory refines the existing one by specifying 'glm4:latest' instead of just 'local', making it more specific and accurate.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 4.12
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"The new memory adds specific location information (Columbus, Ohio) not covered by the existing memory about state.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 2.14
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"User switched to Linux full-time, which supersedes previous Windows usage.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": false,
+          "time": 3.09
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 2,\n  \"reason\": \"User's current state (moved to Texas) contradicts previous memory that user lives in Ohio.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 9.51
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"The existing memory states the vector store is ChromaDB, but the new information indicates it has changed to sqlite-vec.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": false,
+          "time": 4.58
+        }
+      ],
+      "values": [
+        0.1667,
+        0.1667,
+        0.1667
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "valid_rate_think",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "entity",
+      "metric": "accuracy",
+      "value": 0.3406,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.4329,
+        0.336,
+        0.2529
+      ],
+      "spread": 0.18
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "entity",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "length_words",
+      "value": 204.4333,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        218.3,
+        197.2,
+        197.8
+      ],
+      "spread": 21.1
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "length_words",
+      "value": 506.8,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        513.1,
+        502.4,
+        504.9
+      ],
+      "spread": 10.7
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "pipeline",
+      "metric": "latency_s",
+      "value": 3.2563,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        3.205,
+        3.194,
+        3.37
+      ],
+      "spread": 0.176
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "scored": 0,
+        "cases": 12
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "length_words",
+      "value": 199.2333,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        242.4,
+        186.6,
+        168.7
+      ],
+      "spread": 73.7
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "scored": 0,
+        "cases": 9
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "length_words",
+      "value": 72.5667,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        71.7,
+        63.9,
+        82.1
+      ],
+      "spread": 18.2
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "tool_calling",
+      "metric": "tool_pass_rate",
+      "value": 0.9556,
+      "unit": "ratio",
+      "raw": {
+        "system_prompt": true
+      },
+      "values": [
+        1.0,
+        0.8667,
+        1.0
+      ],
+      "spread": 0.1333
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "tool_calling",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning_suite",
+      "metric": "latency_s",
+      "value": 4.7887,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        4.945,
+        4.518,
+        4.903
+      ],
+      "spread": 0.427
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "completeness": 1.0,
+        "judged": false
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "completeness",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "length_words",
+      "value": 1046.1,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        1006.2,
+        1030.5,
+        1101.6
+      ],
+      "spread": 95.4
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "latency_s",
+      "value": 9.591,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        9.206,
+        9.473,
+        10.094
+      ],
+      "spread": 0.888
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review_chunked",
+      "metric": "accuracy",
+      "value": 0.8667,
+      "unit": "ratio",
+      "raw": {
+        "cases": 1,
+        "coverage": 0.8,
+        "fidelity": 1.0,
+        "completeness": 1.0
+      },
+      "values": [
+        0.9,
+        0.8,
+        0.9
+      ],
+      "spread": 0.1
+    }
+  ]
+}

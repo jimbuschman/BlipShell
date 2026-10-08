@@ -17,6 +17,10 @@ import json
 from pathlib import Path
 from typing import Optional
 
+from blipshell.benchmark.manifest import (
+    BENCHMARK_VERSION, DATASET_VERSION, OPEN_ENDED_CATEGORIES, REQUIRED_CATEGORIES,
+)
+
 # Scoring metrics (higher = better). Everything else (latency, agreement) is
 # informational and shown separately.
 SCORING_METRICS = {"accuracy", "quality", "tool_pass_rate"}
@@ -56,13 +60,13 @@ CATEGORIES = [
     ("entity", "Entity extraction", "Extracts entities/relationships from text.",
      "F1 of extracted entities vs the expected entity set per item."),
     ("summarization", "Summarization", "Condenses a message into a memory note.",
-     "Neutral judge 0-1 (faithful / concise / 3rd-person voice)."),
+     "Imported external review, 0-1 (faithful / concise / 3rd-person voice)."),
     ("lessons", "Lessons", "Extracts a reusable insight from a conversation.",
-     "Neutral judge 0-1 (grounded / reusable / concise)."),
+     "Imported external review, 0-1 (grounded / reusable / concise)."),
     ("reasoning", "Reasoning", "Plans, analysis, diagnosis, calibrated explanation.",
-     "Neutral judge 0-1 (correct / complete / actionable)."),
+     "Imported external review, 0-1 (correct / complete / actionable)."),
     ("code_gen", "Code generation", "Writes code for a stated task (no tools, no sandbox).",
-     "Neutral judge 0-1 (correct / complete / idiomatic)."),
+     "Imported external review, 0-1 (correct / complete / idiomatic)."),
     ("coding_agentic", "Coding (agentic)", "Real multi-step coding tasks in a sandbox.",
      "Fraction of verification checks passed (executes code, runs pytest)."),
     ("coding", "Coding (legacy - ambiguous)",
@@ -72,7 +76,7 @@ CATEGORIES = [
     ("tool_calling", "Tool calling", "Picks the right tool with the right arguments.",
      "Exact tool name + required-argument match."),
     ("session_review", "Session review", "Produces a structured session reflection.",
-     "Neutral judge 0-1 (or section-completeness if no judge)."),
+     "Imported external review, 0-1; structure completeness is reported separately."),
     ("session_review_chunked", "Session review (chunked, multi-call)",
      "The path a session too big for the context window takes: chunk-scoped "
      "reflection per part, then merge_chunk_reflections (processor.py:553-577). "
@@ -166,6 +170,40 @@ def _length_map(rows: list[dict]) -> dict[str, float]:
     }
 
 
+def _completion_map(rows: list[dict]) -> dict[str, float]:
+    return {
+        r["task_type"]: float(r["value"])
+        for r in rows
+        if r.get("metric") == "completion_rate" and r.get("value") is not None
+    }
+
+
+def _cohort_signatures(rows: list[dict]) -> list[str]:
+    """Exact experiment signatures contributing objective candidate scores."""
+    signatures = set()
+    for row in rows:
+        if row.get("metric") not in SCORING_METRICS or row.get("external_review"):
+            continue
+        manifest = row.get("benchmark_manifest") or {}
+        settings = row.get("run_settings") or {}
+        experiment = {
+            "benchmark": manifest.get("benchmark_version") or "legacy",
+            "dataset": manifest.get("dataset_version") or "legacy",
+            "scorer": manifest.get("scorer_version") or "legacy",
+            "source_fingerprint": manifest.get("source_fingerprint") or "legacy",
+            "git": row.get("git_sha") or "legacy",
+            "provider": settings.get("provider") or "legacy",
+            "endpoints": settings.get("endpoint_names") or ["legacy"],
+            "tier": settings.get("tier") or "legacy",
+            "jobs": settings.get("jobs") or ["legacy"],
+            "context_tokens": settings.get("context_tokens") or "legacy",
+            "timeout_s": settings.get("timeout_s") or "legacy",
+            "repeats": settings.get("repeats") or "legacy",
+        }
+        signatures.add(json.dumps(experiment, sort_keys=True, separators=(",", ":")))
+    return sorted(signatures)
+
+
 def _weighted_composite(scores: dict[str, float], weights: dict[str, float]) -> Optional[float]:
     """Weighted mean over the comparable scoring categories a model measured."""
     num = den = 0.0
@@ -187,6 +225,8 @@ def build_report(
     generated_ts: str = "",
     task_weights: Optional[dict[str, float]] = None,
     provenance: Optional[dict[str, dict]] = None,
+    required_categories: Optional[set[str]] = None,
+    system_evidence: Optional[dict] = None,
 ) -> dict:
     """Turn stored metric rows for every model into one structured report. Pure.
 
@@ -204,6 +244,8 @@ def build_report(
     scoring = {m: _scoring_map(rows) for m, rows in model_rows.items()}
     latency = {m: _latency_map(rows) for m, rows in model_rows.items()}
     length = {m: _length_map(rows) for m, rows in model_rows.items()}
+    completion = {m: _completion_map(rows) for m, rows in model_rows.items()}
+    cohort_signatures = {m: _cohort_signatures(rows) for m, rows in model_rows.items()}
     partial = {m: _partial_map(rows) for m, rows in model_rows.items()}
     spreads = {m: _spread_map(rows) for m, rows in model_rows.items()}
 
@@ -216,10 +258,12 @@ def build_report(
         # They cannot win the row: their average is over the subset that didn't
         # time out, which is the easier subset.
         incomplete = {m: partial[m][key] for m in models if key in partial.get(m, {})}
-        eligible = {m: v for m, v in scores.items() if m not in incomplete}
+        effective = {m: v * completion[m].get(key, 1.0) for m, v in scores.items()}
+        eligible = {m: v for m, v in effective.items() if m not in incomplete}
         categories.append({
             "key": key, "label": label, "measures": measures, "scoring": method,
             "scores": {m: round(v, 4) for m, v in scores.items()},
+            "effective_scores": {m: round(v, 4) for m, v in effective.items()},
             # Per-model spread for THIS job, so the verdict can require a gain
             # to clear measured noise instead of a fixed 0.03 constant.
             "spread": {m: spreads[m][key] for m in models
@@ -233,13 +277,22 @@ def build_report(
     # A composite over 1 of 10 jobs is not comparable to one over 10, and left
     # unmarked the partial model can top the table (kimi-k2.7-code briefly
     # showed the best composite, 0.925, from a single session_review run).
-    cat_keys = {c[0] for c in CATEGORIES} - NON_COMPARABLE
+    # Production callers pass the versioned manifest's fixed set.  Keeping a
+    # dynamic fallback makes this pure helper useful for small ad-hoc reports
+    # and keeps pre-v2 consumers readable without pretending they are v2 runs.
+    cat_keys = (set(required_categories) if required_categories is not None
+                else ({c[0] for c in CATEGORIES} - NON_COMPARABLE))
     coverage = {m: len(set(scoring[m]) & cat_keys) for m in models}
-    max_coverage = max(coverage.values()) if coverage else 0
+    max_coverage = (len(cat_keys) if required_categories is not None
+                    else (max(coverage.values()) if coverage else 0))
 
     composite = {}
     for m in models:
-        c = _weighted_composite(scoring[m], task_weights)
+        effective_scores = {
+            key: value * completion[m].get(key, 1.0)
+            for key, value in scoring[m].items()
+        }
+        c = _weighted_composite(effective_scores, task_weights)
         if c is not None:
             composite[m] = c
 
@@ -261,10 +314,20 @@ def build_report(
         "composite": composite,
         "latency": latency,           # model -> {suite: seconds}
         "length": length,             # model -> {task_type: mean words} (judged jobs)
+        "completion": completion,
         "catalog": cat_info,          # model -> {price/context/speed}
         "provenance": {m: provenance.get(m, {}) for m in models},
         "coverage": coverage,         # model -> categories measured
         "max_coverage": max_coverage,
+        "required_categories": sorted(cat_keys),
+        "benchmark_version": BENCHMARK_VERSION,
+        "dataset_version": DATASET_VERSION,
+        "pending_external_review": ({
+            m: sorted(OPEN_ENDED_CATEGORIES - set(scoring[m])) for m in models
+        } if required_categories is not None else {}),
+        "system_evidence": system_evidence or {},
+        "cohort_signatures": cohort_signatures,
+        "comparison_contract_enforced": required_categories is not None,
     }
 
 
@@ -303,13 +366,20 @@ def render_markdown(report: dict, advice: str = "") -> str:
         "NOT need cloud for every job — the point of this benchmark is to find, per job, the "
         "cheapest model that's good enough. This report makes **no switch recommendation**: it "
         "lays out quality and speed (and cost/context for cloud models) per job so you can decide. "
-        "Higher quality = better; lower latency = faster. Quality scores are deterministic or "
-        "neutral-judge graded (see Methodology) and are designed to discriminate capable models, "
-        "not saturate."
+        "Higher quality = better; lower latency = faster. Objective jobs are scored locally; "
+        "open-ended jobs remain blank until a blinded external review is imported. COMPOSITE "
+        "uses effective score (quality multiplied by completion rate)."
+    )
+    parts.append(
+        f"\nBenchmark contract: **v{report.get('benchmark_version', '?')}**, dataset "
+        f"**{report.get('dataset_version', '?')}**. Required coverage is fixed at "
+        f"{report.get('max_coverage', 0)} production categories."
     )
     if report.get("judge_model"):
-        parts.append(f"\nOpen-ended tasks were graded by a neutral judge: **{report['judge_model']}** "
-                     "(not one of the candidates).")
+        parts.append(
+            f"\nLegacy imported scores in this report name **{report['judge_model']}** as "
+            "their automatic judge. New v2 runs never call a judge API."
+        )
     parts.append("")
 
     # Quality table
@@ -327,6 +397,9 @@ def render_markdown(report: dict, advice: str = "") -> str:
             # is the difference between a decision and a coin flip.
             sp = (c.get("spread") or {}).get(m)
             suffix = f" +/-{sp:.2f}" if isinstance(sp, (int, float)) and sp > 0 else ""
+            rate = report.get("completion", {}).get(m, {}).get(c["key"])
+            if isinstance(rate, (int, float)) and rate < 1.0:
+                suffix += f" @ {rate:.0%} complete"
             if v is None:
                 row.append("—")
             elif inc:
@@ -378,6 +451,78 @@ def render_markdown(report: dict, advice: str = "") -> str:
         )
     parts.append("")
 
+    signatures = report.get("cohort_signatures") or {}
+    comparable_groups: dict[str, list[str]] = {}
+    for model, sigs in signatures.items():
+        if len(sigs) == 1 and '"benchmark":"legacy"' not in sigs[0]:
+            comparable_groups.setdefault(sigs[0], []).append(model)
+    cohorts = [group for group in comparable_groups.values() if len(group) > 1]
+    if cohorts:
+        parts.append("## Same-configuration comparison cohorts")
+        parts.append("")
+        parts.append(_md_table(
+            ["Cohort", "Models"],
+            [[str(i), ", ".join(group)] for i, group in enumerate(cohorts, 1)],
+        ))
+        parts.append("")
+    elif any(signatures.values()):
+        parts.append(
+            "**No same-configuration comparison cohort exists yet.** Run the candidate set "
+            "from the same Git commit with the same tier, context window, repeat count, "
+            "benchmark version, and dataset version before making a routing decision."
+        )
+        parts.append("")
+
+    evidence = report.get("system_evidence") or {}
+    agent_rows = evidence.get("agent_eval") or []
+    continuity_rows = evidence.get("continuity") or []
+    if agent_rows or continuity_rows:
+        parts.append("## Adjacent system evidence")
+        parts.append(
+            "These suites are kept separate because they measure a different boundary, but are "
+            "included here so a routing decision does not ignore agent behavior or continuity. "
+            "Model identifiers are shown exactly as recorded; similarly named serving stacks are "
+            "not silently merged."
+        )
+        parts.append("")
+        if agent_rows:
+            parts.append("### Multi-turn agent evaluation")
+            parts.append("")
+            parts.append(_md_table(
+                ["Model", "Score", "Silent", "Turn limit", "API errors", "s/episode", "Run"],
+                [[r["model"], f"{r.get('score', '—')}/{r.get('max', '—')}",
+                  str(r.get("silent", "—")), str(r.get("turn_limit", "—")),
+                  str(r.get("api_errors", "—")), str(r.get("seconds_per_episode", "—")),
+                  str(r.get("run_date", "—"))] for r in agent_rows],
+            ))
+            parts.append("")
+        if continuity_rows:
+            parts.append("### Behavioral continuity")
+            parts.append("")
+            parts.append(_md_table(
+                ["Model", "Passed", "Failed", "Scored"],
+                [[r["model"], str(r["passed"]), str(r["failed"]), str(r["scored"])]
+                 for r in continuity_rows],
+            ))
+            parts.append("")
+
+    pending = report.get("pending_external_review") or {}
+    waiting = {m: jobs for m, jobs in pending.items() if jobs}
+    if waiting:
+        parts.append("## Awaiting external review")
+        parts.append(
+            "These open-ended jobs have no imported review score. A new v2 run creates "
+            "the review sources needed by `blipshell benchmark review export`; review the "
+            "packet in ChatGPT, Claude, or manually, then use "
+            "`blipshell benchmark review import RESPONSE.json`."
+        )
+        parts.append("")
+        parts.append(_md_table(
+            ["Model", "Unscored open-ended jobs"],
+            [[m, ", ".join(jobs)] for m, jobs in waiting.items()],
+        ))
+        parts.append("")
+
     # Latency table
     lat = report["latency"]
     suites = [s for s in LATENCY_SUITES if any(s in lat.get(m, {}) for m in models)]
@@ -420,7 +565,7 @@ def render_markdown(report: dict, advice: str = "") -> str:
     judged = [c[0] for c in CATEGORIES if c[0] in JUDGED_JOBS]
     len_jobs = [j for j in judged if any(j in length.get(m, {}) for m in models)]
     if len_jobs:
-        parts.append("## Output length (mean words, judged jobs) — longer is NOT better")
+        parts.append("## Output length (mean words, externally reviewed jobs) — longer is NOT better")
         lrows = []
         for j in len_jobs:
             label = next((c[1] for c in CATEGORIES if c[0] == j), j)
@@ -430,8 +575,8 @@ def render_markdown(report: dict, advice: str = "") -> str:
                 row.append(f"{v:.0f}" if v is not None else "—")
             lrows.append(row)
         parts.append(_md_table(["Job"] + models, lrows))
-        parts.append("\n_The judge is instructed not to reward length, but check this: if a model "
-                     "wins a judged job while writing far more, treat the margin with suspicion._")
+        parts.append("\n_External-review rubrics do not reward length. If a model wins while writing "
+                     "far more, inspect the packet and rationale before acting._")
         parts.append("")
 
     # Provenance — when/where/what-code produced each column
@@ -465,13 +610,19 @@ def render_markdown(report: dict, advice: str = "") -> str:
             span = newest if (not oldest or oldest == newest) else f"{oldest}..{newest}"
             if p.get("mixed_code"):
                 code += " (mixed)"
-            prows.append([
-                m, ts, span, str(p.get("run_count") or 1), code,
-                p.get("judge_model") or "—", scope,
-            ])
+            version = p.get("benchmark_version") or "legacy"
+            dataset = p.get("dataset_version") or "legacy"
+            if p.get("mixed_benchmark") or p.get("mixed_dataset"):
+                version += " (mixed)"
+            scorer = p.get("scorer_version") or "legacy"
+            fingerprint = p.get("source_fingerprint") or "legacy"
+            if p.get("mixed_scorer") or p.get("mixed_source"):
+                scorer += " (mixed)"
+            prows.append([m, ts, span, str(p.get("run_count") or 1), code,
+                          version, dataset, scorer, fingerprint, scope])
         parts.append(_md_table(
             ["Model", "Newest run (UTC)", "Data spans", "Runs", "Code (git)",
-             "Judge", "Scope"], prows))
+             "Benchmark", "Dataset", "Scorer", "Source", "Scope"], prows))
         parts.append("\n_Results persist across machines and months. Columns measured at "
                      "different dates or different commits are NOT strictly comparable — a "
                      "scorer or prompt change between them moves scores on its own. When two "
@@ -495,9 +646,10 @@ def render_markdown(report: dict, advice: str = "") -> str:
     parts.append(
         "## Caveats\n"
         "- Latency is a per-suite mean, not per individual job; cloud latency includes network.\n"
-        "- Quality for open-ended jobs depends on the judge model noted above. The judge is told "
-        "not to reward length, but cross-check the output-length table — a much wordier winner is "
-        "a verbosity-bias smell.\n"
+        "- Open-ended quality is absent until an external review is imported. Review files name "
+        "the reviewer and remain independently replaceable; candidate inference is never rerun.\n"
+        "- Compare models from the same benchmark version, dataset version, Git commit, tier, "
+        "context window, and repeat count. Mixed or legacy columns are historical context only.\n"
         "- Agentic coding executes real tasks; a model with weak tool-calling will score low there "
         "even if its raw code quality is fine — that's intended (it reflects real executor use).\n"
         "- Embedding needs a labeled retrieval set in the DB; it's blank if unavailable."

@@ -131,7 +131,7 @@ TEST_MESSAGES = [
 ]
 
 TEST_CONVERSATIONS = [
-    # Each is a short session; lesson extraction is judge-graded (no ground truth).
+    # Each is a short session; lesson extraction is externally reviewed (no ground truth).
     [
         {"role": "user", "content": "man this desk robot is just being a pain. the connectors are too loose."},
         {"role": "assistant", "content": "Yeah that's frustrating. For the ESP32 connections, JST-PH 2-pin connectors are much more reliable than dupont wires."},

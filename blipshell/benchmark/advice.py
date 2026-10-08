@@ -145,6 +145,8 @@ def build_advice(report: dict, config) -> list[dict]:
     }
     coverage = report.get("coverage", {})
     models = report.get("models", [])
+    enforce_cohorts = bool(report.get("comparison_contract_enforced"))
+    signatures = report.get("cohort_signatures") or {}
 
     blocks = []
     for key, (jobs, purpose) in JOB_OWNERS.items():
@@ -172,6 +174,14 @@ def build_advice(report: dict, config) -> list[dict]:
         for r in rows:
             if r["model"] == incumbent:
                 continue
+            if enforce_cohorts:
+                inc_sig = signatures.get(incumbent) or []
+                cand_sig = signatures.get(r["model"]) or []
+                # A routing recommendation requires one exact, non-legacy
+                # experiment signature shared by incumbent and candidate.
+                if (len(inc_sig) != 1 or inc_sig != cand_sig or
+                        '"benchmark":"legacy"' in inc_sig[0]):
+                    continue
             gains, losses = [], []
             for j in jobs:
                 cand, inc = r["jobs"].get(j), (inc_row or {}).get("jobs", {}).get(j)
@@ -237,6 +247,15 @@ def build_advice(report: dict, config) -> list[dict]:
                 reason = (f"No measured candidate beats {incumbent} by more than "
                           f"the noise floor ({worst:.3f}) on this key's jobs.")
                 action = None
+
+            if enforce_cohorts and not contenders and len(rows) > 1:
+                verdict = "UNKNOWN"
+                reason = ("No candidate has a same-configuration cohort with "
+                          f"{incumbent}; historical cross-commit scores are not "
+                          "routing evidence.")
+                suites = sorted({JOB_SUITE.get(j, j) for j in jobs})
+                action = (f"blipshell benchmark run {incumbent} --tier decision "
+                          f"--jobs {','.join(suites)}")
 
         blocks.append({
             "key": key, "incumbent": incumbent, "jobs": list(jobs),

@@ -516,14 +516,13 @@ class BenchmarkConfig(BaseModel):
     """Unified model-benchmark harness configuration.
 
     Drives `blipshell benchmark` — running candidate models through the
-    existing benchmark suites, grading open-ended outputs with a neutral
-    cloud judge, and rendering a switch-verdict vs the current production
-    models. All optional: an absent `benchmark:` block uses these defaults.
+    existing benchmark suites, saving open-ended outputs for offline external
+    review, and rendering assignment evidence for the production models. All
+    optional: an absent `benchmark:` block uses these defaults.
     """
     db_path: str = "data/benchmark.db"  # dedicated store; NOT the production memory DB
-    # Neutral cloud judge — grades open-ended tasks (summarization/reasoning/lessons)
-    # 0..1. Must name an endpoint present in `endpoints:`. Empty judge_model = no judging
-    # (deterministic metrics only). The judge model is excluded from candidate runs.
+    # Deprecated compatibility fields. The v2 runner never calls an automatic
+    # judge; `benchmark review export/import` supplies offline scores instead.
     judge_model: str = ""
     judge_endpoint: str = ""  # endpoint name from `endpoints:` to route the judge through
     judge_timeout: float = 60.0  # per-judge-call timeout (asyncio.wait_for)

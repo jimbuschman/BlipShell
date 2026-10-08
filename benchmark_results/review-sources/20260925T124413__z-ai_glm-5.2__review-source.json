@@ -1,0 +1,483 @@
+{
+  "schema": 2,
+  "kind": "benchmark_review_source",
+  "model": "z-ai/glm-5.2",
+  "run_group": "z-ai_glm-5.2@2026-09-25T12:44:13.017520+00:00",
+  "run_ts": "2026-09-25T12:44:13.017520+00:00",
+  "benchmark_manifest": {
+    "benchmark_version": "2.0",
+    "dataset_version": "2026-09-23",
+    "scorer_version": "2",
+    "source_fingerprint": "b821993265074d47",
+    "required_categories": [
+      "rank_importance",
+      "ranking",
+      "importance",
+      "contradiction",
+      "dedup",
+      "entity",
+      "summarization",
+      "lessons",
+      "reasoning",
+      "code_gen",
+      "coding_agentic",
+      "tool_calling",
+      "session_review",
+      "session_review_chunked",
+      "embedding"
+    ],
+    "open_ended_categories": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "tiers": {
+      "smoke": {
+        "jobs": [
+          "dedup",
+          "reasoning"
+        ],
+        "repeats": 1,
+        "description": "Fast plumbing/capability check; not sufficient for routing decisions."
+      },
+      "compare": {
+        "jobs": [
+          "pipeline",
+          "reasoning",
+          "session_review"
+        ],
+        "repeats": 3,
+        "description": "Comparable routing-job run without the slow coding/embedding suites."
+      },
+      "decision": {
+        "jobs": [
+          "coding",
+          "embedding",
+          "pipeline",
+          "realdata",
+          "reasoning",
+          "session_review"
+        ],
+        "repeats": 5,
+        "description": "Full evidence run for a production model decision."
+      }
+    }
+  },
+  "items": [
+    {
+      "category": "summarization",
+      "case": "message-1",
+      "task": "hey",
+      "response": "SKIP",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-2",
+      "task": "ok thanks",
+      "response": "SKIP",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-3",
+      "task": "lol yeah",
+      "response": "SKIP",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-4",
+      "task": "brb",
+      "response": "SKIP",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-5",
+      "task": "what time is it",
+      "response": "SKIP",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-6",
+      "task": "[System: <important_rules>\nYou are in agent mode.\nIf you need to use multiple tools...</important_rules>]\ntest",
+      "response": "SKIP",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-7",
+      "task": "thanks that worked",
+      "response": "SKIP",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-8",
+      "task": "sanding paint when its still tacky?",
+      "response": "Sanding paint while still tacky is not recommended; it clogs sandpaper and can ruin the finish. Wait until fully dry.",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-9",
+      "task": "the meeting got moved to thursday at 3pm",
+      "response": "Meeting rescheduled to Thursday at 3pm.",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-10",
+      "task": "I'm using a MAX98357 with the esp32 and the sound it produces is terrible. Mostly sounds like just noise/garbage.",
+      "response": "MAX98357 paired with ESP32 produces terrible sound output \u2014 mostly noise/garbage.",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-11",
+      "task": "for some reason my daughters laptop when we got in dec only wants to load 10 blocks in minecraft, thats pretty terrbile",
+      "response": "Daughter's laptop purchased in December only loads 10 blocks in Minecraft, resulting in poor render performance.",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-12",
+      "task": "can you explain how RRF fusion works in hybrid search?",
+      "response": "Question about how Reciprocal Rank Fusion (RRF) works in hybrid search.",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-13",
+      "task": "Now I can see the worker.py file! Let me provide a code review:\n\n## Code Review: worker.py\n\n### Issues Found:\n1. Missing stop() call on shutdown\n2. No retry logic for failed HTTP requests\n3. No model fallback mechanism",
+      "response": "worker.py has three issues: missing stop() call on shutdown, no retry logic for failed HTTP requests, and no model fallback mechanism.",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-14",
+      "task": "I prefer dark mode in every app I use",
+      "response": "Prefers dark mode in all apps.",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-15",
+      "task": "the API key for the project lives in the .env file at the repo root",
+      "response": "API key for the project is stored in the .env file at the repo root.",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-16",
+      "task": "I swapped the speaker to a 4ohm on JST-PH connectors and the noise is gone \u2014 the 8ohm was the problem.",
+      "response": "Swapped speaker from 8ohm to 4ohm using JST-PH connectors; noise eliminated \u2014 8ohm speaker was the cause.",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-17",
+      "task": "yeah i think ill go with the two-module design for the desk robot. main board plus a sidecar for the sensors. JST connectors between them.",
+      "response": "Desk robot will use a two-module design: main board plus a sensor sidecar, connected with JST connectors.",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-18",
+      "task": "I decided to drop ChromaDB entirely and move the vector store to sqlite-vec.",
+      "response": "Dropped ChromaDB; vector store moved to sqlite-vec.",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-19",
+      "task": "my name is Jim and I work at Xanatek as a developer",
+      "response": "Jim is a developer at Xanatek.",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "summarization",
+      "case": "message-20",
+      "task": "my daughter's name is Lily and she's 8 years old",
+      "response": "Daughter's name is Lily, age 8.",
+      "rubric": "Score 0.0-1.0 for factual faithfulness, preservation of salient details, concision, and neutral third-person memory-note style. Do not reward verbosity."
+    },
+    {
+      "category": "lessons",
+      "case": "conversation-1",
+      "task": "User: man this desk robot is just being a pain. the connectors are too loose.\nAssistant: Yeah that's frustrating. For the ESP32 connections, JST-PH 2-pin connectors are much more reliable than dupont wires.\nUser: yeah ill try those. also the speaker got really hot during testing\nAssistant: That's a critical warning sign - could be a short or wrong impedance speaker. Check the speaker ohms matches what the MAX98357 expects.",
+      "response": "When this user reports one hardware problem, proactively ask if other components showed issues too \u2014 they surface multiple problems casually as asides rather than direct questions.\n\nSuggest fixes this user can physically verify (touch, measure, swap) since they diagnose via hands-on testing and observable symptoms like heat and loose connections.",
+      "rubric": "Score 0.0-1.0 for grounding in the conversation, reusability, specificity, and concision. Penalize invented lessons and generic advice."
+    },
+    {
+      "category": "lessons",
+      "case": "conversation-2",
+      "task": "User: my python script keeps hanging on the ollama call and never times out\nAssistant: The ollama SDK defaults to timeout=None, so httpx waits forever. Pass an explicit httpx.Timeout to the client constructor.\nUser: ok that fixed the hang. why didn't asyncio.wait_for catch it?\nAssistant: Because the call was running in a thread-pool executor (run_in_executor), which asyncio can't cancel. The timeout has to be enforced at the HTTP client, not the asyncio layer.",
+      "response": "This user runs sync SDK calls via run_in_executor under asyncio \u2014 suggest HTTP-layer timeouts rather than asyncio-level cancellation when they hit hanging calls.",
+      "rubric": "Score 0.0-1.0 for grounding in the conversation, reusability, specificity, and concision. Penalize invented lessons and generic advice."
+    },
+    {
+      "category": "lessons",
+      "case": "conversation-3",
+      "task": "User: every assistant message is getting saved twice in the DB\nAssistant: Sounds like a race. _persist_message is fire-and-forget, so the memory ids aren't populated when the enqueue runs and a duplicate row gets inserted.\nUser: how do we fix it cleanly\nAssistant: Track the persist tasks and await them before the enqueue reads the ids. Make the enqueue async and flush first.",
+      "response": "Prefer architectural direction over code snippets \u2014 this user accepted a high-level fix strategy without needing implementation details.",
+      "rubric": "Score 0.0-1.0 for grounding in the conversation, reusability, specificity, and concision. Penalize invented lessons and generic advice."
+    },
+    {
+      "category": "lessons",
+      "case": "conversation-4",
+      "task": "User: search keeps returning almost nothing now that I have 31k memories\nAssistant: Your filters compound: similarity 0.5, then rank>=3, then a score floor. On a big corpus that removes ~85% of candidates. Lower the similarity threshold and replace the rank filter with an importance floor.\nUser: that helped a lot. anything else?\nAssistant: Add a recency boost and give FTS-only hits a baseline similarity so keyword matches aren't dropped for having no vector score.",
+      "response": "After a fix works, proactively offer follow-up optimizations \u2014 this user asks \"anything else?\" expecting additional suggestions beyond the initial solution.\n\nQuantify the compounding effect when diagnosing filter problems \u2014 this user responded immediately to concrete impact estimates like \"~85% of candidates removed.\"",
+      "rubric": "Score 0.0-1.0 for grounding in the conversation, reusability, specificity, and concision. Penalize invented lessons and generic advice."
+    },
+    {
+      "category": "lessons",
+      "case": "conversation-5",
+      "task": "User: should I use a single model for all the background memory tasks?\nAssistant: Consolidating on one reasoning model (qwen3:14b) avoids constant model swaps, which dominate latency on local. Keep summarization on a separate fast model only if cloud is reliable.\nUser: makes sense, swapping was killing throughput\nAssistant: Right \u2014 swap overhead is per-call, so batching same-model tasks together matters more than picking the theoretically-best model per task.",
+      "response": "Prioritize throughput and operational overhead over theoretical optimality when advising this user on local LLM architecture decisions.",
+      "rubric": "Score 0.0-1.0 for grounding in the conversation, reusability, specificity, and concision. Penalize invented lessons and generic advice."
+    },
+    {
+      "category": "lessons",
+      "case": "conversation-6",
+      "task": "User: the entity graph has tons of near-duplicate entities like 'esp32' and 'ESP32'\nAssistant: Run a lexical-variant merge pass first (case/punctuation), then an embedding-similarity merge with a version guard so concurrent writes don't clobber. Archive, never hard-delete, so re-mentions can revive.\nUser: why archive instead of delete?\nAssistant: Because a merged-away name can reappear in a later conversation; if you hard-deleted it the mention strands. Soft-archive lets you revive it on re-mention.",
+      "response": "Include brief rationale for non-obvious design choices in recommendations \u2014 this user probes the reasoning behind decisions rather than accepting them at face value.",
+      "rubric": "Score 0.0-1.0 for grounding in the conversation, reusability, specificity, and concision. Penalize invented lessons and generic advice."
+    },
+    {
+      "category": "lessons",
+      "case": "conversation-7",
+      "task": "User: my cloud summarization keeps hitting 429s and falling over\nAssistant: The free tier has a 20-request burst limit. Add a per-endpoint rate limit and cascade to the next endpoint on RateLimitExhausted instead of failing the request.\nUser: and if all cloud is down?\nAssistant: Fall back to a local model. Make sure the fallback path passes num_ctx from the endpoint config or you'll truncate context silently.",
+      "response": "When proposing a fix, proactively offer the next fallback layer \u2014 this user immediately asks \"what if that fails too?\"\nFlag silent failure modes explicitly \u2014 this user's pipeline risks context truncation that fails without obvious errors.",
+      "rubric": "Score 0.0-1.0 for grounding in the conversation, reusability, specificity, and concision. Penalize invented lessons and generic advice."
+    },
+    {
+      "category": "lessons",
+      "case": "conversation-8",
+      "task": "User: the executor keeps making 37 tool calls and never finishing\nAssistant: It's missing a completion signal. Add a task_complete tool instead of a magic string, inject a state block each turn, and a budget wind-down message at 80% so it wraps up.\nUser: that's basically what claude code does right?\nAssistant: Yes \u2014 explicit completion tool, state awareness, and bounded tool output are the common pattern across the successful coding agents.",
+      "response": "When discussing agent architecture patterns, reference how production agents like Claude Code solve the same problem \u2014 this user uses them as mental reference points.",
+      "rubric": "Score 0.0-1.0 for grounding in the conversation, reusability, specificity, and concision. Penalize invented lessons and generic advice."
+    },
+    {
+      "category": "lessons",
+      "case": "conversation-9",
+      "task": "User: what's the cleanest way to test the chat loop without ollama?\nAssistant: Use a scripted LLM client that feeds canned tool-call/text turns into the real loop. That validates completion detection and tool wiring deterministically; reserve the Ollama PC for actual model-quality runs.\nUser: so logic here, quality there\nAssistant: Exactly \u2014 separating wiring tests from model-behavior tests is the key mental model.",
+      "response": "Frame technical advice for this user as short conceptual dichotomies (e.g., \"logic here, quality there\") \u2014 they actively distill recommendations into compact mental models.",
+      "rubric": "Score 0.0-1.0 for grounding in the conversation, reusability, specificity, and concision. Penalize invented lessons and generic advice."
+    },
+    {
+      "category": "lessons",
+      "case": "conversation-10",
+      "task": "User: vision input \u2014 does minimax take video?\nAssistant: It generates video but does not accept video as input. Image input works on vision-capable models; declare both name forms in model_settings because the registry base-name match splits on ':' or '/'.\nUser: got it, image only\nAssistant: Right. There's no video-input path; don't assume symmetry between generate and accept.",
+      "response": "SKIP",
+      "rubric": "Score 0.0-1.0 for grounding in the conversation, reusability, specificity, and concision. Penalize invented lessons and generic advice."
+    },
+    {
+      "category": "reasoning",
+      "case": "reasoning-1",
+      "task": "User: The nightly entity merge archived 7491 entities last run. I want to re-run it but I'm worried about the version-numbered ones.\nAssistant: projectecho_v1 and projectecho_v2 embed at 0.996 cosine, well above every threshold, so an embedding-only guard would merge them. entity_names.version_distinguished blocks any merge where names differ in a version or instance number.\nUser: Is that guard on both merge paths?\nAssistant: No \u2014 until 2026-08-07 it lived on EntityMerger only, which is the path that ships disabled. Creation-time resolution, the enabled one, had no guard. Both use blipshell/memory/entity_names.py now.\nUser: OK. Decision: re-run the merge, but keep the ARCHIVE-never-DELETE rule and take a backup first. Don't touch cleanup_entities.py, it hard-deletes.\nAssistant: Understood. I'll back up data/blipshell.db, run merge_entities in dry-run, then apply with --loop.\nUser: Also the get_all_entity_names cache \u2014 anything writing entity rows outside the store's own methods has to call _invalidate_entity_name_cache.",
+      "response": "## 1. Primary Request and Intent\nThe user wants to re-run a nightly entity merge that previously archived 7,491 entities. They are specifically concerned about version-numbered entities (e.g., `projectecho_v1`, `projectecho_v2`) being incorrectly merged. They want to keep the ARCHIVE-never-DELETE rule, take a backup before running, and avoid touching `cleanup_entities.py` because it hard-deletes. They also flagged that any code writing entity rows outside the store's own methods must call `_invalidate_entity_name_cache`.\n\n## 2. Key Decisions Made\n- Re-run the entity merge, but with a backup taken first.\n- Keep ARCHIVE-never-DELETE rule; do not use `cleanup_entities.py` (it hard-deletes).\n- Run in dry-run first, then apply with `--loop`.\n- Both merge paths (EntityMerger and creation-time resolution) now use `blipshell/memory/entity_names.py` for the `version_distinguished` guard, as of 2026-08-07.\n- Any code writing entity rows outside the store's own methods must call `_invalidate_entity_name_cache`.\n\n## 3. Files and Code\n- **`blipshell/memory/entity_names.py`** \u2014 Contains the `version_distinguished` guard that blocks merges where entity names differ only in version/instance numbers. Now used by both merge paths.\n- **`EntityMerger`** \u2014 The disabled/shipping-disabled merge path; previously had the guard, now both paths share it.\n- **Creation-time resolution** \u2014 The enabled merge path; previously lacked the guard, now fixed.\n- **`data/blipshell.db`** \u2014 The database to be backed up before re-running the merge.\n- **`cleanup_entities.py`** \u2014 Explicitly excluded; performs hard-deletes.\n- **`get_all_entity_names` cache / `_invalidate_entity_name_cache`** \u2014 Cache invalidation mechanism; must be called by any code writing entity rows outside the store's own methods.\n\n## 4. Errors and Fixes\n- **Guard missing on enabled merge path**: The `version_distinguished` guard only existed on `EntityMerger` (the disabled path). Creation-time resolution (the enabled path) had no guard. Fix: both paths now use `blipshell/memory/entity_names.py` (as of 2026-08-07).\n- **`projectecho_v1` / `projectecho_v2` risk**: These embed at 0.996 cosine similarity, well above any embedding-only threshold, so an embedding-only guard would incorrectly merge them. The `version_distinguished` guard prevents this.\n\n## 5. Problem-Solving Progress\n- Identified that version-numbered entities are at risk from embedding-only merge logic.\n- Confirmed the `version_distinguished` guard exists and is now on both merge paths.\n- Established a safe re-run procedure: backup \u2192 dry-run \u2192 apply with `--loop`.\n- Flagged the cache invalidation requirement for external entity-row writes.\n\n## 6. User Messages Summary\n1. \"The nightly entity merge archived 7491 entities last run. I want to re-run it but I'm worried about the version-numbered ones.\"\n2. \"Is that guard on both merge paths?\"\n3. \"OK. Decision: re-run the merge, but keep the ARCHIVE-never-DELETE rule and take a backup first. Don't touch cleanup_entities.py, it hard-deletes.\"\n4. \"Also the get_all_entity_names cache \u2014 anything writing entity rows outside the store's own methods has to call _invalidate_entity_name_cache.\"\n\n## 7. Pending Tasks\n- Back up `data/blipshell.db`.\n- Run `merge_entities` in dry-run mode and review results.\n- Apply the merge with `--loop`.\n- Verify/audit any code paths that write entity rows outside the store's own methods to ensure they call `_invalidate_entity_name_cache`.\n\n## 8. Current Work\nThe assistant had just acknowledged the plan: back up `data/blipshell.db`, run `merge_entities` in dry-run, then apply with `--loop`. The user then added the additional constraint about `_invalidate_entity_name_cache` invalidation for external entity-row writes. The assistant has not yet executed any of these steps.\n\n## 9. Suggested Next Step\nAcknowledge the cache invalidation constraint, then proceed with the backup of `data/blipshell.db` and the dry-run of `merge_entities`. Review dry-run output for any version-numbered entities that would be merged, confirming the `version_distinguished` guard is working.",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, calibrated uncertainty, and actionability. Do not reward length by itself."
+    },
+    {
+      "category": "reasoning",
+      "case": "reasoning-2",
+      "task": "Why might an ESP32 with a MAX98357 I2S DAC produce noise or garbage audio? List the 3 most likely causes and how to debug each one.",
+      "response": "Here are the 3 most likely causes for noise or garbage audio with an ESP32 and MAX98357 I2S DAC, along with how to debug each:\n\n**1. I2S Configuration Mismatch**\nThe MAX98357 expects specific data formats. If the ESP32's I2S settings do not match the DAC's expectations, you will get static or high-pitched squealing.\n*   **How to debug:** \n    *   **Bit Depth:** Ensure you are sending 16-bit or 32-bit data. The MAX98357 auto-detects, but the ESP32 must be configured to actually output the correct number of bits per sample.\n    *   **I2S Standard:** Ensure the ESP32 is set to standard Philips format (not PCM or TDM).\n    *   **Sample Rate:** Verify the ESP32 sample rate matches your audio source (e.g., 44100Hz or 48000Hz). \n    *   **Channel Selection:** Check the `SD_MODE` pin on the MAX98357. Tie it to GND for left channel, VDD for right channel, or leave it unconnected/pulldown depending on your mono setup. If the ESP32 only sends data on the right channel but the DAC is set to left, you will get silence or noise.\n\n**2. Power and Grounding Issues**\nThe MAX98357 has a built-in Class D amplifier that can draw significant burst current (up to 500mA). If power or grounding is inadequate, it causes brownouts, ground loops, or electrical noise injected into the audio.\n*   **How to debug:**\n    *   **Power Supply:** Do not power the MAX98357 from the ESP32's 3.3V/5V pin if using a weak USB source. Use a dedicated, stable power supply capable of delivering at least 1A.\n    *   **Grounding:** Ensure the ESP32 GND, MAX98357 GND, and power supply GND are all tied together at a single point. Floating grounds cause severe buzzing.\n    *   **Brownouts:** Open the ESP32 serial monitor at 115200 baud while playing audio. If you see \"Brownout detector was triggered\" messages, your power supply is failing.\n\n**3. DMA Buffer Underflows (Data Starvation)**\nIf the ESP32 cannot feed audio data to the I2S peripheral fast enough, the DMA (Direct Memory Access) buffers run dry. This results in periodic loud clicks, pops, or garbage noise.\n*   **How to debug:**\n    *   **Buffer Sizing:** Increase the DMA buffer size and count in your I2S initialization (e.g., in Arduino, set `dma_buf_count` to 4-8 and `dma_buf_len` to 256-1024). This creates a larger cushion for audio data.\n    *   **Task Blocking:** Ensure the loop/task writing to the I2S port is not being blocked by `delay()` functions or heavy synchronous tasks (like reading from an SD card without DMA). \n    *   **Driver API:** If using ESP-IDF v5+ or the latest Arduino core, you might be using the new I2S driver. Ensure you are calling `i2s_channel_write()` continuously in a loop and handling its return values correctly to maintain a steady stream of data.",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, calibrated uncertainty, and actionability. Do not reward length by itself."
+    },
+    {
+      "category": "reasoning",
+      "case": "reasoning-3",
+      "task": "How do I connect an SSD1306 OLED to an ESP32?",
+      "response": "Connect the SSD1306 OLED to the ESP32 as follows:\n\n- **VCC** \u2192 3.3V\n- **GND** \u2192 GND\n- **SDA** \u2192 GPIO 21 (default I2C SDA on ESP32)\n- **SCL** \u2192 GPIO 22 (default I2C SCL on ESP32)\n\nInstall both the **Adafruit SSD1306** and **Adafruit GFX Library** libraries.\n\nThe I2C address is typically **0x3C** for 128x32 displays and **0x3D** for 128x64 displays. If unsure, run an I2C scanner sketch to confirm.\n\nMinimal example for a 128x64 display:\n\n```cpp\n#include <Wire.h>\n#include <Adafruit_GFX.h>\n#include <Adafruit_SSD1306.h>\n\n#define SCREEN_WIDTH 128\n#define SCREEN_HEIGHT 64\n#define OLED_RESET -1\n\nAdafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);\n\nvoid setup() {\n  Wire.begin(21, 22);  // SDA, SCL\n  display.begin(SSD1306_SWITCHCAPVCC, 0x3D);\n  display.clearDisplay();\n  display.setTextSize(1);\n  display.setTextColor(WHITE);\n  display.setCursor(0, 0);\n  display.println(\"Hello, ESP32!\");\n  display.display();\n}\n\nvoid loop() {}\n```",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, calibrated uncertainty, and actionability. Do not reward length by itself."
+    },
+    {
+      "category": "reasoning",
+      "case": "reasoning-4",
+      "task": "For a single-user local assistant with 30k memories, compare a dual-store setup (SQLite + a separate vector DB) vs a single store (sqlite-vec inside the SQLite file). What's the main risk of the dual-store approach and when is it nonetheless justified?",
+      "response": "For 30k memories (roughly 180MB of data for standard 1536-dimensional embeddings), `sqlite-vec` is the superior architectural choice. It keeps your system simple, contained in a single ACID-compliant file.\n\n**Main Risk of the Dual-Store Approach:**\n**Synchronization drift and operational complexity.** Splitting relational data (SQLite) and vectors (e.g., Chroma, Qdrant) creates two sources of truth. Without distributed transactions, you risk orphaned vectors, out-of-sync metadata, and duplicated backup/migration logic. A single crash during a write can leave your database inconsistent.\n\n**When the Dual-Store Approach is Justified:**\nAt 30k memories, performance is rarely the justification\u2014brute-force or basic index search on 30k vectors takes only milliseconds. Dual-store is justified only if:\n\n1. **Advanced ANN Requirements:** You need highly tuned HNSW indices with specific quantization (Product/Scalar Quantization) that `sqlite-vec` does not natively support, though this generally only matters at 1M+ vectors.\n2. **Complex Hybrid Filtering:** You require proprietary, highly optimized metadata filtering combined with vector search that a dedicated vector DB executes more elegantly than SQLite `JOIN`s.\n3. **Future-Proofing for Scale:** You anticipate an immediate, massive explosion in scale (millions of vectors) and prefer to build against the vector DB API now to avoid a future migration, treating the local assistant as a microcosm of a larger planned architecture.\n\n**Architect's Verdict:** Go with `sqlite-vec`. The simplicity, data integrity, and zero-maintenance of a single-file database vastly outweigh the marginal, mostly theoretical benefits of a standalone vector DB at this scale.",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, calibrated uncertainty, and actionability. Do not reward length by itself."
+    },
+    {
+      "category": "reasoning",
+      "case": "reasoning-5",
+      "task": "A python asyncio call to a thread-pool executor never times out even though it's wrapped in asyncio.wait_for. Why doesn't the timeout fire, and what's the correct fix?",
+      "response": "## Root cause\n\nYou're almost certainly **invoking the blocking function on the event\u2011loop thread** instead of handing the *callable* to the executor. The classic mistake:\n\n```python\nawait asyncio.wait_for(\n    loop.run_in_executor(executor, blocking_func(args)),   # \u2190 called here!\n    timeout=5,\n)\n```\n\n`blocking_func(args)` is evaluated **before** `run_in_executor` is even called, so it runs synchronously on the event\u2011loop thread. While that thread is blocked, nothing else on the loop can run \u2014 including the `loop.call_later` callback that `asyncio.wait_for` schedules to fire the timeout. The loop is frozen, so the timeout never triggers. (As a bonus, the executor receives the *return value* of the call rather than a callable, which is also wrong.)\n\n## Correct fix\n\nPass the function reference and its arguments separately so the executor actually schedules the work in a worker thread:\n\n```python\nawait asyncio.wait_for(\n    loop.run_in_executor(executor, blocking_func, arg1, arg2),\n    timeout=5,\n)\n```\n\nOr, for keyword args / bound args, use `functools.partial`:\n\n```python\nimport functools\nawait asyncio.wait_for(\n    loop.run_in_executor(executor, functools.partial(blocking_func, arg1, kw=...)),\n    timeout=5,\n)\n```\n\nA lambda works too (`lambda: blocking_func(args)`), but `partial` is preferred because it's pickle\u2011friendly and clearer.\n\n## Important caveat\n\nEven with the correct pattern, when `wait_for` times out it cancels the `asyncio` Future that wraps the `concurrent.futures.Future`. **Cancellation cannot stop a thread that's already running Python code** \u2014 `concurrent.futures.Future.cancel()` only succeeds if the task hasn't started yet. The `TimeoutError` *will* be raised to the awaiter, but the worker thread keeps running `blocking_func` until it returns naturally. If that's a problem, make the blocking function interruptible itself (poll a cancellation flag, use socket/I\u2011/O timeouts, use a queue with a sentinel, etc.) rather than relying on `wait_for` to kill it.",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, calibrated uncertainty, and actionability. Do not reward length by itself."
+    },
+    {
+      "category": "reasoning",
+      "case": "reasoning-6",
+      "task": "I have limited GPU. Rank these background jobs by how much they need a large local model vs a small one: memory ranking (1-5), summarization, entity extraction, importance scoring, contradiction detection. Justify each.",
+      "response": "Ranked from **1 (needs a large model most)** to **5 (needs it least)**:\n\n1. **Contradiction detection** \u2014 Requires complex logical reasoning and deep semantic comparison between multiple texts, where small models frequently hallucinate or miss subtle logical conflicts.\n2. **Summarization** \u2014 Needs coherent text generation and synthesis; while small models can do it, larger models avoid repetition and capture nuanced themes much better.\n3. **Memory ranking** \u2014 Depends on nuanced semantic similarity and context matching, which mid-to-large models handle more reliably than smaller ones.\n4. **Importance scoring** \u2014 Relies on simpler heuristic-like judgments, meaning smaller models perform adequately if given clear, structured scoring criteria.\n5. **Entity extraction** \u2014 A highly structured pattern-matching task where small models (or even traditional non-LLM NLP tools) excel without needing vast parameter counts.",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, calibrated uncertainty, and actionability. Do not reward length by itself."
+    },
+    {
+      "category": "reasoning",
+      "case": "reasoning-7",
+      "task": "A user says 'the search is broken, fix it.' Before changing code, what are the 3 most important clarifying questions, and what would each answer change about your approach?",
+      "response": "**1. What exactly is \"broken\"?** (Are you getting zero results, an error message, irrelevant results, or is it just slow?)\n* **What it changes:** An error message directs me to check backend logs and exceptions. Zero results points to a disconnected index or broken query syntax. Irrelevant results sends me to the ranking algorithm or data mapping. Slowness points to database performance, indexing bottlenecks, or missing caches.\n\n**2. When and for whom is this happening?** (Is it all search terms, specific keywords, a specific environment like production, or just your account?)\n* **What it changes:** If it's only specific keywords, I will look for data gaps or special character escaping issues. If it's only one user or role, I will investigate permissions or authentication context. If it's only in production, I will diff the environment configurations. \n\n**3. When did it start, and what changed recently?** (Did this happen after a recent deployment, data update, or config change?)\n* **What it changes:** If it started after a deployment, I will immediately review the code diff and potentially roll back. If it followed a data import, I will validate the newly indexed data. If nothing changed, I will look for external failures (e.g., crashed indexing services, exceeded API limits, or corrupted cache).",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, calibrated uncertainty, and actionability. Do not reward length by itself."
+    },
+    {
+      "category": "reasoning",
+      "case": "reasoning-8",
+      "task": "A free API tier allows 20 requests per minute. You must process 5,000 memories, each needing 1 summarization call. Ignoring failures, what's the minimum wall-clock time in minutes, and what's one way to cut it roughly in half?",
+      "response": "**Calculation:**\n5,000 requests \u00f7 20 requests per minute = 250 minutes.\n\n**Number:**\n250\n\n**One way to cut it roughly in half:**\nUse a second free API key/account (or upgrade to a paid tier) to process the memories concurrently at 40 requests per minute.",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, calibrated uncertainty, and actionability. Do not reward length by itself."
+    },
+    {
+      "category": "reasoning",
+      "case": "reasoning-9",
+      "task": "List exactly 4 reasons local models are attractive for a personal assistant. Output ONLY a numbered list 1-4, each reason 6 words or fewer, no preamble, no trailing commentary.",
+      "response": "1. Complete privacy of personal data\n2. Operates fully without internet access\n3. Zero recurring API usage costs\n4. Highly customizable for specific needs",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, calibrated uncertainty, and actionability. Do not reward length by itself."
+    },
+    {
+      "category": "reasoning",
+      "case": "reasoning-10",
+      "task": "If a memory pipeline switched its embedding model but did NOT re-embed the existing corpus, what specifically would degrade, and why would search appear to 'mostly work' while quietly getting worse?",
+      "response": "**What Specifically Degrades:**\nThe semantic alignment between queries and the existing corpus. The old corpus and new queries exist in two entirely different, incompatible high-dimensional geometric spaces. Consequently, cosine similarity and dot product calculations between the two spaces become mathematically meaningless. True semantic recall@k and ranking precision drop to near-random levels for the old data.\n\n**Why it Appears to \"Mostly Work\":**\n1. **Dimension Compatibility:** If the new and old models share the same vector dimensions (e.g., both are 1536d), the vector database will not throw an error; it will happily compute mathematically invalid distances.\n2. **High-Dimensional Artifacts (Hubness):** In high-dimensional spaces, random vectors often share moderate cosine similarity due to the concentration of measure. Similarity scores won't be zero; they will look like normal, plausible scores (e.g., 0.25 to 0.45), hiding the fact that the ranking is random.\n3. **Lexical Bleed-Through:** Embeddings capture some lexical frequency. Direct keyword overlap between the query and old documents can cause accidental, superficial vector alignments, yielding topically adjacent (if not semantically precise) hits.\n4. **The \"New Data\" Masking Effect:** Any new documents added post-switch are correctly embedded in the new model's space. Search will work flawlessly on this recent data, creating a survivorship bias that masks the total failure of the legacy corpus.",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, calibrated uncertainty, and actionability. Do not reward length by itself."
+    },
+    {
+      "category": "reasoning",
+      "case": "reasoning-11",
+      "task": "Explain Reciprocal Rank Fusion (RRF) for combining keyword and vector search results to a competent developer who has never used it. Include the formula and why the constant k matters, in under 120 words.",
+      "response": "Reciprocal Rank Fusion (RRF) merges results from multiple search systems (like BM25 and vector search) using only their rankings, ignoring raw scores.\n\n**Formula:** `RRF(d) = \u03a3 1 / (k + rank(d))`\n\nFor each document `d`, sum the reciprocal of its rank across all result lists. Sort documents by their total RRF score to get the final ranking.\n\n**Why the constant `k` matters:** \nThe constant `k` (typically 60) dampens the influence of extreme top rankings. Without `k`, rank #1 scores 1.0, heavily overshadowing rank #2 (0.5). Adding `k` shrinks the gap between the top spots, preventing one system's #1 result from dominating the final order. This ensures that broad consensus across both search lists drives the ranking, rather than a single outlier.",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, calibrated uncertainty, and actionability. Do not reward length by itself."
+    },
+    {
+      "category": "reasoning",
+      "case": "reasoning-12",
+      "task": "What's the default I2C address of most SSD1306 OLED displays?",
+      "response": "NO_CHANGES",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, calibrated uncertainty, and actionability. Do not reward length by itself."
+    },
+    {
+      "category": "code_gen",
+      "case": "code-1",
+      "task": "Find the bugs in this Python function:\n\ndef retry_with_backoff(func, max_retries=3, base_delay=1.0):\n    for attempt in range(max_retries):\n        try:\n            return func()\n        except Exception as e:\n            if attempt == max_retries:\n                raise\n            delay = base_delay * (2 ** attempt)\n            time.sleep(delay)\n",
+      "response": "Here are the bugs in the function:\n\n1. **Incorrect max retry check**: `range(max_retries)` generates numbers from `0` to `max_retries - 1`. Therefore, `attempt` will never equal `max_retries`. The `if attempt == max_retries:` condition will always be False, meaning the final exception is swallowed and the function implicitly returns `None` instead of raising the exception. It should be `if attempt == max_retries - 1:`.\n2. **Missing import**: The `time` module is used but not imported in the function. (Requires `import time`).",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, idiomatic implementation, edge-case handling, and compliance with the requested interface."
+    },
+    {
+      "category": "code_gen",
+      "case": "code-2",
+      "task": "Write a Python function `parse_rank(text: str) -> int` that extracts a rank (1-5) from LLM output text. It should find the first digit 1-5 in the text and return it, defaulting to 3 if none found.",
+      "response": "def parse_rank(text: str) -> int:\n    for char in text:\n        if '1' <= char <= '5':\n            return int(char)\n    return 3",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, idiomatic implementation, edge-case handling, and compliance with the requested interface."
+    },
+    {
+      "category": "code_gen",
+      "case": "code-3",
+      "task": "Review this code:\n\nasync def process_memory(text, router, db):\n    s, u = summarize_memory(text)\n    summary = await router.generate(\"summarization\", u, system=s, think=False)\n    s2, u2 = rank_memory(text)\n    r = await router.generate(\"ranking\", u2, system=s2, think=False)\n    rank = 3\n    for c in r:\n        if c.isdigit() and 1 <= int(c) <= 5:\n            rank = int(c)\n            break\n    s3, u3 = ask_importance(text)\n    imp = await router.generate(\"ranking\", u3, system=s3, think=False)\n    importance = 0.3\n    try:\n        importance = float(imp.strip())\n    except:\n        pass\n    await db.update(summary=summary, rank=rank, importance=importance)\n    return {\"summary\": summary, \"rank\": rank, \"importance\": importance}\n",
+      "response": "Here are 4 actionable suggestions to improve your code:\n\n1. **Fix the Routing Bug:** When generating importance, you are calling `router.generate(\"ranking\", u3, ...)`. This should likely be a route specific to importance, such as `\"importance\"`, otherwise you might be getting inconsistent model behavior.\n2. **Run Concurrent Requests:** The summary, ranking, and importance LLM calls are independent. Use `asyncio.gather` to run them concurrently. This will significantly reduce the total execution time of the function.\n3. **Avoid Bare Excepts:** Replace the bare `except:` block when parsing `importance` with `except ValueError:`. A bare except will silently swallow critical errors like `KeyboardInterrupt` or `SystemExit`.\n4. **Improve Variable Readability:** Rename the cryptic tuple unpacks (`s, u`, `s2, u2`, `s3, u3`) to descriptive names like `system_prompt, user_prompt`. This makes the code much easier to maintain and review.",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, idiomatic implementation, edge-case handling, and compliance with the requested interface."
+    },
+    {
+      "category": "code_gen",
+      "case": "code-4",
+      "task": "This function should return the number of retries actually used, but it's wrong. Fix it:\n\ndef attempts_used(max_retries, succeeded_on):\n    # succeeded_on is the 1-based attempt that succeeded, or None if all failed\n    if succeeded_on:\n        return succeeded_on - 1\n    return max_retries\n# Bug: when it succeeds on attempt 1, 0 retries is right, but when succeeded_on is None\n# it returns max_retries when it should be max_retries (correct) \u2014 the real bug is the\n# off-by-one: a success on attempt N used N-1 retries, but the None branch and the truthiness\n# check on succeeded_on==0 are wrong. Fix the edge cases.",
+      "response": "def attempts_used(max_retries, succeeded_on):\n    if succeeded_on is not None:\n        return succeeded_on - 1\n    return max_retries",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, idiomatic implementation, edge-case handling, and compliance with the requested interface."
+    },
+    {
+      "category": "code_gen",
+      "case": "code-5",
+      "task": "Write `clamp_unit(x: float) -> float | None` that clamps to [0,1], normalizes a value >1 and <=10 by /10, >10 and <=100 by /100, returns None for >100 or NaN or <0 after normalization. Include one pytest test covering the normalization and the None cases.",
+      "response": "```python\nimport math\nimport pytest\n\ndef clamp_unit(x: float) -> float | None:\n    if math.isnan(x) or x < 0 or x > 100:\n        return None\n    if x <= 1:\n        return x\n    if x <= 10:\n        return x / 10\n    if x <= 100:\n        return x / 100\n    return None\n\ndef test_clamp_unit():\n    assert clamp_unit(5.0) == 0.5\n    assert clamp_unit(50.0) == 0.5\n    assert clamp_unit(150.0) is None\n    assert clamp_unit(-1.0) is None\n    assert clamp_unit(math.nan) is None\n```",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, idiomatic implementation, edge-case handling, and compliance with the requested interface."
+    },
+    {
+      "category": "code_gen",
+      "case": "code-6",
+      "task": "What does this do, and what's the subtle correctness problem?\n\nseen = set()\ndef dedupe(items):\n    out = []\n    for it in items:\n        if it not in seen:\n            seen.add(it)\n            out.append(it)\n    return out\n",
+      "response": "**What it does:** Deduplicates items from an iterable while preserving order.\n\n**The bug:** `seen` is a global set defined outside the function, so state persists across calls. Calling `dedupe` a second time will incorrectly drop items that appeared in the first call.\n\nFix: move `seen = set()` inside the function (or make it a local default argument).",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, idiomatic implementation, edge-case handling, and compliance with the requested interface."
+    },
+    {
+      "category": "code_gen",
+      "case": "code-7",
+      "task": "Write a Python snippet that calls an httpx client with a hard 30-second total timeout that WILL actually fire even if the server hangs. Show the client construction and one GET call.",
+      "response": "```python\nimport httpx\n\nwith httpx.Client(timeout=httpx.Timeout(30.0)) as client:\n    try:\n        response = client.get(\"https://httpbin.org/delay/35\")\n        print(response.status_code)\n    except httpx.TimeoutException as e:\n        print(f\"Timeout fired: {e}\")\n```",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, idiomatic implementation, edge-case handling, and compliance with the requested interface."
+    },
+    {
+      "category": "code_gen",
+      "case": "code-8",
+      "task": "Write a Python regex that extracts a float score from text like `{\"score\": 0.82, ...}` OR `score = .9` OR `Score: 1`. It must capture the number into group 1 and tolerate missing leading zero.",
+      "response": "(?i)score[\"'\\s]*[:=][\"'\\s]*(\\d*\\.?\\d+)\n\nThis regex case-insensitively matches \"score\" followed by optional quotes/spaces, a colon or equals sign, and more optional quotes/spaces, capturing the floating-point number (including those without a leading zero like `.9`) into group 1.",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, idiomatic implementation, edge-case handling, and compliance with the requested interface."
+    },
+    {
+      "category": "code_gen",
+      "case": "code-9",
+      "task": "This function does keyword filtering to decide which tools to pass to a model. Successful coding agents don't gate tools this way. Briefly explain why, and what to do instead.",
+      "response": "**Why not to use keyword filtering:**\nKeyword gating is fragile and myopic. It misses synonyms, implicit needs, and multi-step dependencies (e.g., an agent might only realize it needs a terminal tool *after* writing a file). By filtering upfront, you strip the agent of the flexibility to adapt when a task pivots. Modern context windows are large enough to hold all tool schemas.\n\n**What to do instead:**\nPass *all* relevant tools upfront and let the model's reasoning handle the selection based on robust tool descriptions. If the toolset is truly massive (exceeding context limits), use semantic search (RAG) to dynamically retrieve relevant tool schemas, rather than rigid keyword matching.\n\n**Refactored Shape:**\n```python\n# BEFORE: Fragile keyword gating\ndef get_tools(prompt):\n    tools = []\n    if \"file\" in prompt.lower():\n        tools.append(read_file_tool)\n    if \"run\" in prompt.lower() or \"execute\" in prompt.lower():\n        tools.append(execute_code_tool)\n    return tools\n\n# AFTER: Full context, model-driven selection\ndef get_tools(prompt):\n    # Provide all tools; rely on LLM reasoning and clear schema descriptions\n    return ALL_AVAILABLE_TOOLS \n```",
+      "rubric": "Score 0.0-1.0 for correctness, completeness, idiomatic implementation, edge-case handling, and compliance with the requested interface."
+    },
+    {
+      "category": "session_review",
+      "case": "session-1",
+      "task": "Summary: Debugged terrible audio from a MAX98357 on an ESP32; root cause was an impedance mismatch and a loose JST connector. Switched to JST-PH connectors and a matched 4-ohm speaker, which fixed the noise.\n\nUser: the MAX98357 on my esp32 sounds like garbage, mostly noise.\nAssistant: That's often impedance mismatch or loose wiring. What speaker ohms?\nUser: not sure, and the connectors are dupont and pretty loose.\nAssistant: Dupont wires on audio are unreliable \u2014 switch to JST-PH 2-pin, and confirm the speaker is 4ohm to match the MAX98357. A wrong-impedance speaker also distorts.\nUser: swapped to JST-PH and a 4ohm speaker \u2014 clean now. the speaker was 8ohm before.\nAssistant: Good \u2014 the 8ohm mismatch plus loose contacts explains the noise.",
+      "response": "EFFECTIVENESS: effective\n\nWHAT_WORKED:\n- Identifying speaker impedance as a variable, since the mismatch (8ohm vs expected 4ohm) was a primary cause of distortion\n- Recommending JST-PH connectors over Dupont for audio signal paths, which eliminated the loose contact noise\n\nWHAT_DIDNT_WORK:\n- Initial Dupont wiring setup was inadequate for audio applications due to poor contact reliability\n\nTECHNICAL_INSIGHTS:\n- The MAX98357 amplifier is designed for 4-ohm speaker loads; using an 8-ohm speaker causes noticeable distortion and noise\n- Dupont connectors are unreliable for audio signal paths due to intermittent contact, leading to noise artifacts\n- JST-PH 2-pin connectors provide a more secure, snap-locking connection suitable for audio wiring on ESP32 setups\n\nPROCESS_INSIGHTS:\n- When debugging audio noise on microcontroller setups, check both the physical connector integrity and the speaker impedance before investigating software or DSP causes",
+      "rubric": "Score 0.0-1.0 for accurate synthesis, useful reflection, coverage of what worked and failed, and absence of invented events. Do not reward verbosity."
+    },
+    {
+      "category": "session_review",
+      "case": "session-2",
+      "task": "Summary: Diagnosed a duplicate-message bug: assistant messages were saved twice because _persist_message was fire-and-forget, so _memory_db_ids was empty when the enqueue ran. Fixed by tracking persist tasks and awaiting them before enqueue.\n\nUser: every assistant message is getting saved twice in the DB.\nAssistant: Sounds like a race. Let me check how messages persist.\nAssistant: Found it \u2014 _persist_message uses asyncio.ensure_future (fire-and-forget), so _memory_db_ids isn't populated when _enqueue_undumped_messages runs. The processor gets memory_id=None and inserts a duplicate row.\nUser: how do we fix it cleanly?\nAssistant: Track persist tasks in a list and await them in flush_pending_persists() before the enqueue reads _memory_db_ids. Make _enqueue_undumped_messages async and await the flush first.",
+      "response": "EFFECTIVENESS: effective\n\nWHAT_WORKED:\n- Identified the race condition by tracing the data flow from _persist_message through _memory_db_ids to _enqueue_undumped_messages\n- Recognized that fire-and-forget asyncio.ensure_future left _memory_db_ids empty at enqueue time, causing memory_id=None and a duplicate insert\n\nWHAT_DIDNT_WORK:\n- The original fire-and-forget persistence design lacked synchronization between persist completion and the enqueue step that depended on it\n\nTECHNICAL_INSIGHTS:\n- Fire-and-forget asyncio.ensure_future calls create race conditions when downstream code reads state the task is supposed to populate\n- Tracking pending async tasks in a list and awaiting them via a flush method provides a synchronization point before dependent logic runs\n- When an enqueue step gets memory_id=None due to uninitialized state, it can silently insert duplicate rows rather than failing loudly\n\nPROCESS_INSIGHTS:\n- When diagnosing duplicate-data bugs, trace which state is populated by async tasks and whether callers await that population before reading\n- A clean fix for fire-and-forget races is to make dependent code await a flush of pending tasks rather than adding delays or locks",
+      "rubric": "Score 0.0-1.0 for accurate synthesis, useful reflection, coverage of what worked and failed, and absence of invented events. Do not reward verbosity."
+    },
+    {
+      "category": "session_review",
+      "case": "session-3",
+      "task": "Summary: Fixed search returning almost nothing at 31k memories: compounding filters (similarity 0.5 \u2192 rank \u22653 \u2192 score floor) removed ~85% of candidates. Replaced the rank filter with an importance floor, lowered the similarity threshold, and added a recency boost.\n\nUser: search barely returns anything now that the corpus is huge.\nAssistant: Your filters compound \u2014 similarity 0.5, then rank\u22653, then a score floor. On 31k memories that strips ~85% of candidates.\nUser: what should change?\nAssistant: Drop the rank filter for a continuous importance floor (0.25), lower similarity to ~0.35, give FTS-only hits a baseline similarity, and add a recency boost.\nUser: recall is way better now.",
+      "response": "EFFECTIVENESS: effective\n\nWHAT_WORKED:\n- Replacing the discrete rank\u22653 filter with a continuous importance floor at 0.25 retained more relevant candidates\n- Lowering the similarity threshold from 0.5 to ~0.35 reduced over-filtering at scale\n- Adding a recency boost provided temporal relevance without hard cutoffs\n\nWHAT_DIDNT_WORK:\n- The original sequential filter chain (similarity 0.5 \u2192 rank \u22653 \u2192 score floor) compounded multiplicatively, eliminating ~85% of candidates at 31k memories\n- The rank filter as a discrete threshold was too aggressive at corpus scale\n\nTECHNICAL_INSIGHTS:\n- Sequential filters compound: if each removes 40% of results, three in sequence can eliminate ~85% total\n- Discrete categorical filters (like rank tiers) are more destructive at scale than continuous numeric thresholds (like importance floors)\n- Giving FTS-only hits a baseline similarity score allows them to compete with vector results in a unified ranking\n\nPROCESS_INSIGHTS:\n- When search recall degrades at scale, audit the multiplicative effect of stacked filters rather than tuning individual thresholds\n- Prefer continuous numeric floors over discrete tier filters for retention at corpus scale\n- Add recency as a boost factor rather than a hard filter to avoid compounding candidate loss",
+      "rubric": "Score 0.0-1.0 for accurate synthesis, useful reflection, coverage of what worked and failed, and absence of invented events. Do not reward verbosity."
+    },
+    {
+      "category": "session_review",
+      "case": "session-4",
+      "task": "Summary: Resolved cascading 429s on cloud summarization. The free tier's 20-request burst limit caused failures; added per-endpoint rate limiting and a RateLimitExhausted cascade to the next endpoint, with a local fallback that passes num_ctx.\n\nUser: cloud summarization keeps dying with 429s during import.\nAssistant: Free tier has a 20-request burst cap. We should rate-limit per endpoint and cascade to the next on RateLimitExhausted rather than failing.\nUser: and when everything cloud is exhausted?\nAssistant: Fall back to local \u2014 but the fallback path must pass num_ctx from the endpoint config or it silently truncates context.\nUser: import ran clean after that.",
+      "response": "EFFECTIVENESS: effective\n\nWHAT_WORKED:\n- Per-endpoint rate limiting instead of global, matching the 20-request burst cap on the free tier\n- Cascading to the next endpoint on RateLimitExhausted exception rather than failing the whole import\n- Local fallback explicitly passing num_ctx from endpoint config to prevent silent context truncation\n\nWHAT_DIDNT_WORK:\n- No rate limiting initially, causing cascading 429 failures during import\n- Naive local fallback without num_ctx would have silently truncated context without surfacing an error\n\nTECHNICAL_INSIGHTS:\n- Free tier cloud inference endpoints often enforce a burst cap (here, 20 requests) distinct from sustained rate limits\n- A typed RateLimitExhausted exception enables clean cascade logic to alternate endpoints\n- Local fallback paths must inherit upstream endpoint configuration (num_ctx) or they degrade silently by truncating input context\n- Cascading endpoint exhaustion to a local model provides resilience when all cloud endpoints share the same free tier quota\n\nPROCESS_INSIGHTS:\n- When implementing fallback chains, audit which configuration parameters must propagate to avoid silent quality degradation\n- Distinguish burst limits from sustained rate limits when designing per-endpoint throttling",
+      "rubric": "Score 0.0-1.0 for accurate synthesis, useful reflection, coverage of what worked and failed, and absence of invented events. Do not reward verbosity."
+    },
+    {
+      "category": "session_review",
+      "case": "session-5",
+      "task": "Summary: Made the project-mode executor finish reliably. It was making 37 tool calls without completing; added a task_complete tool, per-turn state injection, and an 80%-budget wind-down message.\n\nUser: the executor just spins \u2014 37 tool calls and never finishes.\nAssistant: It lacks a completion signal and state awareness. Add a task_complete tool instead of a magic string, inject a [STATE] block each turn, and a wind-down nudge at 80% budget.\nUser: that's the Claude Code pattern?\nAssistant: Yes \u2014 explicit completion, state awareness, bounded tool output.\nUser: it completes in ~12 steps now.",
+      "response": "EFFECTIVENESS: effective\n\nWHAT_WORKED:\n- Adding a dedicated task_complete tool gave the executor an explicit, unambiguous completion signal instead of relying on natural language detection\n- Per-turn [STATE] injection kept the executor aware of its progress and remaining budget, reducing aimless exploration\n- An 80%-budget wind-down message created a soft deadline that pushed the executor toward convergence before hitting the hard cap\n\nWHAT_DIDNT_WORK:\n- Relying on a magic string or implicit completion signal resulted in the executor spinning for 37 tool calls with no termination\n\nTECHNICAL_INSIGHTS:\n- Explicit completion tools outperform implicit detection for agentic loop termination\n- Per-turn state injection is a viable pattern for maintaining agent self-awareness in long multi-step execution\n- Soft budget thresholds (80%) with wind-down nudges are more effective than only a hard cutoff for steering agents toward task completion\n- The Claude Code pattern of explicit completion, state awareness, and bounded tool output translates well to custom executor designs\n\nPROCESS_INSIGHTS:\n- When an agent loop fails to terminate, check for missing completion signals and state awareness before tweaking individual tool behaviors\n- Combine soft and hard budget limits: a soft threshold triggers a behavioral nudge while the hard limit enforces an absolute stop",
+      "rubric": "Score 0.0-1.0 for accurate synthesis, useful reflection, coverage of what worked and failed, and absence of invented events. Do not reward verbosity."
+    },
+    {
+      "category": "session_review",
+      "case": "session-6",
+      "task": "Summary: Decided to migrate the vector store from ChromaDB to sqlite-vec to eliminate dual-store sync drift, accepting a one-time re-embedding cost.\n\nUser: the chroma/sqlite sync keeps drifting and throwing FK errors.\nAssistant: Two stores means two sources of truth. Moving vectors into sqlite-vec (vec0 tables in the same DB file) removes the drift class entirely.\nUser: downside?\nAssistant: A one-time full re-embed and losing Chroma's prebuilt index, but for a single-user corpus that's a clear win.\nUser: let's do it.",
+      "response": "EFFECTIVENESS: effective\n\nWHAT_WORKED:\n- Framing the root cause (dual stores = two sources of truth) rather than patching individual FK errors\n- Evaluating trade-offs explicitly (one-time re-embed cost vs. eliminating drift class entirely)\n- Scoping the decision to single-user corpus, which made the re-embed cost acceptable\n\nWHAT_DIDNT_WORK:\n- Session does not reveal prior failed approaches beyond the recurring FK drift, but no dead ends were explored in this conversation itself\n\nTECHNICAL_INSIGHTS:\n- sqlite-vec uses vec0 virtual tables that live in the same SQLite DB file as relational data, eliminating cross-store sync entirely\n- Migrating from ChromaDB to sqlite-vec requires a full re-embedding pass; existing vectors are not directly portable\n- ChromaDB provides a prebuilt ANN index that sqlite-vec does not replicate out of the box; acceptable for small single-user corpora\n\nPROCESS_INSIGHTS:\n- When two stores repeatedly drift, the correct fix is consolidating into one store rather than adding more sync logic\n- Explicitly listing downsides before committing to a migration prevents mid-execution surprises\n- Classifying the deployment context (single-user vs. multi-user) early determines whether re-embed costs are justified",
+      "rubric": "Score 0.0-1.0 for accurate synthesis, useful reflection, coverage of what worked and failed, and absence of invented events. Do not reward verbosity."
+    },
+    {
+      "category": "session_review",
+      "case": "session-7",
+      "task": "Summary: Built a deterministic loop-integration test harness so chat-loop behavior can be validated without Ollama, using a scripted LLM client feeding canned turns.\n\nUser: I keep breaking the chat loop and only finding out on the Ollama PC.\nAssistant: Separate wiring from model behavior. A scripted LLM client can feed canned tool-call/text turns into the real loop and assert completion detection deterministically.\nUser: so logic tests here, quality tests there?\nAssistant: Exactly \u2014 that split is the key mental model.\nUser: caught two regressions already.",
+      "response": "EFFECTIVENESS: effective\n\nWHAT_WORKED:\n- Separating deterministic loop-logic testing from model-quality testing by creating a scripted LLM client that feeds canned turns into the real chat loop\n- Testing completion detection and tool-call handling via canned responses rather than relying on Ollama availability\n\nWHAT_DIDNT_WORK:\n- Previously relying solely on Ollama-connected testing meant regressions in loop logic were only discovered on the dedicated PC, delaying feedback\n\nTECHNICAL_INSIGHTS:\n- A scripted/mock LLM client can drive the real chat loop by injecting canned text and tool-call turns, enabling deterministic assertion of loop completion behavior\n- Completion detection logic in a chat loop can be validated independently of actual model quality\n\nPROCESS_INSIGHTS:\n- Splitting \"wiring logic\" tests from \"model behavior\" tests enables fast local feedback and catches regressions before deploying to the model-running environment",
+      "rubric": "Score 0.0-1.0 for accurate synthesis, useful reflection, coverage of what worked and failed, and absence of invented events. Do not reward verbosity."
+    },
+    {
+      "category": "session_review",
+      "case": "session-8",
+      "task": "Summary: Fixed an entity graph full of near-duplicate entities by adding a lexical-variant merge pass and an embedding-similarity merge with a version guard, archiving rather than deleting so re-mentions can revive.\n\nUser: the entity graph has 'esp32', 'ESP32', 'Esp32' all separate.\nAssistant: Run a lexical-variant merge first (case/punctuation), then an embedding merge with a version guard so concurrent writes don't clobber.\nUser: delete the duplicates?\nAssistant: Archive, don't delete \u2014 a merged name can reappear later and you want to revive it on re-mention, not strand the mention.\nUser: 7k merged, none lost.",
+      "response": "EFFECTIVENESS: effective\n\nWHAT_WORKED:\n- Two-pass merge (lexical variants first, then embedding similarity) handled both exact surface-form differences and semantic duplicates\n- Version guard on the embedding merge prevented concurrent write clobbering\n- Archiving merged entities instead of deleting them preserved the mention graph for re-mentions\n\nWHAT_DIDNT_WORK:\n- Nothing reported as a dead end\n\nTECHNICAL_INSIGHTS:\n- Lexical-variant merge (case/punctuation normalization) is a cheap first pass that eliminates obvious duplicates before running more expensive embedding comparisons\n- Embedding-similarity merge needs a version guard to avoid lost updates when writes overlap\n- Archiving rather than deleting entities lets a previously-merged surface form be revived if it reappears in a later mention, keeping the mention graph intact\n\nPROCESS_INSIGHTS:\n- Process 7k-scale deduplication in merge-and-archive mode rather than delete, so the operation is reversible and mention provenance is preserved\n- Order deduplication passes from cheapest to most expensive (lexical before embedding) to reduce the workload of the costlier pass",
+      "rubric": "Score 0.0-1.0 for accurate synthesis, useful reflection, coverage of what worked and failed, and absence of invented events. Do not reward verbosity."
+    }
+  ]
+}

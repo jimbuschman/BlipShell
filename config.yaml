@@ -53,8 +53,8 @@ endpoints:
     enabled: true
     models:
       coding: "minimax/minimax-m3"
-      tool_calling: "deepseek/deepseek-v4-flash"     # measured 2026-09-02 post-parser-fix: 0.973 tool_calling (best in corpus) + agent eval 28/30 — see MODEL_DECISIONS.md
-      session_review: "deepseek/deepseek-v4-flash"   # measured 2026-09-02: 0.887/0.537 lessons vs gemma's 0.887/0.386 — see MODEL_DECISIONS.md
+      tool_calling: "deepseek/deepseek-v4.1-flash"     # measured 2026-09-02 post-parser-fix: 0.973 tool_calling (best in corpus) + agent eval 28/30 — see MODEL_DECISIONS.md
+      session_review: "deepseek/deepseek-v4.1-flash"   # measured 2026-09-02: 0.887/0.537 lessons vs gemma's 0.887/0.386 — see MODEL_DECISIONS.md
   - name: "groq"
     url: "https://api.groq.com/openai/v1"
     provider: "openai"
@@ -70,7 +70,7 @@ endpoints:
       summarization: "openai/gpt-oss-120b"
       ranking_importance: "openai/gpt-oss-120b"
   - name: "local-cloud"        # Ollama daemon relaying to Ollama's cloud (free tier)
-    url: "http://localhost:11434"
+    url: "http://localhost:11516"
     roles: ["tool_calling", "reflection"]
     priority: 2                # tried before "local" for these roles
     max_concurrent: 5
@@ -81,7 +81,7 @@ endpoints:
       tool_calling: "gemma4:31b-cloud"
       reflection: "gemma4:31b-cloud"
   - name: "local"
-    url: "http://localhost:11434"
+    url: "http://localhost:"
     roles: ["reasoning", "embedding", "summarization", "ranking", "importance", "ranking_importance", "session_review", "reflection"]
     priority: 0    # lowest: cloud endpoints win every shared role; local is the sole provider of its other roles, so nothing shifts
     max_concurrent: 5
@@ -121,9 +121,9 @@ planner:
   enabled: false      # auto-detection off — use !plan to trigger manually
   max_steps: 5
 
-benchmark:
-  judge_model: "anthropic/claude-opus-4.8"   # neutral frontier grader, never a candidate
-  judge_endpoint: "openrouter"
+# Open-ended outputs are reviewed offline through `blipshell benchmark review`.
+# Benchmark runs never spend OpenRouter/Ollama tokens on an automatic judge.
+benchmark: {}
 
 reflection:
   gravity_enabled: true    # step-1 opt-in taken (default false)

@@ -31,7 +31,7 @@ threshold because the deterministic embedder is not semantic; the verdict
 itself is the only scripted part.
 
 Run: `python -m blipshell.benchmark.continuity` prints the table and writes
-benchmark_results/continuity__<sha>__<ts>.json. The pytest wrapper is
+benchmark_results/continuity/continuity__<sha>__<ts>.json. The pytest wrapper is
 tests/test_continuity_set.py.
 """
 
@@ -373,7 +373,7 @@ def _git_sha() -> Optional[str]:
 
 
 def write_result(results: list[CaseResult], summary: dict, out_dir: Optional[Path] = None) -> Path:
-    out_dir = out_dir or (_REPO_ROOT / "benchmark_results")
+    out_dir = out_dir or (_REPO_ROOT / "benchmark_results" / "continuity")
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     sha = _git_sha() or "nosha"
