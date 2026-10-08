@@ -84,6 +84,11 @@ _JOB_TIMEOUT = 300  # 5 minutes per job
 # per-call LLM timeouts and per-session caps below cover that).
 _JOB_TIMEOUTS = {
     "backfill_lessons": 3600,
+    # A normal local tagging call can take ~160s. The generic 300s cap
+    # (270s inner budget) then admits only one batch, even with work left.
+    # Give the backlog a nightly window; tag_all still bounds each call
+    # by the remaining budget and preserves completed-batch progress.
+    "batch_tag": 3600,
 }
 
 # Sentinel distinguishing "caller didn't specify a budget, use the nightly

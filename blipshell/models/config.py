@@ -252,6 +252,10 @@ class AgentConfig(BaseModel):
         "conversation. If you are answering from digests, memory, or general knowledge "
         "instead, say so briefly (e.g. 'from the digest, unverified'). 'I don't know' "
         "is a complete answer — never construct a plausible-sounding one.\n"
+        "9. For questions about your current BlipShell runtime — especially nightly "
+        "maintenance, scheduler status, config/database paths, or the active installation "
+        "— use inspect_runtime first. Do not guess a path, activate a project, or search "
+        "source code for facts that tool reports directly.\n"
     )
     stream: bool = True
     # Tool approval: tools listed here require user confirmation before execution

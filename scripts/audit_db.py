@@ -277,20 +277,31 @@ def check_entity_quality(db_path: str, result: AuditResult):
             sev = "error" if think_tags else "warn"
             result.add("Entities", "quality", sev, "; ".join(issues))
 
-        # Orphaned entities (no mentions AND no relationships)
-        orphaned = conn.execute("""
-            SELECT COUNT(*) FROM entities e
+        # Archived entities include merged-away husks whose references were
+        # moved to the canonical entity. They are expected to be disconnected,
+        # not an active graph backlog. Use the active population for severity.
+        active_total = conn.execute(
+            "SELECT COUNT(*) FROM entities WHERE is_archived = 0"
+        ).fetchone()[0]
+        orphan_counts = dict(conn.execute("""
+            SELECT e.is_archived, COUNT(*) FROM entities e
             WHERE NOT EXISTS (SELECT 1 FROM entity_mentions em WHERE em.entity_id = e.id)
             AND NOT EXISTS (SELECT 1 FROM entity_relationships er
                            WHERE er.subject_id = e.id OR er.object_id = e.id)
-        """).fetchone()[0]
+            GROUP BY e.is_archived
+        """).fetchall())
+        orphaned = orphan_counts.get(0, 0)
         if orphaned == 0:
-            result.add("Entities", "orphans", "ok", "No orphaned entities")
+            result.add("Entities", "orphans", "ok", "No active orphaned entities")
         else:
-            pct = orphaned / total * 100 if total else 0
+            pct = orphaned / active_total * 100 if active_total else 0
             sev = "warn" if pct > 5 else "info"
             result.add("Entities", "orphans", sev,
-                       f"{orphaned} orphaned entities ({pct:.1f}%)")
+                       f"{orphaned} active orphaned entities ({pct:.1f}% of active entities)")
+        archived_orphans = orphan_counts.get(1, 0)
+        if archived_orphans:
+            result.add("Entities", "archived_orphans", "info",
+                       f"{archived_orphans} archived entities without mentions or relationships")
 
         # Relationship and mention counts
         rel_count = conn.execute("SELECT COUNT(*) FROM entity_relationships").fetchone()[0]
