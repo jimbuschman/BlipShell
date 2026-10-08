@@ -1,0 +1,1004 @@
+{
+  "schema": 2,
+  "model": "gemma4:31b-cloud",
+  "run_group": "gemma4_31b-cloud@2026-09-25T11:20:59.406640+00:00",
+  "run_ts": "2026-09-25T11:20:59.406640+00:00",
+  "tier": "compare",
+  "judge_model": null,
+  "jobs": [
+    "pipeline",
+    "reasoning",
+    "session_review"
+  ],
+  "git_sha": "d1e355a",
+  "host": "HPBENDERTWO",
+  "benchmark_manifest": {
+    "benchmark_version": "2.0",
+    "dataset_version": "2026-09-23",
+    "scorer_version": "2",
+    "source_fingerprint": "b821993265074d47",
+    "required_categories": [
+      "rank_importance",
+      "ranking",
+      "importance",
+      "contradiction",
+      "dedup",
+      "entity",
+      "summarization",
+      "lessons",
+      "reasoning",
+      "code_gen",
+      "coding_agentic",
+      "tool_calling",
+      "session_review",
+      "session_review_chunked",
+      "embedding"
+    ],
+    "open_ended_categories": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "tiers": {
+      "smoke": {
+        "jobs": [
+          "dedup",
+          "reasoning"
+        ],
+        "repeats": 1,
+        "description": "Fast plumbing/capability check; not sufficient for routing decisions."
+      },
+      "compare": {
+        "jobs": [
+          "pipeline",
+          "reasoning",
+          "session_review"
+        ],
+        "repeats": 3,
+        "description": "Comparable routing-job run without the slow coding/embedding suites."
+      },
+      "decision": {
+        "jobs": [
+          "coding",
+          "embedding",
+          "pipeline",
+          "realdata",
+          "reasoning",
+          "session_review"
+        ],
+        "repeats": 5,
+        "description": "Full evidence run for a production model decision."
+      }
+    }
+  },
+  "run_settings": {
+    "provider": "ollama",
+    "endpoint_names": [
+      "local",
+      "local-cloud"
+    ],
+    "context_tokens": 32768,
+    "timeout_s": 300.0,
+    "repeats": 1,
+    "tier": "compare",
+    "jobs": [
+      "pipeline",
+      "reasoning",
+      "session_review"
+    ]
+  },
+  "rows": [
+    {
+      "suite": "pipeline",
+      "task_type": "ranking",
+      "metric": "accuracy",
+      "value": 0.9572,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "ranking",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "importance",
+      "metric": "accuracy",
+      "value": 0.9703,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "importance",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "rank_importance",
+      "metric": "accuracy",
+      "value": 0.9785,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "rank_importance",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "contradiction",
+      "metric": "accuracy",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "contradiction",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "accuracy",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.32
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.29
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.3
+        },
+        {
+          "raw": "NONE",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.29
+        },
+        {
+          "raw": "NONE",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.31
+        },
+        {
+          "raw": "NONE",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.32
+        },
+        {
+          "raw": "UPDATE 2",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 0.45
+        },
+        {
+          "raw": "UPDATE 2",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 0.28
+        },
+        {
+          "raw": "UPDATE 1",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 0.37
+        },
+        {
+          "raw": "DELETE 1",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 0.93
+        },
+        {
+          "raw": "DELETE 2",
+          "parsed": "DELETE",
+          "parsed_index": 1,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 0.3
+        },
+        {
+          "raw": "DELETE 1",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 0.31
+        }
+      ],
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "valid_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "accuracy",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "{\"action\": \"ADD\", \"target_index\": null, \"reason\": \"The information about the cat Luna is entirely new and not present in existing memories.\"}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.42
+        },
+        {
+          "raw": "{\"action\": \"ADD\", \"target_index\": null, \"reason\": \"The information about the speaker's specifications is unique and not mentioned in existing memories.\"}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.42
+        },
+        {
+          "raw": "{\"action\": \"ADD\", \"target_index\": null, \"reason\": \"The new memory provides unique information about the user learning Rust, which is not mentioned in existing memories.\"}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.53
+        },
+        {
+          "raw": "{\"action\": \"NONE\", \"target_index\": null, \"reason\": \"The information is redundant as the user's preference for dark mode is already captured in a more comprehensive memory.\"}",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.51
+        },
+        {
+          "raw": "```json\n{\"action\": \"NONE\", \"target_index\": null, \"reason\": \"The information is already captured in memory 1.\"}\n```",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.48
+        },
+        {
+          "raw": "{\"action\": \"NONE\", \"target_index\": null, \"reason\": \"The new memory is redundant as it says the same thing as existing memory 1.\"}",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.42
+        },
+        {
+          "raw": "```json\n{\"action\": \"UPDATE\", \"target_index\": 2, \"reason\": \"The new memory provides specific details (age and breed) about the dog mentioned in memory 2.\"}\n```",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 0.45
+        },
+        {
+          "raw": "```json\n{\"action\": \"UPDATE\", \"target_index\": 2, \"reason\": \"The new memory specifies the exact local model (glm4:latest) and adds information about the Groq fallback.\"}\n```",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 0.5
+        },
+        {
+          "raw": "```json\n{\"action\": \"UPDATE\", \"target_index\": 1, \"reason\": \"The new memory provides a more specific location (Columbus, near the university) than the general state of Ohio.\"}\n```",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 0.43
+        },
+        {
+          "raw": "```json\n{\"action\": \"DELETE\", \"target_index\": 1, \"reason\": \"The new memory contradicts the existing memory that the user uses Windows 10.\"}\n```",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 0.4
+        },
+        {
+          "raw": "```json\n{\"action\": \"DELETE\", \"target_index\": 2, \"reason\": \"The new memory contradicts the existing memory about the user's location.\"}\n```",
+          "parsed": "DELETE",
+          "parsed_index": 1,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 0.52
+        },
+        {
+          "raw": "{\"action\": \"DELETE\", \"target_index\": 1, \"reason\": \"The new memory contradicts the existing memory regarding which vector store is being used.\"}",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 0.41
+        }
+      ],
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "valid_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "accuracy_think",
+      "value": 0.9167,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.77
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.62
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.59
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 11.8
+        },
+        {
+          "raw": "NONE",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 1.46
+        },
+        {
+          "raw": "NONE",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.91
+        },
+        {
+          "raw": "UPDATE 2",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 0.96
+        },
+        {
+          "raw": "UPDATE 2",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 1.19
+        },
+        {
+          "raw": "UPDATE 1",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 0.93
+        },
+        {
+          "raw": "DELETE 1",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 2.19
+        },
+        {
+          "raw": "DELETE 2",
+          "parsed": "DELETE",
+          "parsed_index": 1,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 1.77
+        },
+        {
+          "raw": "DELETE 1",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 1.79
+        }
+      ],
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "valid_rate_think",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "accuracy_think",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "```json\n{\"action\": \"ADD\", \"target_index\": null, \"reason\": \"The existing memories do not mention a cat, so this is new information.\"}\n```",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.77
+        },
+        {
+          "raw": "```json\n{\"action\": \"ADD\", \"target_index\": null, \"reason\": \"The new memory provides specific technical details about the speaker, which are not mentioned in the existing memories.\"}\n```",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.83
+        },
+        {
+          "raw": "```json\n{\"action\": \"ADD\", \"target_index\": null, \"reason\": \"The new memory introduces a completely new fact about the user learning Rust.\"}\n```",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.69
+        },
+        {
+          "raw": "```json\n{\"action\": \"NONE\", \"target_index\": null, \"reason\": \"The new memory is a general version of the more specific existing memory that the user prefers dark mode in all editors.\"}\n```",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 5.59
+        },
+        {
+          "raw": "```json\n{\"action\": \"NONE\", \"target_index\": null, \"reason\": \"Memory 1 already specifies that BlipShell uses sqlite-vec as its vector store.\"}\n```",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 1.19
+        },
+        {
+          "raw": "```json\n{\"action\": \"NONE\", \"target_index\": null, \"reason\": \"The new memory is redundant as it is already stated in memory 1.\"}\n```",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.84
+        },
+        {
+          "raw": "```json\n{\"action\": \"UPDATE\", \"target_index\": 2, \"reason\": \"The new memory adds specific details about Max's age and breed.\"}\n```",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 1.17
+        },
+        {
+          "raw": "```json\n{\"action\": \"UPDATE\", \"target_index\": 2, \"reason\": \"The new memory specifies the exact local model (glm4:latest) and adds information about the Groq fallback.\"}\n```",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 1.09
+        },
+        {
+          "raw": "```json\n{\"action\": \"UPDATE\", \"target_index\": 1, \"reason\": \"The new memory provides more specific location details than the existing memory.\"}\n```",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 1.06
+        },
+        {
+          "raw": "```json\n{\"action\": \"DELETE\", \"target_index\": 1, \"reason\": \"The user no longer uses Windows 10 as they have switched to Linux full-time.\"}\n```",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 3.44
+        },
+        {
+          "raw": "```json\n{\"action\": \"DELETE\", \"target_index\": 2, \"reason\": \"The user moved to Texas, making the memory about living in Ohio outdated.\"}\n```",
+          "parsed": "DELETE",
+          "parsed_index": 1,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 2.68
+        },
+        {
+          "raw": "```json\n{\"action\": \"DELETE\", \"target_index\": 1, \"reason\": \"The vector store has been changed from ChromaDB to sqlite-vec, making the previous memory stale.\"}\n```",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 2.31
+        }
+      ],
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "valid_rate_think",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "entity",
+      "metric": "accuracy",
+      "value": 0.8111,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "entity",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "length_words",
+      "value": 7.5,
+      "unit": "words",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "length_words",
+      "value": 14.5,
+      "unit": "words",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "pipeline",
+      "metric": "latency_s",
+      "value": 0.463,
+      "unit": "seconds",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "scored": 0,
+        "cases": 12
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "length_words",
+      "value": 207.1,
+      "unit": "words",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "scored": 0,
+        "cases": 9
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "length_words",
+      "value": 88.0,
+      "unit": "words",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "tool_calling",
+      "metric": "tool_pass_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": {
+        "system_prompt": true
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "tool_calling",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning_suite",
+      "metric": "latency_s",
+      "value": 1.025,
+      "unit": "seconds",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "completeness": 1.0,
+        "judged": false
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "completeness",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "length_words",
+      "value": 94.0,
+      "unit": "words",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "latency_s",
+      "value": 1.001,
+      "unit": "seconds",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review_chunked",
+      "metric": "accuracy",
+      "value": 0.9,
+      "unit": "ratio",
+      "raw": {
+        "cases": 1,
+        "coverage": 0.8,
+        "fidelity": 1.0,
+        "completeness": 1.0
+      },
+      "values": null,
+      "spread": null
+    }
+  ]
+}

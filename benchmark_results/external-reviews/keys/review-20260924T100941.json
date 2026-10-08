@@ -1,0 +1,3702 @@
+{
+  "schema": 1,
+  "packet_id": "review-20260924T100941",
+  "items": {
+    "review-20260924T100941-0001": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-1"
+    },
+    "review-20260924T100941-0002": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-2"
+    },
+    "review-20260924T100941-0003": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-3"
+    },
+    "review-20260924T100941-0004": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-4"
+    },
+    "review-20260924T100941-0005": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-5"
+    },
+    "review-20260924T100941-0006": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-6"
+    },
+    "review-20260924T100941-0007": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-7"
+    },
+    "review-20260924T100941-0008": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-8"
+    },
+    "review-20260924T100941-0009": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-9"
+    },
+    "review-20260924T100941-0010": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-10"
+    },
+    "review-20260924T100941-0011": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-11"
+    },
+    "review-20260924T100941-0012": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-12"
+    },
+    "review-20260924T100941-0013": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-13"
+    },
+    "review-20260924T100941-0014": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-14"
+    },
+    "review-20260924T100941-0015": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-15"
+    },
+    "review-20260924T100941-0016": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-16"
+    },
+    "review-20260924T100941-0017": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-17"
+    },
+    "review-20260924T100941-0018": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-18"
+    },
+    "review-20260924T100941-0019": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-19"
+    },
+    "review-20260924T100941-0020": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-20"
+    },
+    "review-20260924T100941-0021": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-1"
+    },
+    "review-20260924T100941-0022": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-2"
+    },
+    "review-20260924T100941-0023": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-3"
+    },
+    "review-20260924T100941-0024": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-4"
+    },
+    "review-20260924T100941-0025": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-5"
+    },
+    "review-20260924T100941-0026": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-6"
+    },
+    "review-20260924T100941-0027": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-7"
+    },
+    "review-20260924T100941-0028": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-8"
+    },
+    "review-20260924T100941-0029": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-9"
+    },
+    "review-20260924T100941-0030": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-10"
+    },
+    "review-20260924T100941-0031": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-1"
+    },
+    "review-20260924T100941-0032": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-2"
+    },
+    "review-20260924T100941-0033": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-3"
+    },
+    "review-20260924T100941-0034": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-4"
+    },
+    "review-20260924T100941-0035": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-5"
+    },
+    "review-20260924T100941-0036": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-6"
+    },
+    "review-20260924T100941-0037": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-7"
+    },
+    "review-20260924T100941-0038": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-8"
+    },
+    "review-20260924T100941-0039": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-9"
+    },
+    "review-20260924T100941-0040": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-10"
+    },
+    "review-20260924T100941-0041": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-11"
+    },
+    "review-20260924T100941-0042": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-12"
+    },
+    "review-20260924T100941-0043": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-1"
+    },
+    "review-20260924T100941-0044": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-2"
+    },
+    "review-20260924T100941-0045": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-3"
+    },
+    "review-20260924T100941-0046": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-4"
+    },
+    "review-20260924T100941-0047": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-5"
+    },
+    "review-20260924T100941-0048": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-6"
+    },
+    "review-20260924T100941-0049": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-7"
+    },
+    "review-20260924T100941-0050": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-8"
+    },
+    "review-20260924T100941-0051": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-9"
+    },
+    "review-20260924T100941-0052": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-1"
+    },
+    "review-20260924T100941-0053": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-2"
+    },
+    "review-20260924T100941-0054": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-3"
+    },
+    "review-20260924T100941-0055": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-4"
+    },
+    "review-20260924T100941-0056": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-5"
+    },
+    "review-20260924T100941-0057": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-6"
+    },
+    "review-20260924T100941-0058": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-7"
+    },
+    "review-20260924T100941-0059": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-8"
+    },
+    "review-20260924T100941-0060": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-1"
+    },
+    "review-20260924T100941-0061": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-2"
+    },
+    "review-20260924T100941-0062": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-3"
+    },
+    "review-20260924T100941-0063": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-4"
+    },
+    "review-20260924T100941-0064": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-5"
+    },
+    "review-20260924T100941-0065": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-6"
+    },
+    "review-20260924T100941-0066": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-7"
+    },
+    "review-20260924T100941-0067": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-8"
+    },
+    "review-20260924T100941-0068": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-9"
+    },
+    "review-20260924T100941-0069": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-10"
+    },
+    "review-20260924T100941-0070": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-11"
+    },
+    "review-20260924T100941-0071": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-12"
+    },
+    "review-20260924T100941-0072": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-13"
+    },
+    "review-20260924T100941-0073": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-14"
+    },
+    "review-20260924T100941-0074": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-15"
+    },
+    "review-20260924T100941-0075": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-16"
+    },
+    "review-20260924T100941-0076": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-17"
+    },
+    "review-20260924T100941-0077": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-18"
+    },
+    "review-20260924T100941-0078": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-19"
+    },
+    "review-20260924T100941-0079": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-20"
+    },
+    "review-20260924T100941-0080": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-1"
+    },
+    "review-20260924T100941-0081": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-2"
+    },
+    "review-20260924T100941-0082": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-3"
+    },
+    "review-20260924T100941-0083": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-4"
+    },
+    "review-20260924T100941-0084": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-5"
+    },
+    "review-20260924T100941-0085": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-6"
+    },
+    "review-20260924T100941-0086": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-7"
+    },
+    "review-20260924T100941-0087": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-8"
+    },
+    "review-20260924T100941-0088": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-9"
+    },
+    "review-20260924T100941-0089": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-10"
+    },
+    "review-20260924T100941-0090": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-1"
+    },
+    "review-20260924T100941-0091": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-2"
+    },
+    "review-20260924T100941-0092": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-3"
+    },
+    "review-20260924T100941-0093": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-4"
+    },
+    "review-20260924T100941-0094": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-5"
+    },
+    "review-20260924T100941-0095": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-6"
+    },
+    "review-20260924T100941-0096": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-7"
+    },
+    "review-20260924T100941-0097": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-8"
+    },
+    "review-20260924T100941-0098": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-9"
+    },
+    "review-20260924T100941-0099": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-10"
+    },
+    "review-20260924T100941-0100": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-11"
+    },
+    "review-20260924T100941-0101": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-12"
+    },
+    "review-20260924T100941-0102": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-1"
+    },
+    "review-20260924T100941-0103": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-2"
+    },
+    "review-20260924T100941-0104": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-3"
+    },
+    "review-20260924T100941-0105": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-4"
+    },
+    "review-20260924T100941-0106": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-5"
+    },
+    "review-20260924T100941-0107": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-6"
+    },
+    "review-20260924T100941-0108": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-7"
+    },
+    "review-20260924T100941-0109": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-8"
+    },
+    "review-20260924T100941-0110": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-9"
+    },
+    "review-20260924T100941-0111": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-1"
+    },
+    "review-20260924T100941-0112": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-2"
+    },
+    "review-20260924T100941-0113": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-3"
+    },
+    "review-20260924T100941-0114": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-4"
+    },
+    "review-20260924T100941-0115": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-5"
+    },
+    "review-20260924T100941-0116": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-6"
+    },
+    "review-20260924T100941-0117": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-7"
+    },
+    "review-20260924T100941-0118": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-8"
+    },
+    "review-20260924T100941-0119": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-1"
+    },
+    "review-20260924T100941-0120": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-2"
+    },
+    "review-20260924T100941-0121": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-3"
+    },
+    "review-20260924T100941-0122": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-4"
+    },
+    "review-20260924T100941-0123": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-5"
+    },
+    "review-20260924T100941-0124": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-6"
+    },
+    "review-20260924T100941-0125": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-7"
+    },
+    "review-20260924T100941-0126": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-8"
+    },
+    "review-20260924T100941-0127": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-9"
+    },
+    "review-20260924T100941-0128": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-10"
+    },
+    "review-20260924T100941-0129": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-11"
+    },
+    "review-20260924T100941-0130": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-12"
+    },
+    "review-20260924T100941-0131": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-13"
+    },
+    "review-20260924T100941-0132": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-14"
+    },
+    "review-20260924T100941-0133": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-15"
+    },
+    "review-20260924T100941-0134": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-16"
+    },
+    "review-20260924T100941-0135": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-17"
+    },
+    "review-20260924T100941-0136": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-18"
+    },
+    "review-20260924T100941-0137": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-19"
+    },
+    "review-20260924T100941-0138": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "summarization",
+      "case": "message-20"
+    },
+    "review-20260924T100941-0139": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-1"
+    },
+    "review-20260924T100941-0140": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-2"
+    },
+    "review-20260924T100941-0141": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-3"
+    },
+    "review-20260924T100941-0142": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-4"
+    },
+    "review-20260924T100941-0143": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-5"
+    },
+    "review-20260924T100941-0144": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-6"
+    },
+    "review-20260924T100941-0145": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-7"
+    },
+    "review-20260924T100941-0146": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-8"
+    },
+    "review-20260924T100941-0147": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-9"
+    },
+    "review-20260924T100941-0148": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "lessons",
+      "case": "conversation-10"
+    },
+    "review-20260924T100941-0149": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-1"
+    },
+    "review-20260924T100941-0150": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-2"
+    },
+    "review-20260924T100941-0151": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-3"
+    },
+    "review-20260924T100941-0152": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-4"
+    },
+    "review-20260924T100941-0153": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-5"
+    },
+    "review-20260924T100941-0154": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-6"
+    },
+    "review-20260924T100941-0155": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-7"
+    },
+    "review-20260924T100941-0156": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-8"
+    },
+    "review-20260924T100941-0157": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-9"
+    },
+    "review-20260924T100941-0158": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-10"
+    },
+    "review-20260924T100941-0159": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-11"
+    },
+    "review-20260924T100941-0160": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "reasoning",
+      "case": "reasoning-12"
+    },
+    "review-20260924T100941-0161": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-1"
+    },
+    "review-20260924T100941-0162": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-2"
+    },
+    "review-20260924T100941-0163": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-3"
+    },
+    "review-20260924T100941-0164": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-4"
+    },
+    "review-20260924T100941-0165": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-5"
+    },
+    "review-20260924T100941-0166": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-6"
+    },
+    "review-20260924T100941-0167": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-7"
+    },
+    "review-20260924T100941-0168": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-8"
+    },
+    "review-20260924T100941-0169": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "code_gen",
+      "case": "code-9"
+    },
+    "review-20260924T100941-0170": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-1"
+    },
+    "review-20260924T100941-0171": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-2"
+    },
+    "review-20260924T100941-0172": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-3"
+    },
+    "review-20260924T100941-0173": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-4"
+    },
+    "review-20260924T100941-0174": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-5"
+    },
+    "review-20260924T100941-0175": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-6"
+    },
+    "review-20260924T100941-0176": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-7"
+    },
+    "review-20260924T100941-0177": {
+      "model": "ministral-3:14b",
+      "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "category": "session_review",
+      "case": "session-8"
+    },
+    "review-20260924T100941-0178": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-1"
+    },
+    "review-20260924T100941-0179": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-2"
+    },
+    "review-20260924T100941-0180": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-3"
+    },
+    "review-20260924T100941-0181": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-4"
+    },
+    "review-20260924T100941-0182": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-5"
+    },
+    "review-20260924T100941-0183": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-6"
+    },
+    "review-20260924T100941-0184": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-7"
+    },
+    "review-20260924T100941-0185": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-8"
+    },
+    "review-20260924T100941-0186": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-9"
+    },
+    "review-20260924T100941-0187": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-10"
+    },
+    "review-20260924T100941-0188": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-11"
+    },
+    "review-20260924T100941-0189": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-12"
+    },
+    "review-20260924T100941-0190": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-13"
+    },
+    "review-20260924T100941-0191": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-14"
+    },
+    "review-20260924T100941-0192": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-15"
+    },
+    "review-20260924T100941-0193": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-16"
+    },
+    "review-20260924T100941-0194": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-17"
+    },
+    "review-20260924T100941-0195": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-18"
+    },
+    "review-20260924T100941-0196": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-19"
+    },
+    "review-20260924T100941-0197": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-20"
+    },
+    "review-20260924T100941-0198": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-1"
+    },
+    "review-20260924T100941-0199": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-2"
+    },
+    "review-20260924T100941-0200": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-3"
+    },
+    "review-20260924T100941-0201": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-4"
+    },
+    "review-20260924T100941-0202": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-5"
+    },
+    "review-20260924T100941-0203": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-6"
+    },
+    "review-20260924T100941-0204": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-7"
+    },
+    "review-20260924T100941-0205": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-8"
+    },
+    "review-20260924T100941-0206": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-9"
+    },
+    "review-20260924T100941-0207": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-10"
+    },
+    "review-20260924T100941-0208": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-1"
+    },
+    "review-20260924T100941-0209": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-2"
+    },
+    "review-20260924T100941-0210": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-3"
+    },
+    "review-20260924T100941-0211": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-4"
+    },
+    "review-20260924T100941-0212": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-5"
+    },
+    "review-20260924T100941-0213": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-6"
+    },
+    "review-20260924T100941-0214": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-7"
+    },
+    "review-20260924T100941-0215": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-8"
+    },
+    "review-20260924T100941-0216": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-9"
+    },
+    "review-20260924T100941-0217": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-10"
+    },
+    "review-20260924T100941-0218": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-11"
+    },
+    "review-20260924T100941-0219": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-12"
+    },
+    "review-20260924T100941-0220": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-1"
+    },
+    "review-20260924T100941-0221": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-2"
+    },
+    "review-20260924T100941-0222": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-3"
+    },
+    "review-20260924T100941-0223": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-4"
+    },
+    "review-20260924T100941-0224": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-5"
+    },
+    "review-20260924T100941-0225": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-6"
+    },
+    "review-20260924T100941-0226": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-7"
+    },
+    "review-20260924T100941-0227": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-8"
+    },
+    "review-20260924T100941-0228": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-9"
+    },
+    "review-20260924T100941-0229": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-1"
+    },
+    "review-20260924T100941-0230": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-2"
+    },
+    "review-20260924T100941-0231": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-3"
+    },
+    "review-20260924T100941-0232": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-4"
+    },
+    "review-20260924T100941-0233": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-5"
+    },
+    "review-20260924T100941-0234": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-6"
+    },
+    "review-20260924T100941-0235": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-7"
+    },
+    "review-20260924T100941-0236": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-8"
+    },
+    "review-20260924T100941-0237": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-1"
+    },
+    "review-20260924T100941-0238": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-2"
+    },
+    "review-20260924T100941-0239": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-3"
+    },
+    "review-20260924T100941-0240": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-4"
+    },
+    "review-20260924T100941-0241": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-5"
+    },
+    "review-20260924T100941-0242": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-6"
+    },
+    "review-20260924T100941-0243": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-7"
+    },
+    "review-20260924T100941-0244": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-8"
+    },
+    "review-20260924T100941-0245": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-9"
+    },
+    "review-20260924T100941-0246": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-10"
+    },
+    "review-20260924T100941-0247": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-11"
+    },
+    "review-20260924T100941-0248": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-12"
+    },
+    "review-20260924T100941-0249": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-13"
+    },
+    "review-20260924T100941-0250": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-14"
+    },
+    "review-20260924T100941-0251": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-15"
+    },
+    "review-20260924T100941-0252": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-16"
+    },
+    "review-20260924T100941-0253": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-17"
+    },
+    "review-20260924T100941-0254": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-18"
+    },
+    "review-20260924T100941-0255": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-19"
+    },
+    "review-20260924T100941-0256": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-20"
+    },
+    "review-20260924T100941-0257": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-1"
+    },
+    "review-20260924T100941-0258": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-2"
+    },
+    "review-20260924T100941-0259": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-3"
+    },
+    "review-20260924T100941-0260": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-4"
+    },
+    "review-20260924T100941-0261": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-5"
+    },
+    "review-20260924T100941-0262": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-6"
+    },
+    "review-20260924T100941-0263": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-7"
+    },
+    "review-20260924T100941-0264": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-8"
+    },
+    "review-20260924T100941-0265": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-9"
+    },
+    "review-20260924T100941-0266": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-10"
+    },
+    "review-20260924T100941-0267": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-1"
+    },
+    "review-20260924T100941-0268": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-2"
+    },
+    "review-20260924T100941-0269": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-3"
+    },
+    "review-20260924T100941-0270": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-4"
+    },
+    "review-20260924T100941-0271": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-5"
+    },
+    "review-20260924T100941-0272": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-6"
+    },
+    "review-20260924T100941-0273": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-7"
+    },
+    "review-20260924T100941-0274": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-8"
+    },
+    "review-20260924T100941-0275": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-9"
+    },
+    "review-20260924T100941-0276": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-10"
+    },
+    "review-20260924T100941-0277": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-11"
+    },
+    "review-20260924T100941-0278": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-12"
+    },
+    "review-20260924T100941-0279": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-1"
+    },
+    "review-20260924T100941-0280": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-2"
+    },
+    "review-20260924T100941-0281": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-3"
+    },
+    "review-20260924T100941-0282": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-4"
+    },
+    "review-20260924T100941-0283": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-5"
+    },
+    "review-20260924T100941-0284": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-6"
+    },
+    "review-20260924T100941-0285": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-7"
+    },
+    "review-20260924T100941-0286": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-8"
+    },
+    "review-20260924T100941-0287": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-9"
+    },
+    "review-20260924T100941-0288": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-1"
+    },
+    "review-20260924T100941-0289": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-2"
+    },
+    "review-20260924T100941-0290": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-3"
+    },
+    "review-20260924T100941-0291": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-4"
+    },
+    "review-20260924T100941-0292": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-5"
+    },
+    "review-20260924T100941-0293": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-6"
+    },
+    "review-20260924T100941-0294": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-7"
+    },
+    "review-20260924T100941-0295": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-8"
+    },
+    "review-20260924T100941-0296": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-1"
+    },
+    "review-20260924T100941-0297": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-2"
+    },
+    "review-20260924T100941-0298": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-3"
+    },
+    "review-20260924T100941-0299": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-4"
+    },
+    "review-20260924T100941-0300": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-5"
+    },
+    "review-20260924T100941-0301": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-6"
+    },
+    "review-20260924T100941-0302": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-7"
+    },
+    "review-20260924T100941-0303": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-8"
+    },
+    "review-20260924T100941-0304": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-9"
+    },
+    "review-20260924T100941-0305": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-10"
+    },
+    "review-20260924T100941-0306": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-11"
+    },
+    "review-20260924T100941-0307": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-12"
+    },
+    "review-20260924T100941-0308": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-13"
+    },
+    "review-20260924T100941-0309": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-14"
+    },
+    "review-20260924T100941-0310": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-15"
+    },
+    "review-20260924T100941-0311": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-16"
+    },
+    "review-20260924T100941-0312": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-17"
+    },
+    "review-20260924T100941-0313": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-18"
+    },
+    "review-20260924T100941-0314": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-19"
+    },
+    "review-20260924T100941-0315": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "summarization",
+      "case": "message-20"
+    },
+    "review-20260924T100941-0316": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-1"
+    },
+    "review-20260924T100941-0317": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-2"
+    },
+    "review-20260924T100941-0318": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-3"
+    },
+    "review-20260924T100941-0319": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-4"
+    },
+    "review-20260924T100941-0320": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-5"
+    },
+    "review-20260924T100941-0321": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-6"
+    },
+    "review-20260924T100941-0322": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-7"
+    },
+    "review-20260924T100941-0323": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-8"
+    },
+    "review-20260924T100941-0324": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-9"
+    },
+    "review-20260924T100941-0325": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "lessons",
+      "case": "conversation-10"
+    },
+    "review-20260924T100941-0326": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-1"
+    },
+    "review-20260924T100941-0327": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-2"
+    },
+    "review-20260924T100941-0328": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-3"
+    },
+    "review-20260924T100941-0329": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-4"
+    },
+    "review-20260924T100941-0330": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-5"
+    },
+    "review-20260924T100941-0331": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-6"
+    },
+    "review-20260924T100941-0332": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-7"
+    },
+    "review-20260924T100941-0333": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-8"
+    },
+    "review-20260924T100941-0334": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-9"
+    },
+    "review-20260924T100941-0335": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-10"
+    },
+    "review-20260924T100941-0336": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-11"
+    },
+    "review-20260924T100941-0337": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "reasoning",
+      "case": "reasoning-12"
+    },
+    "review-20260924T100941-0338": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-1"
+    },
+    "review-20260924T100941-0339": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-2"
+    },
+    "review-20260924T100941-0340": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-3"
+    },
+    "review-20260924T100941-0341": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-4"
+    },
+    "review-20260924T100941-0342": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-5"
+    },
+    "review-20260924T100941-0343": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-6"
+    },
+    "review-20260924T100941-0344": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-7"
+    },
+    "review-20260924T100941-0345": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-8"
+    },
+    "review-20260924T100941-0346": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "code_gen",
+      "case": "code-9"
+    },
+    "review-20260924T100941-0347": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-1"
+    },
+    "review-20260924T100941-0348": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-2"
+    },
+    "review-20260924T100941-0349": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-3"
+    },
+    "review-20260924T100941-0350": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-4"
+    },
+    "review-20260924T100941-0351": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-5"
+    },
+    "review-20260924T100941-0352": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-6"
+    },
+    "review-20260924T100941-0353": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-7"
+    },
+    "review-20260924T100941-0354": {
+      "model": "gpt-oss:latest",
+      "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "category": "session_review",
+      "case": "session-8"
+    },
+    "review-20260924T100941-0355": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-1"
+    },
+    "review-20260924T100941-0356": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-2"
+    },
+    "review-20260924T100941-0357": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-3"
+    },
+    "review-20260924T100941-0358": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-4"
+    },
+    "review-20260924T100941-0359": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-5"
+    },
+    "review-20260924T100941-0360": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-6"
+    },
+    "review-20260924T100941-0361": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-7"
+    },
+    "review-20260924T100941-0362": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-8"
+    },
+    "review-20260924T100941-0363": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-9"
+    },
+    "review-20260924T100941-0364": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-10"
+    },
+    "review-20260924T100941-0365": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-11"
+    },
+    "review-20260924T100941-0366": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-12"
+    },
+    "review-20260924T100941-0367": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-13"
+    },
+    "review-20260924T100941-0368": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-14"
+    },
+    "review-20260924T100941-0369": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-15"
+    },
+    "review-20260924T100941-0370": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-16"
+    },
+    "review-20260924T100941-0371": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-17"
+    },
+    "review-20260924T100941-0372": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-18"
+    },
+    "review-20260924T100941-0373": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-19"
+    },
+    "review-20260924T100941-0374": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-20"
+    },
+    "review-20260924T100941-0375": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-1"
+    },
+    "review-20260924T100941-0376": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-2"
+    },
+    "review-20260924T100941-0377": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-3"
+    },
+    "review-20260924T100941-0378": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-4"
+    },
+    "review-20260924T100941-0379": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-5"
+    },
+    "review-20260924T100941-0380": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-6"
+    },
+    "review-20260924T100941-0381": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-7"
+    },
+    "review-20260924T100941-0382": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-8"
+    },
+    "review-20260924T100941-0383": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-9"
+    },
+    "review-20260924T100941-0384": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-10"
+    },
+    "review-20260924T100941-0385": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-1"
+    },
+    "review-20260924T100941-0386": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-2"
+    },
+    "review-20260924T100941-0387": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-3"
+    },
+    "review-20260924T100941-0388": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-4"
+    },
+    "review-20260924T100941-0389": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-5"
+    },
+    "review-20260924T100941-0390": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-6"
+    },
+    "review-20260924T100941-0391": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-7"
+    },
+    "review-20260924T100941-0392": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-8"
+    },
+    "review-20260924T100941-0393": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-9"
+    },
+    "review-20260924T100941-0394": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-10"
+    },
+    "review-20260924T100941-0395": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-11"
+    },
+    "review-20260924T100941-0396": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-12"
+    },
+    "review-20260924T100941-0397": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-1"
+    },
+    "review-20260924T100941-0398": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-2"
+    },
+    "review-20260924T100941-0399": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-3"
+    },
+    "review-20260924T100941-0400": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-4"
+    },
+    "review-20260924T100941-0401": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-6"
+    },
+    "review-20260924T100941-0402": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-7"
+    },
+    "review-20260924T100941-0403": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-8"
+    },
+    "review-20260924T100941-0404": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-9"
+    },
+    "review-20260924T100941-0405": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-1"
+    },
+    "review-20260924T100941-0406": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-2"
+    },
+    "review-20260924T100941-0407": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-3"
+    },
+    "review-20260924T100941-0408": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-4"
+    },
+    "review-20260924T100941-0409": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-5"
+    },
+    "review-20260924T100941-0410": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-6"
+    },
+    "review-20260924T100941-0411": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-7"
+    },
+    "review-20260924T100941-0412": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-8"
+    },
+    "review-20260924T100941-0413": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-1"
+    },
+    "review-20260924T100941-0414": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-2"
+    },
+    "review-20260924T100941-0415": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-3"
+    },
+    "review-20260924T100941-0416": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-4"
+    },
+    "review-20260924T100941-0417": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-5"
+    },
+    "review-20260924T100941-0418": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-6"
+    },
+    "review-20260924T100941-0419": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-7"
+    },
+    "review-20260924T100941-0420": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-8"
+    },
+    "review-20260924T100941-0421": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-9"
+    },
+    "review-20260924T100941-0422": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-10"
+    },
+    "review-20260924T100941-0423": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-11"
+    },
+    "review-20260924T100941-0424": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-12"
+    },
+    "review-20260924T100941-0425": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-13"
+    },
+    "review-20260924T100941-0426": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-14"
+    },
+    "review-20260924T100941-0427": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-15"
+    },
+    "review-20260924T100941-0428": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-16"
+    },
+    "review-20260924T100941-0429": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-17"
+    },
+    "review-20260924T100941-0430": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-18"
+    },
+    "review-20260924T100941-0431": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-19"
+    },
+    "review-20260924T100941-0432": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-20"
+    },
+    "review-20260924T100941-0433": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-1"
+    },
+    "review-20260924T100941-0434": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-2"
+    },
+    "review-20260924T100941-0435": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-3"
+    },
+    "review-20260924T100941-0436": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-4"
+    },
+    "review-20260924T100941-0437": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-5"
+    },
+    "review-20260924T100941-0438": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-6"
+    },
+    "review-20260924T100941-0439": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-7"
+    },
+    "review-20260924T100941-0440": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-8"
+    },
+    "review-20260924T100941-0441": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-9"
+    },
+    "review-20260924T100941-0442": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-10"
+    },
+    "review-20260924T100941-0443": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-1"
+    },
+    "review-20260924T100941-0444": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-2"
+    },
+    "review-20260924T100941-0445": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-3"
+    },
+    "review-20260924T100941-0446": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-4"
+    },
+    "review-20260924T100941-0447": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-5"
+    },
+    "review-20260924T100941-0448": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-6"
+    },
+    "review-20260924T100941-0449": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-7"
+    },
+    "review-20260924T100941-0450": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-8"
+    },
+    "review-20260924T100941-0451": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-9"
+    },
+    "review-20260924T100941-0452": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-10"
+    },
+    "review-20260924T100941-0453": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-11"
+    },
+    "review-20260924T100941-0454": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-12"
+    },
+    "review-20260924T100941-0455": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-1"
+    },
+    "review-20260924T100941-0456": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-2"
+    },
+    "review-20260924T100941-0457": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-3"
+    },
+    "review-20260924T100941-0458": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-4"
+    },
+    "review-20260924T100941-0459": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-6"
+    },
+    "review-20260924T100941-0460": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-7"
+    },
+    "review-20260924T100941-0461": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-8"
+    },
+    "review-20260924T100941-0462": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-9"
+    },
+    "review-20260924T100941-0463": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-1"
+    },
+    "review-20260924T100941-0464": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-2"
+    },
+    "review-20260924T100941-0465": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-3"
+    },
+    "review-20260924T100941-0466": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-4"
+    },
+    "review-20260924T100941-0467": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-5"
+    },
+    "review-20260924T100941-0468": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-6"
+    },
+    "review-20260924T100941-0469": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-7"
+    },
+    "review-20260924T100941-0470": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-8"
+    },
+    "review-20260924T100941-0471": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-1"
+    },
+    "review-20260924T100941-0472": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-2"
+    },
+    "review-20260924T100941-0473": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-3"
+    },
+    "review-20260924T100941-0474": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-4"
+    },
+    "review-20260924T100941-0475": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-5"
+    },
+    "review-20260924T100941-0476": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-6"
+    },
+    "review-20260924T100941-0477": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-7"
+    },
+    "review-20260924T100941-0478": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-8"
+    },
+    "review-20260924T100941-0479": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-9"
+    },
+    "review-20260924T100941-0480": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-10"
+    },
+    "review-20260924T100941-0481": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-11"
+    },
+    "review-20260924T100941-0482": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-12"
+    },
+    "review-20260924T100941-0483": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-13"
+    },
+    "review-20260924T100941-0484": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-14"
+    },
+    "review-20260924T100941-0485": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-15"
+    },
+    "review-20260924T100941-0486": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-16"
+    },
+    "review-20260924T100941-0487": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-17"
+    },
+    "review-20260924T100941-0488": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-18"
+    },
+    "review-20260924T100941-0489": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-19"
+    },
+    "review-20260924T100941-0490": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "summarization",
+      "case": "message-20"
+    },
+    "review-20260924T100941-0491": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-1"
+    },
+    "review-20260924T100941-0492": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-2"
+    },
+    "review-20260924T100941-0493": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-3"
+    },
+    "review-20260924T100941-0494": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-4"
+    },
+    "review-20260924T100941-0495": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-5"
+    },
+    "review-20260924T100941-0496": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-6"
+    },
+    "review-20260924T100941-0497": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-7"
+    },
+    "review-20260924T100941-0498": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-8"
+    },
+    "review-20260924T100941-0499": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-9"
+    },
+    "review-20260924T100941-0500": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "lessons",
+      "case": "conversation-10"
+    },
+    "review-20260924T100941-0501": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-1"
+    },
+    "review-20260924T100941-0502": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-2"
+    },
+    "review-20260924T100941-0503": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-3"
+    },
+    "review-20260924T100941-0504": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-4"
+    },
+    "review-20260924T100941-0505": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-5"
+    },
+    "review-20260924T100941-0506": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-6"
+    },
+    "review-20260924T100941-0507": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-7"
+    },
+    "review-20260924T100941-0508": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-8"
+    },
+    "review-20260924T100941-0509": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-9"
+    },
+    "review-20260924T100941-0510": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-10"
+    },
+    "review-20260924T100941-0511": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-11"
+    },
+    "review-20260924T100941-0512": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "reasoning",
+      "case": "reasoning-12"
+    },
+    "review-20260924T100941-0513": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-1"
+    },
+    "review-20260924T100941-0514": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-2"
+    },
+    "review-20260924T100941-0515": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-3"
+    },
+    "review-20260924T100941-0516": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-4"
+    },
+    "review-20260924T100941-0517": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-6"
+    },
+    "review-20260924T100941-0518": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-7"
+    },
+    "review-20260924T100941-0519": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-8"
+    },
+    "review-20260924T100941-0520": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "code_gen",
+      "case": "code-9"
+    },
+    "review-20260924T100941-0521": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-1"
+    },
+    "review-20260924T100941-0522": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-2"
+    },
+    "review-20260924T100941-0523": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-3"
+    },
+    "review-20260924T100941-0524": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-4"
+    },
+    "review-20260924T100941-0525": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-5"
+    },
+    "review-20260924T100941-0526": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-6"
+    },
+    "review-20260924T100941-0527": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-7"
+    },
+    "review-20260924T100941-0528": {
+      "model": "qwen3:14b",
+      "run_group": "qwen3_14b@2026-09-24T03:00:22.699013+00:00",
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "category": "session_review",
+      "case": "session-8"
+    }
+  }
+}

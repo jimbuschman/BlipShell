@@ -1,5 +1,5 @@
-"""Thin async entry points for `blipshell benchmark` — wires config, judge,
-candidate router, harness, store, and scoreboard together. The CLI command
+"""Thin async entry points for `blipshell benchmark` — wires config,
+candidate router, harness, artifacts, and reports together. The CLI command
 delegates here (lazy import + asyncio.run), matching nightly/test commands.
 """
 
@@ -17,12 +17,17 @@ from blipshell.benchmark.discovery import (
     shortlist,
 )
 from blipshell.benchmark.harness import BenchmarkHarness, build_candidate_router
-from blipshell.benchmark.judge import JudgeUnavailable, build_judge
+from blipshell.benchmark.manifest import (
+    OPEN_ENDED_CATEGORIES, RUN_TIERS, manifest_dict, resolve_tier,
+)
 from blipshell.benchmark.report import build_report, write_report
 from blipshell.benchmark.results import ResultsStore, results_dir
+from blipshell.benchmark.review import (
+    export_review_packet, import_review, load_review_rows,
+)
+from blipshell.benchmark.evidence import load_system_evidence
 from blipshell.benchmark.store import BenchmarkStore
 from blipshell.core.config import ConfigManager, resolve_config_relative
-from blipshell.llm.endpoints import EndpointManager
 from blipshell.models.config import get_ollama_url, resolve_env_vars
 
 logger = logging.getLogger(__name__)
@@ -91,9 +96,16 @@ def _candidate_context_tokens(config, url: str) -> Optional[int]:
     return min(windows) if windows else None
 
 
+def _candidate_endpoint_names(config, url: str) -> list[str]:
+    """Non-secret endpoint identity for reproducibility (never persist URLs)."""
+    target = (url or "").rstrip("/")
+    return sorted({ep.name for ep in config.endpoints
+                   if (ep.url or "").rstrip("/") == target})
+
+
 def _report_dir(config_path: Optional[str]) -> str:
-    """data/benchmark/ next to the config file (repo root by default), cwd-independent."""
-    return resolve_config_relative("data/benchmark", config_path)
+    """Committed, portable reports next to the other benchmark artifacts."""
+    return str(results_dir(config_path) / "reports")
 
 
 async def _regenerate_report(store, config, config_path: Optional[str]) -> tuple[dict, int]:
@@ -105,8 +117,23 @@ async def _regenerate_report(store, config, config_path: Optional[str]) -> tuple
 
     Returns (written_paths, model_count).
     """
-    results = ResultsStore(results_dir(config_path))
+    results = ResultsStore(results_dir(config_path), structured=True)
     model_rows = results.model_rows()
+    # Historical automatic-judge numbers remain preserved in their source
+    # files, but v2 reports never treat them as current evidence. Open-ended
+    # quality enters the report only through a traceable imported review.
+    for rows in model_rows.values():
+        rows[:] = [r for r in rows if not (
+            r.get("task_type") in OPEN_ENDED_CATEGORIES and
+            r.get("metric") == "quality"
+        )]
+    for model, review_rows in load_review_rows(results.root).items():
+        existing = model_rows.setdefault(model, [])
+        reviewed = {r.get("task_type") for r in review_rows}
+        existing[:] = [r for r in existing
+                       if not (r.get("task_type") in reviewed and
+                               r.get("metric") == "quality")]
+        existing.extend(review_rows)
 
     catalog: dict[str, dict] = {}
     for m in model_rows:
@@ -116,10 +143,12 @@ async def _regenerate_report(store, config, config_path: Optional[str]) -> tuple
 
     report = build_report(
         model_rows, catalog=catalog,
-        judge_model=config.benchmark.judge_model or None,
+        judge_model=None,
         generated_ts=_now_iso(),
         task_weights=config.benchmark.task_weights,
+        required_categories=set(manifest_dict()["required_categories"]),
         provenance=results.provenance(),
+        system_evidence=load_system_evidence(results.root.parent),
     )
 
     # The per-config-key advice is the part you act on, so it leads the file and
@@ -175,7 +204,6 @@ async def run_benchmark(
     model: str,
     *,
     config_path: Optional[str] = None,
-    judge_enabled: bool = True,
     provider: str = "ollama",
     url: Optional[str] = None,
     api_key_env: Optional[str] = None,
@@ -183,32 +211,19 @@ async def run_benchmark(
     jobs: Optional[set] = None,
     timeout_override: Optional[float] = None,
     context_tokens: Optional[int] = None,
-    repeats: int = 1,
+    repeats: Optional[int] = None,
+    tier: str = "smoke",
 ) -> None:
     """Run a deep test of a model across the requested jobs, store metrics, and
     regenerate the shareable report. `jobs=None` = every job at full depth."""
     config = ConfigManager(config_path).load()
     bench = config.benchmark
 
-    # Judge — built from the REAL configured endpoints (looked up by name).
-    judge = None
-    if judge_enabled and bench.judge_model:
-        if model == bench.judge_model:
-            console.print(
-                f"[red]Refusing to run: candidate '{model}' is the configured judge "
-                f"model — that would be self-grading. Pick a different judge_endpoint/"
-                f"judge_model or a different candidate.[/red]"
-            )
-            return
-        real_manager = EndpointManager(config.endpoints, config.llm)
-        try:
-            judge = build_judge(config, real_manager)
-            console.print(f"[dim]Judge: {bench.judge_model} via '{bench.judge_endpoint}'[/dim]")
-        except JudgeUnavailable as e:
-            console.print(f"[yellow]Judge disabled: {e}. Running deterministic metrics only.[/yellow]")
-            judge = None
-    elif judge_enabled and not bench.judge_model:
-        console.print("[dim]No judge_model configured — open-ended tasks not graded.[/dim]")
+    jobs, repeats = resolve_tier(tier, jobs, repeats)
+    console.print(
+        f"[dim]Tier: {tier} ({repeats} repeat{'s' if repeats != 1 else ''}). "
+        "Open-ended outputs are saved for offline external review; no judge API is called.[/dim]"
+    )
 
     # Candidate router (its own pinned endpoint; no fallback).
     if provider == "ollama" and not url:
@@ -261,12 +276,11 @@ async def run_benchmark(
     db_path = _resolve_db_path(bench.db_path, config_path)
     store = await BenchmarkStore(db_path).initialize()
     try:
-        console.rule(f"[bold blue]Benchmarking {model} — full deep run")
-        console.print("[dim]Runs every job incl. the agentic coding suite + embedding. "
-                      "This is intentionally heavy (~30-90 min); shallow runs don't discriminate.[/dim]")
+        console.rule(f"[bold blue]Benchmarking {model} — {tier} tier")
+        console.print(f"[dim]{RUN_TIERS[tier].description}[/dim]")
         harness = BenchmarkHarness(
             model=model, router=router, run_group=group, run_ts=run_ts,
-            tier="deep", judge=judge,
+            tier=tier, judge=None,
         )
         if jobs:
             console.print(f"[dim]Scoped to jobs: {', '.join(sorted(jobs))}[/dim]")
@@ -287,16 +301,32 @@ async def run_benchmark(
         # Results go to a committed file, not the gitignored DB — so the other
         # machine inherits this run on `git pull` and the comparison corpus
         # actually accumulates.
-        rstore = ResultsStore(results_dir(config_path))
+        rstore = ResultsStore(results_dir(config_path), structured=True)
         res_path = rstore.write_run(
             model=model, run_group=group, run_ts=run_ts, rows=rows,
-            tier="deep", judge_model=bench.judge_model or None, jobs=jobs,
+            tier=tier, judge_model=None, jobs=jobs,
+            benchmark_manifest=manifest_dict(),
+            run_settings={
+                "provider": provider,
+                "endpoint_names": _candidate_endpoint_names(config, url),
+                "context_tokens": cand_ctx,
+                "timeout_s": llm_cfg.timeout,
+                "repeats": repeats,
+                "tier": tier,
+                "jobs": sorted(jobs),
+            },
         )
         # Transcripts are the primary artifact now — scores index them.
         tr_path = rstore.write_transcripts(
             model=model, run_ts=run_ts, calls=router.calls,
         )
+        review_path = rstore.write_review_source(
+            model=model, run_ts=run_ts, run_group=group,
+            items=harness.review_items, benchmark_manifest=manifest_dict(),
+        )
         console.print(f"[dim]Transcripts ({len(router.calls)} calls) -> {tr_path}[/dim]")
+        console.print(f"[dim]External-review source ({len(harness.review_items)} items) "
+                      f"-> {review_path}[/dim]")
         console.print(
             f"[green]Recorded {len(rows)} metrics for {model}[/green] "
             f"-> [cyan]{res_path}[/cyan]\n"
@@ -331,6 +361,29 @@ async def run_report(*, config_path: Optional[str] = None) -> None:
         )
     finally:
         await store.close()
+
+
+async def run_review_export(
+    *, config_path: Optional[str] = None, models: Optional[set[str]] = None,
+    packet_name: Optional[str] = None,
+) -> None:
+    paths = export_review_packet(
+        results_dir(config_path), models=models, packet_name=packet_name,
+    )
+    console.print(
+        "[bold green]External-review packet created[/bold green]\n"
+        f"  [cyan]{paths['markdown']}[/cyan]\n"
+        f"  [dim]Machine-readable: {paths['json']}[/dim]\n"
+        f"  [dim]Private import key: {paths['key']} (do not give this to the reviewer)[/dim]"
+    )
+
+
+async def run_review_import(
+    response_path: str, *, config_path: Optional[str] = None,
+) -> None:
+    imported = import_review(results_dir(config_path), response_path)
+    console.print(f"[green]Imported external review[/green] -> [cyan]{imported}[/cyan]")
+    await run_report(config_path=config_path)
 
 
 async def run_discover(

@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 # Bump when the on-disk shape changes incompatibly. Readers skip unknown
 # majors rather than silently misreading them.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 RESULTS_DIRNAME = "benchmark_results"
 
@@ -51,6 +51,8 @@ RESULTS_DIRNAME = "benchmark_results"
 # tier live once in the file header, so they are not repeated per row.
 _ROW_FIELDS = ("suite", "task_type", "metric", "value", "unit", "raw",
                "values", "spread")
+
+_RUN_FILE = re.compile(r"^\d{8}T\d{6}__.+\.json$")
 
 
 def slugify_model(model: str) -> str:
@@ -83,8 +85,16 @@ def _git_sha(cwd: Optional[Path] = None) -> Optional[str]:
 class ResultsStore:
     """Read/write benchmark runs as JSON files under a committed directory."""
 
-    def __init__(self, root: str | Path):
+    def __init__(self, root: str | Path, *, structured: bool = False):
         self.root = Path(root)
+        # Flat mode preserves the small reusable file-store API and old callers;
+        # the production runner opts into the namespaced v2 artifact layout.
+        self.structured = structured
+        self.model_runs_dir = self.root / "model-runs" if structured else self.root
+        self.transcripts_dir = self.root / "transcripts" if structured else self.root
+        self.review_sources_dir = self.root / "review-sources" if structured else self.root
+        self.external_reviews_dir = self.root / "external-reviews"
+        self.reports_dir = self.root / "reports"
 
     # ------------------------------------------------------------------ write
 
@@ -99,13 +109,15 @@ class ResultsStore:
         judge_model: Optional[str] = None,
         jobs: Optional[set] = None,
         repo_root: Optional[Path] = None,
+        benchmark_manifest: Optional[dict] = None,
+        run_settings: Optional[dict] = None,
     ) -> Path:
         """Persist one benchmark run. Returns the file written.
 
         Rows are the harness's own dicts; per-run constants are hoisted into the
         header so the file reads cleanly and stays diffable.
         """
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.model_runs_dir.mkdir(parents=True, exist_ok=True)
         payload = {
             "schema": SCHEMA_VERSION,
             "model": model,
@@ -116,9 +128,11 @@ class ResultsStore:
             "jobs": sorted(jobs) if jobs else None,
             "git_sha": _git_sha(repo_root or self.root.parent),
             "host": os.environ.get("COMPUTERNAME") or os.environ.get("HOSTNAME") or None,
+            "benchmark_manifest": benchmark_manifest,
+            "run_settings": run_settings or {},
             "rows": [{k: r.get(k) for k in _ROW_FIELDS} for r in rows],
         }
-        path = self.root / f"{_compact_ts(run_ts)}__{slugify_model(model)}.json"
+        path = self.model_runs_dir / f"{_compact_ts(run_ts)}__{slugify_model(model)}.json"
         path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         logger.info("Wrote %d benchmark rows to %s", len(rows), path)
         return path
@@ -132,8 +146,8 @@ class ResultsStore:
         for the same reason the results are — analysis happens on whichever
         machine reads them, not necessarily the one that ran the model.
         """
-        self.root.mkdir(parents=True, exist_ok=True)
-        path = self.root / (
+        self.transcripts_dir.mkdir(parents=True, exist_ok=True)
+        path = self.transcripts_dir / (
             f"{_compact_ts(run_ts)}__{slugify_model(model)}__transcripts.json"
         )
         path.write_text(
@@ -142,6 +156,26 @@ class ResultsStore:
             encoding="utf-8",
         )
         logger.info("Wrote %d transcript calls to %s", len(calls), path)
+        return path
+
+    def write_review_source(
+        self, *, model: str, run_ts: str, run_group: str, items: list[dict],
+        benchmark_manifest: Optional[dict] = None,
+    ) -> Path:
+        """Persist ungraded open-ended outputs used to build blinded packets."""
+        self.review_sources_dir.mkdir(parents=True, exist_ok=True)
+        path = self.review_sources_dir / (
+            f"{_compact_ts(run_ts)}__{slugify_model(model)}__review-source.json"
+        )
+        path.write_text(json.dumps({
+            "schema": SCHEMA_VERSION,
+            "kind": "benchmark_review_source",
+            "model": model,
+            "run_group": run_group,
+            "run_ts": run_ts,
+            "benchmark_manifest": benchmark_manifest,
+            "items": items,
+        }, indent=2, default=str), encoding="utf-8")
         return path
 
     # ------------------------------------------------------------------- read
@@ -155,7 +189,13 @@ class ResultsStore:
         if not self.root.is_dir():
             return []
         runs = []
-        for path in sorted(self.root.glob("*.json")):
+        # New v2 runs are namespaced.  The root scan keeps the pre-v2 corpus
+        # readable, but its filename filter ignores transcripts and unrelated
+        # continuity/rescore artifacts without noisy "malformed" warnings.
+        paths = list(self.model_runs_dir.glob("*.json")) if self.model_runs_dir.is_dir() else []
+        paths += [p for p in self.root.glob("*.json")
+                  if _RUN_FILE.match(p.name) and not p.stem.endswith("__transcripts")]
+        for path in sorted(set(paths)):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError) as e:
@@ -219,6 +259,8 @@ class ResultsStore:
                     "run_ts": run.get("run_ts"),
                     "tier": run.get("tier"),
                     "git_sha": run.get("git_sha"),
+                    "benchmark_manifest": run.get("benchmark_manifest"),
+                    "run_settings": run.get("run_settings") or {},
                 })
                 bucket[key] = enriched
         return {m: list(b.values()) for m, b in merged.items()}
@@ -247,6 +289,10 @@ class ResultsStore:
                 "run_count": 0,
                 "shas": [],
                 "migrated_from_db": False,
+                "benchmark_versions": [],
+                "dataset_versions": [],
+                "scorer_versions": [],
+                "source_fingerprints": [],
             })
             p["run_ts"] = run.get("run_ts")          # newest wins
             p["host"] = run.get("host") or p.get("host")
@@ -257,12 +303,37 @@ class ResultsStore:
                 p["shas"].append(run["git_sha"])
             if run.get("migrated_from_db"):
                 p["migrated_from_db"] = True
+            manifest = run.get("benchmark_manifest") or {}
+            if manifest.get("benchmark_version"):
+                p["benchmark_versions"].append(manifest["benchmark_version"])
+            if manifest.get("dataset_version"):
+                p["dataset_versions"].append(manifest["dataset_version"])
+            if manifest.get("scorer_version"):
+                p["scorer_versions"].append(manifest["scorer_version"])
+            if manifest.get("source_fingerprint"):
+                p["source_fingerprints"].append(manifest["source_fingerprint"])
         for p in out.values():
             # Newest known sha; None when every contributing run predates
             # sha capture (all migrated runs).
             p["git_sha"] = p["shas"][-1] if p["shas"] else None
             p["mixed_code"] = len(set(p["shas"])) > 1
+            p["benchmark_version"] = (p["benchmark_versions"][-1]
+                                      if p["benchmark_versions"] else None)
+            p["dataset_version"] = (p["dataset_versions"][-1]
+                                    if p["dataset_versions"] else None)
+            p["mixed_benchmark"] = len(set(p["benchmark_versions"])) > 1
+            p["mixed_dataset"] = len(set(p["dataset_versions"])) > 1
+            p["scorer_version"] = (p["scorer_versions"][-1]
+                                   if p["scorer_versions"] else None)
+            p["source_fingerprint"] = (p["source_fingerprints"][-1]
+                                       if p["source_fingerprints"] else None)
+            p["mixed_scorer"] = len(set(p["scorer_versions"])) > 1
+            p["mixed_source"] = len(set(p["source_fingerprints"])) > 1
             p.pop("shas", None)
+            p.pop("benchmark_versions", None)
+            p.pop("dataset_versions", None)
+            p.pop("scorer_versions", None)
+            p.pop("source_fingerprints", None)
         return out
 
 

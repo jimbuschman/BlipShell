@@ -1394,8 +1394,8 @@ def nightly_cmd(ctx, job, quiet, loop, local, history):
 def benchmark_grp():
     """Benchmark local/cloud models for the jobs BlipShell routes per task.
 
-    run <model> — ONE deep test across every job (ability + speed); writes a
-                  shareable report you can hand to a stronger LLM.
+    run <model> — versioned smoke/compare/decision evaluation; never calls a judge.
+    review      — export blinded packets and import ChatGPT/Claude/human scores.
     report      — regenerate that report from stored runs (no re-run).
     discover    — pull a candidate shortlist from OpenRouter + Artificial Analysis.
     """
@@ -1403,44 +1403,74 @@ def benchmark_grp():
 
 @benchmark_grp.command("run")
 @click.argument("model")
-@click.option("--judge/--no-judge", default=True, help="Grade open-ended jobs with the configured neutral judge")
 @click.option("--provider", default="ollama", type=click.Choice(["ollama", "openai"]), help="Candidate endpoint provider")
 @click.option("--url", default=None, help="Candidate endpoint URL (default: first local Ollama endpoint)")
 @click.option("--api-key-env", default=None, help="Env var holding the API key (for --provider openai)")
 @click.option("--coding-timeout", default=300.0, type=float, help="Per-task timeout for the agentic coding executor (seconds)")
-@click.option("--jobs", default=None, help="Comma-separated subset to run: pipeline,reasoning,session_review,realdata,embedding,coding,dedup (default: all; dedup = only the dedup-verdict rows of pipeline). Scope local-background comparisons by dropping the slow cloud-routed 'coding' suite.")
-@click.option("--timeout", "timeout_override", default=None, type=float, help="Per-LLM-call timeout in seconds (default: config llm.timeout). Raise it for a slow local model — a timed-out case is DROPPED from the judged score, which biases the result upward.")
-@click.option("--repeats", default=5, type=int, help="Run every suite N times and report mean + spread per metric. Default 5: measured run-to-run sd on tool_calling is ~0.05-0.09, so a single run cannot separate two close models and WILL invert rankings. Lower it only for a quick smoke test, never for a routing decision.")
+@click.option("--jobs", default=None, help="Comma-separated suite override: pipeline,reasoning,session_review,realdata,embedding,coding,dedup (default: selected by --tier; dedup is the cheap dedup-only subset of pipeline)")
+@click.option("--timeout", "timeout_override", default=None, type=float, help="Per-LLM-call timeout in seconds (default: config llm.timeout). Completion rate is reported separately so timeouts cannot inflate a comparison.")
+@click.option("--tier", default="smoke", show_default=True, type=click.Choice(["smoke", "compare", "decision"]), help="Run profile: smoke=1 repeat, compare=3, decision=5 plus coding/embedding")
+@click.option("--repeats", default=None, type=click.IntRange(min=1), help="Override the tier's repeat count")
 @click.option("--context-tokens", default=None, type=int, help="num_ctx for the candidate (default: the configured endpoint's window). Lower it if generation is slow: a large KV cache can spill to CPU and make every call many times slower.")
 @click.pass_context
-def benchmark_run_cmd(ctx, model, judge, provider, url, api_key_env, coding_timeout, jobs,
-                      timeout_override, context_tokens, repeats):
-    """Run the deep test of MODEL (e.g. qwen3:14b, minimax/minimax-m3).
+def benchmark_run_cmd(ctx, model, provider, url, api_key_env, coding_timeout, jobs,
+                      timeout_override, tier, context_tokens, repeats):
+    """Benchmark MODEL without calling an LLM judge.
 
     Tests every job (ranking, importance, contradiction, entity, summarization,
     lessons, reasoning, coding-gen, agentic coding, tool-calling, session review,
-    embedding) for ability and speed, then updates data/benchmark/report.md.
-    Full run is intentionally heavy (~30-90 min); use --jobs to scope. Cloud
+    embedding) for ability and speed, then updates benchmark_results/reports/.
+    Open-ended outputs are exported for offline review. Cloud
     candidate: --provider openai --url <api-base> --api-key-env <ENV_VAR>.
     """
     from blipshell.benchmark.runner import run_benchmark
     job_set = {j.strip() for j in jobs.split(",") if j.strip()} if jobs else None
     asyncio.run(run_benchmark(
         model, config_path=ctx.obj.get("config_path"),
-        judge_enabled=judge, provider=provider, url=url,
+        provider=provider, url=url,
         api_key_env=api_key_env, coding_timeout=coding_timeout,
         jobs=job_set, timeout_override=timeout_override,
-        context_tokens=context_tokens, repeats=repeats,
+        context_tokens=context_tokens, repeats=repeats, tier=tier,
     ))
 
 
 @benchmark_grp.command("report")
 @click.pass_context
 def benchmark_report_cmd(ctx):
-    """Regenerate the shareable report (data/benchmark/report.md + .json) from all
+    """Regenerate the shareable report (benchmark_results/reports/) from all
     stored runs, without re-running any model."""
     from blipshell.benchmark.runner import run_report
     asyncio.run(run_report(config_path=ctx.obj.get("config_path")))
+
+
+@benchmark_grp.group("review")
+def benchmark_review_grp():
+    """Export blinded review packets and import returned JSON scores."""
+
+
+@benchmark_review_grp.command("export")
+@click.option("--models", default=None, help="Comma-separated model identifiers (default: all with review sources)")
+@click.option("--name", "packet_name", default=None, help="Stable packet name for this comparison cohort")
+@click.pass_context
+def benchmark_review_export_cmd(ctx, models, packet_name):
+    """Create a packet to give ChatGPT, Claude, or a human reviewer."""
+    from blipshell.benchmark.runner import run_review_export
+    model_set = {m.strip() for m in models.split(",") if m.strip()} if models else None
+    asyncio.run(run_review_export(
+        config_path=ctx.obj.get("config_path"), models=model_set,
+        packet_name=packet_name,
+    ))
+
+
+@benchmark_review_grp.command("import")
+@click.argument("response_path", type=click.Path(exists=True, dir_okay=False))
+@click.pass_context
+def benchmark_review_import_cmd(ctx, response_path):
+    """Import JSON scores returned for a previously exported packet."""
+    from blipshell.benchmark.runner import run_review_import
+    asyncio.run(run_review_import(
+        response_path, config_path=ctx.obj.get("config_path"),
+    ))
 
 
 @benchmark_grp.command("discover")

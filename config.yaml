@@ -55,8 +55,9 @@ endpoints:
       # ":floor" = OpenRouter routes each request to the cheapest provider serving the model (2026-09-27:
       # requests were landing on pricier providers such as Parasail at several times the cheapest rate).
       coding: "minimax/minimax-m3:floor"
-      tool_calling: "deepseek/deepseek-v4-flash:floor"     # measured 2026-09-02 post-parser-fix: 0.973 tool_calling (best in corpus) + agent eval 28/30 — see MODEL_DECISIONS.md
-      session_review: "deepseek/deepseek-v4-flash:floor"   # measured 2026-09-02: 0.887/0.537 lessons vs gemma's 0.887/0.386 — see MODEL_DECISIONS.md
+      # The measurements below were taken on deepseek-v4-flash; v4.1-flash is NOT yet benchmarked here.
+      tool_calling: "deepseek/deepseek-v4.1-flash:floor"     # v4-flash measured 2026-09-02 post-parser-fix: 0.973 tool_calling (best in corpus) + agent eval 28/30 — see MODEL_DECISIONS.md
+      session_review: "deepseek/deepseek-v4.1-flash:floor"   # v4-flash measured 2026-09-02: 0.887/0.537 lessons vs gemma's 0.887/0.386 — see MODEL_DECISIONS.md
   - name: "groq"
     url: "https://api.groq.com/openai/v1"
     provider: "openai"
@@ -123,9 +124,9 @@ planner:
   enabled: false      # auto-detection off — use !plan to trigger manually
   max_steps: 5
 
-benchmark:
-  judge_model: "anthropic/claude-opus-4.8"   # neutral frontier grader, never a candidate
-  judge_endpoint: "openrouter"
+# Open-ended outputs are reviewed offline through `blipshell benchmark review`.
+# Benchmark runs never spend OpenRouter/Ollama tokens on an automatic judge.
+benchmark: {}
 
 reflection:
   gravity_enabled: true    # step-1 opt-in taken (default false)

@@ -112,6 +112,18 @@ def _noise_floor(job: str, spreads: dict, incumbent: str, candidate: str) -> flo
     return max(MEANINGFUL_DELTA, sum(observed) / len(observed))
 
 
+# OpenRouter routing suffixes pick a provider, not a model: the benchmark results
+# are recorded under the bare id, so the incumbent must be matched without them.
+_ROUTING_SUFFIXES = (":floor", ":nitro")
+
+
+def _bare_model(name: str) -> str:
+    for suffix in _ROUTING_SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
 def current_assignments(config) -> dict[str, str]:
     """config key -> the model actually serving it, per-endpoint overrides applied.
 
@@ -130,7 +142,7 @@ def current_assignments(config) -> dict[str, str]:
         if candidates:
             best = max(candidates, key=lambda e: e.priority)
             model = best.models[key]
-        out[key] = model or "(unset)"
+        out[key] = _bare_model(model) if model else "(unset)"
     return out
 
 
@@ -145,6 +157,8 @@ def build_advice(report: dict, config) -> list[dict]:
     }
     coverage = report.get("coverage", {})
     models = report.get("models", [])
+    enforce_cohorts = bool(report.get("comparison_contract_enforced"))
+    signatures = report.get("cohort_signatures") or {}
 
     blocks = []
     for key, (jobs, purpose) in JOB_OWNERS.items():
@@ -172,6 +186,14 @@ def build_advice(report: dict, config) -> list[dict]:
         for r in rows:
             if r["model"] == incumbent:
                 continue
+            if enforce_cohorts:
+                inc_sig = signatures.get(incumbent) or []
+                cand_sig = signatures.get(r["model"]) or []
+                # A routing recommendation requires one exact, non-legacy
+                # experiment signature shared by incumbent and candidate.
+                if (len(inc_sig) != 1 or inc_sig != cand_sig or
+                        '"benchmark":"legacy"' in inc_sig[0]):
+                    continue
             gains, losses = [], []
             for j in jobs:
                 cand, inc = r["jobs"].get(j), (inc_row or {}).get("jobs", {}).get(j)
@@ -237,6 +259,15 @@ def build_advice(report: dict, config) -> list[dict]:
                 reason = (f"No measured candidate beats {incumbent} by more than "
                           f"the noise floor ({worst:.3f}) on this key's jobs.")
                 action = None
+
+            if enforce_cohorts and not contenders and len(rows) > 1:
+                verdict = "UNKNOWN"
+                reason = ("No candidate has a same-configuration cohort with "
+                          f"{incumbent}; historical cross-commit scores are not "
+                          "routing evidence.")
+                suites = sorted({JOB_SUITE.get(j, j) for j in jobs})
+                action = (f"blipshell benchmark run {incumbent} --tier decision "
+                          f"--jobs {','.join(suites)}")
 
         blocks.append({
             "key": key, "incumbent": incumbent, "jobs": list(jobs),

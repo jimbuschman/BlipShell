@@ -6,7 +6,7 @@ Extracts tool setup methods so agent.py stays focused on orchestration.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass  # All types accessed via self
@@ -103,6 +103,24 @@ class ToolsMixin:
         from blipshell.core.tools.architecture_tools import DescribeArchitectureTool
         self.tool_registry.register(
             DescribeArchitectureTool(self.config), group="general")
+
+        # Live self-inspection: authoritative paths and operational state.  The
+        # architecture card above is intentionally conceptual; this one keeps
+        # changing facts out of the standing prompt while making them directly
+        # queryable without project activation or shell archaeology.
+        from blipshell.core.tools.runtime_tools import InspectRuntimeTool
+
+        def _runtime_state():
+            task = getattr(self, "_nightly_scheduler_task", None)
+            scheduler = "running" if task is not None and not task.done() else "stopped"
+            return {
+                "active_project": getattr(self, "active_project", None),
+                "nightly_scheduler": scheduler,
+            }
+
+        self.tool_registry.register(InspectRuntimeTool(
+            self.config, self.config_manager, self.sqlite, _runtime_state,
+        ), group="general")
 
         # Plan mode tools
         self.tool_registry.register(

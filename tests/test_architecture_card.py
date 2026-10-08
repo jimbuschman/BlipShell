@@ -6,12 +6,18 @@ gives the model real access to its own scaffolding so it consults instead of
 theorizing (its own diagnosis: 'the limitation isn't insight — it's access').
 """
 
+import json
+from pathlib import Path
+from types import SimpleNamespace as NS
+from unittest.mock import AsyncMock
+
 import pytest
 
 from blipshell.core.tools.architecture_tools import (
     DescribeArchitectureTool,
     build_card,
 )
+from blipshell.core.tools.runtime_tools import InspectRuntimeTool
 from blipshell.models.config import AgentConfig, BlipShellConfig
 
 
@@ -51,3 +57,44 @@ async def test_tool_is_read_only_and_returns_card():
     assert tool.definition().name == "describe_architecture"
     result = await tool.execute()
     assert "YOUR ARCHITECTURE" in result
+
+
+def test_runtime_questions_are_routed_to_live_inspection():
+    prompt = AgentConfig().system_prompt
+    assert "use inspect_runtime first" in prompt
+    assert "Do not guess a path" in prompt
+
+
+@pytest.mark.asyncio
+async def test_runtime_tool_reports_authoritative_paths_scheduler_and_history():
+    config = BlipShellConfig()
+    existing_path = Path(__file__).resolve()
+    config.database.path = str(existing_path)
+    now = 1_800_000_000.0
+    metadata = {
+        "nightly_last_run": json.dumps({
+            "completed_at": now, "status": "completed", "elapsed_s": 42.5,
+        }),
+        "nightly_report": json.dumps({
+            "job_statuses": {"ok": 2, "error": 0, "timeout": 0},
+            "warnings": [], "errors": [],
+        }),
+        "nightly_run_history": json.dumps([{
+            "completed_at": now, "status": "completed",
+            "tagging": {"before": {"pending": 5}, "after": {"pending": 0}},
+        }]),
+    }
+    sqlite = NS(get_metadata=AsyncMock(side_effect=lambda key: metadata.get(key)))
+    manager = NS(config_path=existing_path)
+    tool = InspectRuntimeTool(
+        config, manager, sqlite,
+        lambda: {"nightly_scheduler": "running", "active_project": None},
+    )
+
+    assert tool.read_only is True
+    assert tool.definition().name == "inspect_runtime"
+    result = await tool.execute()
+    assert str(existing_path) in result
+    assert "Nightly scheduler: running" in result
+    assert "2/2 jobs ok" in result
+    assert "tagging pending 5->0" in result

@@ -31,6 +31,8 @@ from blipshell.simulate.scenarios import continuity as sc
 
 REPO = Path(__file__).resolve().parents[1]
 RESULTS = REPO / "benchmark_results"
+BEHAVIOURAL = RESULTS / "continuity" / "behavioural"
+RESCORES = RESULTS / "continuity" / "rescored"
 
 _SCENARIOS = {s.name: s for s in sc.get_scenarios()}
 SCORERS = {name: s.steps[0].response_validator for name, s in _SCENARIOS.items()}
@@ -116,7 +118,8 @@ def main(argv=None) -> int:
     ap.add_argument("--glob", default="simulate_continuity__*.json")
     args = ap.parse_args(argv)
 
-    files = sorted(glob.glob(str(RESULTS / args.glob)))
+    files = sorted(set(glob.glob(str(RESULTS / args.glob)) +
+                       glob.glob(str(BEHAVIOURAL / args.glob))))
     runs = [rescore_file(Path(p)) for p in files]
     invalid = []
     for spec in args.invalid:
@@ -133,7 +136,8 @@ def main(argv=None) -> int:
         "infrastructure_invalid": invalid,
         "summary": summarize(runs),
     }
-    out = RESULTS / f"rescore_continuity__v{sc.SCORER_VERSION}__{report['run_ts']}.json"
+    RESCORES.mkdir(parents=True, exist_ok=True)
+    out = RESCORES / f"rescore_continuity__v{sc.SCORER_VERSION}__{report['run_ts']}.json"
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"rescored {len(runs)} run file(s) with scorer v{sc.SCORER_VERSION} -> {out.name}")
     for name, s in report["summary"].items():

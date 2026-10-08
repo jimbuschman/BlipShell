@@ -1,14 +1,13 @@
 """Benchmark harness — runs a candidate model through the existing suites,
-normalizes their output into metric rows, and grades open-ended outputs.
+normalizes objective metrics, and captures open-ended outputs for review.
 
 Design split (so logic is unit-testable on the dev box, per the project's
 validation split — model behavior is validated only on the Ollama PC):
 
   * Pure scoring functions (`score_*`) take a suite's raw runner output and
     return {metric: value}. No LLM, no I/O — fully unit-testable with canned data.
-  * Async `run_*` methods execute the reused suite runners, then call the pure
-    scorers and the (optional) judge, and emit metric-row dicts ready for
-    BenchmarkStore.record_run.
+  * Async `run_*` methods execute the reused suite runners, call pure scorers,
+    and queue open-ended cases for offline external review.
 
 The suite runners themselves are imported and reused from tests/benchmark_*.py
 (they each take a router) — this harness never reimplements task execution.
@@ -22,6 +21,7 @@ from pathlib import Path
 from typing import Optional
 
 from blipshell.benchmark.judge import LLMJudge
+from blipshell.benchmark.review import RUBRICS
 from blipshell.llm.endpoints import EndpointManager
 from blipshell.llm.router import LLMRouter, TaskType
 from blipshell.models.config import EndpointConfig, LLMConfig, ModelsConfig, resolve_env_vars
@@ -601,6 +601,20 @@ def score_reflection_completeness(parsed: dict) -> float:
     return filled / len(keys)
 
 
+def completion_rate(results: list[dict], field: str = "response") -> Optional[float]:
+    """Fraction of attempted cases that returned a non-error response."""
+    if not results:
+        return None
+    completed = 0
+    for result in results:
+        value = result.get(field)
+        if value is None:
+            value = result.get("raw") or result.get("content")
+        if value is not None and not str(value).startswith("ERROR:"):
+            completed += 1
+    return round(completed / len(results), 4)
+
+
 def realdata_agreement(results: list[dict], orig_key: str, new_key: str, tol: float) -> Optional[float]:
     """Fraction where the candidate's value agrees (within tol) with the stored
     (prior-model) value. This is a DRIFT signal, not ground truth — recorded for
@@ -659,6 +673,18 @@ class BenchmarkHarness:
         self.tier = tier
         self.judge = judge
         self.is_baseline = is_baseline
+        self.review_items: list[dict] = []
+
+    def _queue_review(self, category: str, case: str, task: str, response: str) -> None:
+        if str(response).startswith("ERROR:"):
+            return
+        self.review_items.append({
+            "category": category,
+            "case": case,
+            "task": task,
+            "response": response,
+            "rubric": RUBRICS[category],
+        })
 
     def _row(self, suite: str, task_type: str, metric: str, value, unit: str = "ratio", raw=None) -> dict:
         return {
@@ -690,18 +716,26 @@ class BenchmarkHarness:
         status("pipeline: ranking")
         ranking = await bm.benchmark_ranking(r)
         rows.append(self._row("pipeline", "ranking", "accuracy", score_ranking(ranking)))
+        rows.append(self._row("pipeline", "ranking", "completion_rate",
+                              completion_rate(ranking, "raw")))
 
         status("pipeline: importance")
         importance = await bm.benchmark_importance(r)
         rows.append(self._row("pipeline", "importance", "accuracy", score_importance(importance)))
+        rows.append(self._row("pipeline", "importance", "completion_rate",
+                              completion_rate(importance, "raw")))
 
         status("pipeline: rank+importance")
         rank_imp = await bm.benchmark_rank_and_importance(r)
         rows.append(self._row("pipeline", "rank_importance", "accuracy", score_rank_and_importance(rank_imp)))
+        rows.append(self._row("pipeline", "rank_importance", "completion_rate",
+                              completion_rate(rank_imp, "raw")))
 
         status("pipeline: contradiction")
         contradiction = await bm.benchmark_contradiction(r)
         rows.append(self._row("pipeline", "contradiction", "accuracy", score_contradiction(contradiction)))
+        rows.append(self._row("pipeline", "contradiction", "completion_rate",
+                              completion_rate(contradiction, "raw")))
 
         dedup_rows, dedup_text, dedup_json = await self._dedup_rows(bm, status)
         rows += dedup_rows
@@ -709,6 +743,8 @@ class BenchmarkHarness:
         status("pipeline: entity extraction")
         entity = await bm.benchmark_entity_extraction(r)
         rows.append(self._row("pipeline", "entity", "accuracy", score_entity(entity)))
+        rows.append(self._row("pipeline", "entity", "completion_rate",
+                              completion_rate(entity, "raw")))
 
         status("pipeline: summarization")
         summ = await bm.benchmark_summarization(r)
@@ -717,6 +753,12 @@ class BenchmarkHarness:
             [s["response"] for s in summ],
         )
         rows.append(self._row("pipeline", "summarization", "quality", summ_q))
+        rows.append(self._row("pipeline", "summarization", "completion_rate",
+                              completion_rate(summ)))
+        for i, (message, result) in enumerate(zip(bm.TEST_MESSAGES, summ), 1):
+            self._queue_review(
+                "summarization", f"message-{i}", message["content"], result["response"],
+            )
         rows.append(self._row("pipeline", "summarization", "length_words",
                               _mean_words([s["response"] for s in summ]), unit="words"))
 
@@ -725,6 +767,12 @@ class BenchmarkHarness:
         conv_texts = [bm.build_conversation_text(c) for c in bm.TEST_CONVERSATIONS]
         less_q = await self._judge_lessons(conv_texts, [l["response"] for l in lessons])
         rows.append(self._row("pipeline", "lessons", "quality", less_q))
+        rows.append(self._row("pipeline", "lessons", "completion_rate",
+                              completion_rate(lessons)))
+        for i, (conversation, result) in enumerate(zip(conv_texts, lessons), 1):
+            self._queue_review(
+                "lessons", f"conversation-{i}", conversation, result["response"],
+            )
         rows.append(self._row("pipeline", "lessons", "length_words",
                               _mean_words([l["response"] for l in lessons]), unit="words"))
 
@@ -752,6 +800,8 @@ class BenchmarkHarness:
         rows.append(self._row("pipeline", "dedup", "accuracy",
                               score_dedup(dedup_text, count_invalid_as_wrong=True), raw=dedup_text))
         rows.append(self._row("pipeline", "dedup", "valid_rate", score_dedup_valid_rate(dedup_text)))
+        rows.append(self._row("pipeline", "dedup", "completion_rate",
+                              completion_rate(dedup_text, "raw")))
 
         status("pipeline: dedup verdict (structured)")
         dedup_json = await bm.benchmark_dedup(r, structured=True)
@@ -805,6 +855,10 @@ class BenchmarkHarness:
             reason_tasks, [x["response"] for x in reasoning])
         rows.append(self._row("reasoning", "reasoning", "quality", reason_q,
                               raw={"scored": r_scored, "cases": r_total}))
+        rows.append(self._row("reasoning", "reasoning", "completion_rate",
+                              completion_rate(reasoning)))
+        for i, (task, result) in enumerate(zip(reason_tasks, reasoning), 1):
+            self._queue_review("reasoning", f"reasoning-{i}", task, result["response"])
         rows.append(self._row("reasoning", "reasoning", "length_words",
                               _mean_words([x["response"] for x in reasoning]), unit="words"))
 
@@ -817,9 +871,13 @@ class BenchmarkHarness:
         # task_type "coding" (its sandbox pass rate), and report._scoring_map
         # keys by task_type alone — so on a full run the two silently collapsed
         # and whichever row came last won. This judged generation score was
-        # computed, spent judge tokens, and was then discarded.
+        # computed and then discarded in the old automatic-judge workflow.
         rows.append(self._row("reasoning", "code_gen", "quality", code_q,
                               raw={"scored": c_scored, "cases": c_total}))
+        rows.append(self._row("reasoning", "code_gen", "completion_rate",
+                              completion_rate(coding)))
+        for i, (task, result) in enumerate(zip(code_tasks, coding), 1):
+            self._queue_review("code_gen", f"code-{i}", task, result["response"])
         rows.append(self._row("reasoning", "code_gen", "length_words",
                               _mean_words([x["response"] for x in coding]), unit="words"))
 
@@ -830,6 +888,8 @@ class BenchmarkHarness:
         # turn and are NOT comparable — see TOOL_CALLING_SYSTEM in the suite.
         rows.append(self._row("reasoning", "tool_calling", "tool_pass_rate", score_tool_calling(tools),
                               raw={"system_prompt": True}))
+        rows.append(self._row("reasoning", "tool_calling", "completion_rate",
+                              completion_rate(tools, "content")))
 
         lat = _mean_latency(reasoning, coding, tools)
         rows.append(self._row("reasoning", "reasoning_suite", "latency_s", lat, unit="seconds"))
@@ -924,6 +984,10 @@ class BenchmarkHarness:
             if str(raw).startswith("ERROR:"):
                 continue
             responses.append(raw)
+            self._queue_review(
+                "session_review", case.get("name") or f"session-{len(responses)}",
+                f"Summary: {case['summary']}\n\n{case['transcript']}", raw,
+            )
             parsed = MemoryProcessor._parse_reflection(raw)
             completeness_scores.append(score_reflection_completeness(parsed))
             if self.judge:
@@ -934,9 +998,17 @@ class BenchmarkHarness:
                 ))
 
         completeness = _mean(completeness_scores)
-        quality = _mean(judge_scores) if self.judge else completeness
+        # Structure completeness is deterministic but is not a quality verdict.
+        # The latter stays unscored until an offline external review is imported.
+        quality = _mean(judge_scores) if self.judge else None
         rows = [self._row("session_review", "session_review", "quality", quality,
                           raw={"completeness": completeness, "judged": bool(self.judge)})]
+        rows.append(self._row("session_review", "session_review", "completeness",
+                              completeness))
+        rows.append(self._row(
+            "session_review", "session_review", "completion_rate",
+            round(len(responses) / len(SESSION_REVIEW_CASES), 4) if SESSION_REVIEW_CASES else None,
+        ))
         rows.append(self._row("session_review", "session_review", "length_words",
                               _mean_words(responses), unit="words"))
         lat = round(sum(latencies) / len(latencies), 3) if latencies else None
@@ -1077,6 +1149,10 @@ class BenchmarkHarness:
         rows = [self._row("coding", "coding_agentic", "accuracy", score,
                           raw={"checks_passed": passed, "checks_total": total,
                                "tasks_completed": completed, "tasks_total": len(task_list)})]
+        rows.append(self._row(
+            "coding", "coding_agentic", "completion_rate",
+            round(completed / len(task_list), 4) if task_list else None,
+        ))
         lat = round(sum(times) / len(times), 2) if times else None
         # Latency stays keyed on the SUITE name ("coding") — report.LATENCY_SUITES
         # matches suites, not jobs, so renaming this would drop the row silently.

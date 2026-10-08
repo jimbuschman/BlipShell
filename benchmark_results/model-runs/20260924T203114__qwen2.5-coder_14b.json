@@ -1,0 +1,1140 @@
+{
+  "schema": 2,
+  "model": "qwen2.5-coder:14b",
+  "run_group": "qwen2.5-coder_14b@2026-09-24T20:31:14.491815+00:00",
+  "run_ts": "2026-09-24T20:31:14.491815+00:00",
+  "tier": "compare",
+  "judge_model": null,
+  "jobs": [
+    "pipeline",
+    "reasoning",
+    "session_review"
+  ],
+  "git_sha": "d1e355a",
+  "host": "HPBENDERTWO",
+  "benchmark_manifest": {
+    "benchmark_version": "2.0",
+    "dataset_version": "2026-09-23",
+    "scorer_version": "2",
+    "source_fingerprint": "b821993265074d47",
+    "required_categories": [
+      "rank_importance",
+      "ranking",
+      "importance",
+      "contradiction",
+      "dedup",
+      "entity",
+      "summarization",
+      "lessons",
+      "reasoning",
+      "code_gen",
+      "coding_agentic",
+      "tool_calling",
+      "session_review",
+      "session_review_chunked",
+      "embedding"
+    ],
+    "open_ended_categories": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "tiers": {
+      "smoke": {
+        "jobs": [
+          "dedup",
+          "reasoning"
+        ],
+        "repeats": 1,
+        "description": "Fast plumbing/capability check; not sufficient for routing decisions."
+      },
+      "compare": {
+        "jobs": [
+          "pipeline",
+          "reasoning",
+          "session_review"
+        ],
+        "repeats": 3,
+        "description": "Comparable routing-job run without the slow coding/embedding suites."
+      },
+      "decision": {
+        "jobs": [
+          "coding",
+          "embedding",
+          "pipeline",
+          "realdata",
+          "reasoning",
+          "session_review"
+        ],
+        "repeats": 5,
+        "description": "Full evidence run for a production model decision."
+      }
+    }
+  },
+  "run_settings": {
+    "provider": "ollama",
+    "endpoint_names": [
+      "local",
+      "local-cloud"
+    ],
+    "context_tokens": 32768,
+    "timeout_s": 300.0,
+    "repeats": 3,
+    "tier": "compare",
+    "jobs": [
+      "pipeline",
+      "reasoning",
+      "session_review"
+    ]
+  },
+  "rows": [
+    {
+      "suite": "pipeline",
+      "task_type": "ranking",
+      "metric": "accuracy",
+      "value": 0.9234,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.9264,
+        0.9206,
+        0.9233
+      ],
+      "spread": 0.0058
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "ranking",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "importance",
+      "metric": "accuracy",
+      "value": 0.9207,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.9635,
+        0.8883,
+        0.9103
+      ],
+      "spread": 0.0752
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "importance",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "rank_importance",
+      "metric": "accuracy",
+      "value": 0.9428,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.936,
+        0.9571,
+        0.9352
+      ],
+      "spread": 0.0219
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "rank_importance",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "contradiction",
+      "metric": "accuracy",
+      "value": 0.9167,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        0.8333333333333334,
+        0.9166666666666666
+      ],
+      "spread": 0.1667
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "contradiction",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "accuracy",
+      "value": 0.6111,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.52
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.28
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.27
+        },
+        {
+          "raw": "UPDATE 1",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 0.43
+        },
+        {
+          "raw": "UPDATE 1",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 0.44
+        },
+        {
+          "raw": "UPDATE 1",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 0.4
+        },
+        {
+          "raw": "UPDATE 2",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 0.42
+        },
+        {
+          "raw": "UPDATE 2",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 0.42
+        },
+        {
+          "raw": "UPDATE 1",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 0.42
+        },
+        {
+          "raw": "UPDATE 1",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": false,
+          "time": 0.42
+        },
+        {
+          "raw": "UPDATE 2",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 0.39
+        },
+        {
+          "raw": "UPDATE 1",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": false,
+          "time": 0.41
+        }
+      ],
+      "values": [
+        0.5,
+        0.8333,
+        0.5
+      ],
+      "spread": 0.3333
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "valid_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "accuracy",
+      "value": 0.6944,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "{\n  \"action\": \"ADD\",\n  \"target_index\": null,\n  \"reason\": \"The new memory contains unique information about the user's cat that is not present in the existing memories.\"\n}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 2.94
+        },
+        {
+          "raw": "{\n  \"action\": \"ADD\",\n  \"target_index\": null,\n  \"reason\": \"The new memory contains unique information about the desk robot's speaker specifications.\"\n}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 2.52
+        },
+        {
+          "raw": "{\n  \"action\": \"ADD\",\n  \"target_index\": null,\n  \"reason\": \"The new memory provides unique information not found in any existing memory.\"\n}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 2.5
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"The new memory refines the existing memory by specifying that the user prefers dark mode universally, not just in editors.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 3.17
+        },
+        {
+          "raw": "{\n  \"action\": \"ADD\",\n  \"target_index\": null,\n  \"reason\": \"The new memory adds unique information not present in the existing memories.\"\n}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 2.41
+        },
+        {
+          "raw": "{\n  \"action\": \"NONE\",\n  \"target_index\": null,\n  \"reason\": \"The new memory is redundant as it states the same thing as existing memory 1.\"\n}",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 2.69
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 2,\n  \"reason\": \"The new memory provides additional details about Max, refining the existing memory.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 2.61
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 2,\n  \"reason\": \"The new memory provides more specific details about the local model used for summarization.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 2.7
+        },
+        {
+          "raw": "{\n  \"action\": \"ADD\",\n  \"target_index\": null,\n  \"reason\": \"The new memory contains unique information not found in the existing memories.\"\n}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": false,
+          "time": 2.43
+        },
+        {
+          "raw": "{\n  \"action\": \"DELETE\",\n  \"target_index\": 1,\n  \"reason\": \"The new memory directly contradicts the existing memory.\"\n}",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 2.31
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 2,\n  \"reason\": \"The new memory refines the user's location from Ohio to Texas.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 2.62
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"The new memory specifies a change in the vector store from ChromaDB to sqlite-vec.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": false,
+          "time": 2.9
+        }
+      ],
+      "values": [
+        0.5833,
+        0.75,
+        0.75
+      ],
+      "spread": 0.1667
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "valid_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "accuracy_think",
+      "value": null,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.04
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.04
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": false,
+          "correct": false,
+          "time": 0.04
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": false,
+          "correct": false,
+          "time": 0.04
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": false,
+          "correct": false,
+          "time": 0.02
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": false,
+          "correct": false,
+          "time": 0.04
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": false,
+          "correct": false,
+          "time": 0.04
+        }
+      ],
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "valid_rate_think",
+      "value": 0.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "accuracy_think",
+      "value": null,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.04
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.02
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.04
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.04
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": false,
+          "correct": false,
+          "time": 0.04
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": false,
+          "correct": false,
+          "time": 0.02
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"qwen2.5-coder:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        }
+      ],
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "valid_rate_think",
+      "value": 0.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "entity",
+      "metric": "accuracy",
+      "value": 0.7824,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.7937,
+        0.7639,
+        0.7897
+      ],
+      "spread": 0.0298
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "entity",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "length_words",
+      "value": 8.0667,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        8.2,
+        7.2,
+        8.8
+      ],
+      "spread": 1.6
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "length_words",
+      "value": 20.9667,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        30.2,
+        16.7,
+        16.0
+      ],
+      "spread": 14.2
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "pipeline",
+      "metric": "latency_s",
+      "value": 1.1017,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        1.222,
+        1.035,
+        1.048
+      ],
+      "spread": 0.187
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "scored": 0,
+        "cases": 12
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "length_words",
+      "value": 169.0333,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        164.3,
+        172.7,
+        170.1
+      ],
+      "spread": 8.4
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "scored": 0,
+        "cases": 9
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "length_words",
+      "value": 61.2,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        61.0,
+        56.0,
+        66.6
+      ],
+      "spread": 10.6
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "tool_calling",
+      "metric": "tool_pass_rate",
+      "value": 0.0,
+      "unit": "ratio",
+      "raw": {
+        "system_prompt": true
+      },
+      "values": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "tool_calling",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning_suite",
+      "metric": "latency_s",
+      "value": 8.094,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        8.035,
+        8.011,
+        8.236
+      ],
+      "spread": 0.225
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "completeness": 1.0,
+        "judged": false
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "completeness",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "length_words",
+      "value": 115.2,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        113.8,
+        118.9,
+        112.9
+      ],
+      "spread": 6.0
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "latency_s",
+      "value": 12.6307,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        12.325,
+        12.962,
+        12.605
+      ],
+      "spread": 0.637
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review_chunked",
+      "metric": "accuracy",
+      "value": 0.9,
+      "unit": "ratio",
+      "raw": {
+        "cases": 1,
+        "coverage": 1.0,
+        "fidelity": 1.0,
+        "completeness": 1.0
+      },
+      "values": [
+        1.0,
+        1.0,
+        0.7
+      ],
+      "spread": 0.3
+    }
+  ]
+}

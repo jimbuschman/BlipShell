@@ -1,0 +1,1140 @@
+{
+  "schema": 2,
+  "model": "ministral-3:14b",
+  "run_group": "ministral-3_14b@2026-09-24T06:31:25.895261+00:00",
+  "run_ts": "2026-09-24T06:31:25.895261+00:00",
+  "tier": "compare",
+  "judge_model": null,
+  "jobs": [
+    "pipeline",
+    "reasoning",
+    "session_review"
+  ],
+  "git_sha": "d1e355a",
+  "host": "HPBENDERTWO",
+  "benchmark_manifest": {
+    "benchmark_version": "2.0",
+    "dataset_version": "2026-09-23",
+    "scorer_version": "2",
+    "source_fingerprint": "b821993265074d47",
+    "required_categories": [
+      "rank_importance",
+      "ranking",
+      "importance",
+      "contradiction",
+      "dedup",
+      "entity",
+      "summarization",
+      "lessons",
+      "reasoning",
+      "code_gen",
+      "coding_agentic",
+      "tool_calling",
+      "session_review",
+      "session_review_chunked",
+      "embedding"
+    ],
+    "open_ended_categories": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "tiers": {
+      "smoke": {
+        "jobs": [
+          "dedup",
+          "reasoning"
+        ],
+        "repeats": 1,
+        "description": "Fast plumbing/capability check; not sufficient for routing decisions."
+      },
+      "compare": {
+        "jobs": [
+          "pipeline",
+          "reasoning",
+          "session_review"
+        ],
+        "repeats": 3,
+        "description": "Comparable routing-job run without the slow coding/embedding suites."
+      },
+      "decision": {
+        "jobs": [
+          "coding",
+          "embedding",
+          "pipeline",
+          "realdata",
+          "reasoning",
+          "session_review"
+        ],
+        "repeats": 5,
+        "description": "Full evidence run for a production model decision."
+      }
+    }
+  },
+  "run_settings": {
+    "provider": "ollama",
+    "endpoint_names": [
+      "local",
+      "local-cloud"
+    ],
+    "context_tokens": 32768,
+    "timeout_s": 300.0,
+    "repeats": 3,
+    "tier": "compare",
+    "jobs": [
+      "pipeline",
+      "reasoning",
+      "session_review"
+    ]
+  },
+  "rows": [
+    {
+      "suite": "pipeline",
+      "task_type": "ranking",
+      "metric": "accuracy",
+      "value": 0.9588,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.9658,
+        0.9553,
+        0.9553
+      ],
+      "spread": 0.0105
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "ranking",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "importance",
+      "metric": "accuracy",
+      "value": 0.9265,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.9265,
+        0.9265,
+        0.9265
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "importance",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "rank_importance",
+      "metric": "accuracy",
+      "value": 0.9561,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.9497,
+        0.9659,
+        0.9526
+      ],
+      "spread": 0.0162
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "rank_importance",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "contradiction",
+      "metric": "accuracy",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "contradiction",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "accuracy",
+      "value": 0.8055,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.48
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.24
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.24
+        },
+        {
+          "raw": "UPDATE 1",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 0.35
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 0.25
+        },
+        {
+          "raw": "NONE",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 0.29
+        },
+        {
+          "raw": "UPDATE 2",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 0.34
+        },
+        {
+          "raw": "UPDATE 2",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 0.36
+        },
+        {
+          "raw": "UPDATE 1",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 0.35
+        },
+        {
+          "raw": "DELETE 1",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 0.35
+        },
+        {
+          "raw": "DELETE 2",
+          "parsed": "DELETE",
+          "parsed_index": 1,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 0.36
+        },
+        {
+          "raw": "DELETE 1",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 0.37
+        }
+      ],
+      "values": [
+        0.8333,
+        0.8333,
+        0.75
+      ],
+      "spread": 0.0833
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "valid_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "accuracy",
+      "value": 0.8333,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "{\"action\": \"ADD\", \"target_index\": null, \"reason\": \"New memory introduces unique information about the user's cat.\"}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 1.82
+        },
+        {
+          "raw": "{\n  \"action\": \"ADD\",\n  \"target_index\": null,\n  \"reason\": \"New memory provides unique technical specifications unrelated to existing memories.\"\n}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 2.02
+        },
+        {
+          "raw": "{\n  \"action\": \"ADD\",\n  \"target_index\": null,\n  \"reason\": \"New information about learning Rust is unrelated to existing memories.\"\n}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 2.04
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"New memory is more general and refines the existing specific preference.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 2.17
+        },
+        {
+          "raw": "{\n  \"action\": \"ADD\",\n  \"target_index\": null,\n  \"reason\": \"New memory introduces a unique standalone fact about the vector store being sqlite-vec, unrelated to BlipShell or Ranking.\"\n}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": false,
+          "time": 2.71
+        },
+        {
+          "raw": "{\n  \"action\": \"NONE\",\n  \"target_index\": null,\n  \"reason\": \"The new memory is identical in meaning to existing memory 1.\"\n}",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 2.16
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 2,\n  \"reason\": \"New memory adds species, age, and breed details to the existing dog name.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 2.36
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 2,\n  \"reason\": \"New memory adds detail (Groq fallback) to the existing summarization memory.\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 2.33
+        },
+        {
+          "raw": "{\n  \"action\": \"UPDATE\",\n  \"target_index\": 1,\n  \"reason\": \"Refines location from 'Ohio' to 'Columbus, Ohio, near the university'\"\n}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 2.57
+        },
+        {
+          "raw": "{\n  \"action\": \"DELETE\",\n  \"target_index\": 1,\n  \"reason\": \"New memory contradicts the outdated OS preference.\"\n}",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 1.95
+        },
+        {
+          "raw": "{\n  \"action\": \"DELETE\",\n  \"target_index\": 2,\n  \"reason\": \"The new memory contradicts the existing location.\"\n}",
+          "parsed": "DELETE",
+          "parsed_index": 1,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 1.93
+        },
+        {
+          "raw": "{\n  \"action\": \"DELETE\",\n  \"target_index\": 1,\n  \"reason\": \"The new memory contradicts the existing one about the vector store being ChromaDB.\"\n}",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 2.43
+        }
+      ],
+      "values": [
+        0.8333,
+        0.8333,
+        0.8333
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "valid_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "accuracy_think",
+      "value": null,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.04
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.04
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.05
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": false,
+          "correct": false,
+          "time": 0.05
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": false,
+          "correct": false,
+          "time": 0.04
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": false,
+          "correct": false,
+          "time": 0.02
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        }
+      ],
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "valid_rate_think",
+      "value": 0.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "accuracy_think",
+      "value": null,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.02
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.02
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.04
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.05
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": false,
+          "correct": false,
+          "time": 0.02
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": false,
+          "correct": false,
+          "time": 0.03
+        },
+        {
+          "raw": "ERROR: \"ministral-3:14b\" does not support thinking (status code: 400)",
+          "parsed": "ERROR",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": false,
+          "correct": false,
+          "time": 0.04
+        }
+      ],
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "valid_rate_think",
+      "value": 0.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "entity",
+      "metric": "accuracy",
+      "value": 0.7622,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.7089,
+        0.8062,
+        0.7714
+      ],
+      "spread": 0.0973
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "entity",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "length_words",
+      "value": 6.1,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        5.7,
+        6.8,
+        5.8
+      ],
+      "spread": 1.1
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "length_words",
+      "value": 51.3667,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        48.5,
+        56.0,
+        49.6
+      ],
+      "spread": 7.5
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "pipeline",
+      "metric": "latency_s",
+      "value": 1.174,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        1.204,
+        1.194,
+        1.124
+      ],
+      "spread": 0.08
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "scored": 0,
+        "cases": 12
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "length_words",
+      "value": 217.3333,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        216.2,
+        210.4,
+        225.4
+      ],
+      "spread": 15.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "scored": 0,
+        "cases": 9
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "length_words",
+      "value": 83.4333,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        82.1,
+        91.3,
+        76.9
+      ],
+      "spread": 14.4
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "tool_calling",
+      "metric": "tool_pass_rate",
+      "value": 0.6667,
+      "unit": "ratio",
+      "raw": {
+        "system_prompt": true
+      },
+      "values": [
+        0.6667,
+        0.6667,
+        0.6667
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "tool_calling",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning_suite",
+      "metric": "latency_s",
+      "value": 11.011,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        10.889,
+        11.033,
+        11.111
+      ],
+      "spread": 0.222
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "completeness": 1.0,
+        "judged": false
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "completeness",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "length_words",
+      "value": 178.6,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        178.4,
+        179.9,
+        177.5
+      ],
+      "spread": 2.4
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "latency_s",
+      "value": 17.7923,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        17.568,
+        17.813,
+        17.996
+      ],
+      "spread": 0.428
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review_chunked",
+      "metric": "accuracy",
+      "value": 0.9,
+      "unit": "ratio",
+      "raw": {
+        "cases": 1,
+        "coverage": 0.8,
+        "fidelity": 1.0,
+        "completeness": 0.0
+      },
+      "values": [
+        0.9,
+        0.9,
+        0.9
+      ],
+      "spread": 0.0
+    }
+  ]
+}

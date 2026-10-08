@@ -1,0 +1,3885 @@
+{
+  "generated": "2026-09-25T14:22:30.451667+00:00",
+  "judge_model": null,
+  "models": [
+    "deepseek-v3.2:cloud",
+    "deepseek-v4-flash:cloud",
+    "deepseek/deepseek-v4-flash",
+    "deepseek/deepseek-v4.1-flash",
+    "devstral-small-2:24b",
+    "gemini-3-flash-preview:cloud",
+    "gemma3n:e4b",
+    "gemma4:31b-cloud",
+    "gemma4:e4b",
+    "glm-4.7-flash:latest",
+    "glm-4.7:cloud",
+    "glm-5.1:cloud",
+    "glm-5.2:cloud",
+    "glm-5:cloud",
+    "glm4:latest",
+    "gpt-oss:120b-cloud",
+    "gpt-oss:latest",
+    "kimi-k2-thinking:cloud",
+    "kimi-k2.5:cloud",
+    "kimi-k2.7-code:cloud",
+    "kimi-k3:cloud",
+    "lfm2.5",
+    "lfm2.5:latest",
+    "minimax-m2.5:cloud",
+    "minimax-m2.7:cloud",
+    "minimax-m3:cloud",
+    "minimax/minimax-m3",
+    "minimax/minimax-m3:free",
+    "ministral-3:14b",
+    "ministral-3:8b",
+    "moonshotai/kimi-k2.5",
+    "nemotron-3-nano:30b-cloud",
+    "nemotron-3-super:cloud",
+    "nemotron-3-ultra:cloud",
+    "openai/gpt-5.6-luna",
+    "openai/gpt-6-luna",
+    "phi4:14b",
+    "qwen2.5-coder:14b",
+    "qwen2.5-coder:7b",
+    "qwen2.5:14b",
+    "qwen2.5:7b",
+    "qwen3-coder-next:cloud",
+    "qwen3-coder:30b",
+    "qwen3.5:4b",
+    "qwen3.5:9b",
+    "qwen3.6:27b",
+    "qwen3:14b",
+    "qwen3:8b",
+    "z-ai/glm-5.2"
+  ],
+  "categories": [
+    {
+      "key": "rank_importance",
+      "label": "Rank+Importance (live pipeline)",
+      "measures": "The combined rank+importance+type call every message goes through (rank_importance_and_classify, processor.py:185). This is models.ranking_importance.",
+      "scoring": "Mean of rank-correlation and importance calibration vs gold.",
+      "scores": {
+        "deepseek/deepseek-v4-flash": 0.9786,
+        "deepseek/deepseek-v4.1-flash": 0.9776,
+        "devstral-small-2:24b": 0.972,
+        "gemma4:31b-cloud": 0.9785,
+        "gemma4:e4b": 0.9622,
+        "glm-4.7-flash:latest": 0.9523,
+        "gpt-oss:120b-cloud": 0.9528,
+        "gpt-oss:latest": 0.9447,
+        "lfm2.5:latest": 0.582,
+        "minimax/minimax-m3": 0.9716,
+        "minimax/minimax-m3:free": 0.9853,
+        "ministral-3:14b": 0.9561,
+        "ministral-3:8b": 0.9651,
+        "moonshotai/kimi-k2.5": 0.9637,
+        "nemotron-3-nano:30b-cloud": 0.9239,
+        "nemotron-3-super:cloud": 0.9738,
+        "nemotron-3-ultra:cloud": 0.9702,
+        "openai/gpt-5.6-luna": 0.9778,
+        "openai/gpt-6-luna": 0.9811,
+        "phi4:14b": 0.9627,
+        "qwen2.5-coder:14b": 0.9428,
+        "qwen2.5:14b": 0.9664,
+        "qwen3-coder:30b": 0.9604,
+        "qwen3.5:4b": 0.9446,
+        "qwen3.5:9b": 0.9562,
+        "qwen3.6:27b": 0.9753,
+        "qwen3:14b": 0.9612,
+        "qwen3:8b": 0.9408,
+        "z-ai/glm-5.2": 0.9762
+      },
+      "effective_scores": {
+        "deepseek/deepseek-v4-flash": 0.9786,
+        "deepseek/deepseek-v4.1-flash": 0.9776,
+        "devstral-small-2:24b": 0.972,
+        "gemma4:31b-cloud": 0.9785,
+        "gemma4:e4b": 0.9622,
+        "glm-4.7-flash:latest": 0.9523,
+        "gpt-oss:120b-cloud": 0.9528,
+        "gpt-oss:latest": 0.9447,
+        "lfm2.5:latest": 0.582,
+        "minimax/minimax-m3": 0.9716,
+        "minimax/minimax-m3:free": 0.9853,
+        "ministral-3:14b": 0.9561,
+        "ministral-3:8b": 0.9651,
+        "moonshotai/kimi-k2.5": 0.9637,
+        "nemotron-3-nano:30b-cloud": 0.9239,
+        "nemotron-3-super:cloud": 0.9738,
+        "nemotron-3-ultra:cloud": 0.9702,
+        "openai/gpt-5.6-luna": 0.9778,
+        "openai/gpt-6-luna": 0.9811,
+        "phi4:14b": 0.9627,
+        "qwen2.5-coder:14b": 0.9428,
+        "qwen2.5:14b": 0.9664,
+        "qwen3-coder:30b": 0.9604,
+        "qwen3.5:4b": 0.9446,
+        "qwen3.5:9b": 0.9562,
+        "qwen3.6:27b": 0.3251,
+        "qwen3:14b": 0.9612,
+        "qwen3:8b": 0.9408,
+        "z-ai/glm-5.2": 0.9762
+      },
+      "spread": {
+        "deepseek/deepseek-v4-flash": 0.0,
+        "devstral-small-2:24b": 0.0,
+        "gemma4:e4b": 0.0032,
+        "glm-4.7-flash:latest": 0.0119,
+        "gpt-oss:latest": 0.0425,
+        "lfm2.5:latest": 0.1035,
+        "minimax/minimax-m3:free": 0.0,
+        "ministral-3:14b": 0.0162,
+        "ministral-3:8b": 0.0012,
+        "phi4:14b": 0.0145,
+        "qwen2.5-coder:14b": 0.0219,
+        "qwen2.5:14b": 0.0,
+        "qwen3-coder:30b": 0.0057,
+        "qwen3.5:4b": 0.0321,
+        "qwen3.5:9b": 0.0282,
+        "qwen3:14b": 0.0057,
+        "qwen3:8b": 0.0097
+      },
+      "incomplete": {},
+      "best_model": "minimax/minimax-m3:free"
+    },
+    {
+      "key": "ranking",
+      "label": "Ranking (import path)",
+      "measures": "Standalone rank prompt used only by the bulk import path (rank_memory, import_common.py:598) \u2014 NOT the live pipeline.",
+      "scoring": "Rank-correlation of predicted vs gold rank (order matters); flat output scores ~0.",
+      "scores": {
+        "deepseek/deepseek-v4-flash": 0.9641,
+        "deepseek/deepseek-v4.1-flash": 0.9718,
+        "devstral-small-2:24b": 0.9249,
+        "gemma4:31b-cloud": 0.9572,
+        "gemma4:e4b": 0.9299,
+        "glm-4.7-flash:latest": 0.8742,
+        "glm-5.2:cloud": 0.9608,
+        "gpt-oss:120b-cloud": 0.9573,
+        "gpt-oss:latest": 0.9404,
+        "kimi-k2.7-code:cloud": 0.9534,
+        "lfm2.5": 0.5149,
+        "lfm2.5:latest": 0.5149,
+        "minimax-m3:cloud": 0.9731,
+        "minimax/minimax-m3": 0.9673,
+        "minimax/minimax-m3:free": 0.9671,
+        "ministral-3:14b": 0.9588,
+        "ministral-3:8b": 0.9564,
+        "moonshotai/kimi-k2.5": 0.9368,
+        "nemotron-3-nano:30b-cloud": 0.8135,
+        "nemotron-3-super:cloud": 0.9575,
+        "nemotron-3-ultra:cloud": 0.9685,
+        "openai/gpt-5.6-luna": 0.976,
+        "openai/gpt-6-luna": 0.9664,
+        "phi4:14b": 0.9117,
+        "qwen2.5-coder:14b": 0.9234,
+        "qwen2.5:14b": 0.9575,
+        "qwen3-coder:30b": 0.8892,
+        "qwen3.5:4b": 0.9365,
+        "qwen3.5:9b": 0.9041,
+        "qwen3.6:27b": 0.9264,
+        "qwen3:14b": 0.9237,
+        "qwen3:8b": 0.8693,
+        "z-ai/glm-5.2": 0.9731
+      },
+      "effective_scores": {
+        "deepseek/deepseek-v4-flash": 0.9641,
+        "deepseek/deepseek-v4.1-flash": 0.9718,
+        "devstral-small-2:24b": 0.9249,
+        "gemma4:31b-cloud": 0.9572,
+        "gemma4:e4b": 0.9299,
+        "glm-4.7-flash:latest": 0.8742,
+        "glm-5.2:cloud": 0.9608,
+        "gpt-oss:120b-cloud": 0.9573,
+        "gpt-oss:latest": 0.9404,
+        "kimi-k2.7-code:cloud": 0.9534,
+        "lfm2.5": 0.5149,
+        "lfm2.5:latest": 0.5149,
+        "minimax-m3:cloud": 0.9731,
+        "minimax/minimax-m3": 0.9673,
+        "minimax/minimax-m3:free": 0.9671,
+        "ministral-3:14b": 0.9588,
+        "ministral-3:8b": 0.9564,
+        "moonshotai/kimi-k2.5": 0.9368,
+        "nemotron-3-nano:30b-cloud": 0.8135,
+        "nemotron-3-super:cloud": 0.9575,
+        "nemotron-3-ultra:cloud": 0.9685,
+        "openai/gpt-5.6-luna": 0.976,
+        "openai/gpt-6-luna": 0.9664,
+        "phi4:14b": 0.9117,
+        "qwen2.5-coder:14b": 0.9234,
+        "qwen2.5:14b": 0.9575,
+        "qwen3-coder:30b": 0.8892,
+        "qwen3.5:4b": 0.9365,
+        "qwen3.5:9b": 0.9041,
+        "qwen3.6:27b": 0.3088,
+        "qwen3:14b": 0.9237,
+        "qwen3:8b": 0.8693,
+        "z-ai/glm-5.2": 0.9731
+      },
+      "spread": {
+        "deepseek/deepseek-v4-flash": 0.0,
+        "devstral-small-2:24b": 0.0243,
+        "gemma4:e4b": 0.0251,
+        "glm-4.7-flash:latest": 0.041,
+        "gpt-oss:latest": 0.0315,
+        "lfm2.5:latest": 0.0,
+        "minimax/minimax-m3:free": 0.0,
+        "ministral-3:14b": 0.0105,
+        "ministral-3:8b": 0.0068,
+        "phi4:14b": 0.0392,
+        "qwen2.5-coder:14b": 0.0058,
+        "qwen2.5:14b": 0.0,
+        "qwen3-coder:30b": 0.0211,
+        "qwen3.5:4b": 0.0559,
+        "qwen3.5:9b": 0.0565,
+        "qwen3:14b": 0.0,
+        "qwen3:8b": 0.0036
+      },
+      "incomplete": {},
+      "best_model": "openai/gpt-5.6-luna"
+    },
+    {
+      "key": "importance",
+      "label": "Importance (import path)",
+      "measures": "Standalone importance prompt used only by the bulk import path (ask_importance, import_common.py:648) \u2014 NOT the live pipeline.",
+      "scoring": "Average of correlation and calibration (1-MAE) vs gold importance.",
+      "scores": {
+        "deepseek/deepseek-v4-flash": 0.9326,
+        "deepseek/deepseek-v4.1-flash": 0.9772,
+        "devstral-small-2:24b": 0.8873,
+        "gemma4:31b-cloud": 0.9703,
+        "gemma4:e4b": 0.9231,
+        "glm-4.7-flash:latest": 0.9131,
+        "glm-5.2:cloud": 0.9476,
+        "gpt-oss:120b-cloud": 0.8842,
+        "gpt-oss:latest": 0.8826,
+        "kimi-k2.7-code:cloud": 0.9496,
+        "lfm2.5": 0.6207,
+        "lfm2.5:latest": 0.6369,
+        "minimax-m3:cloud": 0.9544,
+        "minimax/minimax-m3": 0.9597,
+        "minimax/minimax-m3:free": 0.964,
+        "ministral-3:14b": 0.9265,
+        "ministral-3:8b": 0.9151,
+        "moonshotai/kimi-k2.5": 0.9617,
+        "nemotron-3-nano:30b-cloud": 0.8155,
+        "nemotron-3-super:cloud": 0.8948,
+        "nemotron-3-ultra:cloud": 0.9394,
+        "openai/gpt-5.6-luna": 0.9448,
+        "openai/gpt-6-luna": 0.9436,
+        "phi4:14b": 0.9251,
+        "qwen2.5-coder:14b": 0.9207,
+        "qwen2.5:14b": 0.9287,
+        "qwen3-coder:30b": 0.8904,
+        "qwen3.5:4b": 0.9006,
+        "qwen3.5:9b": 0.8995,
+        "qwen3.6:27b": 0.9289,
+        "qwen3:14b": 0.9287,
+        "qwen3:8b": 0.8907,
+        "z-ai/glm-5.2": 0.9486
+      },
+      "effective_scores": {
+        "deepseek/deepseek-v4-flash": 0.9326,
+        "deepseek/deepseek-v4.1-flash": 0.9772,
+        "devstral-small-2:24b": 0.8873,
+        "gemma4:31b-cloud": 0.9703,
+        "gemma4:e4b": 0.9231,
+        "glm-4.7-flash:latest": 0.9131,
+        "glm-5.2:cloud": 0.9476,
+        "gpt-oss:120b-cloud": 0.8842,
+        "gpt-oss:latest": 0.8826,
+        "kimi-k2.7-code:cloud": 0.9496,
+        "lfm2.5": 0.6207,
+        "lfm2.5:latest": 0.6369,
+        "minimax-m3:cloud": 0.9544,
+        "minimax/minimax-m3": 0.9597,
+        "minimax/minimax-m3:free": 0.964,
+        "ministral-3:14b": 0.9265,
+        "ministral-3:8b": 0.9151,
+        "moonshotai/kimi-k2.5": 0.9617,
+        "nemotron-3-nano:30b-cloud": 0.8155,
+        "nemotron-3-super:cloud": 0.8948,
+        "nemotron-3-ultra:cloud": 0.9394,
+        "openai/gpt-5.6-luna": 0.9448,
+        "openai/gpt-6-luna": 0.9436,
+        "phi4:14b": 0.9251,
+        "qwen2.5-coder:14b": 0.9207,
+        "qwen2.5:14b": 0.9287,
+        "qwen3-coder:30b": 0.8904,
+        "qwen3.5:4b": 0.9006,
+        "qwen3.5:9b": 0.8995,
+        "qwen3.6:27b": 0.3096,
+        "qwen3:14b": 0.9287,
+        "qwen3:8b": 0.8907,
+        "z-ai/glm-5.2": 0.9486
+      },
+      "spread": {
+        "deepseek/deepseek-v4-flash": 0.0,
+        "devstral-small-2:24b": 0.0081,
+        "gemma4:e4b": 0.0209,
+        "glm-4.7-flash:latest": 0.0231,
+        "gpt-oss:latest": 0.1144,
+        "lfm2.5:latest": 0.0023,
+        "minimax/minimax-m3:free": 0.0,
+        "ministral-3:14b": 0.0,
+        "ministral-3:8b": 0.0133,
+        "phi4:14b": 0.0152,
+        "qwen2.5-coder:14b": 0.0752,
+        "qwen2.5:14b": 0.0227,
+        "qwen3-coder:30b": 0.0179,
+        "qwen3.5:4b": 0.0445,
+        "qwen3.5:9b": 0.0291,
+        "qwen3:14b": 0.0186,
+        "qwen3:8b": 0.0157
+      },
+      "incomplete": {},
+      "best_model": "deepseek/deepseek-v4.1-flash"
+    },
+    {
+      "key": "contradiction",
+      "label": "Contradiction",
+      "measures": "Decides whether two memories contradict.",
+      "scoring": "Exact YES/NO accuracy over a balanced set.",
+      "scores": {
+        "deepseek/deepseek-v4-flash": 1.0,
+        "deepseek/deepseek-v4.1-flash": 0.9167,
+        "devstral-small-2:24b": 1.0,
+        "gemma4:31b-cloud": 1.0,
+        "gemma4:e4b": 1.0,
+        "glm-4.7-flash:latest": 1.0,
+        "glm-5.2:cloud": 1.0,
+        "gpt-oss:120b-cloud": 1.0,
+        "gpt-oss:latest": 1.0,
+        "kimi-k2.7-code:cloud": 1.0,
+        "minimax-m3:cloud": 1.0,
+        "minimax/minimax-m3": 1.0,
+        "minimax/minimax-m3:free": 1.0,
+        "ministral-3:14b": 1.0,
+        "ministral-3:8b": 0.9722,
+        "moonshotai/kimi-k2.5": 1.0,
+        "nemotron-3-nano:30b-cloud": 1.0,
+        "nemotron-3-super:cloud": 0.75,
+        "nemotron-3-ultra:cloud": 1.0,
+        "openai/gpt-5.6-luna": 1.0,
+        "openai/gpt-6-luna": 0.9167,
+        "phi4:14b": 1.0,
+        "qwen2.5-coder:14b": 0.9167,
+        "qwen2.5:14b": 0.9167,
+        "qwen3-coder:30b": 1.0,
+        "qwen3.5:4b": 0.7778,
+        "qwen3.5:9b": 0.9722,
+        "qwen3.6:27b": 1.0,
+        "qwen3:14b": 1.0,
+        "qwen3:8b": 0.9167,
+        "z-ai/glm-5.2": 1.0
+      },
+      "effective_scores": {
+        "deepseek/deepseek-v4-flash": 1.0,
+        "deepseek/deepseek-v4.1-flash": 0.9167,
+        "devstral-small-2:24b": 1.0,
+        "gemma4:31b-cloud": 1.0,
+        "gemma4:e4b": 1.0,
+        "glm-4.7-flash:latest": 1.0,
+        "glm-5.2:cloud": 1.0,
+        "gpt-oss:120b-cloud": 1.0,
+        "gpt-oss:latest": 1.0,
+        "kimi-k2.7-code:cloud": 1.0,
+        "minimax-m3:cloud": 1.0,
+        "minimax/minimax-m3": 1.0,
+        "minimax/minimax-m3:free": 1.0,
+        "ministral-3:14b": 1.0,
+        "ministral-3:8b": 0.9722,
+        "moonshotai/kimi-k2.5": 1.0,
+        "nemotron-3-nano:30b-cloud": 1.0,
+        "nemotron-3-super:cloud": 0.75,
+        "nemotron-3-ultra:cloud": 1.0,
+        "openai/gpt-5.6-luna": 1.0,
+        "openai/gpt-6-luna": 0.9167,
+        "phi4:14b": 1.0,
+        "qwen2.5-coder:14b": 0.9167,
+        "qwen2.5:14b": 0.9167,
+        "qwen3-coder:30b": 1.0,
+        "qwen3.5:4b": 0.7778,
+        "qwen3.5:9b": 0.9722,
+        "qwen3.6:27b": 0.3333,
+        "qwen3:14b": 1.0,
+        "qwen3:8b": 0.9167,
+        "z-ai/glm-5.2": 1.0
+      },
+      "spread": {
+        "deepseek/deepseek-v4-flash": 0.0,
+        "devstral-small-2:24b": 0.0,
+        "gemma4:e4b": 0.0,
+        "glm-4.7-flash:latest": 0.0,
+        "gpt-oss:latest": 0.0,
+        "minimax/minimax-m3:free": 0.0,
+        "ministral-3:14b": 0.0,
+        "ministral-3:8b": 0.0833,
+        "phi4:14b": 0.0,
+        "qwen2.5-coder:14b": 0.1667,
+        "qwen2.5:14b": 0.0,
+        "qwen3-coder:30b": 0.0,
+        "qwen3.5:4b": 0.0833,
+        "qwen3.5:9b": 0.0833,
+        "qwen3:14b": 0.0,
+        "qwen3:8b": 0.0
+      },
+      "incomplete": {},
+      "best_model": "deepseek/deepseek-v4-flash"
+    },
+    {
+      "key": "dedup",
+      "label": "Dedup verdict (live pipeline)",
+      "measures": "Given a new memory and up to three similar ones, picks ADD / NONE / UPDATE n / DELETE n as a one-line verdict (processor._decide_and_apply_action). Parsed by the strict grammar production runs; an unparseable reply counts as WRONG here because in production it costs a re-ask and then defaults to keeping the memory.",
+      "scoring": "Accuracy: action AND target must match gold. valid_rate (informational) = share of replies the strict grammar accepted.",
+      "scores": {
+        "deepseek/deepseek-v4.1-flash": 0.9167,
+        "devstral-small-2:24b": 0.75,
+        "gemma4:31b-cloud": 1.0,
+        "gemma4:e4b": 0.8889,
+        "glm-4.7-flash:latest": 0.5834,
+        "gpt-oss:120b-cloud": 1.0,
+        "gpt-oss:latest": 0.8889,
+        "lfm2.5:latest": 0.5555,
+        "minimax/minimax-m3": 1.0,
+        "ministral-3:14b": 0.8055,
+        "ministral-3:8b": 0.7222,
+        "moonshotai/kimi-k2.5": 1.0,
+        "nemotron-3-nano:30b-cloud": 0.4167,
+        "nemotron-3-super:cloud": 0.5833,
+        "openai/gpt-5.6-luna": 1.0,
+        "openai/gpt-6-luna": 1.0,
+        "phi4:14b": 0.4722,
+        "qwen2.5-coder:14b": 0.6111,
+        "qwen2.5:14b": 0.7222,
+        "qwen3-coder:30b": 0.5555,
+        "qwen3.5:4b": 0.3889,
+        "qwen3.5:9b": 0.75,
+        "qwen3.6:27b": 0.75,
+        "qwen3:14b": 0.75,
+        "qwen3:8b": 0.5278,
+        "z-ai/glm-5.2": 1.0
+      },
+      "effective_scores": {
+        "deepseek/deepseek-v4.1-flash": 0.9167,
+        "devstral-small-2:24b": 0.75,
+        "gemma4:31b-cloud": 1.0,
+        "gemma4:e4b": 0.8889,
+        "glm-4.7-flash:latest": 0.5834,
+        "gpt-oss:120b-cloud": 1.0,
+        "gpt-oss:latest": 0.8889,
+        "lfm2.5:latest": 0.5555,
+        "minimax/minimax-m3": 1.0,
+        "ministral-3:14b": 0.8055,
+        "ministral-3:8b": 0.7222,
+        "moonshotai/kimi-k2.5": 1.0,
+        "nemotron-3-nano:30b-cloud": 0.4167,
+        "nemotron-3-super:cloud": 0.5833,
+        "openai/gpt-5.6-luna": 1.0,
+        "openai/gpt-6-luna": 1.0,
+        "phi4:14b": 0.4722,
+        "qwen2.5-coder:14b": 0.6111,
+        "qwen2.5:14b": 0.7222,
+        "qwen3-coder:30b": 0.5555,
+        "qwen3.5:4b": 0.3889,
+        "qwen3.5:9b": 0.75,
+        "qwen3.6:27b": 0.25,
+        "qwen3:14b": 0.75,
+        "qwen3:8b": 0.5278,
+        "z-ai/glm-5.2": 1.0
+      },
+      "spread": {
+        "devstral-small-2:24b": 0.0,
+        "gemma4:e4b": 0.0834,
+        "glm-4.7-flash:latest": 0.25,
+        "gpt-oss:latest": 0.1667,
+        "lfm2.5:latest": 0.0833,
+        "ministral-3:14b": 0.0833,
+        "ministral-3:8b": 0.0833,
+        "phi4:14b": 0.0833,
+        "qwen2.5-coder:14b": 0.3333,
+        "qwen2.5:14b": 0.0833,
+        "qwen3-coder:30b": 0.0833,
+        "qwen3.5:4b": 0.25,
+        "qwen3.5:9b": 0.0,
+        "qwen3:14b": 0.0,
+        "qwen3:8b": 0.0833
+      },
+      "incomplete": {},
+      "best_model": "gemma4:31b-cloud"
+    },
+    {
+      "key": "dedup_structured",
+      "label": "Dedup verdict (structured, experimental)",
+      "measures": "Same cases, asked as a schema-constrained JSON object (memory.dedup.structured_output). NOT the production default: this row exists to decide whether it should be. Displayed, not in the composite.",
+      "scoring": "Accuracy over schema-VALID replies; valid_rate = share of replies that validated. Enable the toggle only when valid_rate clears ~0.98 on the model that serves models.reasoning.",
+      "scores": {
+        "deepseek/deepseek-v4.1-flash": 1.0,
+        "devstral-small-2:24b": 0.6111,
+        "gemma4:31b-cloud": 1.0,
+        "gemma4:e4b": 0.6111,
+        "glm-4.7-flash:latest": 0.6111,
+        "gpt-oss:120b-cloud": 1.0,
+        "lfm2.5:latest": 0.1667,
+        "minimax/minimax-m3": 1.0,
+        "ministral-3:14b": 0.8333,
+        "ministral-3:8b": 0.8333,
+        "moonshotai/kimi-k2.5": 1.0,
+        "nemotron-3-nano:30b-cloud": 0.5833,
+        "nemotron-3-super:cloud": 0.5455,
+        "openai/gpt-5.6-luna": 0.8333,
+        "openai/gpt-6-luna": 0.9167,
+        "phi4:14b": 0.4722,
+        "qwen2.5-coder:14b": 0.6944,
+        "qwen2.5:14b": 0.8333,
+        "qwen3-coder:30b": 0.6111,
+        "qwen3.5:4b": 0.5278,
+        "qwen3.5:9b": 0.8333,
+        "qwen3.6:27b": 0.9167,
+        "qwen3:14b": 0.75,
+        "qwen3:8b": 0.75,
+        "z-ai/glm-5.2": 1.0
+      },
+      "effective_scores": {
+        "deepseek/deepseek-v4.1-flash": 1.0,
+        "devstral-small-2:24b": 0.6111,
+        "gemma4:31b-cloud": 1.0,
+        "gemma4:e4b": 0.6111,
+        "glm-4.7-flash:latest": 0.6111,
+        "gpt-oss:120b-cloud": 1.0,
+        "lfm2.5:latest": 0.1667,
+        "minimax/minimax-m3": 1.0,
+        "ministral-3:14b": 0.8333,
+        "ministral-3:8b": 0.8333,
+        "moonshotai/kimi-k2.5": 1.0,
+        "nemotron-3-nano:30b-cloud": 0.5833,
+        "nemotron-3-super:cloud": 0.5455,
+        "openai/gpt-5.6-luna": 0.8333,
+        "openai/gpt-6-luna": 0.9167,
+        "phi4:14b": 0.4722,
+        "qwen2.5-coder:14b": 0.6944,
+        "qwen2.5:14b": 0.8333,
+        "qwen3-coder:30b": 0.6111,
+        "qwen3.5:4b": 0.5278,
+        "qwen3.5:9b": 0.8333,
+        "qwen3.6:27b": 0.9167,
+        "qwen3:14b": 0.75,
+        "qwen3:8b": 0.75,
+        "z-ai/glm-5.2": 1.0
+      },
+      "spread": {
+        "devstral-small-2:24b": 0.0834,
+        "gemma4:e4b": 0.0834,
+        "glm-4.7-flash:latest": 0.1667,
+        "lfm2.5:latest": 0.0,
+        "ministral-3:14b": 0.0,
+        "ministral-3:8b": 0.0,
+        "phi4:14b": 0.0833,
+        "qwen2.5-coder:14b": 0.1667,
+        "qwen2.5:14b": 0.0,
+        "qwen3-coder:30b": 0.0834,
+        "qwen3.5:4b": 0.25,
+        "qwen3.5:9b": 0.1667,
+        "qwen3:14b": 0.0,
+        "qwen3:8b": 0.0
+      },
+      "incomplete": {},
+      "best_model": "deepseek/deepseek-v4.1-flash"
+    },
+    {
+      "key": "entity",
+      "label": "Entity extraction",
+      "measures": "Extracts entities/relationships from text.",
+      "scoring": "F1 of extracted entities vs the expected entity set per item.",
+      "scores": {
+        "deepseek/deepseek-v4-flash": 0.7786,
+        "deepseek/deepseek-v4.1-flash": 0.8165,
+        "devstral-small-2:24b": 0.7532,
+        "gemma4:31b-cloud": 0.8111,
+        "gemma4:e4b": 0.8184,
+        "glm-4.7-flash:latest": 0.8082,
+        "glm-5.2:cloud": 0.7903,
+        "gpt-oss:120b-cloud": 0.8204,
+        "gpt-oss:latest": 0.8013,
+        "kimi-k2.7-code:cloud": 0.7984,
+        "lfm2.5": 0.3565,
+        "lfm2.5:latest": 0.3406,
+        "minimax-m3:cloud": 0.8683,
+        "minimax/minimax-m3": 0.8181,
+        "minimax/minimax-m3:free": 0.8115,
+        "ministral-3:14b": 0.7622,
+        "ministral-3:8b": 0.8436,
+        "moonshotai/kimi-k2.5": 0.8111,
+        "nemotron-3-nano:30b-cloud": 0.597,
+        "nemotron-3-super:cloud": 0.723,
+        "nemotron-3-ultra:cloud": 0.6944,
+        "openai/gpt-5.6-luna": 0.8841,
+        "openai/gpt-6-luna": 0.7817,
+        "phi4:14b": 0.7887,
+        "qwen2.5-coder:14b": 0.7824,
+        "qwen2.5:14b": 0.8148,
+        "qwen3-coder:30b": 0.7602,
+        "qwen3.5:4b": 0.8344,
+        "qwen3.5:9b": 0.887,
+        "qwen3.6:27b": 0.8373,
+        "qwen3:14b": 0.8334,
+        "qwen3:8b": 0.7805,
+        "z-ai/glm-5.2": 0.869
+      },
+      "effective_scores": {
+        "deepseek/deepseek-v4-flash": 0.7786,
+        "deepseek/deepseek-v4.1-flash": 0.8165,
+        "devstral-small-2:24b": 0.7532,
+        "gemma4:31b-cloud": 0.8111,
+        "gemma4:e4b": 0.8184,
+        "glm-4.7-flash:latest": 0.8082,
+        "glm-5.2:cloud": 0.7903,
+        "gpt-oss:120b-cloud": 0.8204,
+        "gpt-oss:latest": 0.8013,
+        "kimi-k2.7-code:cloud": 0.7984,
+        "lfm2.5": 0.3565,
+        "lfm2.5:latest": 0.3406,
+        "minimax-m3:cloud": 0.8683,
+        "minimax/minimax-m3": 0.8181,
+        "minimax/minimax-m3:free": 0.8115,
+        "ministral-3:14b": 0.7622,
+        "ministral-3:8b": 0.8436,
+        "moonshotai/kimi-k2.5": 0.8111,
+        "nemotron-3-nano:30b-cloud": 0.597,
+        "nemotron-3-super:cloud": 0.723,
+        "nemotron-3-ultra:cloud": 0.6944,
+        "openai/gpt-5.6-luna": 0.8841,
+        "openai/gpt-6-luna": 0.7817,
+        "phi4:14b": 0.7887,
+        "qwen2.5-coder:14b": 0.7824,
+        "qwen2.5:14b": 0.8148,
+        "qwen3-coder:30b": 0.7602,
+        "qwen3.5:4b": 0.8344,
+        "qwen3.5:9b": 0.887,
+        "qwen3.6:27b": 0.2791,
+        "qwen3:14b": 0.8334,
+        "qwen3:8b": 0.7805,
+        "z-ai/glm-5.2": 0.869
+      },
+      "spread": {
+        "deepseek/deepseek-v4-flash": 0.0,
+        "devstral-small-2:24b": 0.0452,
+        "gemma4:e4b": 0.0446,
+        "glm-4.7-flash:latest": 0.0816,
+        "gpt-oss:latest": 0.1341,
+        "lfm2.5:latest": 0.18,
+        "minimax/minimax-m3:free": 0.0,
+        "ministral-3:14b": 0.0973,
+        "ministral-3:8b": 0.046,
+        "phi4:14b": 0.1044,
+        "qwen2.5-coder:14b": 0.0298,
+        "qwen2.5:14b": 0.008,
+        "qwen3-coder:30b": 0.083,
+        "qwen3.5:4b": 0.035,
+        "qwen3.5:9b": 0.009,
+        "qwen3:14b": 0.0238,
+        "qwen3:8b": 0.0476
+      },
+      "incomplete": {},
+      "best_model": "qwen3.5:9b"
+    },
+    {
+      "key": "coding_agentic",
+      "label": "Coding (agentic)",
+      "measures": "Real multi-step coding tasks in a sandbox.",
+      "scoring": "Fraction of verification checks passed (executes code, runs pytest).",
+      "scores": {
+        "devstral-small-2:24b": 0.1899,
+        "gemma4:31b-cloud": 0.3203,
+        "gpt-oss:latest": 0.1899
+      },
+      "effective_scores": {
+        "devstral-small-2:24b": 0.1899,
+        "gemma4:31b-cloud": 0.3203,
+        "gpt-oss:latest": 0.1899
+      },
+      "spread": {
+        "gemma4:31b-cloud": 0.6519,
+        "gpt-oss:latest": 0.0
+      },
+      "incomplete": {},
+      "best_model": "gemma4:31b-cloud"
+    },
+    {
+      "key": "coding",
+      "label": "Coding (legacy - ambiguous)",
+      "measures": "Runs before 2026-08-03 reported code generation AND agentic coding under one task_type, so this column is whichever one happened to be written last.",
+      "scoring": "NOT comparable to the two rows above, or between models. Re-run to replace it.",
+      "scores": {
+        "glm-5.2:cloud": 0.9051,
+        "kimi-k2.7-code:cloud": 0.8861,
+        "lfm2.5": 0.2532,
+        "minimax-m3:cloud": 0.8608
+      },
+      "effective_scores": {
+        "glm-5.2:cloud": 0.9051,
+        "kimi-k2.7-code:cloud": 0.8861,
+        "lfm2.5": 0.2532,
+        "minimax-m3:cloud": 0.8608
+      },
+      "spread": {},
+      "incomplete": {},
+      "best_model": "glm-5.2:cloud"
+    },
+    {
+      "key": "tool_calling",
+      "label": "Tool calling",
+      "measures": "Picks the right tool with the right arguments.",
+      "scoring": "Exact tool name + required-argument match.",
+      "scores": {
+        "deepseek-v4-flash:cloud": 0.7333,
+        "deepseek/deepseek-v4-flash": 0.9733,
+        "deepseek/deepseek-v4.1-flash": 1.0,
+        "devstral-small-2:24b": 1.0,
+        "gemma4:31b-cloud": 1.0,
+        "gemma4:e4b": 1.0,
+        "glm-4.7-flash:latest": 0.9778,
+        "glm-5.1:cloud": 0.8,
+        "glm-5.2:cloud": 0.8,
+        "glm4:latest": 0.0,
+        "gpt-oss:120b-cloud": 1.0,
+        "gpt-oss:latest": 1.0,
+        "kimi-k2.7-code:cloud": 0.8,
+        "lfm2.5": 0.9333,
+        "lfm2.5:latest": 0.9556,
+        "minimax-m2.7:cloud": 0.8667,
+        "minimax-m3:cloud": 0.6667,
+        "minimax/minimax-m3": 0.9333,
+        "minimax/minimax-m3:free": 0.0,
+        "ministral-3:14b": 0.6667,
+        "ministral-3:8b": 0.9333,
+        "moonshotai/kimi-k2.5": 1.0,
+        "nemotron-3-nano:30b-cloud": 1.0,
+        "nemotron-3-super:cloud": 1.0,
+        "nemotron-3-ultra:cloud": 0.0,
+        "openai/gpt-5.6-luna": 1.0,
+        "openai/gpt-6-luna": 1.0,
+        "qwen2.5-coder:14b": 0.0,
+        "qwen2.5-coder:7b": 0.0,
+        "qwen2.5:14b": 0.9778,
+        "qwen2.5:7b": 0.8667,
+        "qwen3-coder:30b": 0.9333,
+        "qwen3.5:4b": 1.0,
+        "qwen3.5:9b": 1.0,
+        "qwen3.6:27b": 0.0,
+        "qwen3:14b": 0.9778,
+        "qwen3:8b": 1.0,
+        "z-ai/glm-5.2": 0.9333
+      },
+      "effective_scores": {
+        "deepseek-v4-flash:cloud": 0.7333,
+        "deepseek/deepseek-v4-flash": 0.9733,
+        "deepseek/deepseek-v4.1-flash": 1.0,
+        "devstral-small-2:24b": 1.0,
+        "gemma4:31b-cloud": 1.0,
+        "gemma4:e4b": 1.0,
+        "glm-4.7-flash:latest": 0.9778,
+        "glm-5.1:cloud": 0.8,
+        "glm-5.2:cloud": 0.8,
+        "glm4:latest": 0.0,
+        "gpt-oss:120b-cloud": 1.0,
+        "gpt-oss:latest": 1.0,
+        "kimi-k2.7-code:cloud": 0.8,
+        "lfm2.5": 0.9333,
+        "lfm2.5:latest": 0.9556,
+        "minimax-m2.7:cloud": 0.8667,
+        "minimax-m3:cloud": 0.6667,
+        "minimax/minimax-m3": 0.9333,
+        "minimax/minimax-m3:free": 0.0,
+        "ministral-3:14b": 0.6667,
+        "ministral-3:8b": 0.9333,
+        "moonshotai/kimi-k2.5": 1.0,
+        "nemotron-3-nano:30b-cloud": 1.0,
+        "nemotron-3-super:cloud": 1.0,
+        "nemotron-3-ultra:cloud": 0.0,
+        "openai/gpt-5.6-luna": 1.0,
+        "openai/gpt-6-luna": 1.0,
+        "qwen2.5-coder:14b": 0.0,
+        "qwen2.5-coder:7b": 0.0,
+        "qwen2.5:14b": 0.9778,
+        "qwen2.5:7b": 0.8667,
+        "qwen3-coder:30b": 0.9333,
+        "qwen3.5:4b": 1.0,
+        "qwen3.5:9b": 1.0,
+        "qwen3.6:27b": 0.0,
+        "qwen3:14b": 0.9778,
+        "qwen3:8b": 1.0,
+        "z-ai/glm-5.2": 0.9333
+      },
+      "spread": {
+        "deepseek/deepseek-v4-flash": 0.0667,
+        "devstral-small-2:24b": 0.0,
+        "gemma4:e4b": 0.0,
+        "glm-4.7-flash:latest": 0.0667,
+        "gpt-oss:latest": 0.0,
+        "lfm2.5:latest": 0.1333,
+        "minimax/minimax-m3:free": 0.0,
+        "ministral-3:14b": 0.0,
+        "ministral-3:8b": 0.0,
+        "nemotron-3-ultra:cloud": 0.0,
+        "qwen2.5-coder:14b": 0.0,
+        "qwen2.5:14b": 0.0667,
+        "qwen3-coder:30b": 0.1333,
+        "qwen3.5:4b": 0.0,
+        "qwen3.5:9b": 0.0,
+        "qwen3.6:27b": 0.0,
+        "qwen3:14b": 0.0667,
+        "qwen3:8b": 0.0
+      },
+      "incomplete": {},
+      "best_model": "deepseek/deepseek-v4.1-flash"
+    },
+    {
+      "key": "session_review_chunked",
+      "label": "Session review (chunked, multi-call)",
+      "measures": "The path a session too big for the context window takes: chunk-scoped reflection per part, then merge_chunk_reflections (processor.py:553-577). Single-chunk cases never reach it.",
+      "scoring": "1.0 when the merged reflection does NOT report work that a later chunk resolved as 'never addressed' \u2014 the invented finding that flows to lessons.",
+      "scores": {
+        "deepseek/deepseek-v4.1-flash": 1.0,
+        "devstral-small-2:24b": 0.9,
+        "gemma4:31b-cloud": 0.9,
+        "gemma4:e4b": 0.9,
+        "glm-4.7-flash:latest": 0.8333,
+        "gpt-oss:120b-cloud": 0.9,
+        "gpt-oss:latest": 0.9333,
+        "lfm2.5:latest": 0.8667,
+        "minimax/minimax-m3": 1.0,
+        "ministral-3:14b": 0.9,
+        "ministral-3:8b": 0.9,
+        "moonshotai/kimi-k2.5": 1.0,
+        "nemotron-3-nano:30b-cloud": 0.9,
+        "nemotron-3-super:cloud": 0.8,
+        "openai/gpt-5.6-luna": 0.9,
+        "openai/gpt-6-luna": 0.9,
+        "phi4:14b": 0.8667,
+        "qwen2.5-coder:14b": 0.9,
+        "qwen2.5:14b": 0.8333,
+        "qwen3-coder:30b": 0.9333,
+        "qwen3.5:4b": 0.8667,
+        "qwen3.5:9b": 0.9,
+        "qwen3:14b": 0.8667,
+        "qwen3:8b": 0.8333,
+        "z-ai/glm-5.2": 0.9
+      },
+      "effective_scores": {
+        "deepseek/deepseek-v4.1-flash": 1.0,
+        "devstral-small-2:24b": 0.9,
+        "gemma4:31b-cloud": 0.9,
+        "gemma4:e4b": 0.9,
+        "glm-4.7-flash:latest": 0.8333,
+        "gpt-oss:120b-cloud": 0.9,
+        "gpt-oss:latest": 0.9333,
+        "lfm2.5:latest": 0.8667,
+        "minimax/minimax-m3": 1.0,
+        "ministral-3:14b": 0.9,
+        "ministral-3:8b": 0.9,
+        "moonshotai/kimi-k2.5": 1.0,
+        "nemotron-3-nano:30b-cloud": 0.9,
+        "nemotron-3-super:cloud": 0.8,
+        "openai/gpt-5.6-luna": 0.9,
+        "openai/gpt-6-luna": 0.9,
+        "phi4:14b": 0.8667,
+        "qwen2.5-coder:14b": 0.9,
+        "qwen2.5:14b": 0.8333,
+        "qwen3-coder:30b": 0.9333,
+        "qwen3.5:4b": 0.8667,
+        "qwen3.5:9b": 0.9,
+        "qwen3:14b": 0.8667,
+        "qwen3:8b": 0.8333,
+        "z-ai/glm-5.2": 0.9
+      },
+      "spread": {
+        "devstral-small-2:24b": 0.0,
+        "gemma4:e4b": 0.0,
+        "glm-4.7-flash:latest": 0.1,
+        "gpt-oss:latest": 0.1,
+        "lfm2.5:latest": 0.1,
+        "ministral-3:14b": 0.0,
+        "ministral-3:8b": 0.0,
+        "phi4:14b": 0.1,
+        "qwen2.5-coder:14b": 0.3,
+        "qwen2.5:14b": 0.1,
+        "qwen3-coder:30b": 0.1,
+        "qwen3.5:4b": 0.2,
+        "qwen3.5:9b": 0.0,
+        "qwen3:14b": 0.1,
+        "qwen3:8b": 0.1
+      },
+      "incomplete": {},
+      "best_model": "deepseek/deepseek-v4.1-flash"
+    }
+  ],
+  "composite": {
+    "deepseek-v4-flash:cloud": 0.7333,
+    "deepseek/deepseek-v4-flash": 0.9379,
+    "deepseek/deepseek-v4.1-flash": 0.9471,
+    "devstral-small-2:24b": 0.8197,
+    "gemma4:31b-cloud": 0.8819,
+    "gemma4:e4b": 0.9278,
+    "glm-4.7-flash:latest": 0.8678,
+    "glm-5.1:cloud": 0.8,
+    "glm-5.2:cloud": 0.8997,
+    "glm4:latest": 0.0,
+    "gpt-oss:120b-cloud": 0.9393,
+    "gpt-oss:latest": 0.8423,
+    "kimi-k2.7-code:cloud": 0.9003,
+    "lfm2.5": 0.6064,
+    "lfm2.5:latest": 0.636,
+    "minimax-m2.7:cloud": 0.8667,
+    "minimax-m3:cloud": 0.8925,
+    "minimax/minimax-m3": 0.9563,
+    "minimax/minimax-m3:free": 0.788,
+    "ministral-3:14b": 0.872,
+    "ministral-3:8b": 0.901,
+    "moonshotai/kimi-k2.5": 0.9592,
+    "nemotron-3-nano:30b-cloud": 0.8083,
+    "nemotron-3-super:cloud": 0.8353,
+    "nemotron-3-ultra:cloud": 0.7621,
+    "openai/gpt-5.6-luna": 0.9603,
+    "openai/gpt-6-luna": 0.9362,
+    "phi4:14b": 0.8467,
+    "qwen2.5-coder:14b": 0.7496,
+    "qwen2.5-coder:7b": 0.0,
+    "qwen2.5:14b": 0.8897,
+    "qwen2.5:7b": 0.8667,
+    "qwen3-coder:30b": 0.8653,
+    "qwen3.5:4b": 0.8312,
+    "qwen3.5:9b": 0.9086,
+    "qwen3.6:27b": 0.258,
+    "qwen3:14b": 0.9052,
+    "qwen3:8b": 0.8449,
+    "z-ai/glm-5.2": 0.95
+  },
+  "latency": {
+    "minimax-m3:cloud": {
+      "pipeline": 3.349,
+      "reasoning_suite": 8.902,
+      "session_review": 15.683,
+      "realdata_suite": 3.583,
+      "coding": 100.15
+    },
+    "glm-5.2:cloud": {
+      "pipeline": 1.435,
+      "reasoning_suite": 4.401,
+      "session_review": 4.445,
+      "realdata_suite": 1.467,
+      "coding": 86.64
+    },
+    "kimi-k2.7-code:cloud": {
+      "pipeline": 0.932,
+      "reasoning_suite": 12.192,
+      "session_review": 4.087,
+      "realdata_suite": 1.031,
+      "coding": 48.88
+    },
+    "lfm2.5": {
+      "pipeline": 3.761,
+      "reasoning_suite": 6.252,
+      "session_review": 8.818,
+      "realdata_suite": 2.915,
+      "coding": 37.69
+    },
+    "qwen3:14b": {
+      "session_review": 17.456,
+      "pipeline": 1.248,
+      "reasoning_suite": 86.8553
+    },
+    "gpt-oss:latest": {
+      "pipeline": 7.2143,
+      "reasoning_suite": 14.599,
+      "session_review": 23.5577,
+      "coding": 4.655
+    },
+    "devstral-small-2:24b": {
+      "reasoning_suite": 36.8747,
+      "coding": 4.66,
+      "pipeline": 3.857,
+      "session_review": 61.1693
+    },
+    "qwen3-coder:30b": {
+      "reasoning_suite": 6.388,
+      "pipeline": 0.992,
+      "session_review": 15.4423
+    },
+    "qwen2.5-coder:14b": {
+      "reasoning_suite": 8.094,
+      "pipeline": 1.1017,
+      "session_review": 12.6307
+    },
+    "ministral-3:14b": {
+      "reasoning_suite": 11.011,
+      "pipeline": 1.174,
+      "session_review": 17.7923
+    },
+    "gemma4:e4b": {
+      "reasoning_suite": 8.106,
+      "pipeline": 0.38,
+      "session_review": 4.2617
+    },
+    "kimi-k3:cloud": {
+      "reasoning_suite": 3.491
+    },
+    "glm-5.1:cloud": {
+      "reasoning_suite": 12.538
+    },
+    "glm-5:cloud": {
+      "reasoning_suite": 0.161
+    },
+    "glm-4.7:cloud": {
+      "reasoning_suite": 0.158
+    },
+    "deepseek-v4-flash:cloud": {
+      "reasoning_suite": 4.276
+    },
+    "deepseek-v3.2:cloud": {
+      "reasoning_suite": 0.162
+    },
+    "kimi-k2-thinking:cloud": {
+      "reasoning_suite": 0.166
+    },
+    "kimi-k2.5:cloud": {
+      "reasoning_suite": 0.16
+    },
+    "minimax-m2.7:cloud": {
+      "reasoning_suite": 10.214
+    },
+    "minimax-m2.5:cloud": {
+      "reasoning_suite": 0.158
+    },
+    "qwen3-coder-next:cloud": {
+      "reasoning_suite": 0.161
+    },
+    "gemini-3-flash-preview:cloud": {
+      "reasoning_suite": 0.157
+    },
+    "qwen2.5:14b": {
+      "reasoning_suite": 11.757,
+      "pipeline": 1.1673,
+      "session_review": 11.1313
+    },
+    "gemma3n:e4b": {
+      "reasoning_suite": 3.2
+    },
+    "qwen3:8b": {
+      "reasoning_suite": 21.2187,
+      "pipeline": 0.3233,
+      "session_review": 4.8723
+    },
+    "glm4:latest": {
+      "reasoning_suite": 4.798
+    },
+    "lfm2.5:latest": {
+      "reasoning_suite": 4.7887,
+      "pipeline": 3.2563,
+      "session_review": 9.591
+    },
+    "qwen2.5-coder:7b": {
+      "reasoning_suite": 2.583
+    },
+    "qwen2.5:7b": {
+      "reasoning_suite": 2.568
+    },
+    "qwen3.5:4b": {
+      "reasoning_suite": 31.7637,
+      "pipeline": 0.3937,
+      "session_review": 4.432
+    },
+    "nemotron-3-ultra:cloud": {
+      "pipeline": 0.6762,
+      "reasoning_suite": 1.97,
+      "session_review": 0.0
+    },
+    "gpt-oss:120b-cloud": {
+      "pipeline": 0.925,
+      "reasoning_suite": 2.071,
+      "session_review": 2.991
+    },
+    "gemma4:31b-cloud": {
+      "pipeline": 0.463,
+      "reasoning_suite": 1.025,
+      "session_review": 1.001,
+      "realdata_suite": 0.2544,
+      "coding": 11.13
+    },
+    "minimax/minimax-m3:free": {
+      "pipeline": 0.8556,
+      "reasoning_suite": 4.3868,
+      "session_review": 0.798
+    },
+    "deepseek/deepseek-v4-flash": {
+      "pipeline": 0.85,
+      "reasoning_suite": 3.3582,
+      "session_review": 1.6936
+    },
+    "glm-4.7-flash:latest": {
+      "pipeline": 0.9663,
+      "reasoning_suite": 65.917,
+      "session_review": 12.0323
+    },
+    "ministral-3:8b": {
+      "pipeline": 0.4117,
+      "reasoning_suite": 4.4673,
+      "session_review": 7.916
+    },
+    "phi4:14b": {
+      "pipeline": 0.6593,
+      "reasoning_suite": 4.4207,
+      "session_review": 7.1167
+    },
+    "qwen3.6:27b": {
+      "pipeline": 1.889,
+      "reasoning_suite": 25.0843,
+      "session_review": 0.0
+    },
+    "qwen3.5:9b": {
+      "pipeline": 0.5673,
+      "reasoning_suite": 35.4557,
+      "session_review": 6.5083
+    },
+    "nemotron-3-super:cloud": {
+      "pipeline": 1.376,
+      "reasoning_suite": 9.62,
+      "session_review": 4.671
+    },
+    "nemotron-3-nano:30b-cloud": {
+      "pipeline": 0.778,
+      "reasoning_suite": 6.166,
+      "session_review": 2.467
+    },
+    "openai/gpt-6-luna": {
+      "pipeline": 1.88,
+      "reasoning_suite": 3.906,
+      "session_review": 4.403
+    },
+    "deepseek/deepseek-v4.1-flash": {
+      "pipeline": 3.619,
+      "reasoning_suite": 18.01,
+      "session_review": 7.558
+    },
+    "minimax/minimax-m3": {
+      "pipeline": 2.642,
+      "reasoning_suite": 9.825,
+      "session_review": 15.998
+    },
+    "openai/gpt-5.6-luna": {
+      "pipeline": 1.617,
+      "reasoning_suite": 4.339,
+      "session_review": 5.139
+    },
+    "z-ai/glm-5.2": {
+      "pipeline": 1.837,
+      "reasoning_suite": 6.621,
+      "session_review": 3.979
+    },
+    "moonshotai/kimi-k2.5": {
+      "pipeline": 18.868,
+      "reasoning_suite": 46.713,
+      "session_review": 66.559
+    }
+  },
+  "length": {
+    "minimax-m3:cloud": {
+      "reasoning": 248.8,
+      "code_gen": 137.3
+    },
+    "glm-5.2:cloud": {
+      "reasoning": 169.9,
+      "code_gen": 89.6
+    },
+    "kimi-k2.7-code:cloud": {
+      "session_review": 172.4,
+      "reasoning": 133.2,
+      "code_gen": 70.7
+    },
+    "lfm2.5": {},
+    "qwen3:14b": {
+      "session_review": 177.5,
+      "summarization": 8.2333,
+      "lessons": 44.2667,
+      "reasoning": 132.1333,
+      "code_gen": 60.6
+    },
+    "gpt-oss:latest": {
+      "summarization": 9.4,
+      "lessons": 37.6,
+      "reasoning": 231.3667,
+      "code_gen": 135.3667,
+      "session_review": 188.5
+    },
+    "devstral-small-2:24b": {
+      "reasoning": 159.2667,
+      "code_gen": 68.2333,
+      "summarization": 4.7,
+      "lessons": 25.7333,
+      "session_review": 123.4333
+    },
+    "qwen3-coder:30b": {
+      "reasoning": 160.4,
+      "code_gen": 74.0333,
+      "summarization": 6.5667,
+      "lessons": 36.9333,
+      "session_review": 219.7333
+    },
+    "qwen2.5-coder:14b": {
+      "reasoning": 169.0333,
+      "code_gen": 61.2,
+      "summarization": 8.0667,
+      "lessons": 20.9667,
+      "session_review": 115.2
+    },
+    "ministral-3:14b": {
+      "reasoning": 217.3333,
+      "code_gen": 83.4333,
+      "summarization": 6.1,
+      "lessons": 51.3667,
+      "session_review": 178.6
+    },
+    "gemma4:e4b": {
+      "reasoning": 251.8333,
+      "code_gen": 122.4333,
+      "summarization": 8.6667,
+      "lessons": 26.0333,
+      "session_review": 115.5333
+    },
+    "kimi-k3:cloud": {},
+    "glm-5.1:cloud": {
+      "reasoning": 166.7,
+      "code_gen": 64.1
+    },
+    "glm-5:cloud": {},
+    "glm-4.7:cloud": {},
+    "deepseek-v4-flash:cloud": {
+      "reasoning": 209.0,
+      "code_gen": 76.1
+    },
+    "deepseek-v3.2:cloud": {},
+    "kimi-k2-thinking:cloud": {},
+    "kimi-k2.5:cloud": {},
+    "minimax-m2.7:cloud": {
+      "reasoning": 204.2,
+      "code_gen": 90.7
+    },
+    "minimax-m2.5:cloud": {},
+    "qwen3-coder-next:cloud": {},
+    "gemini-3-flash-preview:cloud": {},
+    "qwen2.5:14b": {
+      "reasoning": 181.4333,
+      "code_gen": 80.0333,
+      "summarization": 8.1333,
+      "lessons": 29.7333,
+      "session_review": 99.6
+    },
+    "gemma3n:e4b": {
+      "reasoning": 149.2,
+      "code_gen": 81.0
+    },
+    "qwen3:8b": {
+      "reasoning": 124.4,
+      "code_gen": 71.7667,
+      "summarization": 6.7333,
+      "lessons": 30.7333,
+      "session_review": 169.8667
+    },
+    "glm4:latest": {
+      "reasoning": 141.8,
+      "code_gen": 93.2
+    },
+    "lfm2.5:latest": {
+      "reasoning": 199.2333,
+      "code_gen": 72.5667,
+      "summarization": 204.4333,
+      "lessons": 506.8,
+      "session_review": 1046.1
+    },
+    "qwen2.5-coder:7b": {
+      "reasoning": 154.4,
+      "code_gen": 76.4
+    },
+    "qwen2.5:7b": {
+      "reasoning": 123.0,
+      "code_gen": 100.0
+    },
+    "qwen3.5:4b": {
+      "reasoning": 145.5333,
+      "code_gen": 75.2333,
+      "summarization": 11.8333,
+      "lessons": 27.1333,
+      "session_review": 189.5667
+    },
+    "nemotron-3-ultra:cloud": {
+      "summarization": 8.0,
+      "lessons": 20.2,
+      "reasoning": 243.4
+    },
+    "gpt-oss:120b-cloud": {
+      "summarization": 8.1,
+      "lessons": 34.8,
+      "reasoning": 318.1,
+      "code_gen": 229.8,
+      "session_review": 208.9
+    },
+    "gemma4:31b-cloud": {
+      "summarization": 7.5,
+      "lessons": 14.5,
+      "reasoning": 207.1,
+      "code_gen": 88.0,
+      "session_review": 94.0
+    },
+    "minimax/minimax-m3:free": {
+      "summarization": 6.7,
+      "lessons": 8.0,
+      "reasoning": 219.4,
+      "code_gen": 125.0,
+      "session_review": 217.4
+    },
+    "deepseek/deepseek-v4-flash": {
+      "summarization": 7.5,
+      "lessons": 28.0,
+      "reasoning": 199.3,
+      "code_gen": 66.1,
+      "session_review": 175.2
+    },
+    "glm-4.7-flash:latest": {
+      "summarization": 8.6667,
+      "lessons": 23.9667,
+      "reasoning": 160.7,
+      "code_gen": 60.3667,
+      "session_review": 146.6333
+    },
+    "ministral-3:8b": {
+      "summarization": 8.7333,
+      "lessons": 53.2333,
+      "reasoning": 238.7,
+      "code_gen": 99.2,
+      "session_review": 234.8667
+    },
+    "phi4:14b": {
+      "summarization": 7.1333,
+      "lessons": 46.0333,
+      "reasoning": 194.0,
+      "code_gen": 123.1667,
+      "session_review": 165.7
+    },
+    "qwen3.6:27b": {
+      "summarization": 8.0,
+      "lessons": 15.0
+    },
+    "qwen3.5:9b": {
+      "summarization": 9.8667,
+      "lessons": 32.6667,
+      "reasoning": 166.3667,
+      "code_gen": 63.4667,
+      "session_review": 192.1667
+    },
+    "nemotron-3-super:cloud": {
+      "summarization": 9.8,
+      "lessons": 28.1,
+      "reasoning": 311.0,
+      "code_gen": 146.8,
+      "session_review": 179.8
+    },
+    "nemotron-3-nano:30b-cloud": {
+      "summarization": 9.6,
+      "lessons": 37.8,
+      "reasoning": 333.3,
+      "code_gen": 134.3,
+      "session_review": 144.2
+    },
+    "openai/gpt-6-luna": {
+      "summarization": 7.8,
+      "lessons": 15.4,
+      "reasoning": 144.2,
+      "code_gen": 61.8,
+      "session_review": 110.6
+    },
+    "deepseek/deepseek-v4.1-flash": {
+      "summarization": 7.0,
+      "lessons": 34.2,
+      "reasoning": 245.4,
+      "code_gen": 104.6,
+      "session_review": 230.8
+    },
+    "minimax/minimax-m3": {
+      "summarization": 9.9,
+      "lessons": 31.8,
+      "reasoning": 267.5,
+      "code_gen": 143.6,
+      "session_review": 244.2
+    },
+    "openai/gpt-5.6-luna": {
+      "summarization": 9.3,
+      "lessons": 17.8,
+      "reasoning": 206.8,
+      "code_gen": 76.0,
+      "session_review": 195.8
+    },
+    "z-ai/glm-5.2": {
+      "summarization": 8.3,
+      "lessons": 26.3,
+      "reasoning": 196.6,
+      "code_gen": 65.1,
+      "session_review": 165.1
+    },
+    "moonshotai/kimi-k2.5": {
+      "summarization": 7.2,
+      "lessons": 29.5,
+      "reasoning": 203.1,
+      "code_gen": 70.0,
+      "session_review": 197.6
+    }
+  },
+  "completion": {
+    "minimax-m3:cloud": {},
+    "glm-5.2:cloud": {},
+    "kimi-k2.7-code:cloud": {},
+    "lfm2.5": {},
+    "qwen3:14b": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 0.8889,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "gpt-oss:latest": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "devstral-small-2:24b": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "qwen3-coder:30b": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "qwen2.5-coder:14b": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "ministral-3:14b": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "gemma4:e4b": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "kimi-k3:cloud": {},
+    "glm-5.1:cloud": {},
+    "glm-5:cloud": {},
+    "glm-4.7:cloud": {},
+    "deepseek-v4-flash:cloud": {},
+    "deepseek-v3.2:cloud": {},
+    "kimi-k2-thinking:cloud": {},
+    "kimi-k2.5:cloud": {},
+    "minimax-m2.7:cloud": {},
+    "minimax-m2.5:cloud": {},
+    "qwen3-coder-next:cloud": {},
+    "gemini-3-flash-preview:cloud": {},
+    "qwen2.5:14b": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "gemma3n:e4b": {},
+    "qwen3:8b": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "glm4:latest": {},
+    "lfm2.5:latest": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "qwen2.5-coder:7b": {},
+    "qwen2.5:7b": {},
+    "qwen3.5:4b": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "nemotron-3-ultra:cloud": {},
+    "gpt-oss:120b-cloud": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "gemma4:31b-cloud": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "minimax/minimax-m3:free": {},
+    "deepseek/deepseek-v4-flash": {},
+    "glm-4.7-flash:latest": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "ministral-3:8b": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "phi4:14b": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 0.0,
+      "session_review": 1.0
+    },
+    "qwen3.6:27b": {
+      "ranking": 0.3333,
+      "importance": 0.3333,
+      "rank_importance": 0.3333,
+      "contradiction": 0.3333,
+      "dedup": 0.3333,
+      "entity": 0.3333,
+      "summarization": 0.3333,
+      "lessons": 0.3333,
+      "reasoning": 0.0,
+      "code_gen": 0.0,
+      "tool_calling": 0.0,
+      "session_review": 0.0
+    },
+    "qwen3.5:9b": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "nemotron-3-super:cloud": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "nemotron-3-nano:30b-cloud": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "openai/gpt-6-luna": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "deepseek/deepseek-v4.1-flash": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "minimax/minimax-m3": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "openai/gpt-5.6-luna": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "z-ai/glm-5.2": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    },
+    "moonshotai/kimi-k2.5": {
+      "ranking": 1.0,
+      "importance": 1.0,
+      "rank_importance": 1.0,
+      "contradiction": 1.0,
+      "dedup": 1.0,
+      "entity": 1.0,
+      "summarization": 1.0,
+      "lessons": 1.0,
+      "reasoning": 1.0,
+      "code_gen": 1.0,
+      "tool_calling": 1.0,
+      "session_review": 1.0
+    }
+  },
+  "catalog": {
+    "deepseek-v3.2:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "deepseek-v4-flash:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "deepseek/deepseek-v4-flash": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "deepseek/deepseek-v4.1-flash": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "devstral-small-2:24b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "gemini-3-flash-preview:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "gemma3n:e4b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "gemma4:31b-cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "gemma4:e4b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "glm-4.7-flash:latest": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "glm-4.7:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "glm-5.1:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "glm-5.2:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "glm-5:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "glm4:latest": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "gpt-oss:120b-cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "gpt-oss:latest": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "kimi-k2-thinking:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "kimi-k2.5:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "kimi-k2.7-code:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "kimi-k3:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "lfm2.5": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "lfm2.5:latest": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "minimax-m2.5:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "minimax-m2.7:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "minimax-m3:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "minimax/minimax-m3": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "minimax/minimax-m3:free": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "ministral-3:14b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "ministral-3:8b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "moonshotai/kimi-k2.5": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "nemotron-3-nano:30b-cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "nemotron-3-super:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "nemotron-3-ultra:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "openai/gpt-5.6-luna": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "openai/gpt-6-luna": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "phi4:14b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "qwen2.5-coder:14b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "qwen2.5-coder:7b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "qwen2.5:14b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "qwen2.5:7b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "qwen3-coder-next:cloud": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "qwen3-coder:30b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "qwen3.5:4b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "qwen3.5:9b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "qwen3.6:27b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "qwen3:14b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "qwen3:8b": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    },
+    "z-ai/glm-5.2": {
+      "price_in": null,
+      "price_out": null,
+      "tok_per_s": null,
+      "context_length": null
+    }
+  },
+  "provenance": {
+    "deepseek-v3.2:cloud": {
+      "oldest_ts": "2026-08-13T03:32:46.748197+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T03:32:46.748197+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "deepseek-v4-flash:cloud": {
+      "oldest_ts": "2026-08-13T03:30:04.619428+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T03:30:04.619428+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "deepseek/deepseek-v4-flash": {
+      "oldest_ts": "2026-09-02T15:49:52.470516+00:00",
+      "run_count": 2,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-02T17:28:51.780207+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "86da755",
+      "mixed_code": true,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "deepseek/deepseek-v4.1-flash": {
+      "oldest_ts": "2026-09-25T11:58:19.455757+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-25T11:58:19.455757+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": null,
+      "git_sha": "d1e355a",
+      "mixed_code": false,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "devstral-small-2:24b": {
+      "oldest_ts": "2026-08-11T00:22:50.090778+00:00",
+      "run_count": 3,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-25T02:09:35.209647+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "d1e355a",
+      "mixed_code": true,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "gemini-3-flash-preview:cloud": {
+      "oldest_ts": "2026-08-13T04:07:40.253689+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T04:07:40.253689+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "gemma3n:e4b": {
+      "oldest_ts": "2026-08-13T05:29:00.325700+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T05:29:00.325700+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "gemma4:31b-cloud": {
+      "oldest_ts": "2026-08-18T12:50:18.239624+00:00",
+      "run_count": 3,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-25T11:20:59.406640+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "d1e355a",
+      "mixed_code": true,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "gemma4:e4b": {
+      "oldest_ts": "2026-08-11T00:58:06.216913+00:00",
+      "run_count": 3,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-25T04:22:14.202486+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "d1e355a",
+      "mixed_code": true,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "glm-4.7-flash:latest": {
+      "oldest_ts": "2026-09-24T17:02:45.114041+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-24T17:02:45.114041+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": null,
+      "git_sha": "d1e355a",
+      "mixed_code": false,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "glm-4.7:cloud": {
+      "oldest_ts": "2026-08-13T03:29:51.141300+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T03:29:51.141300+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "glm-5.1:cloud": {
+      "oldest_ts": "2026-08-13T03:21:58.343155+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T03:21:58.343155+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "glm-5.2:cloud": {
+      "oldest_ts": "2026-06-23T16:36:08.567658+00:00",
+      "run_count": 2,
+      "migrated_from_db": true,
+      "run_ts": "2026-08-13T03:19:11.505317+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "glm-5:cloud": {
+      "oldest_ts": "2026-08-13T03:29:37.573755+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T03:29:37.573755+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "glm4:latest": {
+      "oldest_ts": "2026-08-13T06:02:42.146949+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T06:02:42.146949+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "gpt-oss:120b-cloud": {
+      "oldest_ts": "2026-08-18T12:48:49.686764+00:00",
+      "run_count": 2,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-25T11:36:18.184881+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "d1e355a",
+      "mixed_code": true,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "gpt-oss:latest": {
+      "oldest_ts": "2026-08-10T19:08:42.564862+00:00",
+      "run_count": 3,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-24T07:11:31.084662+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "d1e355a",
+      "mixed_code": true,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "kimi-k2-thinking:cloud": {
+      "oldest_ts": "2026-08-13T03:40:28.234739+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T03:40:28.234739+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "kimi-k2.5:cloud": {
+      "oldest_ts": "2026-08-13T03:40:42.675428+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T03:40:42.675428+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "kimi-k2.7-code:cloud": {
+      "oldest_ts": "2026-06-24T01:18:28.484120+00:00",
+      "run_count": 3,
+      "migrated_from_db": true,
+      "run_ts": "2026-08-13T03:33:00.861378+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "kimi-k3:cloud": {
+      "oldest_ts": "2026-08-13T03:16:57.914330+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T03:16:57.914330+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "lfm2.5": {
+      "oldest_ts": "2026-06-24T11:44:25.302138+00:00",
+      "run_count": 1,
+      "migrated_from_db": true,
+      "run_ts": "2026-06-24T11:44:25.302138+00:00",
+      "host": null,
+      "tier": "deep",
+      "judge_model": null,
+      "git_sha": null,
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "lfm2.5:latest": {
+      "oldest_ts": "2026-08-13T06:05:43.474898+00:00",
+      "run_count": 2,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-25T08:33:50.258194+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "d1e355a",
+      "mixed_code": true,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "minimax-m2.5:cloud": {
+      "oldest_ts": "2026-08-13T03:47:12.472492+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T03:47:12.472492+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "minimax-m2.7:cloud": {
+      "oldest_ts": "2026-08-13T03:40:56.981185+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T03:40:56.981185+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "minimax-m3:cloud": {
+      "oldest_ts": "2026-06-23T15:31:35.967830+00:00",
+      "run_count": 2,
+      "migrated_from_db": true,
+      "run_ts": "2026-08-13T03:11:29.422646+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": null,
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "minimax/minimax-m3": {
+      "oldest_ts": "2026-09-25T12:19:53.405504+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-25T12:19:53.405504+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": null,
+      "git_sha": "d1e355a",
+      "mixed_code": false,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "minimax/minimax-m3:free": {
+      "oldest_ts": "2026-09-02T15:13:17.570108+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-02T15:13:17.570108+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "e5aa214",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "ministral-3:14b": {
+      "oldest_ts": "2026-08-11T00:52:15.128374+00:00",
+      "run_count": 3,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-24T06:31:25.895261+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "d1e355a",
+      "mixed_code": true,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "ministral-3:8b": {
+      "oldest_ts": "2026-09-24T21:39:46.925669+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-24T21:39:46.925669+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": null,
+      "git_sha": "d1e355a",
+      "mixed_code": false,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "moonshotai/kimi-k2.5": {
+      "oldest_ts": "2026-09-25T12:54:27.337471+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-25T12:54:27.337471+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": null,
+      "git_sha": "d1e355a",
+      "mixed_code": false,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "nemotron-3-nano:30b-cloud": {
+      "oldest_ts": "2026-09-25T11:41:02.828760+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-25T11:41:02.828760+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": null,
+      "git_sha": "d1e355a",
+      "mixed_code": false,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "nemotron-3-super:cloud": {
+      "oldest_ts": "2026-09-25T11:24:04.288116+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-25T11:24:04.288116+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": null,
+      "git_sha": "d1e355a",
+      "mixed_code": false,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "nemotron-3-ultra:cloud": {
+      "oldest_ts": "2026-08-18T12:35:02.654083+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-18T12:35:02.654083+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "openai/gpt-5.6-luna": {
+      "oldest_ts": "2026-09-25T12:35:42.610263+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-25T12:35:42.610263+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": null,
+      "git_sha": "d1e355a",
+      "mixed_code": false,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "openai/gpt-6-luna": {
+      "oldest_ts": "2026-09-25T11:49:38.802499+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-25T11:49:38.802499+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": null,
+      "git_sha": "d1e355a",
+      "mixed_code": false,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "phi4:14b": {
+      "oldest_ts": "2026-09-24T22:50:37.553449+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-24T22:50:37.553449+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": null,
+      "git_sha": "d1e355a",
+      "mixed_code": false,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "qwen2.5-coder:14b": {
+      "oldest_ts": "2026-08-11T00:47:04.939592+00:00",
+      "run_count": 3,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-24T20:31:14.491815+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "d1e355a",
+      "mixed_code": true,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "qwen2.5-coder:7b": {
+      "oldest_ts": "2026-08-13T06:09:34.250745+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T06:09:34.250745+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "qwen2.5:14b": {
+      "oldest_ts": "2026-08-13T05:19:27.425303+00:00",
+      "run_count": 2,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-24T21:02:22.075608+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "d1e355a",
+      "mixed_code": true,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "qwen2.5:7b": {
+      "oldest_ts": "2026-08-13T06:11:15.445241+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T06:11:15.445241+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "qwen3-coder-next:cloud": {
+      "oldest_ts": "2026-08-13T03:47:25.955078+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-08-13T03:47:25.955078+00:00",
+      "host": "XTEK-COMPUTER5",
+      "tier": "deep",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "39f4fa6",
+      "mixed_code": false,
+      "benchmark_version": null,
+      "dataset_version": null,
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": null,
+      "source_fingerprint": null,
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "qwen3-coder:30b": {
+      "oldest_ts": "2026-08-11T00:43:08.723353+00:00",
+      "run_count": 3,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-24T20:02:10.360437+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "d1e355a",
+      "mixed_code": true,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "qwen3.5:4b": {
+      "oldest_ts": "2026-08-13T06:12:56.298183+00:00",
+      "run_count": 2,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-25T06:44:04.945696+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "d1e355a",
+      "mixed_code": true,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "qwen3.5:9b": {
+      "oldest_ts": "2026-09-25T04:47:14.445655+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-25T04:47:14.445655+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": null,
+      "git_sha": "d1e355a",
+      "mixed_code": false,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "qwen3.6:27b": {
+      "oldest_ts": "2026-09-24T23:09:03.954647+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-24T23:09:03.954647+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": null,
+      "git_sha": "d1e355a",
+      "mixed_code": false,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "qwen3:14b": {
+      "oldest_ts": "2026-08-03T12:15:02.710264+00:00",
+      "run_count": 7,
+      "migrated_from_db": true,
+      "run_ts": "2026-09-24T03:00:22.699013+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "d1e355a",
+      "mixed_code": true,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "qwen3:8b": {
+      "oldest_ts": "2026-08-13T05:51:04.863364+00:00",
+      "run_count": 2,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-24T21:56:30.390987+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": "anthropic/claude-opus-4.8",
+      "git_sha": "d1e355a",
+      "mixed_code": true,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    },
+    "z-ai/glm-5.2": {
+      "oldest_ts": "2026-09-25T12:44:13.017520+00:00",
+      "run_count": 1,
+      "migrated_from_db": false,
+      "run_ts": "2026-09-25T12:44:13.017520+00:00",
+      "host": "HPBENDERTWO",
+      "tier": "compare",
+      "judge_model": null,
+      "git_sha": "d1e355a",
+      "mixed_code": false,
+      "benchmark_version": "2.0",
+      "dataset_version": "2026-09-23",
+      "mixed_benchmark": false,
+      "mixed_dataset": false,
+      "scorer_version": "2",
+      "source_fingerprint": "b821993265074d47",
+      "mixed_scorer": false,
+      "mixed_source": false
+    }
+  },
+  "coverage": {
+    "deepseek-v3.2:cloud": 0,
+    "deepseek-v4-flash:cloud": 1,
+    "deepseek/deepseek-v4-flash": 6,
+    "deepseek/deepseek-v4.1-flash": 8,
+    "devstral-small-2:24b": 9,
+    "gemini-3-flash-preview:cloud": 0,
+    "gemma3n:e4b": 0,
+    "gemma4:31b-cloud": 9,
+    "gemma4:e4b": 8,
+    "glm-4.7-flash:latest": 8,
+    "glm-4.7:cloud": 0,
+    "glm-5.1:cloud": 1,
+    "glm-5.2:cloud": 5,
+    "glm-5:cloud": 0,
+    "glm4:latest": 1,
+    "gpt-oss:120b-cloud": 8,
+    "gpt-oss:latest": 9,
+    "kimi-k2-thinking:cloud": 0,
+    "kimi-k2.5:cloud": 0,
+    "kimi-k2.7-code:cloud": 5,
+    "kimi-k3:cloud": 0,
+    "lfm2.5": 4,
+    "lfm2.5:latest": 7,
+    "minimax-m2.5:cloud": 0,
+    "minimax-m2.7:cloud": 1,
+    "minimax-m3:cloud": 5,
+    "minimax/minimax-m3": 8,
+    "minimax/minimax-m3:free": 6,
+    "ministral-3:14b": 8,
+    "ministral-3:8b": 8,
+    "moonshotai/kimi-k2.5": 8,
+    "nemotron-3-nano:30b-cloud": 8,
+    "nemotron-3-super:cloud": 8,
+    "nemotron-3-ultra:cloud": 6,
+    "openai/gpt-5.6-luna": 8,
+    "openai/gpt-6-luna": 8,
+    "phi4:14b": 7,
+    "qwen2.5-coder:14b": 8,
+    "qwen2.5-coder:7b": 1,
+    "qwen2.5:14b": 8,
+    "qwen2.5:7b": 1,
+    "qwen3-coder-next:cloud": 0,
+    "qwen3-coder:30b": 8,
+    "qwen3.5:4b": 8,
+    "qwen3.5:9b": 8,
+    "qwen3.6:27b": 7,
+    "qwen3:14b": 8,
+    "qwen3:8b": 8,
+    "z-ai/glm-5.2": 8
+  },
+  "max_coverage": 15,
+  "required_categories": [
+    "code_gen",
+    "coding_agentic",
+    "contradiction",
+    "dedup",
+    "embedding",
+    "entity",
+    "importance",
+    "lessons",
+    "rank_importance",
+    "ranking",
+    "reasoning",
+    "session_review",
+    "session_review_chunked",
+    "summarization",
+    "tool_calling"
+  ],
+  "benchmark_version": "2.0",
+  "dataset_version": "2026-09-23",
+  "pending_external_review": {
+    "deepseek-v3.2:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "deepseek-v4-flash:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "deepseek/deepseek-v4-flash": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "deepseek/deepseek-v4.1-flash": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "devstral-small-2:24b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "gemini-3-flash-preview:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "gemma3n:e4b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "gemma4:31b-cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "gemma4:e4b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "glm-4.7-flash:latest": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "glm-4.7:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "glm-5.1:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "glm-5.2:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "glm-5:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "glm4:latest": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "gpt-oss:120b-cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "gpt-oss:latest": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "kimi-k2-thinking:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "kimi-k2.5:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "kimi-k2.7-code:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "kimi-k3:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "lfm2.5": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "lfm2.5:latest": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "minimax-m2.5:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "minimax-m2.7:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "minimax-m3:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "minimax/minimax-m3": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "minimax/minimax-m3:free": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "ministral-3:14b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "ministral-3:8b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "moonshotai/kimi-k2.5": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "nemotron-3-nano:30b-cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "nemotron-3-super:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "nemotron-3-ultra:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "openai/gpt-5.6-luna": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "openai/gpt-6-luna": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "phi4:14b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "qwen2.5-coder:14b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "qwen2.5-coder:7b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "qwen2.5:14b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "qwen2.5:7b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "qwen3-coder-next:cloud": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "qwen3-coder:30b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "qwen3.5:4b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "qwen3.5:9b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "qwen3.6:27b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "qwen3:14b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "qwen3:8b": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "z-ai/glm-5.2": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ]
+  },
+  "system_evidence": {
+    "agent_eval": [
+      {
+        "model": "glm-5.2_cloud",
+        "score": 30,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 13.2,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "gemma4_cloud",
+        "score": 29,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 17.0,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "deepseek-v4-flash_cloud",
+        "score": 28,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 13.3,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "qwen3.5_397b-cloud",
+        "score": 28,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 10.0,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "gemma4_31b-cloud",
+        "score": 27,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 10.5,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "minimax-m2.7_cloud",
+        "score": 27,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 1,
+        "api_errors": 0,
+        "seconds_per_episode": 11.4,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "nemotron-3-ultra_cloud",
+        "score": 27,
+        "max": 30,
+        "silent": 4,
+        "turn_limit": 4,
+        "api_errors": 0,
+        "seconds_per_episode": 40.1,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "minimax-m3_cloud",
+        "score": 26,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 7.3,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "nemotron-3-super_cloud",
+        "score": 26,
+        "max": 30,
+        "silent": 3,
+        "turn_limit": 2,
+        "api_errors": 1,
+        "seconds_per_episode": 24.5,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "kimi-k2.7-code_cloud",
+        "score": 25,
+        "max": 30,
+        "silent": 4,
+        "turn_limit": 1,
+        "api_errors": 0,
+        "seconds_per_episode": 5.9,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "mistral-large-3_675b-cloud",
+        "score": 25,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 8.5,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "nemotron-3-nano_30b-cloud",
+        "score": 25,
+        "max": 30,
+        "silent": 3,
+        "turn_limit": 3,
+        "api_errors": 0,
+        "seconds_per_episode": 37.3,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "gpt-oss_120b-cloud",
+        "score": 24,
+        "max": 30,
+        "silent": 4,
+        "turn_limit": 4,
+        "api_errors": 0,
+        "seconds_per_episode": 7.8,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "qwen3.5_4b",
+        "score": 21,
+        "max": 30,
+        "silent": 9,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 8.9,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "qwen3_4b",
+        "score": 21,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 67.6,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "gpt-oss_20b-cloud",
+        "score": 18,
+        "max": 30,
+        "silent": 9,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 7.0,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "lfm2.5_latest",
+        "score": 18,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 5.4,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "qwen2.5_3b",
+        "score": 15,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 3.0,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "qwen2.5_1.5b",
+        "score": 14,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 2.7,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "qwen3_1.7b",
+        "score": 14,
+        "max": 30,
+        "silent": 1,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 9.9,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "llama3.2_3b",
+        "score": 9,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 2.5,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "phi4-mini_latest",
+        "score": 7,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 0,
+        "api_errors": 0,
+        "seconds_per_episode": 2.3,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "gemma3_1b",
+        "score": 0,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 0,
+        "api_errors": 30,
+        "seconds_per_episode": 0.7,
+        "run_date": "2026-08-19"
+      },
+      {
+        "model": "gemma3_4b",
+        "score": 0,
+        "max": 30,
+        "silent": 0,
+        "turn_limit": 0,
+        "api_errors": 30,
+        "seconds_per_episode": 0.5,
+        "run_date": "2026-08-19"
+      }
+    ],
+    "continuity": [
+      {
+        "model": "gpt-oss:latest",
+        "scored": 15,
+        "passed": 12,
+        "failed": 3
+      },
+      {
+        "model": "minimax/minimax-m3",
+        "scored": 90,
+        "passed": 65,
+        "failed": 25
+      }
+    ]
+  },
+  "cohort_signatures": {
+    "minimax-m3:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"legacy\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "glm-5.2:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}",
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"legacy\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "kimi-k2.7-code:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}",
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"legacy\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "lfm2.5": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"legacy\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "qwen3:14b": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "gpt-oss:latest": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}",
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"6367eb2\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "devstral-small-2:24b": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}",
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"a13bf94\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "qwen3-coder:30b": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "qwen2.5-coder:14b": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "ministral-3:14b": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "gemma4:e4b": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "kimi-k3:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "glm-5.1:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "glm-5:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "glm-4.7:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "deepseek-v4-flash:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "deepseek-v3.2:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "kimi-k2-thinking:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "kimi-k2.5:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "minimax-m2.7:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "minimax-m2.5:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "qwen3-coder-next:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "gemini-3-flash-preview:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "qwen2.5:14b": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "gemma3n:e4b": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "qwen3:8b": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "glm4:latest": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "lfm2.5:latest": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "qwen2.5-coder:7b": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "qwen2.5:7b": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "qwen3.5:4b": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "nemotron-3-ultra:cloud": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"39f4fa6\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "gpt-oss:120b-cloud": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":1,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "gemma4:31b-cloud": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":1,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}",
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"e5aa214\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "minimax/minimax-m3:free": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"e5aa214\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "deepseek/deepseek-v4-flash": [
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"86da755\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}",
+      "{\"benchmark\":\"legacy\",\"context_tokens\":\"legacy\",\"dataset\":\"legacy\",\"endpoints\":[\"legacy\"],\"git\":\"e5aa214\",\"jobs\":[\"legacy\"],\"provider\":\"legacy\",\"repeats\":\"legacy\",\"scorer\":\"legacy\",\"source_fingerprint\":\"legacy\",\"tier\":\"legacy\",\"timeout_s\":\"legacy\"}"
+    ],
+    "glm-4.7-flash:latest": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "ministral-3:8b": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "phi4:14b": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "qwen3.6:27b": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "qwen3.5:9b": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":3,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "nemotron-3-super:cloud": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":1,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "nemotron-3-nano:30b-cloud": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":32768,\"dataset\":\"2026-09-23\",\"endpoints\":[\"local\",\"local-cloud\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"ollama\",\"repeats\":1,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "openai/gpt-6-luna": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":204800,\"dataset\":\"2026-09-23\",\"endpoints\":[\"openrouter\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"openai\",\"repeats\":1,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "deepseek/deepseek-v4.1-flash": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":204800,\"dataset\":\"2026-09-23\",\"endpoints\":[\"openrouter\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"openai\",\"repeats\":1,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "minimax/minimax-m3": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":204800,\"dataset\":\"2026-09-23\",\"endpoints\":[\"openrouter\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"openai\",\"repeats\":1,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "openai/gpt-5.6-luna": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":204800,\"dataset\":\"2026-09-23\",\"endpoints\":[\"openrouter\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"openai\",\"repeats\":1,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "z-ai/glm-5.2": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":204800,\"dataset\":\"2026-09-23\",\"endpoints\":[\"openrouter\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"openai\",\"repeats\":1,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ],
+    "moonshotai/kimi-k2.5": [
+      "{\"benchmark\":\"2.0\",\"context_tokens\":204800,\"dataset\":\"2026-09-23\",\"endpoints\":[\"openrouter\"],\"git\":\"d1e355a\",\"jobs\":[\"pipeline\",\"reasoning\",\"session_review\"],\"provider\":\"openai\",\"repeats\":1,\"scorer\":\"2\",\"source_fingerprint\":\"b821993265074d47\",\"tier\":\"compare\",\"timeout_s\":300.0}"
+    ]
+  },
+  "comparison_contract_enforced": true
+}

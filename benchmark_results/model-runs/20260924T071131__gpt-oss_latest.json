@@ -1,0 +1,1144 @@
+{
+  "schema": 2,
+  "model": "gpt-oss:latest",
+  "run_group": "gpt-oss_latest@2026-09-24T07:11:31.084662+00:00",
+  "run_ts": "2026-09-24T07:11:31.084662+00:00",
+  "tier": "compare",
+  "judge_model": null,
+  "jobs": [
+    "pipeline",
+    "reasoning",
+    "session_review"
+  ],
+  "git_sha": "d1e355a",
+  "host": "HPBENDERTWO",
+  "benchmark_manifest": {
+    "benchmark_version": "2.0",
+    "dataset_version": "2026-09-23",
+    "scorer_version": "2",
+    "source_fingerprint": "b821993265074d47",
+    "required_categories": [
+      "rank_importance",
+      "ranking",
+      "importance",
+      "contradiction",
+      "dedup",
+      "entity",
+      "summarization",
+      "lessons",
+      "reasoning",
+      "code_gen",
+      "coding_agentic",
+      "tool_calling",
+      "session_review",
+      "session_review_chunked",
+      "embedding"
+    ],
+    "open_ended_categories": [
+      "code_gen",
+      "lessons",
+      "reasoning",
+      "session_review",
+      "summarization"
+    ],
+    "tiers": {
+      "smoke": {
+        "jobs": [
+          "dedup",
+          "reasoning"
+        ],
+        "repeats": 1,
+        "description": "Fast plumbing/capability check; not sufficient for routing decisions."
+      },
+      "compare": {
+        "jobs": [
+          "pipeline",
+          "reasoning",
+          "session_review"
+        ],
+        "repeats": 3,
+        "description": "Comparable routing-job run without the slow coding/embedding suites."
+      },
+      "decision": {
+        "jobs": [
+          "coding",
+          "embedding",
+          "pipeline",
+          "realdata",
+          "reasoning",
+          "session_review"
+        ],
+        "repeats": 5,
+        "description": "Full evidence run for a production model decision."
+      }
+    }
+  },
+  "run_settings": {
+    "provider": "ollama",
+    "endpoint_names": [
+      "local",
+      "local-cloud"
+    ],
+    "context_tokens": 32768,
+    "timeout_s": 300.0,
+    "repeats": 3,
+    "tier": "compare",
+    "jobs": [
+      "pipeline",
+      "reasoning",
+      "session_review"
+    ]
+  },
+  "rows": [
+    {
+      "suite": "pipeline",
+      "task_type": "ranking",
+      "metric": "accuracy",
+      "value": 0.9404,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.9217,
+        0.9463,
+        0.9532
+      ],
+      "spread": 0.0315
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "ranking",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "importance",
+      "metric": "accuracy",
+      "value": 0.8826,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.8417,
+        0.9561,
+        0.8501
+      ],
+      "spread": 0.1144
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "importance",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "rank_importance",
+      "metric": "accuracy",
+      "value": 0.9447,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.9375,
+        0.9695,
+        0.927
+      ],
+      "spread": 0.0425
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "rank_importance",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "contradiction",
+      "metric": "accuracy",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "contradiction",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "accuracy",
+      "value": 0.8889,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 2.65
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 2.55
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 3.09
+        },
+        {
+          "raw": "NONE",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 11.33
+        },
+        {
+          "raw": "NONE",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 17.22
+        },
+        {
+          "raw": "NONE",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 4.13
+        },
+        {
+          "raw": "UPDATE 2",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 7.57
+        },
+        {
+          "raw": "UPDATE 2",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 4.56
+        },
+        {
+          "raw": "UPDATE 1",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 9.9
+        },
+        {
+          "raw": "DELETE 1",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 4.18
+        },
+        {
+          "raw": "UPDATE 2",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 16.01
+        },
+        {
+          "raw": "UPDATE 1",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": false,
+          "time": 5.72
+        }
+      ],
+      "values": [
+        0.8333,
+        0.8333,
+        1.0
+      ],
+      "spread": 0.1667
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "valid_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "accuracy",
+      "value": null,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "",
+          "parsed": "RETRY",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 1.02
+        },
+        {
+          "raw": "",
+          "parsed": "RETRY",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 1.07
+        },
+        {
+          "raw": "",
+          "parsed": "RETRY",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.84
+        },
+        {
+          "raw": "",
+          "parsed": "RETRY",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.83
+        },
+        {
+          "raw": "",
+          "parsed": "RETRY",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.9
+        },
+        {
+          "raw": "",
+          "parsed": "RETRY",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": false,
+          "correct": false,
+          "time": 0.99
+        },
+        {
+          "raw": "",
+          "parsed": "RETRY",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": false,
+          "correct": false,
+          "time": 1.26
+        },
+        {
+          "raw": "",
+          "parsed": "RETRY",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": false,
+          "correct": false,
+          "time": 0.88
+        },
+        {
+          "raw": "",
+          "parsed": "RETRY",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": false,
+          "correct": false,
+          "time": 0.92
+        },
+        {
+          "raw": "",
+          "parsed": "RETRY",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": false,
+          "correct": false,
+          "time": 0.81
+        },
+        {
+          "raw": "",
+          "parsed": "RETRY",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": false,
+          "correct": false,
+          "time": 1.07
+        },
+        {
+          "raw": "",
+          "parsed": "RETRY",
+          "parsed_index": null,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": false,
+          "correct": false,
+          "time": 1.05
+        }
+      ],
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "valid_rate",
+      "value": 0.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "accuracy_think",
+      "value": 0.8611,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 2.28
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 2.55
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 1.92
+        },
+        {
+          "raw": "NONE",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 30.72
+        },
+        {
+          "raw": "NONE",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 8.41
+        },
+        {
+          "raw": "NONE",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 4.4
+        },
+        {
+          "raw": "ADD",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 3.68
+        },
+        {
+          "raw": "UPDATE 2",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 9.14
+        },
+        {
+          "raw": "UPDATE 1",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 4.76
+        },
+        {
+          "raw": "DELETE 1",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 30.71
+        },
+        {
+          "raw": "DELETE 2",
+          "parsed": "DELETE",
+          "parsed_index": 1,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 4.77
+        },
+        {
+          "raw": "DELETE 1",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 17.96
+        }
+      ],
+      "values": [
+        0.9167,
+        0.9167,
+        0.75
+      ],
+      "spread": 0.1667
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup",
+      "metric": "valid_rate_think",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "accuracy_think",
+      "value": 0.8611,
+      "unit": "ratio",
+      "raw": [
+        {
+          "raw": "{\"action\":\"ADD\",\"target_index\":null,\"reason\":\"Unique new information about the user's cat\"}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 3.38
+        },
+        {
+          "raw": "{\"action\":\"ADD\",\"target_index\":null,\"reason\":\"Unique speaker specs\"}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 3.37
+        },
+        {
+          "raw": "{\"action\":\"ADD\",\"target_index\":null,\"reason\":\"Adds new information about learning Rust on weekends\"}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "ADD",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 3.48
+        },
+        {
+          "raw": "{\"action\":\"NONE\",\"target_index\":null,\"reason\":\"Same preference already recorded\"}",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 12.76
+        },
+        {
+          "raw": "{\"action\":\"NONE\",\"target_index\":null,\"reason\":\"Same fact about sqlite-vec vector store already recorded.\"}",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 10.95
+        },
+        {
+          "raw": "{\"action\":\"NONE\",\"target_index\":null,\"reason\":\"Same employment info as existing memory.\"}",
+          "parsed": "NONE",
+          "parsed_index": null,
+          "expected": "NONE",
+          "expected_index": null,
+          "valid": true,
+          "correct": true,
+          "time": 4.39
+        },
+        {
+          "raw": "{\"action\":\"ADD\",\"target_index\":null,\"reason\":\"Adds new information about Max's age and breed\"}",
+          "parsed": "ADD",
+          "parsed_index": null,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": false,
+          "time": 3.5
+        },
+        {
+          "raw": "{\"action\":\"UPDATE\",\"target_index\":2,\"reason\":\"New memory refines the existing local summarization detail with model name and fallback.\"}",
+          "parsed": "UPDATE",
+          "parsed_index": 1,
+          "expected": "UPDATE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 4.21
+        },
+        {
+          "raw": "{\"action\":\"UPDATE\",\"target_index\":1,\"reason\":\"Provides more specific location details than existing memory\"}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "UPDATE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 5.76
+        },
+        {
+          "raw": "{\"action\":\"DELETE\",\"target_index\":1,\"reason\":\"Contradicts existing Windows 10 usage\"}",
+          "parsed": "DELETE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": true,
+          "time": 37.03
+        },
+        {
+          "raw": "{\"action\":\"DELETE\",\"target_index\":2,\"reason\":\"New memory contradicts existing memory about location\"}",
+          "parsed": "DELETE",
+          "parsed_index": 1,
+          "expected": "DELETE",
+          "expected_index": 1,
+          "valid": true,
+          "correct": true,
+          "time": 12.63
+        },
+        {
+          "raw": "{\"action\":\"UPDATE\",\"target_index\":1,\"reason\":\"Updates vector store from ChromaDB to sqlite-vec\"}",
+          "parsed": "UPDATE",
+          "parsed_index": 0,
+          "expected": "DELETE",
+          "expected_index": 0,
+          "valid": true,
+          "correct": false,
+          "time": 5.71
+        }
+      ],
+      "values": [
+        0.8333,
+        0.9167,
+        0.8333
+      ],
+      "spread": 0.0834
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "dedup_structured",
+      "metric": "valid_rate_think",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "entity",
+      "metric": "accuracy",
+      "value": 0.8013,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.7968,
+        0.8706,
+        0.7365
+      ],
+      "spread": 0.1341
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "entity",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "summarization",
+      "metric": "length_words",
+      "value": 9.4,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        9.0,
+        9.8,
+        9.4
+      ],
+      "spread": 0.8
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": null,
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "lessons",
+      "metric": "length_words",
+      "value": 37.6,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        37.0,
+        36.6,
+        39.2
+      ],
+      "spread": 2.6
+    },
+    {
+      "suite": "pipeline",
+      "task_type": "pipeline",
+      "metric": "latency_s",
+      "value": 7.2143,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        7.512,
+        7.05,
+        7.081
+      ],
+      "spread": 0.462
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "scored": 0,
+        "cases": 12
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning",
+      "metric": "length_words",
+      "value": 231.3667,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        221.4,
+        238.7,
+        234.0
+      ],
+      "spread": 17.3
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "scored": 0,
+        "cases": 9
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "code_gen",
+      "metric": "length_words",
+      "value": 135.3667,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        133.8,
+        145.9,
+        126.4
+      ],
+      "spread": 19.5
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "tool_calling",
+      "metric": "tool_pass_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": {
+        "system_prompt": true
+      },
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "tool_calling",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "reasoning",
+      "task_type": "reasoning_suite",
+      "metric": "latency_s",
+      "value": 14.599,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        15.387,
+        15.16,
+        13.25
+      ],
+      "spread": 2.137
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "quality",
+      "value": null,
+      "unit": "ratio",
+      "raw": {
+        "completeness": 0.875,
+        "judged": false
+      },
+      "values": null,
+      "spread": null
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "completeness",
+      "value": 0.9583,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        0.875,
+        1.0,
+        1.0
+      ],
+      "spread": 0.125
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "completion_rate",
+      "value": 1.0,
+      "unit": "ratio",
+      "raw": null,
+      "values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "spread": 0.0
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "length_words",
+      "value": 188.5,
+      "unit": "words",
+      "raw": null,
+      "values": [
+        162.4,
+        201.0,
+        202.1
+      ],
+      "spread": 39.7
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review",
+      "metric": "latency_s",
+      "value": 23.5577,
+      "unit": "seconds",
+      "raw": null,
+      "values": [
+        19.561,
+        29.463,
+        21.649
+      ],
+      "spread": 9.902
+    },
+    {
+      "suite": "session_review",
+      "task_type": "session_review_chunked",
+      "metric": "accuracy",
+      "value": 0.9333,
+      "unit": "ratio",
+      "raw": {
+        "cases": 1,
+        "coverage": 0.8,
+        "fidelity": 1.0,
+        "completeness": 0.0
+      },
+      "values": [
+        0.9,
+        1.0,
+        0.9
+      ],
+      "spread": 0.1
+    }
+  ]
+}

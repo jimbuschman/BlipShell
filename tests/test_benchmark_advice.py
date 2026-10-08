@@ -129,6 +129,20 @@ class TestCurrentAssignments:
         )
         assert current_assignments(cfg)["summarization"] == "glm4"
 
+    def test_openrouter_routing_suffix_is_not_part_of_the_model(self):
+        """`:floor` picks a provider; results are recorded under the bare id, so
+        an incumbent carrying the suffix would never match its own scores."""
+        cfg = _Cfg(
+            _Models(tool_calling="global"),
+            [_Ep("or", ["tool_calling"],
+                 {"tool_calling": "deepseek/deepseek-v4-flash:floor"}, priority=5)],
+        )
+        assert current_assignments(cfg)["tool_calling"] == "deepseek/deepseek-v4-flash"
+
+    def test_ollama_tags_are_untouched(self):
+        cfg = _Cfg(_Models(reasoning="qwen3:14b"))
+        assert current_assignments(cfg)["reasoning"] == "qwen3:14b"
+
 
 class TestVerdicts:
     def _cfg(self, **kw):

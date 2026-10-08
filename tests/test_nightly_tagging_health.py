@@ -136,16 +136,47 @@ async def test_centroid_cap_selects_strongest_matches():
     assert store.tag_memory.call_args.args[1] == ['6', '5', '4', '3', '2']
 
 
-async def test_batch_inner_budget_uses_outer_job_override(sqlite_store, temp_db_path, monkeypatch):
+@pytest.mark.parametrize('timeout', [None, 600])
+async def test_batch_inner_budget_uses_outer_job_override(sqlite_store, temp_db_path, monkeypatch, timeout):
     import blipshell.core.nightly as module
     r = runner(sqlite_store, temp_db_path)
     r.config.memory = MemoryConfig()
     fake = MagicMock()
     fake.tag_all = AsyncMock(return_value={})
     monkeypatch.setattr(module, 'BatchTagger', lambda *a: fake)
-    monkeypatch.setitem(module._JOB_TIMEOUTS, 'batch_tag', 600)
+    if timeout is None:
+        assert module._JOB_TIMEOUTS['batch_tag'] == 3600
+    else:
+        monkeypatch.setitem(module._JOB_TIMEOUTS, 'batch_tag', timeout)
     await r._job_batch_tag(lambda _: None)
-    assert fake.tag_all.call_args.kwargs['time_budget_seconds'] == 570
+    assert fake.tag_all.call_args.kwargs['time_budget_seconds'] == (timeout or 3600) - 30
+
+
+async def test_nightly_tags_full_batch_and_tail_past_generic_timeout(sqlite_store, temp_db_path, monkeypatch):
+    """Normal slow tagging must drain the tail using the longer job window."""
+    import blipshell.core.nightly as module
+    r = runner(sqlite_store, temp_db_path)
+    r.config.memory = MemoryConfig()
+    for _ in range(13):
+        await seed(sqlite_store, ['python'])
+    await sqlite_store._ensure_tags_exist(['sql'])
+
+    async def slow_tags(*args, **kwargs):
+        await asyncio.sleep(0.1)
+        return '\n'.join(f'{i}: python, sql' for i in range(1, 11))
+
+    r.router.generate = AsyncMock(side_effect=slow_tags)
+    # Scale down the outer caps while keeping the real inner-budget margin.
+    # Every model call exceeds the generic cap, but fits the tagging window.
+    monkeypatch.setattr(module, '_JOB_TIMEOUT', 0.05)
+    monkeypatch.setitem(module._JOB_TIMEOUTS, 'batch_tag', 36)
+    result = await r.run(jobs=['batch_tag'])
+    stats = result['jobs']['batch_tag']
+    assert stats['status'] == 'ok'
+    assert stats['checked'] == stats['memories_tagged'] == 13
+    assert stats['remaining_pool'] == 0
+    assert stats['stopped_early'] is False
+    assert r.router.generate.await_count == 2
 
 
 def test_history_cli_is_read_only_and_does_not_boot_models(tmp_path, monkeypatch):
